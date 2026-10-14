@@ -9,11 +9,11 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "echo \"web: not scaffolded yet (Phase 0 B5)\"",
-    "dev": "echo \"web: not scaffolded yet (Phase 0 B5)\"",
-    "lint": "echo \"web: not scaffolded yet (Phase 0 B5)\"",
-    "typecheck": "echo \"web: not scaffolded yet (Phase 0 B5)\"",
-    "test": "echo \"web: not scaffolded yet (Phase 0 B5)\""
+    "build": "vite build",
+    "dev": "vite",
+    "lint": "eslint .",
+    "typecheck": "tsc -b",
+    "test": "vitest run"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
