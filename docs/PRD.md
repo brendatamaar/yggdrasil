@@ -85,7 +85,7 @@ Yggdrasil v1 is a **rewrite**. The personal tool stays private and serves only a
 | Tests | `go test` with temporary fixture repos; Vitest for frontend logic; Playwright for UI on Windows CI |
 | API contracts | `oasdiff` (OpenAPI breaking-change checks) and `gotreesitter` (pure-Go tree-sitter) for XR-02 |
 | Constraint | **No cgo.** Builds never need a C compiler (`CGO_ENABLED=0` enforced in CI). |
-| License | **Apache-2.0.** All dependencies must be compatible (MIT, BSD, ISC, Apache-2.0, MPL-2.0; no GPL/AGPL). |
+| License | **Apache-2.0.** All dependencies must be compatible (MIT, BSD, ISC, Apache-2.0, MPL-2.0, 0BSD, CC0-1.0, BlueOak-1.0.0, Unlicense; no GPL/AGPL). |
 
 ## 6. Scope — v1
 

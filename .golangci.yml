@@ -1,0 +1,52 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - forbidigo
+    - gosec
+    - misspell
+    - nilerr
+    - unconvert
+  settings:
+    forbidigo:
+      analyze-types: true
+      forbid:
+        # docs/AGENTS.md 5.3: every child process starts through internal/platform.
+        - pattern: ^exec\.Command(Context)?$
+          pkg: ^os/exec$
+          msg: start processes through internal/platform (docs/AGENTS.md 5.3)
+        # docs/AGENTS.md 5.2: no OS checks outside internal/platform.
+        - pattern: ^runtime\.GOOS$
+          pkg: ^runtime$
+          msg: put OS-specific code in internal/platform (docs/AGENTS.md 5.2)
+        # docs/AGENTS.md 5.3 / 6.3: children get the clean environment, never ours.
+        - pattern: ^os\.Environ$
+          pkg: ^os$
+          msg: use the clean environment from internal/safety (docs/AGENTS.md 5.3)
+  exclusions:
+    presets:
+      - std-error-handling
+    rules:
+      - path: ^internal/platform/
+        linters: [forbidigo]
+        text: exec\.Command|runtime\.GOOS
+      - path: ^internal/safety/
+        linters: [forbidigo]
+        text: os\.Environ
+      - path: _test\.go$
+        linters: [gosec]
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/brendatamaar/yggdrasil

@@ -32,7 +32,7 @@ Yggdrasil is a local server with a browser UI that combines a multi-repo workspa
 
 **No cgo, ever.** `CGO_ENABLED=0` must always build. Don't add a dependency that needs cgo.
 
-**License: Apache-2.0.** Every dependency (Go and npm) must have a compatible license: MIT, BSD, ISC, Apache-2.0 or MPL-2.0. No GPL, LGPL or AGPL. New source files don't need license headers; the root `LICENSE` and `NOTICE` cover them.
+**License: Apache-2.0.** Every dependency (Go and npm) must have a compatible license: MIT, BSD, ISC, Apache-2.0, MPL-2.0, 0BSD, CC0-1.0, BlueOak-1.0.0 or Unlicense. No GPL, LGPL or AGPL. `task license` checks production dependencies (what ships in the binary). New source files don't need license headers; the root `LICENSE` and `NOTICE` cover them.
 
 ## 3. Commands
 
@@ -41,15 +41,21 @@ Yggdrasil is a local server with a browser UI that combines a multi-repo workspa
 | Task | Command |
 |---|---|
 | Build everything (frontend + embed + binary) | `task build` |
+| Build only the frontend into `web/dist` | `task build:web` |
 | Run the built binary | `task run` (or `./bin/ygg`) |
 | Dev mode (Go server + Vite dev server with proxy) | `task dev` |
 | Check prerequisites | `ygg doctor` |
 | Generate code (sqlc, tygo) | `task generate` |
-| Go tests | `task test` (runs `go test ./...`) |
+| Go tests | `task test` (runs `go test ./...` with `CGO_ENABLED=0`) |
+| Go tests with the race detector | `task test:race` (needs cgo + gcc; tests only, never shipped builds) |
 | Frontend tests | `task test:web` |
 | UI end-to-end tests | `task test:e2e` |
 | Lint (golangci-lint + ESLint) | `task lint` |
 | Type check frontend | `task typecheck` |
+| Generate `fixtures/demo-project/` | `task fixtures` |
+| Dependency license check (Go + npm) | `task license` |
+| Phase 0 spike tests (each spike is its own module) | `task spikes:test` |
+| Validate the GoReleaser config (no publishing) | `task release:check` |
 
 Before finishing any change: run `task generate`, `task lint`, `task typecheck`, `task test` and `task test:web`. Do not mark work done if any of them fail or if generated files are out of date.
 
@@ -220,7 +226,7 @@ Yggdrasil's main promise is that it is safe to let agents work. **Never weaken t
 - Toolchain detection is tested with small fixture repos per ecosystem (manifests and lock files only). Tests that run a real toolchain (e.g. `uv sync`, `dotnet build`) skip themselves when that toolchain isn't installed; the Windows CI runner installs all of them.
 - Git host clients are tested with recorded HTTP fixtures (`httptest.Server`).
 - Every safety invariant in section 6 has at least one test that fails if it's broken.
-- Run Go tests with `-race`.
+- Run Go tests with `-race` (`task test:race`). The race detector needs cgo, so it's the one place `CGO_ENABLED=1` is allowed; `task test` and every build stay `CGO_ENABLED=0`.
 - Include Windows-specific cases: paths with spaces, long paths, drive letters, CRLF files, locked files during worktree removal, child processes killed when the job object closes.
 
 ## 9. Windows gotchas

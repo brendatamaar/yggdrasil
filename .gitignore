@@ -3,7 +3,10 @@ node_modules/
 .pnpm-store/
 
 # build output
-dist/
+bin/
+# ignore dist contents (not the dirs) so web/dist/.gitkeep can stay tracked for go:embed
+**/dist/*
+!web/dist/.gitkeep
 build/
 out/
 target/
