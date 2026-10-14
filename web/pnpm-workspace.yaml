@@ -1,0 +1,5 @@
+# Makes web/ its own pnpm workspace root. Without this, pnpm can pick up a
+# pnpm-workspace.yaml from a parent folder (e.g. the user's home) and write
+# web's lockfile there instead of web/pnpm-lock.yaml.
+packages:
+  - .
