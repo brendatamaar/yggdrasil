@@ -1,0 +1,13 @@
+# LF in the repo and in every checkout, so gofmt and ESLint agree on Windows.
+* text=auto eol=lf
+
+# Windows scripts need CRLF.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary files.
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary

@@ -1,0 +1,8 @@
+# Keeps GitHub Actions versions current. Go and npm dependencies are updated by
+# hand so every new version gets a license and cgo check (docs/AGENTS.md 7).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

@@ -8,9 +8,11 @@ vars:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
   # Kept in sync with docs/AGENTS.md section 2.
   ALLOWED_LICENSES: Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0,0BSD,CC0-1.0,BlueOak-1.0.0,Unlicense
-  # Same version CI installs (.github/workflows, A4).
+  # CI installs this exact version through `task license:install`.
   GO_LICENSES_VERSION: v2.0.0
 
+# Default for every go command. Commands that must not depend on the caller's
+# environment set CGO_ENABLED inline, since OS env overrides this block.
 env:
   CGO_ENABLED: "0"
 
@@ -24,7 +26,7 @@ tasks:
     desc: Build the frontend, embed it and produce bin/ygg
     cmds:
       - task: build:web
-      - go build -trimpath -ldflags "-s -w -X main.version={{.VERSION}}" -o "{{.BIN}}" ./cmd/ygg
+      - CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version={{.VERSION}}" -o "{{.BIN}}" ./cmd/ygg
 
   build:web:
     desc: Build the frontend into web/dist
@@ -62,18 +64,16 @@ tasks:
   test:
     desc: Go tests, CGO_ENABLED=0 (root module and fixtures/demo-gen)
     cmds:
-      - go test ./...
+      - CGO_ENABLED=0 go test ./...
       - |
         if [ -f fixtures/demo-gen/go.mod ]; then
-          go -C fixtures/demo-gen test ./...
+          CGO_ENABLED=0 go -C fixtures/demo-gen test ./...
         fi
 
   test:race:
     desc: Go tests with the race detector (needs cgo and gcc; tests only, never shipped builds)
-    env:
-      CGO_ENABLED: "1"
     cmds:
-      - go test -race ./...
+      - CGO_ENABLED=1 go test -race ./...
 
   test:web:
     desc: Frontend tests (Vitest)
@@ -115,17 +115,27 @@ tasks:
     cmds:
       - |
         if ! command -v go-licenses >/dev/null 2>&1; then
-          echo "go-licenses not found: go install github.com/google/go-licenses/v2@{{.GO_LICENSES_VERSION}}" >&2
+          echo "go-licenses not found: run 'task license:install' (go install github.com/google/go-licenses/v2@{{.GO_LICENSES_VERSION}})" >&2
           exit 1
         fi
       - go-licenses check ./... --allowed_licenses={{.ALLOWED_LICENSES}}
       - |
         if [ -f web/package.json ]; then
-          pnpm -C web licenses list --prod --json > web/node_modules/.licenses.json
-          node scripts/check-npm-licenses.mjs web/node_modules/.licenses.json "{{.ALLOWED_LICENSES}}"
+          if ! pnpm -C web install --frozen-lockfile; then
+            echo 'pnpm install from the lockfile failed: run `pnpm -C web install` first' >&2
+            exit 1
+          fi
+          mkdir -p .task
+          pnpm -C web licenses list --prod --json > .task/npm-licenses.json
+          node scripts/check-npm-licenses.mjs .task/npm-licenses.json "{{.ALLOWED_LICENSES}}"
         else
           echo "web/ not scaffolded yet: skipping npm license check"
         fi
+
+  license:install:
+    desc: Install the pinned go-licenses (needs network; CI uses this)
+    cmds:
+      - go install github.com/google/go-licenses/v2@{{.GO_LICENSES_VERSION}}
 
   spikes:test:
     desc: Vet and test each Phase 0 spike (each is its own Go module)
@@ -135,8 +145,8 @@ tasks:
           [ -f "$mod" ] || continue
           dir=$(dirname "$mod")
           echo "== $dir"
-          go -C "$dir" vet ./... || exit 1
-          go -C "$dir" test ./... || exit 1
+          CGO_ENABLED=0 go -C "$dir" vet ./... || exit 1
+          CGO_ENABLED=0 go -C "$dir" test ./... || exit 1
         done
 
   release:check:

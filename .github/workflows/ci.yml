@@ -1,0 +1,163 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# CGO_ENABLED is set inline by each task (0 everywhere, 1 only for test:race).
+# Don't set it here: OS env would override the Taskfile.
+env:
+  GOLANGCI_LINT_VERSION: v2.14.0
+
+jobs:
+  # Windows is the supported platform: this job must pass.
+  windows:
+    name: Windows (required)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+
+      # pnpm's version comes from "packageManager" in web/package.json (IN-02).
+      - uses: pnpm/action-setup@v4
+        if: hashFiles('web/package.json') != ''
+        with:
+          package_json_file: web/package.json
+
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          install-only: true
+
+      # Toolchains used by toolchain-module tests (docs/AGENTS.md section 8).
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "8.0.x"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v7
+      - name: Install Poetry
+        run: pipx install poetry
+
+      - name: Generate
+        run: task generate
+      - name: Generated files are up to date
+        shell: bash
+        run: |
+          git diff --exit-code
+          test -z "$(git status --porcelain)" || { git status --porcelain; echo "task generate left changes: run it and commit the result"; exit 1; }
+
+      - name: Lint
+        run: task lint
+      - name: Typecheck
+        run: task typecheck
+      - name: Go tests (CGO_ENABLED=0)
+        run: task test
+      - name: Go tests with race detector (cgo, tests only)
+        run: task test:race
+      - name: Frontend tests
+        run: task test:web
+      - name: Build
+        run: task build
+      - name: Spike tests
+        run: task spikes:test
+
+  # macOS and Linux are experimental: failures are reported but don't block.
+  unix:
+    name: ${{ matrix.os }} (allowed to fail)
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+
+      - uses: pnpm/action-setup@v4
+        if: hashFiles('web/package.json') != ''
+        with:
+          package_json_file: web/package.json
+
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          install-only: true
+
+      - run: task generate
+      - run: task lint
+      - run: task typecheck
+      - run: task test
+      - run: task test:race
+      - run: task test:web
+      - run: task build
+
+  # Dependency licenses must match docs/AGENTS.md section 2.
+  licenses:
+    name: License check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+
+      - uses: pnpm/action-setup@v4
+        if: hashFiles('web/package.json') != ''
+        with:
+          package_json_file: web/package.json
+
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - run: task license:install
+      - run: task license

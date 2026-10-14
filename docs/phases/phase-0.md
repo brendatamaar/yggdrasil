@@ -144,4 +144,10 @@ CI green ← B5 merged (web lint/typecheck/test have real content)
 - A2: npm license check is `scripts/check-npm-licenses.mjs` (new top-level `scripts/` dir, added to AGENTS.md section 4).
 - A2: `task test` also runs `fixtures/demo-gen` tests when that module exists.
 - A2: `task fixtures` passes an absolute `-out` (`{{.ROOT_DIR}}/fixtures/demo-project`), because `go -C` changes the working directory.
+- A4: actions are pinned to **major tags**, not commit SHAs: SHAs can't be resolved offline, and inventing them would break CI. `.github/dependabot.yml` keeps action versions current; switching to SHA pins is a follow-up once CI is green.
+- A4: Task v3 lets OS env override Taskfile `env:`, so `CGO_ENABLED` is set inline on each go command (`CGO_ENABLED=0 go build …`, `CGO_ENABLED=1 go test -race …`). CI doesn't set it at job level.
+- A4: `.gitattributes` forces LF (CRLF for `.cmd`/`.bat`/`.ps1`). Windows runners default to `core.autocrlf=true`, which would make gofmt flag every Go file.
+- A4: `task license:install` installs the pinned `go-licenses`; CI uses it, so the version lives only in the Taskfile.
+- A4: pnpm setup in CI is skipped until `web/package.json` exists, and then reads `packageManager` from it. **B5 must set `"packageManager": "pnpm@<version>"`.**
+- A4: CI toolchains: Temurin 21, Gradle via setup-gradle, Maven from the runner image, .NET 8, Python 3.13, uv, Poetry (pipx). Test-time only; tighten versions when the toolchain modules land.
 - A2 verification: `build`, `generate`, `test`, `lint`, `typecheck` and `test:web` were run in the lead session. `test:race`, `test:e2e`, `fixtures`, `spikes:test`, `license`, `release:check`, `run` and `dev` are blocked by the lead session's shell allowlist and need a manual run or CI.
