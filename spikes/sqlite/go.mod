@@ -4,6 +4,8 @@ go 1.26.0
 
 toolchain go1.26.9
 
+tool github.com/sqlc-dev/sqlc/cmd/sqlc
+
 require (
 	cel.dev/expr v0.25.2 // indirect
 	filippo.io/edwards25519 v1.2.0 // indirect
