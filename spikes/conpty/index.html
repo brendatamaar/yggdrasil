@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ygg ConPTY spike</title>
+<link rel="stylesheet" href="/assets/xterm/css/xterm.css">
+<style>
+  html, body { height: 100%; margin: 0; background: #1e1e1e; color: #ddd; font: 14px system-ui, sans-serif; }
+  #bar { height: 32px; display: flex; gap: 14px; align-items: center; padding: 0 10px; border-bottom: 1px solid #333; }
+  #bar a { color: #8cf; }
+  #status { color: #aaa; }
+  #term { position: absolute; top: 33px; left: 0; right: 0; bottom: 0; padding: 4px; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <b>ygg ConPTY spike</b>
+  <a href="?shell=powershell">PowerShell</a>
+  <a href="?shell=cmd">cmd</a>
+  <span id="status">loading xterm.js…</span>
+</div>
+<div id="term"></div>
+<script type="module">
+const status = document.getElementById('status');
+const el = document.getElementById('term');
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('could not load ' + src));
+    document.head.append(s);
+  });
+}
+
+// xterm 6 ships ESM (.mjs) builds; fall back to the UMD globals if needed.
+async function loadXterm() {
+  try {
+    const [x, f] = await Promise.all([
+      import('/assets/xterm/lib/xterm.mjs'),
+      import('/assets/addon-fit/lib/addon-fit.mjs'),
+    ]);
+    return { Terminal: x.Terminal, FitAddon: f.FitAddon, via: 'esm' };
+  } catch (err) {
+    console.warn('xterm ESM build failed, trying UMD', err);
+    await loadScript('/assets/xterm/lib/xterm.js');
+    await loadScript('/assets/addon-fit/lib/addon-fit.js');
+    return { Terminal: window.Terminal, FitAddon: window.FitAddon.FitAddon, via: 'umd' };
+  }
+}
+
+let xt;
+try {
+  xt = await loadXterm();
+} catch (err) {
+  status.textContent = 'xterm.js not found: run "pnpm -C web install --frozen-lockfile" or pass -xterm';
+  throw err;
+}
+
+const term = new xt.Terminal({
+  cursorBlink: true,
+  fontFamily: '"Cascadia Mono", Consolas, monospace',
+  fontSize: 14,
+});
+const fit = new xt.FitAddon();
+term.loadAddon(fit);
+term.open(el);
+fit.fit();
+
+const shell = new URLSearchParams(location.search).get('shell') || 'powershell';
+const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const url = `${proto}//${location.host}/ws?shell=${encodeURIComponent(shell)}&cols=${term.cols}&rows=${term.rows}`;
+const ws = new WebSocket(url);
+ws.binaryType = 'arraybuffer';
+const enc = new TextEncoder();
+status.textContent = `${shell}: connecting…`;
+
+ws.onmessage = (ev) => {
+  if (typeof ev.data !== 'string') {
+    term.write(new Uint8Array(ev.data));
+    return;
+  }
+  const msg = JSON.parse(ev.data);
+  if (msg.type === 'started') {
+    status.textContent = `${shell} · pid ${msg.pid} · ${term.cols}x${term.rows} · xterm ${xt.via}`;
+  } else if (msg.type === 'exit') {
+    status.textContent = `${shell} exited with code ${msg.code}`;
+    term.write(`\r\n\x1b[90m[process exited with code ${msg.code}]\x1b[0m\r\n`);
+  }
+};
+ws.onclose = (ev) => {
+  status.textContent += ` · socket closed (${ev.code}${ev.reason ? ': ' + ev.reason : ''})`;
+};
+
+const send = (data) => { if (ws.readyState === WebSocket.OPEN) ws.send(data); };
+term.onData((d) => send(enc.encode(d)));
+term.onBinary((d) => send(Uint8Array.from(d, (c) => c.charCodeAt(0))));
+term.onResize(({ cols, rows }) => {
+  send(JSON.stringify({ type: 'resize', cols, rows }));
+  if (ws.readyState === WebSocket.OPEN) {
+    status.textContent = status.textContent.replace(/\d+x\d+/, `${cols}x${rows}`);
+  }
+});
+new ResizeObserver(() => fit.fit()).observe(el);
+term.focus();
+</script>
+</body>
+</html>
