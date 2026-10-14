@@ -19,18 +19,18 @@ Goal: prove the risky parts on Windows before building on them, and set up a pub
 - [ ] **Pure-Go SQLite spike:** `modernc.org/sqlite` + sqlc + goose with `CGO_ENABLED=0` on Windows.
 
 **Project setup:**
-- [ ] Pick the GitHub org/repo name and domain (PRD open question 1). Create a fresh public repo; add Apache-2.0 `LICENSE` and `NOTICE` (D5).
-- [ ] Set the Go module path (`github.com/<owner>/yggdrasil`) and binary name `ygg` (D14).
-- [ ] Repo skeleton following docs/AGENTS.md section 4: `cmd/`, `internal/`, `web/`, `fixtures/`, `docs/`.
+- [ ] Pick the GitHub org/repo name and domain (PRD open question 1). Create a fresh public repo; add Apache-2.0 `LICENSE` and `NOTICE` (D5). *(Repo `brendatamaar/yggdrasil`, LICENSE and NOTICE done; domain still open.)*
+- [x] Set the Go module path (`github.com/<owner>/yggdrasil`) and binary name `ygg` (D14).
+- [x] Repo skeleton following docs/AGENTS.md section 4: `cmd/`, `internal/`, `web/`, `fixtures/`, `docs/`.
 - [ ] `go.mod` with pinned Go version; `web/` with Vite + React + TypeScript strict + pnpm; `.nvmrc` (IN-02).
-- [ ] Taskfile with `build`, `run`, `dev`, `generate`, `test`, `test:web`, `test:e2e`, `lint`, `typecheck`.
+- [x] Taskfile with `build`, `run`, `dev`, `generate`, `test`, `test:web`, `test:e2e`, `lint`, `typecheck`.
 - [ ] `go:embed` of `web/dist` into the binary; `task build` produces one executable serving everything on one port (IN-01).
 - [ ] CI (GitHub Actions): Windows required (`CGO_ENABLED=0`, `go test -race`, golangci-lint, ESLint, typecheck, Vitest); macOS and Linux allowed to fail.
 - [ ] CI dependency license check (Go and npm) against the allowed list in docs/AGENTS.md section 2.
 - [ ] Windows CI runner installs the toolchains used by tests: Node + pnpm, Java + Maven + Gradle, .NET SDK, Python + uv + Poetry.
 - [ ] GoReleaser config prepared but not publishing (IN-08).
 - [ ] Script that generates `fixtures/demo-project/`: fictional repos (`acme-shop`: `shop-api`, `shop-web`, `shop-admin`), history, branches (IN-05).
-- [ ] `.env.example` skeleton (IN-06). README skeleton with platform statement (PL-01). docs/AGENTS.md, docs/CONTRIBUTING.md, docs/CHANGELOG.md.
+- [x] `.env.example` skeleton (IN-06). README skeleton with platform statement (PL-01). docs/AGENTS.md, docs/CONTRIBUTING.md, docs/CHANGELOG.md.
 
 **Exit:** all four spikes pass on Windows; CI green; `task build` on a clean Windows machine with only Go and Node installed produces a binary that serves an empty UI.
 

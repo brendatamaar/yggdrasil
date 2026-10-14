@@ -161,3 +161,14 @@ jobs:
 
       - run: task license:install
       - run: task license
+
+  # IN-08: the release config stays valid. Validation only, nothing is built or published.
+  release-config:
+    name: GoReleaser config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: check
