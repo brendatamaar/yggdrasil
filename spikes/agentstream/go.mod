@@ -1,6 +1,6 @@
 module github.com/brendatamaar/yggdrasil/spikes/agentstream
 
-go 1.26
+go 1.26.0
 
 toolchain go1.26.9
 
