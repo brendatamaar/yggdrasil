@@ -8,7 +8,7 @@ Thanks for helping. Before you start, read:
 
 ## Setup
 
-You need Go 1.25+, Node.js 22 (`.nvmrc`) with pnpm, Task and golangci-lint v2. No C compiler: cgo is never used.
+You need Go 1.26+, Node.js 22 (`.nvmrc`) with pnpm, Task and golangci-lint v2. No C compiler: cgo is never used.
 
 ```sh
 task build        # frontend + embed + bin/ygg

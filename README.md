@@ -13,7 +13,7 @@ Yggdrasil is a local server with a browser UI. It combines a multi-repo workspac
 
 Prerequisites:
 
-- [Go](https://go.dev/dl/) 1.25 or newer (the exact toolchain is pinned in `go.mod` and downloaded automatically)
+- [Go](https://go.dev/dl/) 1.26 or newer (the exact toolchain is pinned in `go.mod` and downloaded automatically)
 - [Node.js](https://nodejs.org/) 22 (see `.nvmrc`) and [pnpm](https://pnpm.io/)
 - [Task](https://taskfile.dev/)
 

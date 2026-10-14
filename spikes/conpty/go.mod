@@ -1,8 +1,8 @@
 module github.com/brendatamaar/yggdrasil/spikes/conpty
 
-go 1.25
+go 1.26
 
-toolchain go1.25.11
+toolchain go1.26.9
 
 require (
 	github.com/aymanbagabas/go-pty v0.2.2

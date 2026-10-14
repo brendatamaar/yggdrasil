@@ -66,7 +66,8 @@ tasks:
     cmds:
       - CGO_ENABLED=0 go test ./...
       - |
-        if [ -f fixtures/demo-gen/go.mod ]; then
+        # Skip until the generator has Go code (go test fails on "no packages").
+        if [ -n "$(go -C fixtures/demo-gen list ./... 2>/dev/null)" ]; then
           CGO_ENABLED=0 go -C fixtures/demo-gen test ./...
         fi
 
