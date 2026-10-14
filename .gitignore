@@ -1,0 +1,22 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+build/
+out/
+target/
+.next/
+coverage/
+
+# env and secrets
+.env
+.env.*
+!.env.example
+
+# logs and OS / editor files
+*.log
+.DS_Store
+Thumbs.db
+.idea/
