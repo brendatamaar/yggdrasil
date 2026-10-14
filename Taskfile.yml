@@ -8,6 +8,8 @@ vars:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
   # Kept in sync with docs/AGENTS.md section 2.
   ALLOWED_LICENSES: Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0,0BSD,CC0-1.0,BlueOak-1.0.0,Unlicense
+  # Same version CI installs (.github/workflows, A4).
+  GO_LICENSES_VERSION: v2.0.0
 
 env:
   CGO_ENABLED: "0"
@@ -113,7 +115,7 @@ tasks:
     cmds:
       - |
         if ! command -v go-licenses >/dev/null 2>&1; then
-          echo "go-licenses not found: go install github.com/google/go-licenses/v2@latest" >&2
+          echo "go-licenses not found: go install github.com/google/go-licenses/v2@{{.GO_LICENSES_VERSION}}" >&2
           exit 1
         fi
       - go-licenses check ./... --allowed_licenses={{.ALLOWED_LICENSES}}
@@ -157,7 +159,10 @@ tasks:
     cmds:
       - |
         if [ -f web/package.json ]; then
-          pnpm -C web install --frozen-lockfile
+          if ! pnpm -C web install --frozen-lockfile; then
+            echo 'pnpm install from the lockfile failed: run `pnpm -C web install` first' >&2
+            exit 1
+          fi
           pnpm -C web run {{.SCRIPT}}
         else
           echo "web/ not scaffolded yet: skipping '{{.SCRIPT}}'"
