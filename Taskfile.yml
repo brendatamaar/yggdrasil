@@ -1,0 +1,164 @@
+# Yggdrasil tasks. Run `task --list` to see them. Commands run in Task's
+# built-in POSIX shell, so they work the same on Windows, macOS and Linux.
+version: "3"
+
+vars:
+  BIN: bin/ygg{{exeExt}}
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+  # Kept in sync with docs/AGENTS.md section 2.
+  ALLOWED_LICENSES: Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0,0BSD,CC0-1.0,BlueOak-1.0.0,Unlicense
+
+env:
+  CGO_ENABLED: "0"
+
+tasks:
+  default:
+    cmds:
+      - task --list
+    silent: true
+
+  build:
+    desc: Build the frontend, embed it and produce bin/ygg
+    cmds:
+      - task: build:web
+      - go build -trimpath -ldflags "-s -w -X main.version={{.VERSION}}" -o "{{.BIN}}" ./cmd/ygg
+
+  build:web:
+    desc: Build the frontend into web/dist
+    cmds:
+      - task: web
+        vars: { SCRIPT: build }
+
+  run:
+    desc: Build and run ygg on 127.0.0.1:4747
+    cmds:
+      - task: build
+      - '"{{.BIN}}"'
+
+  dev:
+    desc: Go server on :4747 plus the Vite dev server (open the Vite URL; it proxies /api and /ws)
+    deps: [dev:go, dev:web]
+
+  dev:go:
+    internal: true
+    cmds:
+      - go run ./cmd/ygg
+
+  dev:web:
+    internal: true
+    cmds:
+      - task: web
+        vars: { SCRIPT: dev }
+
+  generate:
+    desc: Generate code (sqlc, tygo)
+    cmds:
+      - echo "nothing to generate yet (sqlc and tygo arrive in Phase 1)"
+    silent: true
+
+  test:
+    desc: Go tests, CGO_ENABLED=0 (root module and fixtures/demo-gen)
+    cmds:
+      - go test ./...
+      - |
+        if [ -f fixtures/demo-gen/go.mod ]; then
+          go -C fixtures/demo-gen test ./...
+        fi
+
+  test:race:
+    desc: Go tests with the race detector (needs cgo and gcc; tests only, never shipped builds)
+    env:
+      CGO_ENABLED: "1"
+    cmds:
+      - go test -race ./...
+
+  test:web:
+    desc: Frontend tests (Vitest)
+    cmds:
+      - task: web
+        vars: { SCRIPT: test }
+
+  test:e2e:
+    desc: UI end-to-end tests (Playwright)
+    cmds:
+      - echo "no end-to-end tests yet (Playwright arrives with the first UI flows)"
+    silent: true
+
+  lint:
+    desc: golangci-lint and ESLint
+    cmds:
+      - golangci-lint run
+      - task: web
+        vars: { SCRIPT: lint }
+
+  typecheck:
+    desc: Type check the frontend
+    cmds:
+      - task: web
+        vars: { SCRIPT: typecheck }
+
+  fixtures:
+    desc: Generate fixtures/demo-project (fictional acme-shop repos)
+    cmds:
+      - |
+        if [ -f fixtures/demo-gen/go.mod ]; then
+          go -C fixtures/demo-gen run . -out "{{.ROOT_DIR}}/fixtures/demo-project"
+        else
+          echo "fixtures/demo-gen doesn't exist yet: skipping"
+        fi
+
+  license:
+    desc: Check Go and npm production dependency licenses against docs/AGENTS.md section 2
+    cmds:
+      - |
+        if ! command -v go-licenses >/dev/null 2>&1; then
+          echo "go-licenses not found: go install github.com/google/go-licenses/v2@latest" >&2
+          exit 1
+        fi
+      - go-licenses check ./... --allowed_licenses={{.ALLOWED_LICENSES}}
+      - |
+        if [ -f web/package.json ]; then
+          pnpm -C web licenses list --prod --json > web/node_modules/.licenses.json
+          node scripts/check-npm-licenses.mjs web/node_modules/.licenses.json "{{.ALLOWED_LICENSES}}"
+        else
+          echo "web/ not scaffolded yet: skipping npm license check"
+        fi
+
+  spikes:test:
+    desc: Vet and test each Phase 0 spike (each is its own Go module)
+    cmds:
+      - |
+        for mod in spikes/*/go.mod; do
+          [ -f "$mod" ] || continue
+          dir=$(dirname "$mod")
+          echo "== $dir"
+          go -C "$dir" vet ./... || exit 1
+          go -C "$dir" test ./... || exit 1
+        done
+
+  release:check:
+    desc: Validate the GoReleaser config and build a local snapshot (never publishes)
+    cmds:
+      - |
+        if ! command -v goreleaser >/dev/null 2>&1; then
+          echo "goreleaser not found: install GoReleaser v2 (e.g. winget install GoReleaser.GoReleaser)" >&2
+          exit 1
+        fi
+      - goreleaser check
+      - goreleaser release --snapshot --clean
+
+  # Runs a web/package.json script, installing dependencies first. Prints a
+  # notice instead while web/ hasn't been scaffolded.
+  web:
+    internal: true
+    requires:
+      vars: [SCRIPT]
+    cmds:
+      - |
+        if [ -f web/package.json ]; then
+          pnpm -C web install --frozen-lockfile
+          pnpm -C web run {{.SCRIPT}}
+        else
+          echo "web/ not scaffolded yet: skipping '{{.SCRIPT}}'"
+        fi

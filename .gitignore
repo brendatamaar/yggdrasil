@@ -4,6 +4,7 @@ node_modules/
 
 # build output
 bin/
+.task/
 # ignore dist contents (not the dirs) so web/dist/.gitkeep can stay tracked for go:embed
 **/dist/*
 !web/dist/.gitkeep

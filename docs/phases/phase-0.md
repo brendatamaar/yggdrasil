@@ -140,3 +140,8 @@ CI green ← B5 merged (web lint/typecheck/test have real content)
 - Blockers 4–7 accepted as proposed (2026-10-14). Blockers 1, 2 and 3 resolved.
 - Blocker 2 resolved (2026-10-14): Task 3.54.0 and golangci-lint 2.14.0 are on PATH; `GOTOOLCHAIN=auto`, so `go.mod` pins `go 1.25` / `toolchain go1.25.11` (cached, works offline).
 - Batch B runs as repo-hub subtasks instead of `.claude/agents` worktree subagents (blocker 1).
+- A2: `task license` and `task release:check` call installed `go-licenses` / `goreleaser` binaries instead of `go run …@version`. The lead session has `GOPROXY=off`, so versions can't be resolved here. CI installs pinned versions (A4).
+- A2: npm license check is `scripts/check-npm-licenses.mjs` (new top-level `scripts/` dir, added to AGENTS.md section 4).
+- A2: `task test` also runs `fixtures/demo-gen` tests when that module exists.
+- A2: `task fixtures` passes an absolute `-out` (`{{.ROOT_DIR}}/fixtures/demo-project`), because `go -C` changes the working directory.
+- A2 verification: `build`, `generate`, `test`, `lint`, `typecheck` and `test:web` were run in the lead session. `test:race`, `test:e2e`, `fixtures`, `spikes:test`, `license`, `release:check`, `run` and `dev` are blocked by the lead session's shell allowlist and need a manual run or CI.
