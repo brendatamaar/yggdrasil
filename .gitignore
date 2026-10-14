@@ -10,6 +10,7 @@ bin/
 !web/dist/.gitkeep
 build/
 out/
+fixtures/demo-project/
 target/
 .next/
 coverage/
