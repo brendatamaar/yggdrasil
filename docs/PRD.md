@@ -76,7 +76,7 @@ Yggdrasil v1 is a **rewrite**. The personal tool stays private and serves only a
 | Database | SQLite via `modernc.org/sqlite` (pure Go), `sqlc` for type-safe queries, `goose` for migrations |
 | Git | The git CLI, called only through the `git` package |
 | Processes | `os/exec` plus Windows **job objects** (`golang.org/x/sys/windows`), so every child process dies with Yggdrasil, even after a crash |
-| Terminal | `aymanbagabas/go-pty` on the server (tried first in the Phase 0 spike; fallback is a thin ConPTY wrapper on `golang.org/x/sys/windows` plus `creack/pty` on Unix), xterm.js in the browser |
+| Terminal | Own thin ConPTY wrapper on `golang.org/x/sys/windows` plus `creack/pty` on Unix (D12: go-pty was tried in the Phase 0 spike and not adopted), xterm.js in the browser |
 | MCP | Official Go MCP SDK |
 | Git hosts | GitLab and GitHub Go client libraries; plain HTTP for Gitea |
 | Frontend | **React + TypeScript (strict) + Vite**, TanStack Query, TanStack Router, Zustand, Tailwind, Radix primitives, cmdk, react-grid-layout, xterm.js, a diff viewer component |
@@ -315,7 +315,7 @@ Tests that need a database or other services are why Maven, Gradle and .NET don'
 |---|---|---|
 | IN-01 | Install by cloning: `git clone`, then `task build` builds the frontend, embeds it and produces one binary; `ygg` (or `task run`) serves everything on one port. | Extend |
 | IN-02 | Pinned toolchains: Go version in `go.mod`, Node version for the frontend build in `.nvmrc`, committed `go.sum` and frontend lockfile, one package manager (pnpm). | New |
-| IN-03 | No native modules and no cgo: the build needs only Go and Node, never a C compiler or Visual Studio Build Tools. | New |
+| IN-03 | No native modules built at install time and no cgo: the build needs only Go and Node, never a C compiler or Visual Studio Build Tools. Prebuilt platform binaries shipped as npm packages (e.g. esbuild, lightningcss, Tailwind's engine) are allowed. | New |
 | IN-04 | `ygg doctor`: checks git, the toolchains used by tracked repos (Node, Java/Maven/Gradle, Go, .NET, Python with uv/Poetry), agent CLIs and sign-in, and explains what's missing. | New |
 | IN-05 | First run with nothing tracked offers a **demo project with mock repos** (fictional names and history). The same data is used for README screenshots. | New |
 | IN-06 | `.env.example` documenting every setting and token, all optional. | New |

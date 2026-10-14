@@ -22,7 +22,7 @@ Goal: prove the risky parts on Windows before building on them, and set up a pub
 - [ ] Pick the GitHub org/repo name and domain (PRD open question 1). Create a fresh public repo; add Apache-2.0 `LICENSE` and `NOTICE` (D5). *(Repo `brendatamaar/yggdrasil`, LICENSE and NOTICE done; domain still open.)*
 - [x] Set the Go module path (`github.com/<owner>/yggdrasil`) and binary name `ygg` (D14).
 - [x] Repo skeleton following docs/AGENTS.md section 4: `cmd/`, `internal/`, `web/`, `fixtures/`, `docs/`.
-- [ ] `go.mod` with pinned Go version; `web/` with Vite + React + TypeScript strict + pnpm; `.nvmrc` (IN-02).
+- [x] `go.mod` with pinned Go version; `web/` with Vite + React + TypeScript strict + pnpm; `.nvmrc` (IN-02).
 - [x] Taskfile with `build`, `run`, `dev`, `generate`, `test`, `test:web`, `test:e2e`, `lint`, `typecheck`.
 - [ ] `go:embed` of `web/dist` into the binary; `task build` produces one executable serving everything on one port (IN-01).
 - [ ] CI (GitHub Actions): Windows required (`CGO_ENABLED=0`, `go test -race`, golangci-lint, ESLint, typecheck, Vitest); macOS and Linux allowed to fail.
@@ -233,7 +233,7 @@ Goal: the dashboard becomes the agent's to-do list.
 | Risk | Mitigation |
 |---|---|
 | Rewrite takes longer than expected | Phases 2–4 restore parity first; the personal tool stays in use until Phase 4. Phases after 4 can move to v1.x without blocking a useful release. |
-| `go-pty` is small and lightly used | Phase 0 spike first; PTY kept behind `internal/platform`; fallback is a thin wrapper on `x/sys/windows` + `creack/pty`; last resort is a non-interactive log console for v1. |
+| ConPTY behaviour differs from Unix PTYs | Resolved in Phase 0 (D12): own thin wrapper on `x/sys/windows` + `creack/pty`, behind a small interface in `internal/platform`; last resort is a non-interactive log console for v1. |
 | `gotreesitter` is pre-1.0 | XR-02 is advisory only; re-check maturity in Phase 9; `oasdiff` layer works without it. |
 | Python tooling is fragmented | v1 supports uv, Poetry and pip + venv only; everything else uses the custom command. |
 | Sub-tasks add scheduling complexity and multiply token use | One level only, cap on children, shared queue, split budget; the parent ID and task relation exist from Phase 1 so Phase 7 adds behaviour, not schema changes. |

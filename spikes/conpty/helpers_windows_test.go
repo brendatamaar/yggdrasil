@@ -63,6 +63,9 @@ func startSession(t *testing.T, shell string, size Size, noJob bool) *session {
 		}
 		if !processGone(pid, 5*time.Second) {
 			t.Errorf("shell %d still running after Close", pid)
+			// Kill only the shell. With a job its children die with the job;
+			// TestCloseKillsTree's noJob case kills its own ping child.
+			killPid(pid)
 		}
 		if t.Failed() {
 			t.Logf("output:\n%q", s.raw())

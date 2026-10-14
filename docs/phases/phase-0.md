@@ -23,7 +23,7 @@ Module path: `github.com/brendatamaar/yggdrasil` (resolves PRD open question 1 f
    - pnpm **11.4.0**: OK.
    - Re-check (2026-10-14): Task and golangci-lint **v2.14.0** are now installed via winget, but this session's PATH predates the install, so neither is found. Restart repo-hub (or the session) to pick up the new PATH.
    - Go: the system install is still 1.23.2, but the module cache already has the auto-downloaded toolchain **go1.25.11**. Pinning `go 1.25` / `toolchain go1.25.11` in `go.mod` uses it with no download, provided `GOTOOLCHAIN` is the default `auto`.
-3. **Author identity — resolved, no leak.** The repo-local git config is `Brendatama Akbar <brendatama10@gmail.com>`, and it overrides the global corporate user. Both commits on `main` (`3880ee1`, `5f8ab7d`) use it; the first was committed through GitHub's web UI. Note that `main` was rewritten since the first plan (HEAD is now `5f8ab7d`), and `LICENSE` (Apache-2.0) is already committed, so A3 only adds `NOTICE`.
+3. **Author identity — resolved, no leak.** The repo-local git identity is the owner's public one and overrides any global identity. Both commits on `main` (`3880ee1`, `5f8ab7d`) use it; the first was committed through GitHub's web UI. Note that `main` was rewritten since the first plan (HEAD is now `5f8ab7d`), and `LICENSE` (Apache-2.0) is already committed, so A3 only adds `NOTICE`.
 4. **`-race` needs cgo.** On Windows, `go test -race` needs `CGO_ENABLED=1` and gcc, which conflicts with `CGO_ENABLED=0` everywhere.
    **Proposal:** `task test` = `CGO_ENABLED=0 go test ./...` (proves the pure-Go build); `task test:race` = `CGO_ENABLED=1 go test -race ./...`, for test runs only, never for shipped binaries. CI Windows runs both, using the runner's preinstalled MinGW gcc. Product builds stay `CGO_ENABLED=0`. AGENTS.md sections 3 and 8 get updated to match.
 5. **License allowlist gaps.** Common transitive npm licenses (`0BSD` e.g. tslib, `CC0-1.0`, `BlueOak-1.0.0`, `Unlicense`) aren't in the AGENTS.md list.
@@ -159,4 +159,23 @@ CI green ← B5 merged (web lint/typecheck/test have real content)
   - `web/package.json` scripts are placeholders until B5.
 - `web/pnpm-workspace.yaml` makes `web/` its own pnpm workspace root. A `pnpm-workspace.yaml` in a parent folder (here, the user's home) otherwise captures the install and writes the lockfile there.
 - B1 outcome (2026-10-14, human approved): **own ConPTY wrapper** in Phase 1 `internal/platform`. It's built on `x/sys/windows` (`CreatePseudoConsole` + attribute list + `CreateProcess`, keeping the thread handle for suspended job assignment, a required clean env, close order console then drain then pipes), with `creack/pty` on Unix. go-pty is dropped. Reasons are in PRD D12. B1's `PTY` interface carries over. Reporting the leak upstream to go-pty is optional and the human's call.
+- Wave 1 merged (2026-10-14): B2 `bd0cd66`, B1 `f0bb127`, B5 `051c6b4`.
+  - After B5: `task generate`, `lint` (golangci 0 issues + ESLint clean), `typecheck` (`tsc -b`), `test`, `test:web` (5/5) and `build` all pass; the tree is clean after the build (`web/dist/.gitkeep` kept).
+  - Spike tests aren't re-run by the lead: the session shell blocks `go -C` and `task spikes:test`. Subtasks ran them; CI runs them.
+- Wave 1 safety review (researcher acting as safety-reviewer): **FAIL → fixed.**
+  - The one Blocking item was the author's name and email in this file (blocker 3 note); removed. It still exists in earlier commits of this file; rewriting history is the human's call.
+  - Fixed now:
+    - the spike test cleanup kills a surviving shell;
+    - PRD 5.1, AGENTS.md section 2/9 and PLAN risks no longer name go-pty;
+    - IN-03 wording clarified (prebuilt npm platform binaries allowed, no install-time native builds);
+    - `web/src/stores/` added to AGENTS.md section 4.
+  - Carried into Phase 1 (recorded in docs/spikes.md):
+    - clean env required for every spawn, including editors;
+    - always attach a job, with no `NoJob` path;
+    - `BREAKAWAY_OK` never on task/build/agent jobs; per-child job assignment instead of self-assign;
+    - a single-use socket token for terminals (DV-04);
+    - static assets served from an allowlist.
+  - Kept as is: `@xterm/xterm` and `@xterm/addon-fit` are in `web` dependencies on purpose (requested for the terminal dock, DV-04, used by the B1 spike); `brendatamaar` in module paths is the public repo owner.
+- Go 1.26.9 (2026-10-14, human approved, `1b9c500`): Go 1.27 is out, so 1.25 is unsupported, and current `modernc.org/sqlite`, goose, sqlc and go-git need 1.26. Root and all spike/fixture modules are on `go 1.26` / `toolchain go1.26.9` (cached, works offline).
+- Wave 2 deps (`1b9c500`): `spikes/sqlite` gets modernc.org/sqlite v1.60.1, goose v3.29.0 and sqlc v1.31.1 (it uses `wasilibs/go-pgquery` + wazero, so no cgo); `fixtures/demo-gen` gets go-git v5.19.3. `task test` skips demo-gen until it has Go code.
 - A2 verification: `build`, `generate`, `test`, `lint`, `typecheck` and `test:web` were run in the lead session. `test:race`, `test:e2e`, `fixtures`, `spikes:test`, `license`, `release:check`, `run` and `dev` are blocked by the lead session's shell allowlist and need a manual run or CI.
