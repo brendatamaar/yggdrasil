@@ -14,15 +14,26 @@ import (
 // is skipped, so a runaway tool result can't exhaust memory.
 const MaxLineBytes = 16 << 20
 
-// Stream line shapes. UNVERIFIED: written from memory of Claude Code's
-// stream-json output; the live run checks every field name here.
+// Stream line shapes, checked against the Agent SDK TypeScript reference
+// (SDKSystemMessage, SDKAssistantMessage, SDKUserMessage, SDKResultMessage,
+// SDKTaskStartedMessage) and /headless "Follow subagent messages".
 type rawLine struct {
-	Type            string      `json:"type"`
-	Subtype         string      `json:"subtype"`
-	SessionID       string      `json:"session_id"`
-	ParentToolUseID *string     `json:"parent_tool_use_id"`
-	Model           string      `json:"model"`
-	Message         *rawMessage `json:"message"`
+	Type            string  `json:"type"`
+	Subtype         string  `json:"subtype"`
+	SessionID       string  `json:"session_id"`
+	ParentToolUseID *string `json:"parent_tool_use_id"`
+	AgentID         string  `json:"agent_id"`
+	Model           string  `json:"model"`
+	// Message is an object on assistant/user lines and a string on some
+	// system lines (permission_denied).
+	Message json.RawMessage `json:"message"`
+	// system/permission_denied
+	ToolName string `json:"tool_name"`
+	// system/task_started
+	TaskID      string `json:"task_id"`
+	ToolUseID   string `json:"tool_use_id"`
+	Description string `json:"description"`
+	SpawnDepth  int    `json:"spawn_depth"`
 	// type=result
 	IsError      bool      `json:"is_error"`
 	Result       string    `json:"result"`
@@ -132,7 +143,7 @@ func (p *Parser) ParseLine(line []byte) []Event {
 		base.Kind, base.Err = KindError, fmt.Sprintf("malformed line: %v", err)
 		return []Event{base}
 	}
-	base.SessionID = rl.SessionID
+	base.SessionID, base.AgentID = rl.SessionID, rl.AgentID
 	if rl.ParentToolUseID != nil {
 		base.ParentID = *rl.ParentToolUseID
 	}
@@ -140,8 +151,22 @@ func (p *Parser) ParseLine(line []byte) []Event {
 	case rl.Type == "system" && rl.Subtype == "init":
 		base.Kind, base.ID, base.Model = KindInit, rl.SessionID, rl.Model
 		return []Event{base}
-	case (rl.Type == "assistant" || rl.Type == "user") && rl.Message != nil:
-		return messageEvents(base, rl.Type, rl.Message)
+	case rl.Type == "system" && rl.Subtype == "task_started":
+		base.Kind, base.ID, base.AgentID, base.Depth, base.Text = KindTaskStarted, rl.ToolUseID, rl.TaskID, rl.SpawnDepth, rl.Description
+		return []Event{base}
+	case rl.Type == "system" && rl.Subtype == "permission_denied":
+		var msg string
+		_ = json.Unmarshal(rl.Message, &msg)
+		base.Kind, base.ResultFor, base.Text, base.IsError = KindPermissionDenied, rl.ToolUseID, msg, true
+		base.Tool = &Tool{Name: rl.ToolName}
+		return []Event{base}
+	case (rl.Type == "assistant" || rl.Type == "user") && len(rl.Message) > 0 && string(rl.Message) != "null":
+		var m rawMessage
+		if err := json.Unmarshal(rl.Message, &m); err != nil {
+			base.Kind, base.Err = KindError, fmt.Sprintf("malformed message: %v", err)
+			return []Event{base}
+		}
+		return messageEvents(base, rl.Type, &m)
 	case rl.Type == "result":
 		base.Kind, base.ID, base.Text, base.IsError = KindResult, rl.SessionID, rl.Result, rl.IsError
 		base.Usage = rl.Usage.normalize()

@@ -15,10 +15,16 @@ const (
 	KindToolCall      Kind = "tool_call"
 	KindToolResult    Kind = "tool_result"
 	KindSubagentStart Kind = "subagent_start"
-	KindUsage         Kind = "usage"
-	KindResult        Kind = "result"
-	KindError         Kind = "error"
-	KindUnknown       Kind = "unknown"
+	// KindTaskStarted: system/task_started, a sub-agent (or background task)
+	// began. ID is its tool_use id, AgentID its task_id.
+	KindTaskStarted Kind = "task_started"
+	// KindPermissionDenied: system/permission_denied, the CLI's own
+	// permission check refused a call. ResultFor is its tool_use id.
+	KindPermissionDenied Kind = "permission_denied"
+	KindUsage            Kind = "usage"
+	KindResult           Kind = "result"
+	KindError            Kind = "error"
+	KindUnknown          Kind = "unknown"
 )
 
 // Event is one normalized event. One stream line can produce several events
@@ -32,7 +38,12 @@ type Event struct {
 	ID string `json:"id,omitempty"`
 	// ParentID is the tool_use id of the sub-agent call this event belongs to
 	// (Claude Code parent_tool_use_id). Empty for the main agent.
-	ParentID  string `json:"parentId,omitempty"`
+	ParentID string `json:"parentId,omitempty"`
+	// AgentID is the sub-agent that produced the event (agent_id; the same
+	// id hooks get as agent_id). Empty for the main agent.
+	AgentID string `json:"agentId,omitempty"`
+	// Depth is the sub-agent layer of a task_started event (spawn_depth).
+	Depth     int    `json:"depth,omitempty"`
 	SessionID string `json:"sessionId,omitempty"`
 	Model     string `json:"model,omitempty"`
 	// Role is "assistant" or "user" for text events.
@@ -66,9 +77,11 @@ type Usage struct {
 	NumTurns                 int      `json:"numTurns,omitempty"`
 }
 
-// subagentTools are the tool names that spawn a sub-agent. UNVERIFIED: "Task"
-// is the long-standing name; newer CLI versions may call it "Agent".
-var subagentTools = []string{"Task", "Agent"}
+// subagentTools are the tool names that spawn a sub-agent. The tool is
+// "Agent" (renamed from "Task" in CLI 2.1.63; "Task" stays an alias, and the
+// init message's tools list still says "Task"), per /sub-agents and the Agent
+// SDK reference.
+var subagentTools = []string{"Agent", "Task"}
 
 // IsSubagentTool reports whether a tool name spawns a sub-agent.
 func IsSubagentTool(name string) bool {
@@ -80,8 +93,9 @@ func IsSubagentTool(name string) bool {
 	return false
 }
 
-// SubagentInput is the part of a sub-agent tool's input the harness reads.
-// UNVERIFIED field names: subagent_type, description, isolation.
+// SubagentInput is the part of a sub-agent tool's input the harness reads
+// (Agent SDK AgentInput). Isolation is "worktree" or "remote"; the hook
+// blocks both.
 type SubagentInput struct {
 	SubagentType string `json:"subagent_type"`
 	Description  string `json:"description"`

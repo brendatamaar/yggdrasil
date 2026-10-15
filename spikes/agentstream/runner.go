@@ -25,6 +25,12 @@ type Config struct {
 	MaxBudgetUSD float64
 	// SettingsPath is the generated settings file (hooks, env).
 	SettingsPath string
+	// SettingSources limits which settings files load (--setting-sources,
+	// e.g. "project"); --settings always applies. Without it the user's own
+	// hooks run too: hook entries merge across levels. Empty leaves it out.
+	SettingSources string
+	// PermissionMode is passed as --permission-mode; empty leaves it out.
+	PermissionMode string
 	// ExtraArgs go after the known flags, as is (live-run experiments).
 	ExtraArgs []string
 	// Env are extras on top of BaseEnvAllowlist. Secrets are refused (CleanEnv).
@@ -36,15 +42,22 @@ type Config struct {
 	Lookup func(string) (string, bool)
 }
 
-// Args builds the CLI arguments. UNVERIFIED, each one: -p (headless print
-// mode, a boolean flag with the prompt as positional argument),
-// --output-format stream-json, --verbose (needed for stream-json with -p),
-// --forward-subagent-text (sub-agent messages in the stream, tagged with
-// parent_tool_use_id), --settings <file>, --model, --max-budget-usd.
+// Args builds the CLI arguments. Each flag is in `claude --help` (2.1.299):
+// -p (print mode, prompt as positional argument), --output-format
+// stream-json, --verbose (docs pair it with stream-json), --forward-subagent-
+// text (sub-agent text and thinking blocks with parent_tool_use_id set; -p and
+// stream-json only), --settings <file-or-json>, --setting-sources,
+// --permission-mode, --model, --max-budget-usd (-p only).
 func (c Config) Args() []string {
 	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--forward-subagent-text"}
 	if c.SettingsPath != "" {
 		args = append(args, "--settings", c.SettingsPath)
+	}
+	if c.SettingSources != "" {
+		args = append(args, "--setting-sources", c.SettingSources)
+	}
+	if c.PermissionMode != "" {
+		args = append(args, "--permission-mode", c.PermissionMode)
 	}
 	if c.Model != "" {
 		args = append(args, "--model", c.Model)
@@ -53,7 +66,9 @@ func (c Config) Args() []string {
 		args = append(args, "--max-budget-usd", strconv.FormatFloat(c.MaxBudgetUSD, 'f', -1, 64))
 	}
 	args = append(args, c.ExtraArgs...)
-	return append(args, c.Prompt)
+	// "--" ends the options: a variadic extra flag (--allowedTools <tools...>)
+	// would otherwise take the prompt as one of its values.
+	return append(args, "--", c.Prompt)
 }
 
 // Exit is how a run ended.

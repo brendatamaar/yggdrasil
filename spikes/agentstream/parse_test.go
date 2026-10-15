@@ -108,6 +108,92 @@ func TestParseSubagentsNested(t *testing.T) {
 	}
 }
 
+func TestParseTaskStartedAndAgentID(t *testing.T) {
+	in := `{"type":"system","subtype":"task_started","task_id":"a5c2e8f41b09d7a36","tool_use_id":"toolu_suba","description":"Review cart","task_type":"local_agent","spawn_depth":1,"session_id":"s"}
+{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"hi"}]},"parent_tool_use_id":"toolu_suba","agent_id":"a5c2e8f41b09d7a36","session_id":"s"}
+`
+	var events []Event
+	_ = Parse(strings.NewReader(in), func(ev Event) bool { events = append(events, ev); return true })
+	if len(events) != 2 {
+		t.Fatalf("events = %+v", events)
+	}
+	if ts := events[0]; ts.Kind != KindTaskStarted || ts.ID != "toolu_suba" || ts.AgentID != "a5c2e8f41b09d7a36" || ts.Depth != 1 || ts.Text != "Review cart" {
+		t.Errorf("task_started = %+v", ts)
+	}
+	if ev := events[1]; ev.ParentID != "toolu_suba" || ev.AgentID != "a5c2e8f41b09d7a36" {
+		t.Errorf("sub-agent text = %+v", ev)
+	}
+	sum := NewSummary()
+	sum.Add(Event{Kind: KindSubagentStart, ID: "toolu_suba"})
+	sum.Add(events[0])
+	if a := sum.Subagents[0]; a.AgentID != "a5c2e8f41b09d7a36" || a.SpawnDepth != 1 {
+		t.Errorf("summary = %+v", a)
+	}
+}
+
+// The live/ fixtures are scrubbed captures from the part 2 live run (CLI
+// 2.1.299); *.hook.jsonl are the hook logs of the same runs.
+func TestParseLiveFixtures(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("testdata", "live", "*.jsonl"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no live fixtures: %v", err)
+	}
+	for _, path := range files {
+		name := strings.TrimPrefix(filepath.ToSlash(path), "testdata/")
+		if strings.HasSuffix(path, ".hook.jsonl") {
+			recs, err := ReadHookLog(path)
+			if err != nil || len(recs) == 0 {
+				t.Errorf("%s: %d records, %v", name, len(recs), err)
+			}
+			continue
+		}
+		events := parseFile(t, name)
+		for _, ev := range events {
+			if ev.Kind == KindError {
+				t.Errorf("%s line %d: %s", name, ev.Line, ev.Err)
+			}
+		}
+		if events[0].Kind != KindInit {
+			t.Errorf("%s: first event %s", name, events[0].Kind)
+		}
+	}
+
+	events := parseFile(t, "live/subagent-read.jsonl")
+	sum := NewSummary()
+	for _, ev := range events {
+		sum.Add(ev)
+	}
+	if len(sum.Subagents) != 1 || sum.Subagents[0].SpawnDepth != 1 || sum.Subagents[0].AgentID == "" || sum.Subagents[0].Events == 0 {
+		t.Fatalf("sub-agents = %+v", sum.Subagents)
+	}
+	sub := sum.Subagents[0]
+	for _, ev := range events {
+		if ev.ParentID != "" && (ev.ParentID != sub.ID || ev.AgentID != sub.AgentID) {
+			t.Errorf("line %d: parent %q agent %q, want %q %q", ev.Line, ev.ParentID, ev.AgentID, sub.ID, sub.AgentID)
+		}
+	}
+	recs, err := ReadHookLog(filepath.Join("testdata", "live", "subagent-read.hook.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var subRead bool
+	for _, r := range recs {
+		if r.Event == EventPreToolUse && r.Tool == "Read" && r.AgentID == sub.AgentID {
+			subRead = true
+		}
+	}
+	if !subRead {
+		t.Error("no PreToolUse for the sub-agent's Read with its agent_id")
+	}
+
+	denied := parseFile(t, "live/dontask-shortpath-denied.jsonl")
+	if !slices.ContainsFunc(denied, func(ev Event) bool {
+		return ev.Kind == KindPermissionDenied && ev.Tool != nil && ev.Tool.Name == "Read"
+	}) {
+		t.Error("no permission_denied event for Read")
+	}
+}
+
 func TestParseKeepsUnknown(t *testing.T) {
 	events := parseFile(t, "unknown.jsonl")
 	want := []Kind{KindInit, KindUnknown, KindUnknown, KindUnknown, KindText, KindUnknown, KindUnknown, KindResult}

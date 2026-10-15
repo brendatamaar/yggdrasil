@@ -12,15 +12,19 @@ import (
 )
 
 func TestArgs(t *testing.T) {
-	c := Config{Prompt: "Summarize README.md", Model: "haiku", MaxBudgetUSD: 0.1, SettingsPath: "C:/run/settings.json", ExtraArgs: []string{"--permission-mode", "default"}}
+	c := Config{Prompt: "Summarize README.md", Model: "haiku", MaxBudgetUSD: 0.1, SettingsPath: "C:/run/settings.json",
+		SettingSources: "project", PermissionMode: "dontAsk", ExtraArgs: []string{"--effort", "low"}}
 	want := []string{"-p", "--output-format", "stream-json", "--verbose", "--forward-subagent-text",
-		"--settings", "C:/run/settings.json", "--model", "haiku", "--max-budget-usd", "0.1",
-		"--permission-mode", "default", "Summarize README.md"}
+		"--settings", "C:/run/settings.json", "--setting-sources", "project", "--permission-mode", "dontAsk",
+		"--model", "haiku", "--max-budget-usd", "0.1", "--effort", "low", "--", "Summarize README.md"}
 	if got := c.Args(); !slices.Equal(got, want) {
 		t.Errorf("args = %q\nwant   %q", got, want)
 	}
-	if got := (Config{Prompt: "hi"}).Args(); slices.Contains(got, "--max-budget-usd") || slices.Contains(got, "--model") {
-		t.Errorf("zero options added flags: %q", got)
+	got := (Config{Prompt: "hi"}).Args()
+	for _, flag := range []string{"--max-budget-usd", "--model", "--settings", "--setting-sources", "--permission-mode"} {
+		if slices.Contains(got, flag) {
+			t.Errorf("zero options added %s: %q", flag, got)
+		}
 	}
 }
 
@@ -45,19 +49,31 @@ func TestWriteSettings(t *testing.T) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		t.Fatal(err)
 	}
-	for _, event := range []string{EventPreToolUse, EventPostToolUse} {
-		m := s.Hooks[event]
-		if len(m) != 1 || m[0].Matcher != "*" || len(m[0].Hooks) != 1 || m[0].Hooks[0].Type != "command" {
-			t.Fatalf("%s hooks = %+v", event, m)
+	if len(s.Hooks) != len(hookEvents) {
+		t.Errorf("events = %v", s.Hooks)
+	}
+	for _, e := range hookEvents {
+		m := s.Hooks[e.event]
+		if len(m) != 1 || m[0].Matcher != e.matcher || len(m[0].Hooks) != 1 || m[0].Hooks[0].Type != "command" {
+			t.Fatalf("%s hooks = %+v", e.event, m)
 		}
-		cmd := m[0].Hooks[0].Command
-		for _, part := range []string{" hook ", "--event " + event, "--log \"" + filepath.ToSlash(h.LogPath) + "\"", "--deny-mode json", "--max-depth 2", "--max-concurrent 4"} {
-			if !strings.Contains(cmd, part) {
-				t.Errorf("%s command %q lacks %q", event, cmd, part)
-			}
+		c := m[0].Hooks[0]
+		// Exec form: the exe as is, every argument its own element.
+		wantArgs := []string{"hook", "--event", e.event, "--log", h.LogPath, "--deny-mode", "json", "--max-depth", "2", "--max-concurrent", "4"}
+		if c.Command != h.Exe || !slices.Equal(c.Args, wantArgs) || c.Timeout != hookTimeoutSec {
+			t.Errorf("%s handler = %+v", e.event, c)
+		}
+		if want := map[bool]string{true: "block", false: ""}[blocking(e.event)]; c.OnFailure != want {
+			t.Errorf("%s onFailure = %q, want %q", e.event, c.OnFailure, want)
 		}
 	}
-	if s.Env[EnvMaxSubagentDepth] != "2" || s.Env[EnvMaxConcurrentSubagent] != "4" {
+	if s.Hooks[EventPreToolUse][0].Hooks[0].OnFailure != "block" || s.Hooks[EventWorktreeCreate][0].Hooks[0].OnFailure != "block" {
+		t.Error("enforcing hooks must fail closed")
+	}
+	if !strings.Contains(string(data), `"args"`) {
+		t.Error("args missing: the CLI would run the command through a shell")
+	}
+	if s.Env[EnvMaxSubagentDepth] != "2" || s.Env[EnvMaxConcurrentSubagent] != "4" || s.Env[EnvDisableBackgroundTasks] != "1" {
 		t.Errorf("env = %v", s.Env)
 	}
 	if err := WriteSettings(path, HookSettings{Exe: `C:\a "b"\x.exe`, LogPath: "l", Mode: DenyExit2}, nil); err == nil {
@@ -88,6 +104,31 @@ func TestScrubber(t *testing.T) {
 	var buf bytes.Buffer
 	if err := s.Copy(strings.NewReader("a jdoe\nb\n"), &buf); err != nil || buf.String() != "a dev\nb\n" {
 		t.Errorf("copy = %q, %v", buf.String(), err)
+	}
+}
+
+func TestScrubberRedactsAccountAndAgentIDs(t *testing.T) {
+	s := NewScrubber(nil)
+	init := s.Line(`{"type":"system","subtype":"init","model":"claude-haiku","mcp_servers":[{"name":"claude.ai Mail","status":"connected"}],` +
+		`"plugins":[{"name":"acme-internal","path":"x"}],"skills":["s1"],"memory_paths":["m"],"messaging_socket_path":"p"}`)
+	for _, leak := range []string{"claude.ai Mail", "acme-internal", "s1", `"m"`, `"p"`} {
+		if strings.Contains(init, leak) {
+			t.Errorf("%s left in %s", leak, init)
+		}
+	}
+	if !strings.Contains(init, `"model":"claude-haiku"`) || !strings.Contains(init, `"mcp_servers":[]`) {
+		t.Errorf("init = %s", init)
+	}
+	if cc := s.Line(`{"type":"system","subtype":"commands_changed","commands":[{"name":"claude.ai Mail:compose (MCP)"}]}`); strings.Contains(cc, "Mail") {
+		t.Errorf("commands left in %s", cc)
+	}
+	rl := s.Line(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","unifiedWindows":{"five_hour":{"utilization":0.41}}}}`)
+	if strings.Contains(rl, "0.41") || !strings.Contains(rl, `"resetsAt":1700000000`) {
+		t.Errorf("rate limit = %s", rl)
+	}
+	ids := s.Line(`{"type":"system","subtype":"task_progress","task_id":"a315afbcd73855512","run_id":"0mv95pkpb-e0bcc57c","agent_id":"a315afbcd73855512"}`)
+	if want := `{"type":"system","subtype":"task_progress","task_id":"a0000000000000001","run_id":"0scrub001-00000001","agent_id":"a0000000000000001"}`; ids != want {
+		t.Errorf("ids = %s\nwant  %s", ids, want)
 	}
 }
 

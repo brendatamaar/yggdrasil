@@ -32,10 +32,11 @@ type Capabilities struct {
 	BudgetCap      bool `json:"budgetCap"`
 }
 
-// ClaudeCode is what this spike expects of Claude Code. UNVERIFIED, all of it:
-// resume (--resume), cost (total_cost_usd), hooks, nested sub-agents
-// (parent_tool_use_id), the limit env vars and --max-budget-usd. PlanLimits
-// is unknown and left false.
+// ClaudeCode is what this spike expects of Claude Code. Documented (CLI
+// 2.1.299 help and docs): resume (--resume), cost (total_cost_usd), hooks,
+// nested sub-agents (parent_tool_use_id at every depth), the limit env vars
+// and --max-budget-usd. Not yet seen in a live run. PlanLimits is unknown and
+// left false.
 var ClaudeCode = Capabilities{
 	Resume:          true,
 	CostReporting:   true,

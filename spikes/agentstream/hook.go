@@ -12,32 +12,38 @@ import (
 	"time"
 )
 
-// HookInput is what the CLI sends a command hook on stdin. UNVERIFIED: every
-// field name. ToolUseID and ParentToolUseID may not exist at all; then every
-// spawn counts as depth 1 and concurrency is counted from the log alone.
+// HookInput is what the CLI sends a command hook on stdin (hooks docs, common
+// input fields; Agent SDK PreToolUseHookInput). There is no parent tool_use
+// id: a call made inside a sub-agent carries that sub-agent's agent_id (the
+// same id as agent_id on its stream messages and task_id on task_started).
 type HookInput struct {
-	SessionID       string          `json:"session_id"`
-	TranscriptPath  string          `json:"transcript_path"`
-	Cwd             string          `json:"cwd"`
-	HookEventName   string          `json:"hook_event_name"`
-	ToolName        string          `json:"tool_name"`
-	ToolInput       json.RawMessage `json:"tool_input"`
-	ToolUseID       string          `json:"tool_use_id"`
-	ParentToolUseID string          `json:"parent_tool_use_id"`
+	SessionID      string          `json:"session_id"`
+	TranscriptPath string          `json:"transcript_path"`
+	Cwd            string          `json:"cwd"`
+	HookEventName  string          `json:"hook_event_name"`
+	ToolName       string          `json:"tool_name"`
+	ToolInput      json.RawMessage `json:"tool_input"`
+	ToolUseID      string          `json:"tool_use_id"`
+	// ToolResponse is on PostToolUse; for the Agent tool it has a status.
+	ToolResponse json.RawMessage `json:"tool_response"`
+	// AgentID and AgentType are set when the hook fires inside a sub-agent,
+	// and on SubagentStart/SubagentStop.
+	AgentID   string `json:"agent_id"`
+	AgentType string `json:"agent_type"`
 }
 
 // DenyMode is how the hook tells the CLI to block a tool call.
 type DenyMode string
 
 const (
-	// DenyExit2: reason on stderr, exit code 2. UNVERIFIED: exit 2 blocks the
-	// call and the CLI shows stderr to the model.
+	// DenyExit2: reason on stderr, exit code 2. Documented: blocks the call
+	// and stderr is the reason the model sees.
 	DenyExit2 DenyMode = "exit2"
 	// DenyJSON: exit 0, stdout {"hookSpecificOutput": {"hookEventName":
-	// "PreToolUse", "permissionDecision": "deny", ...}}. UNVERIFIED.
+	// "PreToolUse", "permissionDecision": "deny", ...}}. Documented.
 	DenyJSON DenyMode = "json"
 	// DenyJSONLegacy: exit 0, stdout {"decision": "block", "reason": ...}.
-	// UNVERIFIED, older form.
+	// Documented as deprecated for PreToolUse ("block" maps to "deny").
 	DenyJSONLegacy DenyMode = "json-legacy"
 )
 
@@ -58,11 +64,24 @@ const (
 	DecisionLog = "log"
 )
 
-// Hook event names. UNVERIFIED.
+// Hook event names, from the hooks docs.
 const (
-	EventPreToolUse  = "PreToolUse"
-	EventPostToolUse = "PostToolUse"
+	EventPreToolUse         = "PreToolUse"
+	EventPostToolUse        = "PostToolUse"
+	EventPostToolUseFailure = "PostToolUseFailure"
+	EventSubagentStart      = "SubagentStart"
+	EventSubagentStop       = "SubagentStop"
+	// EventWorktreeCreate fires for every agent-native worktree, including a
+	// sub-agent with isolation: worktree in its definition's frontmatter,
+	// which PreToolUse can't see. A failing hook makes creation fail.
+	EventWorktreeCreate = "WorktreeCreate"
 )
+
+// blocking reports whether the hook enforces on an event. On the others it
+// only logs: exit 2 on SubagentStop would keep the sub-agent running.
+func blocking(event string) bool {
+	return event == "" || event == EventPreToolUse || event == EventWorktreeCreate
+}
 
 // HookOptions configure hook mode.
 type HookOptions struct {
@@ -79,13 +98,17 @@ type HookOptions struct {
 
 // HookRecord is one line of the hook log.
 type HookRecord struct {
-	Time         string `json:"time"`
-	Event        string `json:"event"`
-	SessionID    string `json:"sessionId,omitempty"`
-	Tool         string `json:"tool,omitempty"`
-	ToolUseID    string `json:"toolUseId,omitempty"`
-	ParentID     string `json:"parentId,omitempty"`
-	Subagent     bool   `json:"subagent,omitempty"`
+	Time      string `json:"time"`
+	Event     string `json:"event"`
+	SessionID string `json:"sessionId,omitempty"`
+	Tool      string `json:"tool,omitempty"`
+	ToolUseID string `json:"toolUseId,omitempty"`
+	AgentID   string `json:"agentId,omitempty"`
+	AgentType string `json:"agentType,omitempty"`
+	Subagent  bool   `json:"subagent,omitempty"`
+	// Async: PostToolUse of a sub-agent that went to the background (it is
+	// still running, so it doesn't count as finished).
+	Async        bool   `json:"async,omitempty"`
 	SubagentType string `json:"subagentType,omitempty"`
 	Isolation    string `json:"isolation,omitempty"`
 	// Depth and Active are what the caps saw, for sub-agent PreToolUse calls.
@@ -105,28 +128,41 @@ const (
 )
 
 // RunHook is hook mode: it reads one hook call from stdin, appends it to the
-// log and returns the exit code. It fails closed: if it can't read its input
-// or write its log, the call is denied.
+// log and returns the exit code. On an enforcing event (PreToolUse,
+// WorktreeCreate) it fails closed: if it can't read its input or write its
+// log, the call is denied. On the log-only events a failure is exit 1, which
+// the CLI treats as a non-blocking error.
 func RunHook(opts HookOptions, stdin io.Reader, stdout, stderr io.Writer) int {
 	unlock, err := lockFile(opts.LogPath + ".lock")
 	if err != nil {
-		return deny(opts.Mode, "agentstream hook: "+err.Error(), stdout, stderr)
+		if !blocking(opts.Event) {
+			_, _ = fmt.Fprintln(stderr, "agentstream hook:", err)
+			return 1
+		}
+		return deny(opts.Mode, opts.Event, "agentstream hook: "+err.Error(), stdout, stderr)
 	}
 	defer unlock()
 	rec := decide(opts, stdin, time.Now())
 	if err := appendRecord(opts.LogPath, rec); err != nil {
+		if !blocking(rec.Event) {
+			_, _ = fmt.Fprintln(stderr, "agentstream hook:", err)
+			return 1
+		}
 		rec.Decision, rec.Reason = DecisionDeny, "agentstream hook: "+err.Error()
 	}
 	if rec.Decision != DecisionDeny {
 		return 0
 	}
-	return deny(opts.Mode, rec.Reason, stdout, stderr)
+	return deny(opts.Mode, rec.Event, rec.Reason, stdout, stderr)
 }
 
 func decide(opts HookOptions, stdin io.Reader, now time.Time) HookRecord {
 	rec := HookRecord{Time: now.UTC().Format(time.RFC3339Nano), Event: opts.Event, Decision: DecisionAllow}
 	fail := func(format string, a ...any) HookRecord {
 		rec.Decision, rec.Reason = DecisionDeny, "agentstream hook: "+fmt.Sprintf(format, a...)
+		if !blocking(rec.Event) {
+			rec.Decision = DecisionLog
+		}
 		return rec
 	}
 	data, err := io.ReadAll(io.LimitReader(stdin, maxHookInput))
@@ -141,7 +177,12 @@ func decide(opts HookOptions, stdin io.Reader, now time.Time) HookRecord {
 	if rec.Event == "" {
 		rec.Event = in.HookEventName
 	}
-	rec.SessionID, rec.Tool, rec.ToolUseID, rec.ParentID = in.SessionID, in.ToolName, in.ToolUseID, in.ParentToolUseID
+	rec.SessionID, rec.Tool, rec.ToolUseID = in.SessionID, in.ToolName, in.ToolUseID
+	rec.AgentID, rec.AgentType = in.AgentID, in.AgentType
+	if rec.Event == EventWorktreeCreate {
+		rec.Decision, rec.Reason = DecisionDeny, "Agent-native worktrees are blocked inside Yggdrasil tasks; the task already runs in its own worktree."
+		return rec
+	}
 	// An unnamed event is treated as PreToolUse, so a renamed field can't
 	// silently turn the block off.
 	pre := rec.Event == "" || rec.Event == EventPreToolUse
@@ -160,16 +201,17 @@ func decide(opts HookOptions, stdin io.Reader, now time.Time) HookRecord {
 	sub := ParseSubagentInput(in.ToolInput)
 	rec.Subagent, rec.SubagentType, rec.Isolation = true, sub.SubagentType, sub.Isolation
 	if !pre {
+		rec.Async = rec.Event == EventPostToolUse && launchedAsync(in.ToolResponse)
 		return rec
 	}
 	prior, err := ReadHookLog(opts.LogPath)
 	if err != nil {
 		return fail("%v", err)
 	}
-	rec.Depth, rec.Active = spawnDepth(prior, in.ParentToolUseID), activeSubagents(prior)
+	rec.Depth, rec.Active = spawnDepth(in.AgentID), activeSubagents(prior)
 	switch {
-	case sub.WantsWorktree():
-		rec.Decision, rec.Reason = DecisionDeny, "Sub-agents with isolation: worktree are blocked inside Yggdrasil tasks; run the sub-agent without isolation."
+	case sub.Isolation != "":
+		rec.Decision, rec.Reason = DecisionDeny, fmt.Sprintf("Sub-agents with isolation: %s are blocked inside Yggdrasil tasks; run the sub-agent without isolation.", sub.Isolation)
 	case opts.MaxDepth > 0 && rec.Depth > opts.MaxDepth:
 		rec.Decision, rec.Reason = DecisionDeny, fmt.Sprintf("Sub-agent nesting is limited to %d levels in this task.", opts.MaxDepth)
 	case opts.MaxConcurrent > 0 && rec.Active >= opts.MaxConcurrent:
@@ -182,36 +224,54 @@ func isSpawn(r HookRecord) bool {
 	return r.Subagent && (r.Event == "" || r.Event == EventPreToolUse) && r.Decision == DecisionAllow
 }
 
-// spawnDepth is 1 + the depth of the allowed spawn whose tool_use id is
-// parent, or 1 if there is none.
-func spawnDepth(prior []HookRecord, parent string) int {
-	if parent == "" {
+// spawnDepth is the depth of a new sub-agent: 1 from the main conversation,
+// at least 2 from inside a sub-agent. The hook input has no parent link, so
+// deeper levels can't be told apart here; the CLI's own depth env var is
+// exact. (Phase 1: the adapter can map agent_id to spawn_depth from the
+// stream's task_started messages.)
+func spawnDepth(agentID string) int {
+	if agentID == "" {
 		return 1
 	}
-	for _, r := range prior {
-		if isSpawn(r) && r.ToolUseID == parent {
-			return r.Depth + 1
-		}
-	}
-	return 1
+	return 2
 }
 
-// activeSubagents is allowed spawns minus finished ones (PostToolUse on a
-// sub-agent tool; UNVERIFIED that it fires when the sub-agent ends).
+// launchedAsync reports whether an Agent tool_response says the sub-agent
+// went on in the background ("async_launched", or "remote_launched").
+func launchedAsync(resp json.RawMessage) bool {
+	var r struct {
+		Status string `json:"status"`
+	}
+	if len(resp) == 0 || json.Unmarshal(resp, &r) != nil {
+		return false
+	}
+	return r.Status == "async_launched" || r.Status == "remote_launched"
+}
+
+// activeSubagents is allowed spawns minus finished ones: PostToolUse (which
+// fires when a foreground sub-agent completes) or PostToolUseFailure on a
+// sub-agent tool. A background launch never counts as finished, so the count
+// can only err high.
 func activeSubagents(prior []HookRecord) int {
 	n := 0
 	for _, r := range prior {
 		switch {
 		case isSpawn(r):
 			n++
-		case r.Subagent && r.Event == EventPostToolUse:
+		case r.Subagent && !r.Async && (r.Event == EventPostToolUse || r.Event == EventPostToolUseFailure):
 			n--
 		}
 	}
 	return max(n, 0)
 }
 
-func deny(mode DenyMode, reason string, stdout, stderr io.Writer) int {
+// deny blocks the call. WorktreeCreate always gets exit 2 and no stdout: it
+// reads the last stdout line as the worktree path, so JSON there would be
+// taken as one.
+func deny(mode DenyMode, event, reason string, stdout, stderr io.Writer) int {
+	if event == EventWorktreeCreate {
+		mode = DenyExit2
+	}
 	var out any
 	switch mode {
 	case DenyJSON:

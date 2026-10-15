@@ -4,9 +4,10 @@
 // whole process tree through a job object.
 //
 // Part 1 (this code) is tested only with synthetic fixtures and fake
-// processes; nothing here runs the real CLI in tests. Every CLI detail (flags,
-// event shapes, hook protocol, env var names) is written from memory and marked
-// UNVERIFIED; the part 2 live run checks them.
+// processes; nothing here runs the real CLI in tests. The CLI details (flags,
+// event shapes, hook protocol, env var names) are checked against `claude
+// --help` 2.1.299 and the Claude Code docs; docs/spikes.md (B4) lists the
+// sources and what only the part 2 live run can confirm.
 //
 // The binary lives in cmd/agentstream:
 //

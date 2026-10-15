@@ -9,8 +9,10 @@ import (
 )
 
 type hookCall struct {
-	event, tool, id, parent string
-	input                   map[string]any
+	// agent is the agent_id of the sub-agent the call is made in.
+	event, tool, id, agent string
+	input                  map[string]any
+	response               map[string]any
 }
 
 func (c hookCall) json(t *testing.T) string {
@@ -28,8 +30,11 @@ func (c hookCall) json(t *testing.T) string {
 	if c.id != "" {
 		in["tool_use_id"] = c.id
 	}
-	if c.parent != "" {
-		in["parent_tool_use_id"] = c.parent
+	if c.agent != "" {
+		in["agent_id"], in["agent_type"] = c.agent, "general-purpose"
+	}
+	if c.response != nil {
+		in["tool_response"] = c.response
 	}
 	data, err := json.Marshal(in)
 	if err != nil {
@@ -99,6 +104,48 @@ func TestHookDeniesWorktreeIsolation(t *testing.T) {
 	}
 }
 
+func TestHookDeniesRemoteIsolation(t *testing.T) {
+	call := hookCall{event: EventPreToolUse, tool: "Agent", id: "toolu_rm", input: map[string]any{"description": "x", "prompt": "x", "isolation": "remote"}}
+	code, _, stderr := runHookCall(t, HookOptions{LogPath: filepath.Join(t.TempDir(), "hook.log"), Mode: DenyExit2}, call.json(t))
+	if code != 2 || !strings.Contains(stderr, "isolation: remote") {
+		t.Fatalf("code %d, stderr %q", code, stderr)
+	}
+}
+
+func TestHookWorktreeCreateAlwaysFails(t *testing.T) {
+	in := `{"session_id":"s","transcript_path":"t","cwd":"C:/scratch/acme-shop","hook_event_name":"WorktreeCreate","name":"bold-oak-a3f2"}`
+	for _, mode := range []DenyMode{DenyExit2, DenyJSON, DenyJSONLegacy} {
+		log := filepath.Join(t.TempDir(), "hook.log")
+		// No stdout: the CLI would read a JSON line as the worktree path.
+		code, stdout, stderr := runHookCall(t, HookOptions{LogPath: log, Mode: mode, Event: EventWorktreeCreate}, in)
+		if code != 2 || stdout != "" || stderr == "" {
+			t.Fatalf("%s: code %d, stdout %q, stderr %q", mode, code, stdout, stderr)
+		}
+		if recs := hookLog(t, log); len(recs) != 1 || recs[0].Decision != DecisionDeny {
+			t.Errorf("%s: records = %+v", mode, recs)
+		}
+	}
+}
+
+func TestHookLogOnlyEventsNeverBlock(t *testing.T) {
+	stop := `{"session_id":"s","hook_event_name":"SubagentStop","agent_id":"a1","agent_type":"general-purpose"}`
+	ok := filepath.Join(t.TempDir(), "hook.log")
+	for _, event := range []string{EventSubagentStart, EventSubagentStop, EventPostToolUse, EventPostToolUseFailure} {
+		if code, stdout, _ := runHookCall(t, HookOptions{LogPath: ok, Mode: DenyJSON, Event: event}, stop); code != 0 || stdout != "" {
+			t.Errorf("%s: code %d, stdout %q", event, code, stdout)
+		}
+		// Exit 2 on SubagentStop would keep the sub-agent running; a broken
+		// log must be a non-blocking error instead.
+		broken := filepath.Join(t.TempDir(), "missing", "hook.log")
+		if code, stdout, _ := runHookCall(t, HookOptions{LogPath: broken, Mode: DenyJSON, Event: event}, stop); code != 1 || stdout != "" {
+			t.Errorf("%s with broken log: code %d, stdout %q; want 1", event, code, stdout)
+		}
+	}
+	if recs := hookLog(t, ok); len(recs) != 4 || recs[1].AgentID != "a1" || recs[1].Decision != DecisionLog {
+		t.Errorf("records = %+v", recs)
+	}
+}
+
 func TestHookAllowsNormalSpawn(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "hook.log")
 	opts := HookOptions{LogPath: log, Mode: DenyJSON, MaxDepth: 2, MaxConcurrent: 4}
@@ -148,23 +195,44 @@ func TestHookConcurrencyCap(t *testing.T) {
 	}
 }
 
-func TestHookDepthCap(t *testing.T) {
+func TestHookAsyncLaunchStaysActive(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "hook.log")
-	opts := HookOptions{LogPath: log, Mode: DenyExit2, MaxDepth: 2}
-	calls := []hookCall{
-		{event: EventPreToolUse, tool: "Task", id: "toolu_d1", input: map[string]any{}},
-		{event: EventPreToolUse, tool: "Task", id: "toolu_d2", parent: "toolu_d1", input: map[string]any{}},
-		{event: EventPreToolUse, tool: "Task", id: "toolu_d3", parent: "toolu_d2", input: map[string]any{}},
+	opts := HookOptions{LogPath: log, Mode: DenyExit2, MaxConcurrent: 1}
+	spawn := hookCall{event: EventPreToolUse, tool: "Agent", id: "toolu_bg", input: map[string]any{"description": "bg", "run_in_background": true}}
+	if code, _, _ := runHookCall(t, opts, spawn.json(t)); code != 0 {
+		t.Fatal("first spawn denied")
 	}
-	for i, c := range calls {
-		code, _, stderr := runHookCall(t, opts, c.json(t))
-		if want := map[bool]int{true: 2, false: 0}[i == 2]; code != want {
-			t.Fatalf("depth %d: code %d, want %d (stderr %q)", i+1, code, want, stderr)
+	post := spawn
+	post.event, post.response = EventPostToolUse, map[string]any{"status": "async_launched", "agentId": "a1"}
+	if code, _, _ := runHookCall(t, opts, post.json(t)); code != 0 {
+		t.Fatal("PostToolUse denied")
+	}
+	next := spawn
+	next.id = "toolu_bg2"
+	if code, _, stderr := runHookCall(t, opts, next.json(t)); code != 2 || !strings.Contains(stderr, "at once") {
+		t.Fatalf("spawn while a background one runs: code %d, stderr %q", code, stderr)
+	}
+}
+
+func TestHookDepthCap(t *testing.T) {
+	top := hookCall{event: EventPreToolUse, tool: "Agent", id: "toolu_d1", input: map[string]any{}}
+	nested := hookCall{event: EventPreToolUse, tool: "Agent", id: "toolu_d2", agent: "a1", input: map[string]any{}}
+	for _, tc := range []struct {
+		maxDepth   int
+		nestedCode int
+	}{{1, 2}, {2, 0}, {0, 0}} {
+		log := filepath.Join(t.TempDir(), "hook.log")
+		opts := HookOptions{LogPath: log, Mode: DenyExit2, MaxDepth: tc.maxDepth}
+		if code, _, stderr := runHookCall(t, opts, top.json(t)); code != 0 {
+			t.Fatalf("max %d, depth 1: code %d (stderr %q)", tc.maxDepth, code, stderr)
 		}
-	}
-	recs := hookLog(t, log)
-	if recs[2].Depth != 3 || recs[2].Decision != DecisionDeny {
-		t.Errorf("third record = %+v", recs[2])
+		if code, _, stderr := runHookCall(t, opts, nested.json(t)); code != tc.nestedCode {
+			t.Fatalf("max %d, from a sub-agent: code %d, want %d (stderr %q)", tc.maxDepth, code, tc.nestedCode, stderr)
+		}
+		recs := hookLog(t, log)
+		if recs[0].Depth != 1 || recs[1].Depth != 2 || recs[1].AgentID != "a1" {
+			t.Errorf("max %d: records = %+v", tc.maxDepth, recs)
+		}
 	}
 }
 

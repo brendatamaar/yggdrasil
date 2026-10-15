@@ -10,6 +10,9 @@ type SubagentInfo struct {
 	Type        string `json:"type,omitempty"`
 	Description string `json:"description,omitempty"`
 	Isolation   string `json:"isolation,omitempty"`
+	// AgentID and SpawnDepth come from the CLI's task_started message.
+	AgentID    string `json:"agentId,omitempty"`
+	SpawnDepth int    `json:"spawnDepth,omitempty"`
 	// Events counts the events whose ParentID is this sub-agent.
 	Events int `json:"events"`
 }
@@ -51,6 +54,10 @@ func (s *Summary) Add(ev Event) {
 		s.Subagents = append(s.Subagents, info)
 		if ev.ID != "" {
 			s.byID[ev.ID] = info
+		}
+	case KindTaskStarted:
+		if info := s.byID[ev.ID]; info != nil && ev.ID != "" {
+			info.AgentID, info.SpawnDepth = ev.AgentID, ev.Depth
 		}
 	case KindResult:
 		if ev.Usage != nil && ev.Usage.CostUSD != nil {

@@ -3,6 +3,7 @@ package agentstream
 import (
 	"bufio"
 	"cmp"
+	"encoding/json"
 	"fmt"
 	"io"
 	"regexp"
@@ -12,9 +13,57 @@ import (
 
 var (
 	uuidRe = regexp.MustCompile(`(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
-	// Message, tool-use and request ids. UNVERIFIED prefixes.
+	// Message, tool-use and request ids.
 	idRe = regexp.MustCompile(`\b(msg|toolu|srvtoolu|req)_[A-Za-z0-9]{6,}\b`)
+	// Sub-agent ids (agent_id, task_id: "a" + 16 hex, seen live) and task
+	// run ids ("0mv95pkpb-e0bcc57c").
+	agentIDRe = regexp.MustCompile(`\ba[0-9a-f]{16}\b`)
+	runIDRe   = regexp.MustCompile(`\b0[0-9a-z]{8}-[0-9a-f]{8}\b`)
 )
+
+// Account details in the stream, not needed by a fixture: the init line
+// lists the user's MCP servers, plugins, skills and memory paths,
+// commands_changed their commands (MCP prompts included), and
+// rate_limit_event carries account usage. They are blanked; the rest of the
+// line is kept (keys come out sorted).
+var (
+	initBlank = map[string]string{
+		"mcp_servers": "[]", "plugins": "[]", "skills": "[]", "slash_commands": "[]",
+		"terminal_slash_commands": "[]", "memory_paths": "[]", "messaging_socket_path": `""`,
+	}
+	rateLimitInfo = `{"status":"allowed","rateLimitType":"five_hour","resetsAt":1700000000}`
+)
+
+// redact blanks account details in init and rate_limit_event lines. Other
+// lines, and lines it can't decode, are returned as they are.
+func redact(line string) string {
+	var m map[string]json.RawMessage
+	if json.Unmarshal([]byte(line), &m) != nil {
+		return line
+	}
+	var typ, sub string
+	_ = json.Unmarshal(m["type"], &typ)
+	_ = json.Unmarshal(m["subtype"], &sub)
+	switch {
+	case typ == "system" && sub == "init":
+		for k, v := range initBlank {
+			if _, ok := m[k]; ok {
+				m[k] = json.RawMessage(v)
+			}
+		}
+	case typ == "system" && sub == "commands_changed":
+		m["commands"] = json.RawMessage("[]")
+	case typ == "rate_limit_event":
+		m["rate_limit_info"] = json.RawMessage(rateLimitInfo)
+	default:
+		return line
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return line
+	}
+	return string(out)
+}
 
 type literal struct{ old, new string }
 
@@ -57,6 +106,7 @@ func NewScrubber(repl map[string]string) *Scrubber {
 
 // Line scrubs one line.
 func (s *Scrubber) Line(line string) string {
+	line = redact(line)
 	for _, l := range s.lits {
 		line = strings.ReplaceAll(line, l.old, l.new)
 	}
@@ -64,6 +114,12 @@ func (s *Scrubber) Line(line string) string {
 		return s.placeholder("uuid", strings.ToLower(m), func(n int) string {
 			return fmt.Sprintf("00000000-0000-4000-8000-%012d", n)
 		})
+	})
+	line = agentIDRe.ReplaceAllStringFunc(line, func(m string) string {
+		return s.placeholder("agent", m, func(n int) string { return fmt.Sprintf("a%016d", n) })
+	})
+	line = runIDRe.ReplaceAllStringFunc(line, func(m string) string {
+		return s.placeholder("run", m, func(n int) string { return fmt.Sprintf("0scrub%03d-%08d", n, n) })
 	})
 	return idRe.ReplaceAllStringFunc(line, func(m string) string {
 		prefix, _, _ := strings.Cut(m, "_")

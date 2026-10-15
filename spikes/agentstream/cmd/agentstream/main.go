@@ -19,7 +19,9 @@ import (
 const usage = `usage:
   agentstream run --prompt "..." [--model haiku] [--max-budget-usd 0.10] [--keep]
                   [--claude <path>] [--deny-mode exit2|json|json-legacy]
-                  [--max-depth 2] [--max-concurrent 4] [--timeout 10m] [--extra-arg <arg>]...
+                  [--max-depth 2] [--max-concurrent 4] [--hook-max-depth N] [--hook-max-concurrent N]
+                  [--setting-sources project] [--permission-mode dontAsk]
+                  [--timeout 10m] [--extra-arg <arg>]...
   agentstream hook --log <file> [--event PreToolUse] [--deny-mode exit2]
                    [--max-depth 0] [--max-concurrent 0]
   agentstream scrub --in <raw.jsonl> --out <fixture.jsonl> [--replace old=new]...`
@@ -57,8 +59,12 @@ func cmdRun(args []string) int {
 	keep := fs.Bool("keep", false, "keep the run dir (scratch repo, raw capture, hook log)")
 	claude := fs.String("claude", "", "agent binary (default: claude on PATH)")
 	denyMode := fs.String("deny-mode", string(agentstream.DenyExit2), "hook deny variant: exit2, json or json-legacy")
-	maxDepth := fs.Int("max-depth", 2, "sub-agent nesting cap (env var and hook); 0 = none")
-	maxConc := fs.Int("max-concurrent", 4, "sub-agent concurrency cap (env var and hook); 0 = none")
+	maxDepth := fs.Int("max-depth", 2, "sub-agent nesting cap (env var, and hook unless --hook-max-depth); 0 = CLI default")
+	maxConc := fs.Int("max-concurrent", 4, "sub-agent concurrency cap (env var, and hook unless --hook-max-concurrent); 0 = CLI default")
+	hookDepth := fs.Int("hook-max-depth", -1, "hook nesting cap; -1 = --max-depth, 0 = none (tests the env var alone)")
+	hookConc := fs.Int("hook-max-concurrent", -1, "hook concurrency cap; -1 = --max-concurrent, 0 = none (tests the env var alone)")
+	sources := fs.String("setting-sources", "project", "settings files to load; keeps the user's own hooks out (--settings always applies); empty = CLI default")
+	permMode := fs.String("permission-mode", "dontAsk", "CLI permission mode; dontAsk denies anything that would prompt; empty = CLI default")
 	timeout := fs.Duration("timeout", 10*time.Minute, "cancel the run after this long")
 	var extra multiFlag
 	fs.Var(&extra, "extra-arg", "extra CLI argument, repeatable")
@@ -74,9 +80,16 @@ func cmdRun(args []string) int {
 		fmt.Fprintln(os.Stderr, "run: --prompt is required")
 		return 2
 	}
+	if *hookDepth < 0 {
+		*hookDepth = *maxDepth
+	}
+	if *hookConc < 0 {
+		*hookConc = *maxConc
+	}
 	ok, err := run(runOptions{
 		prompt: *prompt, model: *model, budget: *budget, keep: *keep, claude: *claude, mode: mode,
-		maxDepth: *maxDepth, maxConc: *maxConc, timeout: *timeout, extra: extra,
+		maxDepth: *maxDepth, maxConc: *maxConc, hookDepth: *hookDepth, hookConc: *hookConc,
+		sources: *sources, permMode: *permMode, timeout: *timeout, extra: extra,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "run:", err)
@@ -90,10 +103,12 @@ func cmdRun(args []string) int {
 
 type runOptions struct {
 	prompt, model, claude string
+	sources, permMode     string
 	budget                float64
 	keep                  bool
 	mode                  agentstream.DenyMode
 	maxDepth, maxConc     int
+	hookDepth, hookConc   int
 	timeout               time.Duration
 	extra                 []string
 }
@@ -127,7 +142,7 @@ func run(o runOptions) (bool, error) {
 	logPath := filepath.Join(dir, "hook.log")
 	settingsPath := filepath.Join(dir, "settings.json")
 	subEnv := agentstream.SubagentEnv(o.maxDepth, o.maxConc)
-	hs := agentstream.HookSettings{Exe: self, LogPath: logPath, Mode: o.mode, MaxDepth: o.maxDepth, MaxConcurrent: o.maxConc}
+	hs := agentstream.HookSettings{Exe: self, LogPath: logPath, Mode: o.mode, MaxDepth: o.hookDepth, MaxConcurrent: o.hookConc}
 	if err := agentstream.WriteSettings(settingsPath, hs, subEnv); err != nil {
 		return false, err
 	}
@@ -149,7 +164,8 @@ func run(o runOptions) (bool, error) {
 
 	r, err := agentstream.Start(ctx, agentstream.Config{
 		Binary: bin, Dir: repo, Prompt: o.prompt, Model: o.model, MaxBudgetUSD: o.budget,
-		SettingsPath: settingsPath, ExtraArgs: o.extra, Env: subEnv, Stderr: stderr,
+		SettingsPath: settingsPath, SettingSources: o.sources, PermissionMode: o.permMode,
+		ExtraArgs: o.extra, Env: subEnv, Stderr: stderr,
 	})
 	if err != nil {
 		return false, err
