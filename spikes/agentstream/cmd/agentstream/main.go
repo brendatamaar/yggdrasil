@@ -52,7 +52,7 @@ func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 func cmdRun(args []string) int {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	prompt := fs.String("prompt", "", "prompt for the agent (required)")
-	model := fs.String("model", "", "model alias or name")
+	model := fs.String("model", "haiku", "model alias or name (cheapest by default)")
 	budget := fs.Float64("max-budget-usd", 0.10, "spend cap passed to the CLI; 0 leaves it out")
 	keep := fs.Bool("keep", false, "keep the run dir (scratch repo, raw capture, hook log)")
 	claude := fs.String("claude", "", "agent binary (default: claude on PATH)")

@@ -10,3 +10,4 @@ All notable changes to Yggdrasil are documented here. The format follows [Keep a
 - Empty browser app shell (top bar, theme switch for system/dark/light), built with Vite and embedded into `ygg` (IN-01, IN-02).
 - Taskfile with build, dev, test, lint, typecheck and license tasks (IN-01, IN-02).
 - Apache-2.0 `LICENSE` and `NOTICE` (D5).
+- Deterministic demo-project generator (`task fixtures`): fictional `acme-shop` repos with history, branches, a dirty tree and a CRLF file (IN-05).

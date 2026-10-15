@@ -16,7 +16,7 @@ Goal: prove the risky parts on Windows before building on them, and set up a pub
 - [ ] **ConPTY spike:** try **`aymanbagabas/go-pty` first** (D12). Open PowerShell and cmd, stream to xterm.js over WebSocket, resize, run an interactive program, exit cleanly. If it fails any of these, build the fallback: a thin wrapper on `golang.org/x/sys/windows` plus `creack/pty` on Unix. Record the result in `docs/spikes.md`.
 - [ ] **Job object spike:** start a process tree (e.g. `npm run dev` spawning children), kill Yggdrasil with Task Manager, confirm every child dies. Also confirm that an editor launched outside the job (PL-05) stays open.
 - [ ] **Agent streaming spike:** run Claude Code headless with streaming JSON output from Go, parse events, cancel mid-run, confirm the process tree stops. Also: trigger a sub-agent and confirm (a) its messages arrive with `parent_tool_use_id` when `--forward-subagent-text` is passed, (b) `PreToolUse` hooks fire for its tool calls, (c) the depth and concurrency environment variables are respected, and (d) sub-agent `isolation: worktree` can be blocked.
-- [ ] **Pure-Go SQLite spike:** `modernc.org/sqlite` + sqlc + goose with `CGO_ENABLED=0` on Windows.
+- [x] **Pure-Go SQLite spike:** `modernc.org/sqlite` + sqlc + goose with `CGO_ENABLED=0` on Windows. *(Tests written; the `-race` and `go version -m` checks are still to run.)*
 
 **Project setup:**
 - [ ] Pick the GitHub org/repo name and domain (PRD open question 1). Create a fresh public repo; add Apache-2.0 `LICENSE` and `NOTICE` (D5). *(Repo `brendatamaar/yggdrasil`, LICENSE and NOTICE done; domain still open.)*
@@ -29,7 +29,7 @@ Goal: prove the risky parts on Windows before building on them, and set up a pub
 - [ ] CI dependency license check (Go and npm) against the allowed list in docs/AGENTS.md section 2.
 - [ ] Windows CI runner installs the toolchains used by tests: Node + pnpm, Java + Maven + Gradle, .NET SDK, Python + uv + Poetry.
 - [ ] GoReleaser config prepared but not publishing (IN-08).
-- [ ] Script that generates `fixtures/demo-project/`: fictional repos (`acme-shop`: `shop-api`, `shop-web`, `shop-admin`), history, branches (IN-05).
+- [x] Script that generates `fixtures/demo-project/`: fictional repos (`acme-shop`: `shop-api`, `shop-web`, `shop-admin`), history, branches (IN-05).
 - [x] `.env.example` skeleton (IN-06). README skeleton with platform statement (PL-01). docs/AGENTS.md, docs/CONTRIBUTING.md, docs/CHANGELOG.md.
 
 **Exit:** all four spikes pass on Windows; CI green; `task build` on a clean Windows machine with only Go and Node installed produces a binary that serves an empty UI.

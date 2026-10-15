@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 )
 
 // scratchFiles is the fictional content of the scratch repo.
@@ -40,9 +41,9 @@ func NewScratchRepo(root string) (string, error) {
 		"GIT_CONFIG_GLOBAL":   emptyCfg,
 		"GIT_TERMINAL_PROMPT": "0",
 		"GIT_AUTHOR_NAME":     "Acme Dev",
-		"GIT_AUTHOR_EMAIL":    "dev@acme-shop.invalid",
+		"GIT_AUTHOR_EMAIL":    "dev@example.com",
 		"GIT_COMMITTER_NAME":  "Acme Dev",
-		"GIT_COMMITTER_EMAIL": "dev@acme-shop.invalid",
+		"GIT_COMMITTER_EMAIL": "dev@example.com",
 	})
 	if err != nil {
 		return "", err
@@ -52,13 +53,26 @@ func NewScratchRepo(root string) (string, error) {
 		{"add", "-A"},
 		{"-c", "commit.gpgsign=false", "commit", "-q", "-m", "Initial acme-shop"},
 	} {
-		cmd := exec.Command("git", args...)
-		cmd.Dir, cmd.Env = repo, env
-		var out bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &out, &out
-		if err := cmd.Run(); err != nil {
-			return "", fmt.Errorf("scratch repo: git %s: %w: %s", args, err, bytes.TrimSpace(out.Bytes()))
+		if out, err := runGit(repo, env, args); err != nil {
+			return "", fmt.Errorf("scratch repo: git %s: %w: %s", args, err, out)
 		}
 	}
 	return repo, nil
+}
+
+// runGit runs git in a job (or process group), like the agent itself, and
+// returns its combined output.
+func runGit(dir string, env, args []string) ([]byte, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir, cmd.Env = dir, env
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	cmd.WaitDelay = 2 * time.Second
+	g, err := startInGroup(cmd)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = g.close() }()
+	err = cmd.Wait()
+	return bytes.TrimSpace(out.Bytes()), err
 }

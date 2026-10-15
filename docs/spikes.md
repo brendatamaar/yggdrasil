@@ -85,7 +85,7 @@ Status key: **auto** = covered by the spike's automated tests on Windows; **manu
 - sqlc: engine `sqlite`, schema read from the goose files (Down sections skipped), `emit_empty_slices: true`.
 
 **Gaps for Phase 1:**
-- `task test:race` runs the root module only, so `TestConcurrentWriters` has never run under `-race`. Run it once by hand with cgo, and decide whether `spikes:test` gets a race variant.
+- `task test:race` runs the root module only, so `TestConcurrentWriters` has never run under `-race`. `task spikes:test:race` now covers the spikes (needs cgo and gcc); it hasn't been run yet.
 - Record the `go version -m` check and the exact sqlc invocation in the Phase 1 `task generate`.
 - Not shipped, so `task license` doesn't cover the spike's dependencies. The ones opened (modernc.org/sqlite, sqlc, wazero, pgx) are BSD, MIT or Apache-2.0; the rest weren't checked.
 
@@ -111,17 +111,17 @@ Status key: **auto** = covered by the spike's automated tests on Windows; **manu
 
 **Unverified until the live run.** The flags above, the settings file shape and matcher, whether `--settings` merges with user settings, and the sub-agent env vars: `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` (default 2) and `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` (default 4). The only source recorded is PRD AG-22 and `.claude/settings.json` (concurrency only). Check `claude --help` and the current docs, and record the source, before part 2.
 
+**Done after the review:** `--model` defaults to `haiku` (`--max-budget-usd` defaults to 0.10); the scratch repo's `git` calls run through `startInGroup`; the scratch author is `dev@example.com`.
+
 **Before the live run:**
-- Default `--model` to the cheapest (`haiku`); it is empty now. `--max-budget-usd` already defaults to 0.10.
-- Run the scratch repo's `git` calls (`scratch.go`) through the job-attached helper.
-- Use `@example.com` for the scratch author (`scratch.go` has `dev@acme-shop.invalid`).
+- Verify the env var names and flags against `claude --help` and the docs, and record the source.
 - `testdata/*.jsonl` is hand-written. Replace it with scrubbed captures from the live run.
 
 ---
 
 ## Wave 2 safety review (B3, B4 part 1, B6)
 
-**Verdict: PASS, no blocking items.** A read-only reviewer read the code; it didn't run tests or builds. Should-fix items are the four lists above (B3 race run, B4 model, scratch `git` job, scratch email, env var sources).
+**Verdict: PASS, no blocking items.** A read-only reviewer read the code; it didn't run tests or builds. Should-fix items: B4 model, scratch `git` job and scratch email are fixed; the B3 race task is added but not run; the env var sources stay open until `claude --help` can be checked.
 
 - Passed: no cgo; no personal data, real hosts or tokens in scope (only fictional values); clean env on every agent spawn; job always attached to the agent, no breakaway; the hook denies `isolation: worktree` and fails closed; tests never run `claude`; `RemoveAll` only on the harness's own temp dir; no binaries committed (`bin/` ignored).
 - **B6 deviation:** `fixtures/demo-gen` refuses a non-empty `-out` and never deletes, where the brief said it replaces. Safer, but a second `task fixtures` fails until `fixtures/demo-project` is removed by hand.

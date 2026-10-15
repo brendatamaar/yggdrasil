@@ -150,6 +150,17 @@ tasks:
           CGO_ENABLED=0 go -C "$dir" test ./... || exit 1
         done
 
+  spikes:test:race:
+    desc: Race detector on each Phase 0 spike (needs cgo and gcc; tests only)
+    cmds:
+      - |
+        for mod in spikes/*/go.mod; do
+          [ -f "$mod" ] || continue
+          dir=$(dirname "$mod")
+          echo "== $dir"
+          CGO_ENABLED=1 go -C "$dir" test -race ./... || exit 1
+        done
+
   release:check:
     desc: Validate the GoReleaser config and build a local snapshot (never publishes)
     cmds:
