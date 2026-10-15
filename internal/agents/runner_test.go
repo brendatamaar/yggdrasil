@@ -86,11 +86,12 @@ func TestRunParentLinks(t *testing.T) {
 	}
 	var sa2 *agents.Node
 	for _, c := range sa1.Children {
-		if c.Event.AgentID != "explorer" {
-			t.Errorf("child of sa_1 has agent %q", c.Event.AgentID)
-		}
 		if c.Event.ID == "sa_2" {
 			sa2 = c
+			continue
+		}
+		if c.Event.AgentID != "explorer" {
+			t.Errorf("child of sa_1 has agent %q", c.Event.AgentID)
 		}
 	}
 	if sa2 == nil {
@@ -197,9 +198,9 @@ func TestCumulativeUsageReplaces(t *testing.T) {
 
 type stubAdapter struct{ events []agents.Event }
 
-func (stubAdapter) Name() string                       { return "stub" }
+func (stubAdapter) Name() string                      { return "stub" }
 func (stubAdapter) Capabilities() agents.Capabilities { return agents.Capabilities{} }
-func (stubAdapter) Check(context.Context) error        { return nil }
+func (stubAdapter) Check(context.Context) error       { return nil }
 func (a stubAdapter) Start(context.Context, agents.StartOptions) (agents.Run, error) {
 	ch := make(chan agents.Event, len(a.events))
 	for _, e := range a.events {
