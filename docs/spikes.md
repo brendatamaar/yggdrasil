@@ -65,9 +65,68 @@ Status key: **auto** = covered by the spike's automated tests on Windows; **manu
 
 ---
 
-## B3 — Pure-Go SQLite · pending (Wave 2)
+## B3 — Pure-Go SQLite (`spikes/sqlite`) · IN-03, D4
 
-## B4 — Agent streaming · pending (Wave 2, needs the human's go-ahead to run the real CLI)
+**Setup.** `modernc.org/sqlite` v1.60.1 (driver name `"sqlite"`), goose v3.29.0 with embedded migrations, sqlc v1.31.1 pinned as a `tool` directive in `go.mod` (it runs without cgo, using `wasilibs/go-pgquery` + wazero). Two tables: `projects` and `repos` (FK, `ON DELETE CASCADE`, `STRICT`). Go 1.26.
+
+| Check | Status |
+|---|---|
+| Insert/select through sqlc, pragmas as configured | auto |
+| FK enforcement | auto |
+| DB path with spaces; a path containing `?` is refused | auto |
+| Concurrent writers | auto (plain `go test`; no `-race` run, see below) |
+| Migrations up twice is a no-op; down works | auto |
+| `go version -m` on the built binary shows `CGO_ENABLED=0` | pending (not recorded) |
+
+**Connection setup.**
+- Pragmas on every connection (DSN `_pragma`): `busy_timeout(5000)`, `journal_mode(WAL)`, `foreign_keys(1)`, `synchronous(NORMAL)`.
+- Two pools: one write connection (`_txlock=immediate`) and a read pool of `max(4, NumCPU)` with `_query_only=1`. Connections are never recycled.
+- Goose uses `goose.NewProvider(goose.DialectSQLite3, …)` over the embedded `migrations/*.sql`, not the global `SetDialect`.
+- sqlc: engine `sqlite`, schema read from the goose files (Down sections skipped), `emit_empty_slices: true`.
+
+**Gaps for Phase 1:**
+- `task test:race` runs the root module only, so `TestConcurrentWriters` has never run under `-race`. Run it once by hand with cgo, and decide whether `spikes:test` gets a race variant.
+- Record the `go version -m` check and the exact sqlc invocation in the Phase 1 `task generate`.
+- Not shipped, so `task license` doesn't cover the spike's dependencies. The ones opened (modernc.org/sqlite, sqlc, wazero, pgx) are BSD, MIT or Apache-2.0; the rest weren't checked.
+
+---
+
+## B4 — Agent streaming (`spikes/agentstream`) · AG-01, AG-02, AG-21, AG-22
+
+**Part 1 (harness, no CLI calls): done. Part 2 (live run): pending, needs the human's go-ahead.**
+
+**Setup.** One module, one dependency (`golang.org/x/sys`). The CLI has `run`, `hook` and `scrub`. `run` starts `claude -p --output-format stream-json --verbose --forward-subagent-text [--settings F] [--model M] [--max-budget-usd N] <prompt>` in a scratch git repo it creates in a temp dir.
+- **Process:** a job per run (`KILL_ON_JOB_CLOSE`, no breakaway), suspended start → assign → resume. Cancelling the context terminates the job. The environment goes through `CleanEnv`, which is never nil and refuses secrets and tokens.
+- **Events:** a draft normalized `Event` (init, assistant, user, tool_use, result, usage/cost). `ParentID` comes from `parent_tool_use_id`.
+- **Hook:** the `--settings` file registers `PreToolUse` and `PostToolUse` (matcher `*`) pointing at `agentstream hook`. It logs every call under a lock file and, for `PreToolUse`, denies a sub-agent call that has `isolation: worktree`, is deeper than `--max-depth`, or would exceed `--max-concurrent`. It fails closed. Deny modes: `exit2` (default), `json`, `json-legacy`.
+- **Tests:** synthetic JSONL for the parser and hook, env and settings checks, and a Windows test that cancels a fake helper and checks the tree is gone. Nothing runs `claude`.
+
+| Check (live run, part 2) | Status |
+|---|---|
+| (a) `parent_tool_use_id` on sub-agent messages | pending |
+| (b) `PreToolUse` fires for sub-agent tool calls | pending |
+| (c) depth and concurrency caps respected | pending |
+| (d) `isolation: worktree` blocked | pending |
+| (e) cancel kills the tree (real CLI) | pending |
+
+**Unverified until the live run.** The flags above, the settings file shape and matcher, whether `--settings` merges with user settings, and the sub-agent env vars: `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` (default 2) and `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` (default 4). The only source recorded is PRD AG-22 and `.claude/settings.json` (concurrency only). Check `claude --help` and the current docs, and record the source, before part 2.
+
+**Before the live run:**
+- Default `--model` to the cheapest (`haiku`); it is empty now. `--max-budget-usd` already defaults to 0.10.
+- Run the scratch repo's `git` calls (`scratch.go`) through the job-attached helper.
+- Use `@example.com` for the scratch author (`scratch.go` has `dev@acme-shop.invalid`).
+- `testdata/*.jsonl` is hand-written. Replace it with scrubbed captures from the live run.
+
+---
+
+## Wave 2 safety review (B3, B4 part 1, B6)
+
+**Verdict: PASS, no blocking items.** A read-only reviewer read the code; it didn't run tests or builds. Should-fix items are the four lists above (B3 race run, B4 model, scratch `git` job, scratch email, env var sources).
+
+- Passed: no cgo; no personal data, real hosts or tokens in scope (only fictional values); clean env on every agent spawn; job always attached to the agent, no breakaway; the hook denies `isolation: worktree` and fails closed; tests never run `claude`; `RemoveAll` only on the harness's own temp dir; no binaries committed (`bin/` ignored).
+- **B6 deviation:** `fixtures/demo-gen` refuses a non-empty `-out` and never deletes, where the brief said it replaces. Safer, but a second `task fixtures` fails until `fixtures/demo-project` is removed by hand.
+- The demo repos' `origin` is an absolute local path, so the generated `.git/config` holds the user's real path. The output is gitignored.
+- Test-only helpers in `agentstream` (`setup_test.go`, `main_test.go`) spawn `git` or the test binary without a job or clean env; acceptable for tests.
 
 ---
 
