@@ -1,0 +1,15 @@
+{"kind":"status","status":"started"}
+{"kind":"message","id":"m1","role":"assistant","text":"I will ask helpers to look at shop-api and shop-web."}
+{"kind":"subagent_start","id":"sa_1","agentId":"explorer","text":"Find the order routes in shop-api."}
+{"kind":"message","id":"m2","parentId":"sa_1","agentId":"explorer","role":"assistant","text":"Searching shop-api."}
+{"kind":"tool_call","id":"tc1","parentId":"sa_1","agentId":"explorer","tool":{"name":"Grep","input":{"pattern":"orders"}}}
+{"kind":"tool_result","parentId":"sa_1","agentId":"explorer","resultFor":"tc1","text":"routes.go:12"}
+{"kind":"usage","parentId":"sa_1","agentId":"explorer","usage":{"inputTokens":100,"outputTokens":20,"costUsd":0.001}}
+{"kind":"subagent_start","id":"sa_2","parentId":"sa_1","agentId":"reviewer","text":"Check the shop-web client for the same routes."}
+{"kind":"message","id":"m3","parentId":"sa_2","agentId":"reviewer","role":"assistant","text":"The shop-web client matches."}
+{"kind":"usage","parentId":"sa_2","agentId":"reviewer","usage":{"inputTokens":60,"outputTokens":10,"costUsd":0.0005}}
+{"kind":"subagent_end","parentId":"sa_2","agentId":"reviewer","text":"Done."}
+{"kind":"subagent_end","parentId":"sa_1","agentId":"explorer","text":"Done."}
+{"kind":"message","id":"m4","role":"assistant","text":"Both agree."}
+{"kind":"usage","usage":{"inputTokens":500,"outputTokens":80,"costUsd":0.01}}
+{"kind":"status","status":"completed"}

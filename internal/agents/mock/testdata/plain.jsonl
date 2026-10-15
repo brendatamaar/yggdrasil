@@ -1,0 +1,7 @@
+{"kind":"status","status":"started"}
+{"kind":"message","id":"m1","role":"user","text":"Explain what shop-api does."}
+{"kind":"message","id":"m2","role":"assistant","text":"shop-api serves the acme-shop catalog and orders over HTTP."}
+{"kind":"usage","usage":{"inputTokens":120,"outputTokens":40,"costUsd":0.002}}
+{"kind":"message","id":"m3","role":"assistant","text":"shop-web calls it for every page."}
+{"kind":"usage","usage":{"inputTokens":30,"outputTokens":15,"costUsd":0.001}}
+{"kind":"status","status":"completed"}

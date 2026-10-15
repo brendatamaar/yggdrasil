@@ -1,0 +1,4 @@
+{"kind":"status","status":"started"}
+{"kind":"message","id":"m1","role":"assistant","text":"Looking at shop-web."}
+{"kind":"error","error":"The agent lost its connection. Try again."}
+{"kind":"status","status":"failed"}
