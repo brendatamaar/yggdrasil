@@ -2,6 +2,7 @@ package safety
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"slices"
@@ -101,6 +102,35 @@ func TestRedact(t *testing.T) {
 		if got := r.Redact(c.in); got != c.want {
 			t.Errorf("%s: Redact(%q) = %q, want %q", c.name, c.in, got, c.want)
 		}
+	}
+}
+
+// A configured secret that JSON escapes must be masked in its escaped form,
+// which is how it appears in audit detail (invariant 4).
+func TestRedactJSONEscapedSecret(t *testing.T) {
+	for _, secret := range []string{`s"x-secret`, `a&b<c>secret`, `back\slash-secret`} {
+		r := NewRedactor(secret)
+		raw, err := json.Marshal(map[string]string{"note": "v " + secret})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := r.Redact(string(raw))
+		if strings.Contains(got, "secret") {
+			t.Errorf("escaped secret %q leaks: %s", secret, got)
+		}
+		if !json.Valid([]byte(got)) {
+			t.Errorf("redacted JSON for %q is no longer valid: %s", secret, got)
+		}
+	}
+}
+
+func TestLogHandlerRedactsStructAttrs(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(NewLogHandler(slog.NewTextHandler(&buf, nil), NewRedactor("topsecret")))
+	type cfg struct{ Name, Token string }
+	log.Info("config", "cfg", cfg{Name: "x", Token: "topsecret"}, "m", map[string]string{"k": "topsecret"})
+	if strings.Contains(buf.String(), "topsecret") {
+		t.Errorf("log leaks a secret held in a struct or map: %s", buf.String())
 	}
 }
 

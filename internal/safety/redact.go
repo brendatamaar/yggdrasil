@@ -2,6 +2,7 @@ package safety
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -22,7 +23,7 @@ var (
 	// ghp_, gho_, ghu_, ghs_, ghr_, github_pat_, glpat-, sk-ant-
 	reTokens = regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9]{10,}|github_pat_[A-Za-z0-9_]{10,}|glpat-[A-Za-z0-9_-]{10,}|sk-ant-[A-Za-z0-9_-]{10,})`)
 	// token=..., "password": "...", GITHUB_TOKEN=..., api_key: ...
-	rePairs = regexp.MustCompile(`(?i)([A-Za-z0-9_.-]*(?:token|password|passwd|secret|api[_-]?key)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s&,;"']+)`)
+	rePairs = regexp.MustCompile(`(?i)([A-Za-z0-9_.-]*(?:token|password|passwd|secret|credential|private[_-]?key|api[_-]?key)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s&,;"']+)`)
 )
 
 type redactor struct {
@@ -33,9 +34,37 @@ type redactor struct {
 // secrets, such as the tokens Yggdrasil holds. Empty values are ignored.
 func NewRedactor(secrets ...string) Redactor {
 	s := slices.DeleteFunc(slices.Clone(secrets), func(v string) bool { return v == "" })
+	// A secret that JSON escapes (quotes, backslashes, & < >) appears in
+	// audit detail and JSON logs in its escaped form: mask that form too.
+	for _, v := range slices.Clone(s) {
+		for _, esc := range jsonForms(v) {
+			if esc != v && !slices.Contains(s, esc) {
+				s = append(s, esc)
+			}
+		}
+	}
 	// Longest first, so a secret that contains another one is masked whole.
 	slices.SortFunc(s, func(a, b string) int { return len(b) - len(a) })
 	return redactor{secrets: s}
+}
+
+// jsonForms returns the text of v inside a JSON string, with and without
+// HTML escaping, without the outer quotes.
+func jsonForms(v string) []string {
+	var out []string
+	for _, html := range []bool{true, false} {
+		var b strings.Builder
+		enc := json.NewEncoder(&b)
+		enc.SetEscapeHTML(html)
+		if err := enc.Encode(v); err != nil {
+			continue
+		}
+		q := strings.TrimSuffix(b.String(), "\n")
+		if len(q) >= 2 {
+			out = append(out, q[1:len(q)-1])
+		}
+	}
+	return out
 }
 
 // Redact implements Redactor.
@@ -116,6 +145,10 @@ func (h logHandler) attr(a slog.Attr) slog.Attr {
 			a.Value = slog.StringValue(h.r.Redact(v.Error()))
 		case fmt.Stringer:
 			a.Value = slog.StringValue(h.r.Redact(v.String()))
+		default:
+			// Structs, maps and slices could hold a token in any field:
+			// log their text form, redacted.
+			a.Value = slog.StringValue(h.r.Redact(fmt.Sprintf("%+v", v)))
 		}
 	default:
 	}

@@ -217,4 +217,21 @@ No two tasks in a batch own the same file or package: Batch 1 (`platform` / `db+
 - Playwright is not planned for this phase (`task test:e2e` stays a stub); T11 uses Go/Vitest integration instead. Say if you want Playwright now.
 
 ## Decisions / deviations log
-- (empty)
+- F0 (2026-10-15): `go mod tidy` removes requires that nothing imports yet, so dependencies are only safe in `go.mod` once code imports them. `tygo` pulls an old `x/tools`; `go get` upgraded it to v0.51.0. `sqlc` needs `go mod tidy` for its `go.sum` entries.
+- F6: `tygo` writes one file per Go package (`web/src/api/gen/{core,agents,api}.gen.ts`), not a single `types.gen.ts`. `type_mappings` are per package; a cross-package type without a mapping becomes `any` silently, so every one is mapped by name. `web/eslint.config.ts` ignores `src/api/gen`. `.claude/agents/frontend.md` still names `types.gen.ts` (the lead can't edit `.claude/`).
+- Batch 1 merged: T1 `52471a4`, T3 `01865fc`, T2 `ac73152` (T2 restarted once, because `go.mod` lacked its dependencies). After the merges `task generate` (no diff), `lint`, `typecheck`, `test` and `test:web` pass.
+- Batch 1 safety review (read-only researcher): **FAIL, 3 Blocking.**
+  - **B1 editor fallback env — decision, not changed.** Inside a foreign outer job that forbids breakaway, `OpenEditor` falls back to Explorer's `ShellExecute` (spikes B2 decision). The editor then has Explorer's environment, the user's own session environment, never Yggdrasil's (`.env` tokens are loaded into `ygg`, not into Explorer). The alternative is to refuse and tell the user to start `ygg` outside that terminal. Kept, pending the human's veto. To revisit before v1.
+  - **B2 JSON-escaped configured secrets in audit detail — fixed.** `NewRedactor` also masks each secret's JSON-escaped forms (with and without HTML escaping); test `TestRedactJSONEscapedSecret`.
+  - **B3 struct, map and slice log attributes bypassed redaction — fixed.** The slog handler now formats any other value with `%+v` and redacts it; test `TestLogHandlerRedactsStructAttrs`.
+  - Should-fix 4 (audit key pairs narrower than log keys) fixed: `credential` and `private_key` added to the pair pattern.
+- Should-fix carried forward (reviewer numbers):
+  - 5 env builder checks only names of Extra, not values; `looksSecret` misses AUTH, COOKIE, SESSION. → T10 or a small follow-up.
+  - 6 `ws.ts` resets backoff on every open, so a server that accepts then closes is retried every 500 ms. → T12 (frontend shell polish).
+  - 7 `OpenFolder` searches PATH for `explorer.exe` when `SystemRoot` is empty; 8 a path starting with `-` is read as an editor option (make it absolute). → T4 (platform) follow-up.
+  - 9 `fixtures/demo-gen` uses `runtime.GOOS`; it is a separate tooling module. → accepted, T11 allowlists it.
+  - 10 `db.Store.InsertAudit` is exported and unredacted (needed by `internal/audit` across packages). → document; T11 test forbids other callers.
+  - 11 nothing is wired yet (slog handler, redactor, audit writer, `platform.Shutdown`). → T10.
+  - 12 no tracked-repo check in `platform` or `CheckPath`. → Phase 3 path guard, before any agent call site.
+  - 13 `cancelTree` with a `TaskID` kills the whole task job, so one per-call context cancel kills siblings. → documented on `Start`; add a test in T4.
+- Known limits: the redactor masks `Basic <8+ chars>` prose; SQLite triggers can be dropped by anyone who can write the DB file.
