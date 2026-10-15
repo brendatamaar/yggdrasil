@@ -74,9 +74,11 @@ Status key: **auto** = covered by the spike's automated tests on Windows; **manu
 | Insert/select through sqlc, pragmas as configured | auto |
 | FK enforcement | auto |
 | DB path with spaces; a path containing `?` is refused | auto |
-| Concurrent writers | auto (plain `go test`; no `-race` run, see below) |
+| Concurrent writers, also under `-race` (`task spikes:test:race`, gcc from WinLibs) | auto |
 | Migrations up twice is a no-op; down works | auto |
-| `go version -m` on the built binary shows `CGO_ENABLED=0` | pending (not recorded) |
+| `go version -m` on the built `cmd/demo` shows `CGO_ENABLED=0` (modernc.org/sqlite v1.60.1, libc v1.78.0) | done (manual) |
+
+`task spikes:test` and `task spikes:test:race` both pass for all four spikes on Windows (run by the human, 2026-10-15).
 
 **Connection setup.**
 - Pragmas on every connection (DSN `_pragma`): `busy_timeout(5000)`, `journal_mode(WAL)`, `foreign_keys(1)`, `synchronous(NORMAL)`.
@@ -85,8 +87,8 @@ Status key: **auto** = covered by the spike's automated tests on Windows; **manu
 - sqlc: engine `sqlite`, schema read from the goose files (Down sections skipped), `emit_empty_slices: true`.
 
 **Gaps for Phase 1:**
-- `task test:race` runs the root module only, so `TestConcurrentWriters` has never run under `-race`. `task spikes:test:race` now covers the spikes (needs cgo and gcc); it hasn't been run yet.
-- Record the `go version -m` check and the exact sqlc invocation in the Phase 1 `task generate`.
+- `task test:race` covers the root module only; `task spikes:test:race` covers the spikes. Both need cgo and gcc (on Windows: `winget install BrechtSanders.WinLibs.POSIX.UCRT`, then a new terminal). Phase 1 CI needs the same.
+- Wire the exact sqlc invocation into the Phase 1 `task generate`.
 - Not shipped, so `task license` doesn't cover the spike's dependencies. The ones opened (modernc.org/sqlite, sqlc, wazero, pgx) are BSD, MIT or Apache-2.0; the rest weren't checked.
 
 ---
@@ -121,7 +123,7 @@ Status key: **auto** = covered by the spike's automated tests on Windows; **manu
 
 ## Wave 2 safety review (B3, B4 part 1, B6)
 
-**Verdict: PASS, no blocking items.** A read-only reviewer read the code; it didn't run tests or builds. Should-fix items: B4 model, scratch `git` job and scratch email are fixed; the B3 race task is added but not run; the env var sources stay open until `claude --help` can be checked.
+**Verdict: PASS, no blocking items.** A read-only reviewer read the code; it didn't run tests or builds. Should-fix items: B4 model, scratch `git` job and scratch email are fixed; the B3 race task is added and passes; the env var sources stay open until `claude --help` can be checked.
 
 - Passed: no cgo; no personal data, real hosts or tokens in scope (only fictional values); clean env on every agent spawn; job always attached to the agent, no breakaway; the hook denies `isolation: worktree` and fails closed; tests never run `claude`; `RemoveAll` only on the harness's own temp dir; no binaries committed (`bin/` ignored).
 - **B6 deviation:** `fixtures/demo-gen` refuses a non-empty `-out` and never deletes, where the brief said it replaces. Safer, but a second `task fixtures` fails until `fixtures/demo-project` is removed by hand.
