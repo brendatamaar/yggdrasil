@@ -9,6 +9,43 @@ import (
 	"context"
 )
 
+const createProject = `-- name: CreateProject :exec
+INSERT INTO projects (id, name, path, created_at) VALUES (?, ?, ?, ?)
+`
+
+type CreateProjectParams struct {
+	ID        string
+	Name      string
+	Path      string
+	CreatedAt string
+}
+
+func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) error {
+	_, err := q.db.ExecContext(ctx, createProject,
+		arg.ID,
+		arg.Name,
+		arg.Path,
+		arg.CreatedAt,
+	)
+	return err
+}
+
+const getProject = `-- name: GetProject :one
+SELECT id, name, path, created_at FROM projects WHERE id = ?
+`
+
+func (q *Queries) GetProject(ctx context.Context, id string) (Project, error) {
+	row := q.db.QueryRowContext(ctx, getProject, id)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Path,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const listProjects = `-- name: ListProjects :many
 SELECT id, name, path, created_at FROM projects ORDER BY name
 `
