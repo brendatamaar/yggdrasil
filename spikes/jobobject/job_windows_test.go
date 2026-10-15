@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -120,7 +121,16 @@ func runYgg(args []string) error {
 	// Plain breakaway with no checks, to record where it really lands.
 	breakaway := HelperCmd("sleep", life)
 	if err := StartBreakaway(breakaway); err != nil {
-		return err
+		// CI runners put the test in a job that forbids breakaway, and then
+		// CreateProcess fails with ACCESS_DENIED. Start it normally: it is
+		// still outside ygg's job, which is all this process is checked for.
+		if !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			return err
+		}
+		breakaway = HelperCmd("sleep", life)
+		if err := breakaway.Start(); err != nil {
+			return fmt.Errorf("start breakaway fallback: %w", err)
+		}
 	}
 	pids := map[string]int{
 		"child":      childPID,

@@ -183,4 +183,11 @@ CI green ← B5 merged (web lint/typecheck/test have real content)
   - B4 has `doc.go`, `event.go`, `parse.go`, `env.go`, `proc_windows.go`, `proc_other.go`. Missing: runner + cancel, hook mode, scratch repo, CLI, testdata fixtures, tests, report.
   - B6 has `main.go`, `generate.go`, `history.go`, `summary.go` (history possibly incomplete). Missing: tests, report.
   - Resume plan: commit each WIP in its worktree, then start a continuation subtask per task with `base` = that branch and the original brief plus "continue from the existing files".
+- Wave 2 outcome (2026-10-15): B3, B4 part 1 and B6 were finished and merged (`21128ad`); the reports are in docs/spikes.md.
+  - Wave 2 safety review (read-only reviewer): **PASS**, no blocking items. Fixed: B4 default model is `haiku`, the scratch repo's `git` runs through `startInGroup`, the scratch author is `@example.com`. Added `task spikes:test:race` (needs cgo and gcc, e.g. WinLibs).
+  - B3 verified by the human: `task spikes:test` and `task spikes:test:race` pass for all four spikes; `go version -m` on the `cmd/demo` binary shows `CGO_ENABLED=0`.
+  - B4 part 2 (live run, CLI 2.1.299, `--model haiku`, about $0.04 for 8 runs): checks (a)–(e) pass. The real depth and concurrency env var defaults are 3 and 20 (not 2 and 4); an 8.3 short `TEMP` path breaks `dontAsk` permission checks; the stream carries account data. Details are in docs/spikes.md.
+  - A username fragment in a live fixture (the 8.3 short-name form, which `scrub` had missed) was caught in review and squashed out of the unpushed history before any push.
+  - B6 deviation: the generator refuses a non-empty `-out` and never deletes; delete `fixtures/demo-project` by hand before re-running `task fixtures`.
+- B1 and B2 manual checklists run by the human (2026-10-15): all steps pass for PowerShell and cmd, and for the default and `perchild` job approaches.
 - A2 verification: `build`, `generate`, `test`, `lint`, `typecheck` and `test:web` were run in the lead session. `test:race`, `test:e2e`, `fixtures`, `spikes:test`, `license`, `release:check`, `run` and `dev` are blocked by the lead session's shell allowlist and need a manual run or CI.

@@ -135,8 +135,17 @@ tasks:
 
   license:install:
     desc: Install the pinned go-licenses (needs network; CI uses this)
+    # go-licenses v2.0.0 requires golang.org/x/tools v0.12.0, which doesn't
+    # compile with Go 1.22 or later (tokeninternal). So build it in a scratch
+    # module that upgrades x/tools; a plain `go install ...@version` fails.
     cmds:
-      - go install github.com/google/go-licenses/v2@{{.GO_LICENSES_VERSION}}
+      - |
+        tmp="$(mktemp -d)"
+        cd "$tmp"
+        go mod init licenses-tool
+        go get github.com/google/go-licenses/v2@{{.GO_LICENSES_VERSION}} golang.org/x/tools@latest
+        GOBIN="$(go env GOPATH)/bin" CGO_ENABLED=0 go install github.com/google/go-licenses/v2
+        rm -rf "$tmp"
 
   spikes:test:
     desc: Vet and test each Phase 0 spike (each is its own Go module)
