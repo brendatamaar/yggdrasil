@@ -17,8 +17,10 @@ Status key: **auto** = covered by the spike's automated tests on Windows; **manu
 | (c) interactive program | auto | auto (`choice`) |
 | (d) `exit 3` gives exit code 3, socket closes with "exit code 3" | auto | auto |
 | (e) closing the socket kills the shell tree, no `conhost`/`OpenConsole` left | auto | auto |
-| (f) unicode and colors in the browser | manual | manual |
-| Browser end to end (xterm.js, window resize) | manual | manual |
+| (f) unicode and colors in the browser | done (manual) | done (manual) |
+| Browser end to end (xterm.js, window resize) | done (manual) | done (manual) |
+
+The manual checklist below was run by the human on 2026-10-15 (PowerShell and cmd, steps 2–9): all steps passed, with no orphan `cmd.exe`, `PING.EXE`, `powershell.exe` or `conhost.exe` after closing the tab or stopping the server.
 
 **Verdict: go-pty works, but we don't adopt it (D12).** Phase 1 builds its own thin wrapper on `x/sys/windows`, with `creack/pty` on Unix. go-pty v0.2.2 has four problems:
 1. It leaks the `CreateProcess` process handle on every start (`cmd_windows.go`: it calls `os.FindProcess` and never closes `pi.Process`).
@@ -53,7 +55,7 @@ Status key: **auto** = covered by the spike's automated tests on Windows; **manu
 | Kill the `ygg` stand-in: child and grandchild die (all four approaches) | auto |
 | Nested task job: cancelling the context kills only that task's tree | auto |
 | Outside-job process survives `ygg` | auto (breakaway or broker) |
-| Kill the demo from Task Manager: children die, Notepad stays open | manual |
+| Kill the demo from Task Manager: children die, Notepad stays open | done (manual, 2026-10-15, default and `perchild` approaches) |
 
 **Breakaway (PL-05):** `CREATE_BREAKAWAY_FROM_JOB` only leaves jobs that allow it. Under an outer job without `BREAKAWAY_OK` (some terminals, IDEs, CI), `CreateProcess` succeeds but the process silently stays in that outer job. The spike's fallback starts the process with Explorer as its parent (`PROC_THREAD_ATTRIBUTE_PARENT_PROCESS`). Only automated runs inside an outer job were tested; running with no outer job at all is untested.
 
