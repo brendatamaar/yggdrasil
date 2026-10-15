@@ -1,18 +1,52 @@
 @import "tailwindcss";
 
 /* `dark:` follows the resolved theme on <html> (see src/stores/theme.ts). */
-@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+@custom-variant dark (&:where([data-theme="harbour"], [data-theme="harbour"] *));
+
+/* Theme tokens. Each theme sets the same variables; add themes here (UI-05). */
+:root,
+[data-theme="light"] {
+  --canvas: #ffffff;
+  --surface: #f4f4f5;
+  --line: #d4d4d8;
+  --fg: #18181b;
+  --muted: #52525b;
+  --accent: #0369a1;
+  --ok: #15803d;
+  --warn: #b45309;
+  --danger: #b91c1c;
+}
+
+[data-theme="harbour"] {
+  --canvas: #0b1220;
+  --surface: #131c2e;
+  --line: #243049;
+  --fg: #e6edf7;
+  --muted: #8b9ab5;
+  --accent: #38bdf8;
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --danger: #f87171;
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+}
 
 @layer base {
   html {
-    @apply bg-white text-zinc-900;
-  }
-
-  html[data-theme="dark"] {
-    @apply bg-zinc-950 text-zinc-100;
+    @apply bg-canvas text-fg;
   }
 
   :focus-visible {
-    @apply outline-2 outline-offset-2 outline-sky-500;
+    @apply outline-2 outline-offset-2 outline-accent;
   }
 }
