@@ -95,7 +95,7 @@ internal/
   notify/            # notification events for in-app and browser notifications
 web/
   src/
-    api/             # typed client; generated types from tygo live in src/api/types.gen.ts
+    api/             # typed client; generated types from tygo live in src/api/gen/*.gen.ts (one file per Go package)
     routes/          # TanStack Router routes
     widgets/         # one folder per widget module
     components/      # shared UI components

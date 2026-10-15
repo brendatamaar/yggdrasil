@@ -46,7 +46,7 @@ Goal: the structure every feature builds on.
 - [ ] `internal/git`: CLI wrapper for the safe subset, with `core.longpaths` (WE-04).
 - [ ] `internal/api`: HTTP server bound to `127.0.0.1`, Host/Origin checks, WebSocket hub, error format (SF-01).
 - [ ] `internal/audit`: audit writer used by every state change (SF-05).
-- [ ] `tygo` pipeline: Go types → `web/src/api/types.gen.ts`, wired into `task generate`.
+- [ ] `tygo` pipeline: Go types → `web/src/api/gen/*.gen.ts`, wired into `task generate`.
 - [ ] Agent `Adapter` interface, `Event` types with optional `ParentID`, and `Capabilities` including sub-agent support and budget cap (AG-01, AG-02).
 - [ ] Task model with optional `ParentTaskID` in the first migration (AG-23).
 - [ ] Mock adapter replaying `testdata/*.jsonl`, including one fixture with nested sub-agents (AG-03).

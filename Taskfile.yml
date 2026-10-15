@@ -56,10 +56,10 @@ tasks:
         vars: { SCRIPT: dev }
 
   generate:
-    desc: Generate code (sqlc, tygo)
+    desc: Generate code (sqlc into internal/db/gen, tygo into web/src/api/gen)
     cmds:
-      - echo "nothing to generate yet (sqlc and tygo arrive in Phase 1)"
-    silent: true
+      - go tool sqlc generate
+      - go tool tygo generate
 
   test:
     desc: Go tests, CGO_ENABLED=0 (root module and fixtures/demo-gen)

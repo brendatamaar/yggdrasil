@@ -40,7 +40,7 @@
 | F3 | **Platform and safety contracts** (interfaces and signatures only, no OS code): `platform.Spec` (argv, cwd, `Env []string` required, job scope), `platform.Process` (Wait, Kill via job, stdio), `platform.PTY` (from B1), `safety.Env` builder signature, `safety.Redactor` signature. | `internal/platform/platform.go`, `internal/safety/safety.go` | Compiles for windows/darwin/linux (`go vet`). |
 | F4 | **API contract types** in `internal/api/types.go`: error body `{code, message, hint}`, WebSocket envelope `{type, topic, seq, data}`, health response, task-event message. Plus **audit** writer interface (`audit.Writer.Write(ctx, Entry)`). | `internal/api/types.go`, `internal/audit/audit.go` | Compiles. |
 | F5 | **Migration 00001** (projects, repos, worktrees, tasks incl. `parent_task_id`, change_sets, proposals, builds + build_steps, task_events, audit_log) and `sqlc.yaml`. Queries are written in Batch 1. | `internal/db/migrations/00001_init.sql`, `sqlc.yaml` | `sqlc generate` runs offline; schema reviewed against AG-23. |
-| F6 | **Generation pipeline**: `tygo.yaml` (core, agents events, api types → `web/src/api/types.gen.ts`); `task generate` runs sqlc then tygo; CI `git diff --exit-code` already exists. | `tygo.yaml`, `Taskfile.yml` (generate only), `web/src/api/types.gen.ts` | `task generate` is a no-op on a second run; a type change breaks `task typecheck`. |
+| F6 | **Generation pipeline**: `tygo.yaml` (core, agents events, api types → `web/src/api/gen/{core,agents,api}.gen.ts`, one file per Go package); `task generate` runs sqlc then tygo; CI `git diff --exit-code` already exists. | `tygo.yaml`, `Taskfile.yml` (generate only), `web/src/api/gen/**` | `task generate` is a no-op on a second run; a type change breaks `task typecheck`. |
 
 Commit each step with its generated output (via `propose_commit`). Batch 1 starts only after F0–F6 are on `main` and you confirm.
 
@@ -67,10 +67,10 @@ Commit each step with its generated output (via `propose_commit`). Batch 1 start
 
 ### T3 — Frontend shell · `frontend`
 - **PRD:** UI-04, UI-05 (System + Harbour only), UI-08.
-- **Owns:** `web/src/**` **except** `web/src/widgets/**` and `web/src/api/types.gen.ts`.
+- **Owns:** `web/src/**` **except** `web/src/widgets/**` and `web/src/api/gen/**`.
 - **Must not touch:** Go code, `Taskfile.yml`, `web/embed.go`.
 - **Work:** router with routes `/`, `/tasks/:id`, `/projects`, `/settings` (placeholder pages); TanStack Query client + typed fetch wrapper that understands the F4 error body; WebSocket client (reconnect, `seq` gap detection, topic subscribe) in `web/src/api/ws.ts`; theme tokens (System, Harbour) as CSS variables plus the Zustand store (extends the current `stores/theme.ts`); top bar; `Ctrl+K` palette skeleton (`cmdk`, registers commands from a registry); notifications area; status pill; keyboard-reachable core flows.
-- **Interfaces:** `web/src/api/types.gen.ts` (read-only).
+- **Interfaces:** `web/src/api/gen/*.gen.ts` (read-only).
 - **Done:** `task lint`, `task typecheck`, `task test:web`, `task build` pass; Vitest tests for the WS client (reconnect, gaps), theme store and palette registry.
 - **Exit criteria:** E1 (shell).
 

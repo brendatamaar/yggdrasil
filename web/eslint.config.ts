@@ -6,7 +6,8 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default defineConfig([
-  globalIgnores(["dist", "node_modules"]),
+  // src/api/gen is written by tygo (task generate) and never edited by hand.
+  globalIgnores(["dist", "node_modules", "src/api/gen"]),
   {
     files: ["**/*.{ts,tsx}"],
     extends: [

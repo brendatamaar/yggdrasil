@@ -1,0 +1,32 @@
+# Go types -> TypeScript (docs/AGENTS.md 5.8). Run with `task generate`.
+# tygo writes one file per Go package; never edit the output by hand.
+#
+# type_mappings are per package. A Go type from another package that has no
+# mapping becomes `any`, which would hide breaking changes: map every
+# cross-package type to its qualified name, and import that package in the
+# frontmatter.
+packages:
+  - path: github.com/brendatamaar/yggdrasil/internal/core
+    output_path: web/src/api/gen/core.gen.ts
+    type_mappings: &std
+      time.Time: string
+      json.RawMessage: unknown
+  - path: github.com/brendatamaar/yggdrasil/internal/agents
+    output_path: web/src/api/gen/agents.gen.ts
+    # adapter.go holds the Go-only Adapter and Run interfaces and StartOptions.
+    exclude_files:
+      - adapter.go
+    type_mappings: *std
+  - path: github.com/brendatamaar/yggdrasil/internal/api
+    output_path: web/src/api/gen/api.gen.ts
+    frontmatter: |
+      import type * as agents from "./agents.gen";
+      import type * as core from "./core.gen";
+    type_mappings:
+      time.Time: string
+      json.RawMessage: unknown
+      core.ProjectID: core.ProjectID
+      core.RepoID: core.RepoID
+      core.TaskMode: core.TaskMode
+      core.Task: core.Task
+      agents.Event: agents.Event
