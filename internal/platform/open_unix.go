@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"syscall"
 )
@@ -15,6 +16,10 @@ import (
 func OpenEditor(ctx context.Context, editor string, path string, env []string) error {
 	if env == nil {
 		return ErrNoEnv
+	}
+	path, err := filepath.Abs(path) // a leading "-" must not read as an option
+	if err != nil {
+		return err
 	}
 	if err := CheckPath(path); err != nil {
 		return err
@@ -30,6 +35,10 @@ func OpenEditor(ctx context.Context, editor string, path string, env []string) e
 func OpenFolder(ctx context.Context, path string, env []string) error {
 	if env == nil {
 		return ErrNoEnv
+	}
+	path, err := filepath.Abs(path) // a leading "-" must not read as an option
+	if err != nil {
+		return err
 	}
 	if err := CheckPath(path); err != nil {
 		return err

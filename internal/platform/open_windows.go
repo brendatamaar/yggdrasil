@@ -25,6 +25,10 @@ func OpenEditor(ctx context.Context, editor string, path string, env []string) e
 	if env == nil {
 		return ErrNoEnv
 	}
+	path, err := filepath.Abs(path) // a leading "-" must not read as an option
+	if err != nil {
+		return err
+	}
 	if err := CheckPath(path); err != nil {
 		return err
 	}
@@ -36,19 +40,25 @@ func OpenEditor(ctx context.Context, editor string, path string, env []string) e
 }
 
 // OpenFolder shows path in Windows Explorer, outside every ygg job (PL-05).
+// Explorer comes from SystemRoot of env, never from the PATH.
 func OpenFolder(ctx context.Context, path string, env []string) error {
 	if env == nil {
 		return ErrNoEnv
 	}
+	path, err := filepath.Abs(path) // a leading "-" must not read as an option
+	if err != nil {
+		return err
+	}
 	if err := CheckPath(path); err != nil {
 		return err
 	}
-	exe := filepath.Join(envGet(env, "SystemRoot"), "explorer.exe")
+	root := envGet(env, "SystemRoot")
+	if root == "" {
+		return errors.New("platform: SystemRoot is not set in the environment, cannot find explorer.exe")
+	}
+	exe := filepath.Join(root, "explorer.exe")
 	if !filepath.IsAbs(exe) || !isRegular(exe) {
-		var err error
-		if exe, err = lookPath("explorer.exe", "", env); err != nil {
-			return err
-		}
+		return fmt.Errorf("platform: %s not found, check SystemRoot", exe)
 	}
 	return launchOutside(ctx, exe, []string{exe, path}, env)
 }
