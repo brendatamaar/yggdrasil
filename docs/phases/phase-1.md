@@ -1,6 +1,6 @@
 # Phase 1 — Foundations → `v0.2.0`
 
-> Status: **plan, awaiting approval** · 2026-10-15
+> Status: **done, waiting for your review before the tag** · plan written 2026-10-15, closed 2026-10-16
 > Source: docs/PLAN.md Phase 1; docs/PRD.md AG-01–AG-03, AG-05, AG-23 (schema only), SF-01, SF-04, SF-05, PL-02, PL-04, PL-05, WE-04, UI-02, UI-04, IN-04, D12, D15, D17; docs/spikes.md (B1–B4); docs/AGENTS.md sections 5–9.
 
 **Exit criteria (PLAN.md):**
@@ -258,4 +258,63 @@ No two tasks in a batch own the same file or package: Batch 1 (`platform` / `db+
   - Should-fix done: non-user errors from `Check` are no longer sent to the client (`UserMessage()` interface); `failTask` and the session write are audited first; at most 64 subscriptions per WebSocket client; model names validated (`^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$`, API and adapter); event text, tool input, diffs and commands are redacted before they are stored or sent (JSON stays valid); a panic in a run fails that task only; `POST /api/tasks` is refused during shutdown and `Close` serialises with `start` so a task can't join the group after `Wait`; a `Content-Security-Policy` header.
   - Accepted and documented: the hook `command` still holds the absolute `ygg` path (the CLI shows it in "hook error" lines); event reads are unauthenticated, which is fine on a loopback single-user server with 64-bit random task IDs.
   - Manual checks that need the real CLI (not automated on purpose): (1) the hook receives `YGG_HOOK_CONFIG` from the CLI's environment (if not, every tool call is denied: safe but useless); (2) `--disallowedTools` is accepted by the installed CLI; (3) the CSP does not break the UI in a browser (grid, palette).
+- Batch 4 (2026-10-16), written by the lead like Batch 3 (subagents kept stopping on "Bash denied"):
+  - T10 `cmd/ygg`: `config.go` (settings: `YGG_ADDR`, `YGG_DATA_DIR`, `YGG_LOG`, `YGG_MOCK_DELAY_MS`), `app.go` (wiring: database, audit, redacting logger, demo agent `mock` and `claude-code`, the server), `doctor.go`, `seed.go`, the hidden `ygg hook`, and `main.go`. `internal/api` now serves the UI, so `cmd/ygg/ui.go` is removed. `platform.Shutdown` (closing the process-wide job) is called once by `main`, not by `app.run`, so tests in one process can keep starting processes.
+  - `ygg seed <folder>` is a stand-in for the project pages (WS-01, Phase 2): it tracks a repo, audits it and prints the two IDs the composer asks for. It never changes the repo.
+  - T11 `internal/archtest`: reads the module's source and fails if a process starts outside `internal/platform` (`os/exec`, `os.StartProcess`, `syscall.StartProcess`, `windows.CreateProcess`), `runtime.GOOS` is read outside it, `os.Environ` is read outside `internal/safety`, `InsertAudit` (no redaction) is called outside `internal/audit`/`internal/db`, or a package imports one it must not (`core`, `safety`, `platform` are leaves; `db` knows `core` only; the agent contract knows `core` only; `api` imports no adapter; `git` and `audit` stay below `api`/`agents`). Every rule is also run on source that breaks it. Only the `ygg` binary may exist. It found two bugs in its own rules while being written.
+  - Not done on purpose: a Windows end-to-end test that kills `ygg` and counts child processes. The job-object tests in `internal/platform` cover the mechanism and `cmd/ygg/app_test.go` covers the wiring; the combination is on the manual list below.
+  - Playwright is still not in use (`task test:e2e` stays a stub).
+
+## Phase close (2026-10-16)
+
+Proposed tag: **`v0.2.0`**, for you to create. I did not tag, push or start Phase 2.
+
+### Exit criteria
+
+| Criterion | Met | Evidence |
+|---|---|---|
+| A mock agent task streams events end to end into a basic transcript view | yes, in tests; manual run left | `cmd/ygg` `TestAppRunsADemoTaskEndToEnd` (seed, POST, events with parent links stored in order); `internal/api` live WebSocket, backfill and cancel tests; `web` `useTranscript`, `Transcript`, `TaskPage` tests |
+| Every spawned process goes through `platform.Start` | yes | `internal/archtest` `TestArchitectureRules/os/exec` and siblings pass on the whole tree; `golangci-lint` `forbidigo` bans `exec.Command*` outside platform; `internal/git` and the Claude Code adapter test that their only start is `platform.Start` |
+| Safety helpers have tests | yes | `internal/safety` (env builder, redaction incl. JSON-escaped secrets, log handler), `internal/audit`, `internal/db` (append-only triggers) |
+
+### Safety invariants (docs/AGENTS.md section 6) in this phase
+
+| # | Invariant | Test |
+|---|---|---|
+| 1 | no force push, hard reset, branch deletion, file deletion | `internal/git` `TestNoDestructiveGit` (source and test files), `TestScanCatchesDestructiveCode` |
+| 3 | tokens never reach child processes | `safety` env tests; `platform` nil-env refusal; Claude Code `TestRunCommandLineEnvironmentAndCleanup` (tokens set in the parent never arrive) |
+| 4 | tokens never in logs, URLs, audit | `safety` redaction tests; `api` `TestEventsAreRedactedBeforeTheyAreStored`; `cmd/ygg` `TestAppLogsNeverHoldATokenShape` |
+| 5 | enforcement outside the agent | Claude Code hook tests (`TestHookEnforcesAskModeAndTheRepoFolder`, guard tests); API refuses Code mode |
+| 6 | only tracked repos visible | `api` `TestCreateTaskRefusals` (repo of another project), guard path tests |
+| 7 | loopback only, Host/Origin checks | `api` `TestHostAndOriginChecks`, `TestRunRefusesNonLoopbackListener`; `cmd/ygg` `TestServeRefusesARemoteAddress`; `archtest` `TestDefaultAddressIsLoopback` |
+| 8 | state changes audited | `api` `TestCancelEndsTheTaskAndIsAudited`; `cmd/ygg` `TestSeedTracksARepoAndPrintsTheIDs` |
+| 9, 10, 11 | Ask mode integrity, repo trust, sub-agents never widen access | partly: Ask-only API and hook, `ownAgentConfig` refusal, hook depth/concurrency/isolation tests. The full integrity check (SF-07) and repo trust (SF-09) are Phase 3 |
+| 2 | every mutation of a main checkout or remote is a proposal | nothing mutates a checkout yet; Phase 3 |
+
+### Manual verification on Windows (what only you can confirm)
+
+1. **Clean build:** `task build`, then `bin\ygg.exe version`, `bin\ygg.exe doctor`. Expected: git and the data folder are `ok`; the rest `ok` or `--` with a hint. Run `doctor` once with Git renamed out of PATH: it must say `FAIL` and what to do, exit code 1.
+2. **Start and demo task:** `bin\ygg.exe seed <path of any local git repo>`, copy the two IDs; `bin\ygg.exe`; open `http://127.0.0.1:4747`; enter a prompt (and optionally a name), the IDs, agent "Demo agent", Start. Expected: the transcript streams (about 250 ms per event), a nested sub-agent block appears with tool-call count and duration, the status pill shows 1 running and then a notification "your task name: Done". Reload the page: the transcript is back. Check the notification shows the name or "Task xxxxxx", never your prompt.
+3. **Customize:** on the start page choose Customize, remove "This machine", reload (it stays removed), Add widget brings it back, Reset layout restores both.
+4. **Kill test:** start a task with the real agent (step 6) or leave the server idle, then end `ygg.exe` in Task Manager: no `claude`, `node` or `cmd` child is left within 2 s.
+5. **Loopback:** `YGG_ADDR=0.0.0.0:4747` refuses to start; from another PC the port is unreachable; `curl -H "Host: evil.example" http://127.0.0.1:4747/api/health` is refused (403).
+6. **Real Claude Code (needs your OK, uses a little quota; use a Haiku model and a repo without `.claude/settings*.json`, `.mcp.json` or `.claude/agents`):**
+   - the run starts and streams; a sub-agent nests;
+   - the hook gets its configuration (if every tool call is denied with "its configuration is missing", the CLI did not pass `YGG_HOOK_CONFIG` on);
+   - `--disallowedTools` is accepted by your installed CLI;
+   - asking it to edit a file or read `..\..\something` is refused with a plain reason;
+   - Cancel leaves no `claude` or `node` process.
+7. **Content Security Policy:** with the app open, the grid, palette and notifications menu work and the browser console shows no CSP errors.
+8. **Platform tests on your desktop:** `go test -count=1 ./internal/platform/...` passes; afterwards no `platform.test.exe`, `cmd.exe` or `conhost.exe` is left (the editor tests open a console window for about 2 s); `TestLongPathExpandsShortNames` is a PASS, not a SKIP.
+9. **From inside Windows Terminal:** repeat step 8; the editor tests (outer job) must still pass.
+10. **Defender:** no alert when `ygg` opens an editor through Explorer inside an outer job (the fallback decided in spikes B2; B1 of the Batch 1 review is still waiting for your veto).
+
+### Left open (carried to Phase 2 or later)
+
+- Batch 1 and Batch 2 should-fix items listed above (env value check, ws backoff, `-` option paths, pipes on PTY close timeout, `ctrlCMu` span, scan breadth).
+- No project or repo pages: tracking is `ygg seed` until WS-01.
+- The bundle is 563 KB; code splitting is a polish item.
+- Phase 0 leftovers in PLAN.md (domain name; the CI checkboxes were never ticked although CI is green) are for you.
+- The `.claude/agents/frontend.md` file still names `types.gen.ts` (the lead cannot edit `.claude/`).
+
 - Known limits: the redactor masks `Basic <8+ chars>` prose; SQLite triggers can be dropped by anyone who can write the DB file.

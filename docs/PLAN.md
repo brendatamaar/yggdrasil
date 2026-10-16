@@ -40,20 +40,20 @@ Goal: prove the risky parts on Windows before building on them, and set up a pub
 
 Goal: the structure every feature builds on.
 
-- [ ] Data model and first migrations: projects, repos, worktrees, tasks, change sets, proposals, builds, audit log (`internal/core`, `internal/db`).
-- [ ] `internal/platform`: paths, executable/wrapper resolution, job objects, `platform.Start`, PTY, port detection, open editor/folder, WSL path detection (PL-02, PL-04).
-- [ ] `internal/safety`: clean environment builder and token redaction for logs (SF-04).
-- [ ] `internal/git`: CLI wrapper for the safe subset, with `core.longpaths` (WE-04).
-- [ ] `internal/api`: HTTP server bound to `127.0.0.1`, Host/Origin checks, WebSocket hub, error format (SF-01).
-- [ ] `internal/audit`: audit writer used by every state change (SF-05).
-- [ ] `tygo` pipeline: Go types → `web/src/api/gen/*.gen.ts`, wired into `task generate`.
-- [ ] Agent `Adapter` interface, `Event` types with optional `ParentID`, and `Capabilities` including sub-agent support and budget cap (AG-01, AG-02).
-- [ ] Task model with optional `ParentTaskID` in the first migration (AG-23).
-- [ ] Mock adapter replaying `testdata/*.jsonl`, including one fixture with nested sub-agents (AG-03).
-- [ ] Claude Code reference adapter, based on the Phase 0 spike (AG-03, AG-05).
-- [ ] Frontend shell: router, TanStack Query client, WebSocket client, theme tokens (System + Harbour first), top bar, `Ctrl+K` palette skeleton, notifications area, status pill (UI-04).
-- [ ] Widget module interface and grid with Customize (UI-02).
-- [ ] `ygg doctor` subcommand, first version (IN-04).
+- [x] Data model and first migrations: projects, repos, worktrees, tasks, change sets, proposals, builds, audit log (`internal/core`, `internal/db`).
+- [x] `internal/platform`: paths, executable/wrapper resolution, job objects, `platform.Start`, PTY, port detection, open editor/folder, WSL path detection (PL-02, PL-04).
+- [x] `internal/safety`: clean environment builder and token redaction for logs (SF-04).
+- [x] `internal/git`: CLI wrapper for the safe subset, with `core.longpaths` (WE-04).
+- [x] `internal/api`: HTTP server bound to `127.0.0.1`, Host/Origin checks, WebSocket hub, error format (SF-01).
+- [x] `internal/audit`: audit writer used by every state change (SF-05).
+- [x] `tygo` pipeline: Go types → `web/src/api/gen/*.gen.ts`, wired into `task generate`.
+- [x] Agent `Adapter` interface, `Event` types with optional `ParentID`, and `Capabilities` including sub-agent support and budget cap (AG-01, AG-02).
+- [x] Task model with optional `ParentTaskID` in the first migration (AG-23).
+- [x] Mock adapter replaying `testdata/*.jsonl`, including one fixture with nested sub-agents (AG-03).
+- [x] Claude Code reference adapter, based on the Phase 0 spike (AG-03, AG-05). *(Ask mode only until worktrees and the path guard exist; needs a manual run against the real CLI, see docs/phases/phase-1.md.)*
+- [x] Frontend shell: router, TanStack Query client, WebSocket client, theme tokens (System + Harbour first), top bar, `Ctrl+K` palette skeleton, notifications area, status pill (UI-04).
+- [x] Widget module interface and grid with Customize (UI-02).
+- [x] `ygg doctor` subcommand, first version (IN-04).
 
 **Exit:** a mock agent task streams events end to end into a basic transcript view; every spawned process goes through `platform.Start`; safety helpers have tests.
 
