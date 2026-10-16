@@ -1,5 +1,6 @@
-import { useConnectionStore } from "../stores/connection";
+import { useRunningTasks } from "../api/queries";
 import type { ConnectionStatus } from "../api/ws";
+import { useConnectionStore } from "../stores/connection";
 
 const labels: Record<ConnectionStatus, string> = {
   connecting: "Connecting",
@@ -15,14 +16,11 @@ const dots: Record<ConnectionStatus, string> = {
   closed: "bg-danger",
 };
 
-/** Running task count. No task list endpoint exists in api.gen yet, so this is 0 until one lands. */
-function useRunningCount(): number {
-  return 0;
-}
-
 export function StatusPill() {
   const status = useConnectionStore((s) => s.status);
-  const running = useRunningCount();
+  // Zero while loading or when the server can't be reached: the connection
+  // dot already says so.
+  const running = useRunningTasks().data?.length ?? 0;
 
   return (
     <div

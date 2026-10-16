@@ -24,4 +24,23 @@ export default defineConfig([
       },
     },
   },
+  {
+    // Widgets are self-contained modules and must not import each other
+    // (docs/AGENTS.md 5.10). A widget folder may reach "../types" and anything
+    // outside src/widgets. src/widgets/isolation.test.ts checks every depth.
+    files: ["src/widgets/*/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              regex: String.raw`^\.\./(?!types$)[^./][^/]*(/|$)`,
+              message: "A widget can't import another widget. Share code through src/components or src/api.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 ]);

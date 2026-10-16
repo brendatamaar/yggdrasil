@@ -4,6 +4,7 @@ import { RouterProvider } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { createQueryClient } from "./api/client";
 import { getWSClient, type WSClient } from "./api/ws";
+import { WSContext } from "./api/wsContext";
 import type { AppRouter } from "./router";
 import { useConnectionStore } from "./stores/connection";
 import { syncTheme } from "./stores/theme";
@@ -16,11 +17,11 @@ interface AppProps {
 
 export function App({ router, socket }: AppProps) {
   const [queryClient] = useState(createQueryClient);
+  const ws = socket ?? getWSClient();
 
   useEffect(() => syncTheme(), []);
 
   useEffect(() => {
-    const ws = socket ?? getWSClient();
     const stop = ws.onStatus((status) => {
       useConnectionStore.setState({ status });
     });
@@ -29,13 +30,15 @@ export function App({ router, socket }: AppProps) {
       stop();
       ws.close();
     };
-  }, [socket]);
+  }, [ws]);
 
   return (
     <QueryClientProvider client={queryClient}>
-      <Tooltip.Provider delayDuration={300}>
-        <RouterProvider router={router} />
-      </Tooltip.Provider>
+      <WSContext.Provider value={ws}>
+        <Tooltip.Provider delayDuration={300}>
+          <RouterProvider router={router} />
+        </Tooltip.Provider>
+      </WSContext.Provider>
     </QueryClientProvider>
   );
 }

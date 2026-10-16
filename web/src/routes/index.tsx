@@ -1,10 +1,18 @@
 import { createRoute } from "@tanstack/react-router";
-import { Placeholder } from "../components/Placeholder";
+import { Composer } from "../components/Composer";
+import { WidgetGrid } from "../components/widgetgrid/WidgetGrid";
 import { rootRoute } from "./root";
 
-// The start page is a placeholder until the first widgets land.
 export const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
-  component: () => <Placeholder title="Start" />,
+  component: function Start() {
+    return (
+      <div className="space-y-6">
+        <h1 className="sr-only">Start</h1>
+        <Composer />
+        <WidgetGrid />
+      </div>
+    );
+  },
 });

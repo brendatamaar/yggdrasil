@@ -3,7 +3,7 @@ import { indexRoute } from "./routes/index";
 import { projectsRoute } from "./routes/projects";
 import { rootRoute } from "./routes/root";
 import { settingsRoute } from "./routes/settings";
-import { taskRoute } from "./routes/tasks.placeholder";
+import { taskRoute } from "./routes/tasks/route";
 
 const routeTree = rootRoute.addChildren([indexRoute, taskRoute, projectsRoute, settingsRoute]);
 

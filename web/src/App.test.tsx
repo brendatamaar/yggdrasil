@@ -6,9 +6,11 @@ import { WSClient } from "./api/ws";
 import { createAppRouter } from "./router";
 import { useCommandStore } from "./stores/commands";
 import { useNotificationStore } from "./stores/notifications";
+import { stubApi } from "./test/fakeApi";
 import { FakeSocket } from "./test/fakeSocket";
 
 function renderAt(path: string) {
+  stubApi(); // a quiet server: nothing running, tasks not found
   const router = createAppRouter(createMemoryHistory({ initialEntries: [path] }));
   const socket = new WSClient({ url: "ws://x/ws", socketCtor: FakeSocket });
   render(<App router={router} socket={socket} />);

@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { useRegisterCommands, type Command } from "../stores/commands";
 import { useThemeStore } from "../stores/theme";
 import { CommandPalette } from "./CommandPalette";
+import { LiveSync } from "./LiveSync";
 import { TopBar } from "./TopBar";
 
 export function AppLayout() {
@@ -27,6 +28,7 @@ export function AppLayout() {
         <Outlet />
       </main>
       <CommandPalette />
+      <LiveSync />
     </div>
   );
 }

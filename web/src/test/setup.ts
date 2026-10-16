@@ -1,5 +1,5 @@
 import { cleanup } from "@testing-library/react";
-import { afterEach } from "vitest";
+import { afterEach, vi } from "vitest";
 
 // jsdom doesn't implement scrolling; the router's scroll handling calls it.
 window.scrollTo = () => undefined;
@@ -16,4 +16,5 @@ Element.prototype.scrollIntoView = () => undefined;
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  vi.unstubAllGlobals(); // fetch, when a test replaced it with stubApi
 });
