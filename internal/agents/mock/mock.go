@@ -40,13 +40,14 @@ func New(opts Options) *Adapter {
 func (*Adapter) Name() string { return "mock" }
 
 func (*Adapter) Capabilities() agents.Capabilities {
+	// Only what the mock really does: it replays nested events, tags a resumed
+	// session and reports cost. It enforces nothing, so claiming hooks or
+	// sub-agent limits would let later safety tests pass against a false claim.
 	return agents.Capabilities{
-		Resume:          true,
-		CostReporting:   true,
-		Enforcement:     agents.EnforcementHook,
-		Subagents:       agents.SubagentsNested,
-		SubagentLimits:  true,
-		PermissionHooks: true,
+		Resume:        true,
+		CostReporting: true,
+		Enforcement:   agents.EnforcementLimited,
+		Subagents:     agents.SubagentsNested,
 	}
 }
 

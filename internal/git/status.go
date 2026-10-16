@@ -70,13 +70,13 @@ func parseStatus(out string) (Status, error) {
 			continue
 		case strings.HasPrefix(t, "1 "):
 			f := strings.SplitN(t, " ", 9)
-			if len(f) != 9 {
+			if len(f) != 9 || len(f[1]) != 2 {
 				return st, fmt.Errorf("bad status entry %q", t)
 			}
 			fc = FileChange{Path: f[8], Index: code(f[1][0]), Worktree: code(f[1][1])}
 		case strings.HasPrefix(t, "2 "):
 			f := strings.SplitN(t, " ", 10)
-			if len(f) != 10 || i+1 >= len(toks) {
+			if len(f) != 10 || len(f[1]) != 2 || i+1 >= len(toks) {
 				return st, fmt.Errorf("bad status entry %q", t)
 			}
 			i++ // the original path is the next NUL-separated token

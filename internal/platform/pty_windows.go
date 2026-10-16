@@ -205,7 +205,11 @@ func allowCtrlC() (restore func()) {
 	if peb == nil || peb.ProcessParameters == nil || peb.ProcessParameters.ConsoleFlags&consoleIgnoreCtrlC == 0 {
 		return ctrlCMu.Unlock
 	}
-	_, _, _ = procSetConsoleCtrlHandler.Call(0, 0)
+	// If clearing fails the child keeps ignoring Ctrl+C; there is nothing to
+	// restore then, and the PTY still works (Ctrl+C is sent as 0x03).
+	if r, _, _ := procSetConsoleCtrlHandler.Call(0, 0); r == 0 {
+		return ctrlCMu.Unlock
+	}
 	return func() {
 		_, _, _ = procSetConsoleCtrlHandler.Call(0, 1)
 		ctrlCMu.Unlock()

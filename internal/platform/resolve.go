@@ -59,7 +59,9 @@ func lookPath(name, dir string, env []string) (string, error) {
 	}
 	var dirs []string
 	for _, d := range filepath.SplitList(envGet(env, "PATH")) {
-		if d != "" {
+		// A relative entry (including ".") would search the current
+		// directory, which Resolve promises never to do.
+		if d != "" && filepath.IsAbs(d) {
 			dirs = append(dirs, filepath.Join(d, name))
 		}
 	}
