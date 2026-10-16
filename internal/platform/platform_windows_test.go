@@ -36,13 +36,17 @@ const (
 )
 
 func TestMain(m *testing.M) {
-	if len(os.Args) > 1 {
+	// `go test` always passes -test.* flags first. Anything else is a helper
+	// (or a stand-in editor) started by a test.
+	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-test.") {
 		// Recording "editor": writes its first argument to the file and exits.
 		if out := os.Getenv(argvOutEnvVar); out != "" {
 			exitOn(os.WriteFile(out, []byte(os.Args[1]), 0o600))
 			os.Exit(0)
 		}
-		if pidFile, ok := strings.CutPrefix(os.Args[1], editorArgPrefix); ok {
+		// OpenEditor makes its path argument absolute, so the prefix may follow
+		// the working directory: look for it instead of requiring it first.
+		if _, pidFile, ok := strings.Cut(os.Args[1], editorArgPrefix); ok {
 			exitOn(writePIDs(pidFile, map[string]int{"pid": os.Getpid()}))
 			time.Sleep(helperLife)
 			os.Exit(0)
@@ -51,6 +55,10 @@ func TestMain(m *testing.M) {
 			exitOn(runHelper(os.Args[1], os.Args[2:]))
 			os.Exit(0)
 		}
+		// A helper never runs the test suite: an unrecognised argument would
+		// otherwise start every test again, which starts more helpers.
+		fmt.Fprintf(os.Stderr, "platform test binary: unexpected argument %q\n", os.Args[1])
+		os.Exit(2)
 	}
 	os.Exit(m.Run())
 }
@@ -133,7 +141,12 @@ func runHelper(mode string, args []string) error {
 		if err := gc.Start(); err != nil {
 			return fmt.Errorf("start grandchild: %w", err)
 		}
-		return writePIDs(args[0], map[string]int{"pid": gc.Process.Pid})
+		if err := writePIDs(args[0], map[string]int{"pid": gc.Process.Pid}); err != nil {
+			return err
+		}
+		// Stay alive long enough for the test to open the grandchild: once
+		// this process exits, the task job closes and kills it.
+		time.Sleep(time.Second)
 	case "listen":
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {

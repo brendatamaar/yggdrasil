@@ -76,8 +76,9 @@ func TestPTYNoHandleLeak(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	grew := int(handleCount(t)) - int(before)
 	t.Logf("handles after %d sessions: StartPTY +%d, bare ConPTY +%d", n, grew, osLeak)
-	// A per-session leak would add at least n; the slack covers runtime noise.
-	if grew > osLeak+25 {
+	// A per-session leak would add at least n; the slack covers runtime noise,
+	// which measured 6 handles over 20 sessions and 24 to 30 over 200.
+	if grew > osLeak+max(25, n/4) {
 		t.Errorf("StartPTY gained %d handles over %d sessions, bare ConPTY only %d", grew, n, osLeak)
 	}
 }

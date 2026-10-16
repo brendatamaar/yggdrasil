@@ -59,9 +59,9 @@ func TestListeningPortsDescendants(t *testing.T) {
 	if !slices.Contains(got, pids["port"]) {
 		t.Errorf("ListeningPorts(%d) = %v, want it to contain %d", p.Pid(), got, pids["port"])
 	}
-	// A sibling that is not in the tree does not show up.
-	if own, err := ListeningPorts(os.Getpid()); err != nil || slices.Contains(own, pids["port"]) {
-		t.Errorf("test process reports the grandchild's port: %v, %v", own, err)
+	// The test process is an ancestor, so it sees the grandchild's port too.
+	if own, err := ListeningPorts(os.Getpid()); err != nil || !slices.Contains(own, pids["port"]) {
+		t.Errorf("ancestor does not report the grandchild's port: %v, %v", own, err)
 	}
 
 	if err := p.Kill(); err != nil {

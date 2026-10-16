@@ -147,8 +147,8 @@ func newConPTY(spec PTYSpec, exe, dir string) (*conPTY, error) {
 	}
 	defer attrs.Delete()
 	// The pseudo console attribute's value is the HPCON itself, not a pointer to it.
-	if err := attrs.Update(windows.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, //nolint:gosec // raw Win32 attribute
-		*(*unsafe.Pointer)(unsafe.Pointer(&hpc)), unsafe.Sizeof(hpc)); err != nil {
+	if err := attrs.Update(windows.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+		*(*unsafe.Pointer)(unsafe.Pointer(&hpc)), unsafe.Sizeof(hpc)); err != nil { //nolint:gosec // raw Win32 attribute: the value is the HPCON itself
 		return fail(fmt.Errorf("set pseudo console attribute: %w", err))
 	}
 
