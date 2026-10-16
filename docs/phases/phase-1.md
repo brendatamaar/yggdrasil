@@ -309,6 +309,16 @@ Proposed tag: **`v0.2.0`**, for you to create. I did not tag, push or start Phas
 9. **From inside Windows Terminal:** repeat step 8; the editor tests (outer job) must still pass.
 10. **Defender:** no alert when `ygg` opens an editor through Explorer inside an outer job (the fallback decided in spikes B2; B1 of the Batch 1 review is still waiting for your veto).
 
+### Manual verification progress (the human, 2026-10-16)
+
+- Step 1 **passed**: `task build`, `ygg version`, `ygg doctor` (exit 0 with one optional tool missing; with Git removed from PATH: `FAIL git` with a hint and exit 1). It showed Python 2.7.18 as usable; fixed (`0c028330`), Python 2 is now refused.
+- Step 2 **passed**: `ygg seed` printed the IDs; the demo task streamed with a nested sub-agent (1 tool call, 2.3 s, 190 tokens; second sub-agent 752 ms, 70 tokens), total 770 tokens and $0.0115, ending "The agent finished"; the task name was shown, not the prompt. The human also confirmed that nothing looked wrong.
+- Steps 3 to 10: not reported yet.
+
+### Decision
+
+- **Editor fallback inside an outer job (Batch 1 review B1): keep it** (the human, 2026-10-16). Inside a foreign job that forbids breakaway, `OpenEditor` starts the editor through Explorer's `ShellExecute`, so it gets the user's session environment, never Yggdrasil's. To be written into the threat model (SF-08) in Phase 3.
+
 ### Left open (carried to Phase 2 or later)
 
 - Batch 1 and Batch 2 should-fix items listed above (env value check, ws backoff, `-` option paths, pipes on PTY close timeout, `ctrlCMu` span, scan breadth).
