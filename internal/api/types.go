@@ -54,8 +54,21 @@ const (
 	MsgError MessageType = "error"
 )
 
-// Topic names. Task topics are "task:<id>".
-const TopicTaskPrefix = "task:"
+// Topic names. A task topic is "task:<id>" and carries agents.Event values in
+// WSMessage.Data. TopicTasks carries TaskStatusMessage values for every task.
+const (
+	TopicTaskPrefix = "task:"
+	TopicTasks      = "tasks"
+)
+
+// TaskStatusMessage is the Data of a message on TopicTasks, sent whenever a
+// task changes status. It holds no prompt or output, so it is safe to show in
+// notifications (docs/AGENTS.md 5.9).
+type TaskStatusMessage struct {
+	TaskID core.TaskID     `json:"taskId"`
+	Title  string          `json:"title"`
+	Status core.TaskStatus `json:"status"`
+}
 
 // WSMessage is the envelope of every WebSocket message in both directions.
 // Seq is per topic and increases by one; a jump means a gap.
@@ -74,6 +87,11 @@ type CreateTaskRequest struct {
 	Mode      core.TaskMode  `json:"mode"`
 	Agent     string         `json:"agent"`
 	Model     string         `json:"model,omitempty"`
+}
+
+// TaskListResponse is the body of GET /api/tasks (optionally ?status=running).
+type TaskListResponse struct {
+	Tasks []core.Task `json:"tasks"`
 }
 
 // TaskResponse is the body of task endpoints.

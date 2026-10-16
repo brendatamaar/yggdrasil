@@ -13,9 +13,11 @@ packages:
       json.RawMessage: unknown
   - path: github.com/brendatamaar/yggdrasil/internal/agents
     output_path: web/src/api/gen/agents.gen.ts
-    # adapter.go holds the Go-only Adapter and Run interfaces and StartOptions.
+    # Go-only files: the Adapter and Run interfaces and StartOptions, and the
+    # runner (EventSink, Result with an error field, Node).
     exclude_files:
       - adapter.go
+      - runner.go
     type_mappings: *std
   - path: github.com/brendatamaar/yggdrasil/internal/api
     output_path: web/src/api/gen/api.gen.ts
@@ -28,5 +30,7 @@ packages:
       core.ProjectID: core.ProjectID
       core.RepoID: core.RepoID
       core.TaskMode: core.TaskMode
+      core.TaskID: core.TaskID
+      core.TaskStatus: core.TaskStatus
       core.Task: core.Task
       agents.Event: agents.Event

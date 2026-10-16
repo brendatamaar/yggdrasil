@@ -53,9 +53,25 @@ export const MsgGap: MessageType = "gap";
  */
 export const MsgError: MessageType = "error";
 /**
- * Topic names. Task topics are "task:<id>".
+ * Topic names. A task topic is "task:<id>" and carries agents.Event values in
+ * WSMessage.Data. TopicTasks carries TaskStatusMessage values for every task.
  */
 export const TopicTaskPrefix = "task:";
+/**
+ * Topic names. A task topic is "task:<id>" and carries agents.Event values in
+ * WSMessage.Data. TopicTasks carries TaskStatusMessage values for every task.
+ */
+export const TopicTasks = "tasks";
+/**
+ * TaskStatusMessage is the Data of a message on TopicTasks, sent whenever a
+ * task changes status. It holds no prompt or output, so it is safe to show in
+ * notifications (docs/AGENTS.md 5.9).
+ */
+export interface TaskStatusMessage {
+  taskId: core.TaskID;
+  title: string;
+  status: core.TaskStatus;
+}
 /**
  * WSMessage is the envelope of every WebSocket message in both directions.
  * Seq is per topic and increases by one; a jump means a gap.
@@ -76,6 +92,12 @@ export interface CreateTaskRequest {
   mode: core.TaskMode;
   agent: string;
   model?: string;
+}
+/**
+ * TaskListResponse is the body of GET /api/tasks (optionally ?status=running).
+ */
+export interface TaskListResponse {
+  tasks: core.Task[];
 }
 /**
  * TaskResponse is the body of task endpoints.
