@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,10 +32,16 @@ const (
 	// Explorer starts it with an environment that is not ours.
 	helperEnvVar    = "YGG_PLATFORM_HELPER"
 	editorArgPrefix = "editor-sleep:"
+	argvOutEnvVar   = "YGG_PLATFORM_ARGV_OUT"
 )
 
 func TestMain(m *testing.M) {
 	if len(os.Args) > 1 {
+		// Recording "editor": writes its first argument to the file and exits.
+		if out := os.Getenv(argvOutEnvVar); out != "" {
+			exitOn(os.WriteFile(out, []byte(os.Args[1]), 0o600))
+			os.Exit(0)
+		}
 		if pidFile, ok := strings.CutPrefix(os.Args[1], editorArgPrefix); ok {
 			exitOn(writePIDs(pidFile, map[string]int{"pid": os.Getpid()}))
 			time.Sleep(helperLife)
@@ -81,6 +88,9 @@ func selfExe(t testing.TB) string {
 //	pwd                          print the working directory
 //	exit <code>
 //	child <pidfile> <lifetime>   start a "sleep" grandchild, write its pid, sleep
+//	orphan <pidfile> <lifetime>  like child, but exit at once and leave the grandchild
+//	listen <portfile>            listen on 127.0.0.1, write the port, sleep
+//	spawn-listen <portfile>      start a "listen" grandchild, sleep
 //	ygg <out> <gate|nogate> <editor|noeditor>
 func runHelper(mode string, args []string) error {
 	exe, err := os.Executable()
@@ -117,6 +127,30 @@ func runHelper(mode string, args []string) error {
 			return err
 		}
 		time.Sleep(d)
+	case "orphan":
+		gc := exec.Command(exe, "sleep", args[1])
+		gc.Env = helperEnv()
+		if err := gc.Start(); err != nil {
+			return fmt.Errorf("start grandchild: %w", err)
+		}
+		return writePIDs(args[0], map[string]int{"pid": gc.Process.Pid})
+	case "listen":
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return err
+		}
+		defer ln.Close()
+		if err := writePIDs(args[0], map[string]int{"port": ln.Addr().(*net.TCPAddr).Port}); err != nil {
+			return err
+		}
+		time.Sleep(helperLife)
+	case "spawn-listen":
+		gc := exec.Command(exe, "listen", args[0])
+		gc.Env = helperEnv()
+		if err := gc.Start(); err != nil {
+			return fmt.Errorf("start grandchild: %w", err)
+		}
+		time.Sleep(helperLife)
 	case "ygg":
 		return runYgg(exe, args[0], args[1] == "gate", args[2] == "editor")
 	default:

@@ -89,6 +89,6 @@ func envGet(env []string, key string) string {
 }
 
 func isRegular(path string) bool {
-	fi, err := os.Stat(path)
+	fi, err := os.Stat(path) //nolint:gosec // only stats; the path is a PATH or SystemRoot candidate
 	return err == nil && fi.Mode().IsRegular()
 }
