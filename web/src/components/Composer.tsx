@@ -126,6 +126,7 @@ export function Composer() {
             }}
           >
             <option value="mock">Demo agent</option>
+            <option value="claude-code">Claude Code</option>
           </select>
         </div>
       </div>

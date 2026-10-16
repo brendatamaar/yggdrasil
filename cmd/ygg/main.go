@@ -7,44 +7,97 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log/slog"
 	"net"
-	"net/http"
 	"os"
 	"os/signal"
-	"time"
 
+	"github.com/brendatamaar/yggdrasil/internal/agents/claudecode"
+	"github.com/brendatamaar/yggdrasil/internal/platform"
 	"github.com/brendatamaar/yggdrasil/web"
 )
 
 // version is set at build time with -ldflags "-X main.version=<tag>".
 var version = "dev"
 
-const defaultAddr = "127.0.0.1:4747"
+// streams is what a command talks to, so tests can replace it.
+type streams struct {
+	in            io.Reader
+	out, err      io.Writer
+	getenv        func(string) string
+	userConfigDir func() (string, error)
+}
+
+// exitError asks main to exit with a code without printing anything more.
+type exitError struct{ code int }
+
+func (e exitError) Error() string { return fmt.Sprintf("exit status %d", e.code) }
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	err := run(ctx, os.Args[1:], streams{
+		in: os.Stdin, out: os.Stdout, err: os.Stderr, getenv: os.Getenv, userConfigDir: os.UserConfigDir,
+	})
+	stop()
+	// Closes the job every child process belongs to: nothing outlives ygg.
+	if shutdownErr := platform.Shutdown(); shutdownErr != nil {
+		fmt.Fprintln(os.Stderr, "ygg: stopping child processes:", shutdownErr)
+	}
+	var ee exitError
+	if errors.As(err, &ee) {
+		os.Exit(ee.code)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "ygg:", err)
 		os.Exit(1)
 	}
 }
 
-func run(args []string) error {
+func run(ctx context.Context, args []string, s streams) error {
 	cmd := "serve"
 	if len(args) > 0 {
 		cmd = args[0]
 	}
 	switch cmd {
 	case "serve":
-		return serve()
+		return serve(ctx, s)
+	case "doctor":
+		cfg, err := loadConfig(s.getenv, s.userConfigDir)
+		if err != nil {
+			return err
+		}
+		if code := doctor(ctx, s.out, cfg); code != 0 {
+			return exitError{code}
+		}
+		return nil
+	case "seed":
+		if len(args) < 2 || len(args) > 3 {
+			return errors.New("usage: ygg seed <repo folder> [project name]")
+		}
+		cfg, err := loadConfig(s.getenv, s.userConfigDir)
+		if err != nil {
+			return err
+		}
+		name := ""
+		if len(args) == 3 {
+			name = args[2]
+		}
+		return seed(ctx, s.out, cfg, args[1], name)
+	case "hook":
+		// Not listed in the help: Claude Code runs this on every tool call to
+		// enforce the task's rules (see claudecode.RunHook). It needs no
+		// configuration of its own and opens no database.
+		if code := claudecode.RunHook(args[1:], s.in, s.out, s.err, s.getenv); code != 0 {
+			return exitError{code}
+		}
+		return nil
 	case "version", "--version":
-		fmt.Println("ygg", version)
+		fmt.Fprintln(s.out, "ygg", version)
 		return nil
 	case "help", "-h", "--help":
-		usage(os.Stdout)
+		usage(s.out)
 		return nil
 	default:
-		usage(os.Stderr)
+		usage(s.err)
 		return fmt.Errorf("unknown command %q", cmd)
 	}
 }
@@ -53,72 +106,40 @@ func usage(w io.Writer) {
 	fmt.Fprint(w, `Usage: ygg [command]
 
 Commands:
-  serve     start Yggdrasil (default)
-  version   print the version
-  help      show this help
+  serve            start Yggdrasil (default)
+  doctor           check what Yggdrasil needs and explain what is missing
+  seed <folder>    track a git repo so you can start a task on it
+                   (a stand-in until the project pages arrive)
+  version          print the version
+  help             show this help
 
-Settings:
-  YGG_ADDR  listen address (default `+defaultAddr+`, loopback only)
+Settings (all optional, see .env.example):
+  YGG_ADDR            listen address (default `+defaultAddr+`, loopback only)
+  YGG_DATA_DIR        where the database and logs live
+  YGG_LOG             debug, info, warn or error
+  YGG_MOCK_DELAY_MS   pause between events of the demo agent
 `)
 }
 
-func serve() error {
-	addr, err := listenAddr(os.Getenv("YGG_ADDR"))
+// serve starts Yggdrasil on the configured address until ctx is cancelled.
+func serve(ctx context.Context, s streams) error {
+	cfg, err := loadConfig(s.getenv, s.userConfigDir)
 	if err != nil {
 		return err
 	}
-
 	dist, err := fs.Sub(web.Dist, "dist")
 	if err != nil {
 		return fmt.Errorf("open embedded frontend: %w", err)
 	}
-
-	ln, err := net.Listen("tcp", addr)
+	// Listen first, so a busy port is reported before anything else starts.
+	ln, err := net.Listen("tcp", cfg.addr)
 	if err != nil {
-		return fmt.Errorf("can't listen on %s (is another ygg running? set YGG_ADDR to use another port): %w", addr, err)
+		return fmt.Errorf("can't listen on %s (is another ygg running? set YGG_ADDR to use another port): %w", cfg.addr, err)
 	}
-
-	srv := &http.Server{
-		Handler:           uiHandler(dist),
-		ReadHeaderTimeout: 10 * time.Second,
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
-	errc := make(chan error, 1)
-	go func() { errc <- srv.Serve(ln) }()
-	slog.Info("Yggdrasil is running", "url", "http://"+ln.Addr().String(), "version", version)
-
-	select {
-	case err := <-errc:
-		return fmt.Errorf("serve http: %w", err)
-	case <-ctx.Done():
-	}
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("shut down http server: %w", err)
-	}
-	if err := <-errc; err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("serve http: %w", err)
-	}
-	return nil
-}
-
-// listenAddr returns the address to listen on. Only loopback addresses are
-// accepted until remote access mode (RA-*) exists.
-func listenAddr(env string) (string, error) {
-	if env == "" {
-		return defaultAddr, nil
-	}
-	host, _, err := net.SplitHostPort(env)
+	a, err := newApp(ctx, cfg, dist, s.err)
 	if err != nil {
-		return "", fmt.Errorf("YGG_ADDR %q is not host:port, e.g. %s: %w", env, defaultAddr, err)
+		_ = ln.Close()
+		return err
 	}
-	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
-		return "", fmt.Errorf("YGG_ADDR %q must use a loopback IP such as 127.0.0.1; remote access isn't available yet", env)
-	}
-	return env, nil
+	return a.run(ctx, ln)
 }
