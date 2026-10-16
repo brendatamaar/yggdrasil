@@ -20,6 +20,7 @@ func TestBuildArgs(t *testing.T) {
 		"--setting-sources", "project",
 		"--permission-mode", "dontAsk",
 		"--allowedTools", "Read,Grep,Glob",
+		"--disallowedTools", "Edit,Write,MultiEdit,NotebookEdit,Bash,PowerShell",
 		"--", "-x look at the cart",
 	}
 	if !slices.Equal(args, want) {

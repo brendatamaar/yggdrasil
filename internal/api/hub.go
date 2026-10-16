@@ -19,6 +19,9 @@ const (
 	writeTimeout = 10 * time.Second
 	pingEvery    = 30 * time.Second
 	maxWSMessage = 64 << 10
+	// maxTopicsPerClient bounds the subscriptions one connection can hold, so a
+	// client can't grow the server's memory by subscribing without end.
+	maxTopicsPerClient = 64
 )
 
 // hub fans messages out to WebSocket clients by topic. Publishing never
@@ -206,12 +209,20 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			h.mu.Lock()
+			tooMany := false
 			if msg.Type == MsgSubscribe {
-				c.topics[msg.Topic] = struct{}{}
+				if _, have := c.topics[msg.Topic]; !have && len(c.topics) >= maxTopicsPerClient {
+					tooMany = true
+				} else {
+					c.topics[msg.Topic] = struct{}{}
+				}
 			} else {
 				delete(c.topics, msg.Topic)
 			}
 			h.mu.Unlock()
+			if tooMany {
+				h.reply(c, WSMessage{Type: MsgError, Topic: msg.Topic, Data: errData("Too many subscriptions on this connection.")})
+			}
 		default:
 			h.reply(c, WSMessage{Type: MsgError, Data: errData("Unknown message type.")})
 		}

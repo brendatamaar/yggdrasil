@@ -2,6 +2,7 @@ package claudecode
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -198,6 +199,43 @@ func TestStartRefusals(t *testing.T) {
 			}
 		}
 	}
+	// A repo that configures Claude Code itself could run its own commands.
+	for _, name := range []string{".claude/settings.json", ".claude/settings.local.json", ".mcp.json", ".claude/agents"} {
+		o := ok
+		o.Dir = t.TempDir()
+		path := filepath.Join(o.Dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		var err error
+		if strings.HasSuffix(name, "agents") {
+			err = os.Mkdir(path, 0o700)
+		} else {
+			err = os.WriteFile(path, []byte("{}"), 0o600)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := a.Start(context.Background(), o)
+		var ue *UserError
+		if err == nil || !errors.As(err, &ue) || !strings.Contains(ue.Message, name) || !strings.Contains(ue.Message, "own Claude Code configuration") {
+			t.Errorf("%s: err = %v", name, err)
+			if err == nil {
+				for range r.Events() { //nolint:revive // drain so the run ends
+				}
+			}
+		}
+	}
+	// Model names go onto a command line.
+	for _, model := range []string{"--dangerously-skip-permissions", "a b", "x;y", "-m", strings.Repeat("a", 65)} {
+		o := ok
+		o.Model = model
+		if r, err := a.Start(context.Background(), o); err == nil {
+			t.Errorf("model %q was accepted", model)
+			for range r.Events() { //nolint:revive // drain so the run ends
+			}
+		}
+	}
 	// The hook executable must be absolute.
 	bad := New(Options{Binary: testExe(t), HookExecutable: "ygg", TempDir: t.TempDir()})
 	if r, err := bad.Start(context.Background(), ok); err == nil {
@@ -304,6 +342,18 @@ func TestRunCommandLineEnvironmentAndCleanup(t *testing.T) {
 	}
 	if cwd := read(t, out+".cwd"); !strings.EqualFold(filepath.Clean(cwd), filepath.Clean(long)) {
 		t.Errorf("working directory = %q, want %q", cwd, long)
+	}
+
+	// The hook was told to enforce Ask mode and the repo folder.
+	var hookCfg HookConfig
+	if err := json.Unmarshal([]byte(read(t, out+".hookcfg")), &hookCfg); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(hookCfg.AllowedTools, askTools) || !strings.EqualFold(filepath.Clean(hookCfg.AllowedDir), filepath.Clean(long)) {
+		t.Errorf("hook configuration = %+v", hookCfg)
+	}
+	if !slices.Contains(argv, "--disallowedTools") {
+		t.Errorf("--disallowedTools missing from %q", argv)
 	}
 
 	// The settings the CLI got hold only the hook command and the event name.

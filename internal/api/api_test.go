@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -364,8 +365,13 @@ func TestTaskRunsAndEventsAreStoredInOrder(t *testing.T) {
 		if err := json.Unmarshal(m.Data, &sm); err != nil || sm.TaskID != task.ID {
 			t.Fatalf("bad tasks message %s", m.Data)
 		}
-		if strings.Contains(string(m.Data), secretDetail) {
+		// Neither the secret line nor the first line of the prompt: the title is
+		// what the person named the task, or "Task <id>".
+		if strings.Contains(string(m.Data), secretDetail) || strings.Contains(string(m.Data), "order routes") {
 			t.Errorf("tasks topic leaks the prompt: %s", m.Data)
+		}
+		if !strings.Contains(string(m.Data), `"title":"Task `) {
+			t.Errorf("tasks topic title = %s, want a generic title", m.Data)
 		}
 		seen = append(seen, sm.Status)
 	}
@@ -532,7 +538,10 @@ func TestCancelEndsTheTaskAndIsAudited(t *testing.T) {
 }
 
 func TestUnavailableAgentIsRefused(t *testing.T) {
-	e := newEnv(t, "plain", 0, func(d *Deps) { d.Adapters["broken"] = brokenAdapter{mock.New(mock.Options{})} })
+	e := newEnv(t, "plain", 0, func(d *Deps) {
+		d.Adapters["broken"] = brokenAdapter{mock.New(mock.Options{}), userError("The agent is not signed in. Sign in with its own app first.")}
+		d.Adapters["leaky"] = brokenAdapter{mock.New(mock.Options{}), errString(`open C:\Users\someone\secret.db: access denied`)}
+	})
 	req := e.createReq()
 	req.Agent = "broken"
 	resp, data := e.do(t, http.MethodPost, "/api/tasks", req)
@@ -540,18 +549,224 @@ func TestUnavailableAgentIsRefused(t *testing.T) {
 	if resp.StatusCode != 503 || json.Unmarshal(data, &b) != nil || b.Code != ErrUnavailable || !strings.Contains(b.Message, "not signed in") {
 		t.Errorf("broken agent = %d %s", resp.StatusCode, data)
 	}
+
+	// An error without a message meant for people is never shown.
+	req.Agent = "leaky"
+	resp, data = e.do(t, http.MethodPost, "/api/tasks", req)
+	if resp.StatusCode != 503 || strings.Contains(string(data), "someone") || strings.Contains(string(data), "secret.db") {
+		t.Errorf("internal error leaked: %d %s", resp.StatusCode, data)
+	}
 }
 
-type brokenAdapter struct{ *mock.Adapter }
-
-func (brokenAdapter) Name() string { return "broken" }
-func (brokenAdapter) Check(context.Context) error {
-	return errString("The agent is not signed in. Sign in with its own app first.")
+type brokenAdapter struct {
+	*mock.Adapter
+	err error
 }
+
+func (brokenAdapter) Name() string                  { return "broken" }
+func (b brokenAdapter) Check(context.Context) error { return b.err }
 
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+// userError carries a message meant for people, like claudecode.UserError.
+type userError string
+
+func (e userError) Error() string       { return string(e) }
+func (e userError) UserMessage() string { return string(e) }
+
+func TestTaskTitleComesFromTheRequestNeverThePrompt(t *testing.T) {
+	e := newEnv(t, "plain", 0)
+	req := e.createReq()
+	resp, data := e.do(t, http.MethodPost, "/api/tasks", req)
+	var tr TaskResponse
+	if resp.StatusCode != 201 || json.Unmarshal(data, &tr) != nil {
+		t.Fatalf("create = %d %s", resp.StatusCode, data)
+	}
+	short := string(tr.Task.ID)[len(tr.Task.ID)-6:]
+	if tr.Task.Title != "Task "+short {
+		t.Errorf("default title = %q, want %q", tr.Task.Title, "Task "+short)
+	}
+
+	req.Title = "  Cart\tbug\nreview  "
+	_, data = e.do(t, http.MethodPost, "/api/tasks", req)
+	if err := json.Unmarshal(data, &tr); err != nil || tr.Task.Title != "Cart bug review" {
+		t.Errorf("a given title = %q (%s)", tr.Task.Title, data)
+	}
+
+	req.Title = strings.Repeat("é", 200)
+	_, data = e.do(t, http.MethodPost, "/api/tasks", req)
+	if err := json.Unmarshal(data, &tr); err != nil || len([]rune(tr.Task.Title)) != maxTitleRunes+1 || !strings.HasSuffix(tr.Task.Title, "…") {
+		t.Errorf("a long title = %d runes (%s)", len([]rune(tr.Task.Title)), data)
+	}
+}
+
+func TestModelNameIsValidated(t *testing.T) {
+	e := newEnv(t, "plain", 0)
+	for _, model := range []string{"--dangerously-skip-permissions", "a b", "x;y", "-m", strings.Repeat("a", 65)} {
+		req := e.createReq()
+		req.Model = model
+		if resp, data := e.do(t, http.MethodPost, "/api/tasks", req); resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("model %q = %d %s, want 400", model, resp.StatusCode, data)
+		}
+	}
+	req := e.createReq()
+	req.Model = "claude-haiku-5-5"
+	if resp, data := e.do(t, http.MethodPost, "/api/tasks", req); resp.StatusCode != http.StatusCreated {
+		t.Errorf("a valid model = %d %s", resp.StatusCode, data)
+	}
+}
+
+// What an agent reads can hold secrets; known token shapes never reach the
+// database or a client.
+func TestEventsAreRedactedBeforeTheyAreStored(t *testing.T) {
+	const token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+	e := newEnv(t, "plain", 0, func(d *Deps) {
+		d.Adapters["leaky"] = emitAdapter{mock.New(mock.Options{}), []agents.Event{
+			{Kind: agents.EventMessage, Role: agents.RoleAssistant, Text: "the key is " + token},
+			{Kind: agents.EventToolCall, Tool: &agents.ToolCall{Name: "Read", Input: json.RawMessage(`{"note":"Bearer abc123def456ghi789"}`)}},
+			{Kind: agents.EventToolResult, Text: "GITHUB_TOKEN=" + token},
+			{Kind: agents.EventFileEdit, File: &agents.FileEdit{Path: "a.env", Op: "modify", Diff: "+TOKEN=" + token}},
+			{Kind: agents.EventCommand, Command: &agents.CommandRun{Line: "curl -H 'Authorization: Bearer abcdefgh12345678'", Output: token}},
+			{Kind: agents.EventError, Error: "failed with " + token},
+		}}
+	})
+	req := e.createReq()
+	req.Agent = "leaky"
+	task := func() core.Task {
+		resp, data := e.do(t, http.MethodPost, "/api/tasks", req)
+		var tr TaskResponse
+		if resp.StatusCode != 201 || json.Unmarshal(data, &tr) != nil {
+			t.Fatalf("create = %d %s", resp.StatusCode, data)
+		}
+		return tr.Task
+	}()
+	e.waitStatus(t, task.ID, core.TaskDone)
+
+	_, data := e.do(t, http.MethodGet, "/api/tasks/"+string(task.ID)+"/events", nil)
+	for _, leak := range []string{token, "abc123def456ghi789", "abcdefgh12345678"} {
+		if strings.Contains(string(data), leak) {
+			t.Errorf("stored events contain %q: %s", leak, data)
+		}
+	}
+	if !strings.Contains(string(data), "[REDACTED]") {
+		t.Errorf("nothing was redacted: %s", data)
+	}
+	// The database holds the same, not only the REST view.
+	rows, err := e.store.ListTaskEvents(context.Background(), task.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if strings.Contains(string(row.Data), token) {
+			t.Errorf("database row %d holds the token: %s", row.Seq, row.Data)
+		}
+	}
+}
+
+// emitAdapter replays the events it is given.
+type emitAdapter struct {
+	*mock.Adapter
+	events []agents.Event
+}
+
+func (emitAdapter) Name() string { return "leaky" }
+func (a emitAdapter) Start(context.Context, agents.StartOptions) (agents.Run, error) {
+	ch := make(chan agents.Event, len(a.events)+2)
+	ch <- agents.Event{Kind: agents.EventStatus, Status: agents.RunStarted}
+	for _, e := range a.events {
+		ch <- e
+	}
+	ch <- agents.Event{Kind: agents.EventStatus, Status: agents.RunCompleted}
+	close(ch)
+	return stubRun{ch}, nil
+}
+
+type stubRun struct{ ch chan agents.Event }
+
+func (r stubRun) Events() <-chan agents.Event { return r.ch }
+func (stubRun) SessionID() string             { return "" }
+func (stubRun) Wait() error                   { return nil }
+
+// A panic inside a run fails that task; it doesn't take the server down.
+func TestPanicInARunFailsOnlyThatTask(t *testing.T) {
+	e := newEnv(t, "plain", 0, func(d *Deps) { d.Adapters["panics"] = panicAdapter{mock.New(mock.Options{})} })
+	req := e.createReq()
+	req.Agent = "panics"
+	resp, data := e.do(t, http.MethodPost, "/api/tasks", req)
+	var tr TaskResponse
+	if resp.StatusCode != 201 || json.Unmarshal(data, &tr) != nil {
+		t.Fatalf("create = %d %s", resp.StatusCode, data)
+	}
+	e.waitStatus(t, tr.Task.ID, core.TaskFailed)
+	if resp, _ := e.do(t, http.MethodGet, "/api/health", nil); resp.StatusCode != 200 {
+		t.Errorf("the server stopped answering after a panic: %d", resp.StatusCode)
+	}
+	// And the next task still runs.
+	if _, data := e.do(t, http.MethodPost, "/api/tasks", e.createReq()); !strings.Contains(string(data), `"task"`) {
+		t.Errorf("the next task: %s", data)
+	}
+}
+
+type panicAdapter struct{ *mock.Adapter }
+
+func (panicAdapter) Name() string { return "panics" }
+func (panicAdapter) Start(context.Context, agents.StartOptions) (agents.Run, error) {
+	panic("boom")
+}
+
+func TestNoTaskStartsWhileTheServerIsStopping(t *testing.T) {
+	e := newEnv(t, "plain", 0)
+	e.srv.Close()
+	resp, data := e.do(t, http.MethodPost, "/api/tasks", e.createReq())
+	var b ErrorBody
+	if resp.StatusCode != http.StatusServiceUnavailable || json.Unmarshal(data, &b) != nil || b.Code != ErrUnavailable {
+		t.Errorf("create during shutdown = %d %s", resp.StatusCode, data)
+	}
+	tasks, _ := e.store.ListTasks(context.Background(), e.project.ID)
+	if len(tasks) != 0 {
+		t.Errorf("a task was created during shutdown: %+v", tasks)
+	}
+}
+
+func TestSubscriptionsPerClientAreCapped(t *testing.T) {
+	e := newEnv(t, "plain", 0)
+	ws := e.dial(t)
+	for i := range maxTopicsPerClient {
+		subscribe(t, ws, TopicTaskPrefix+"t"+strconv.Itoa(i))
+	}
+	subscribe(t, ws, TopicTaskPrefix+"one-too-many")
+	m, err := readMsg(t, ws, 5*time.Second)
+	if err != nil || m.Type != MsgError || !strings.Contains(string(m.Data), "Too many") {
+		t.Fatalf("over the cap: %+v, %v", m, err)
+	}
+	// A topic the client already has is not "one more".
+	subscribe(t, ws, TopicTaskPrefix+"t0")
+	unsubscribeAndResubscribe := func() {
+		b, _ := json.Marshal(WSMessage{Type: MsgUnsubscribe, Topic: TopicTaskPrefix + "t0"})
+		_ = ws.Write(context.Background(), websocket.MessageText, b)
+		subscribe(t, ws, TopicTaskPrefix+"fits-now")
+	}
+	unsubscribeAndResubscribe()
+	if m, err := readMsg(t, ws, 300*time.Millisecond); err == nil {
+		t.Errorf("unexpected message after making room: %+v", m)
+	}
+}
+
+func TestContentSecurityPolicy(t *testing.T) {
+	e := newEnv(t, "plain", 0)
+	resp, _ := e.do(t, http.MethodGet, "/", nil)
+	csp := resp.Header.Get("Content-Security-Policy")
+	for _, want := range []string{"default-src 'self'", "frame-ancestors 'none'", "object-src 'none'", "base-uri 'none'"} {
+		if !strings.Contains(csp, want) {
+			t.Errorf("CSP %q lacks %q", csp, want)
+		}
+	}
+	if strings.Contains(csp, "unsafe-eval") || strings.Contains(csp, "script-src 'self' 'unsafe-inline'") {
+		t.Errorf("CSP allows inline or eval script: %q", csp)
+	}
+}
 
 func TestStaticAssets(t *testing.T) {
 	e := newEnv(t, "plain", 0)

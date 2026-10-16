@@ -83,10 +83,14 @@ type WSMessage struct {
 type CreateTaskRequest struct {
 	ProjectID core.ProjectID `json:"projectId"`
 	RepoIDs   []core.RepoID  `json:"repoIds"`
-	Prompt    string         `json:"prompt"`
-	Mode      core.TaskMode  `json:"mode"`
-	Agent     string         `json:"agent"`
-	Model     string         `json:"model,omitempty"`
+	// Title is the task's name, shown in lists and notifications. It is never
+	// made from the prompt, which can hold code or paths (docs/AGENTS.md 5.9).
+	// Empty gives "Task <short id>".
+	Title  string        `json:"title,omitempty"`
+	Prompt string        `json:"prompt"`
+	Mode   core.TaskMode `json:"mode"`
+	Agent  string        `json:"agent"`
+	Model  string        `json:"model,omitempty"`
 }
 
 // TaskListResponse is the body of GET /api/tasks (optionally ?status=running).

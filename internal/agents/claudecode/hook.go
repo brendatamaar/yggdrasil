@@ -33,6 +33,14 @@ type HookConfig struct {
 	// back up the CLI's own environment limits.
 	MaxDepth      int `json:"maxDepth"`
 	MaxConcurrent int `json:"maxConcurrent"`
+	// AllowedTools lists the tools a call may use; empty means no limit. The
+	// sub-agent tool is always allowed here (it has its own limits). This is
+	// Yggdrasil's own enforcement of Ask mode, in addition to the CLI flags
+	// (SF-06, invariant 5).
+	AllowedTools []string `json:"allowedTools,omitempty"`
+	// AllowedDir limits the file paths a call may name to this folder (the
+	// task's repo); empty means no check (invariant 6).
+	AllowedDir string `json:"allowedDir,omitempty"`
 }
 
 // Hook event names (Claude Code hooks documentation).
@@ -194,6 +202,11 @@ func decide(cfg HookConfig, event string, stdin io.Reader, now time.Time) hookRe
 		return rec
 	}
 	if !isSubagentTool(in.ToolName) {
+		if pre {
+			if reason := checkToolCall(cfg, in); reason != "" {
+				return deny("%s", reason)
+			}
+		}
 		return rec
 	}
 	var sub struct {

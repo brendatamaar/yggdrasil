@@ -112,11 +112,20 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 	})
 }
 
+// contentSecurityPolicy: the page loads only its own files, can't be framed
+// and can only talk to its own origin (the WebSocket included; the ws: sources
+// cover browsers that don't count 'self' for ws://). Inline styles are allowed
+// because the grid and Radix set styles on elements.
+const contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data:; connect-src 'self' ws://127.0.0.1:* ws://localhost:* ws://[::1]:*; " +
+	"base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"
+
 // headers sets the headers every response carries.
 func headers(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Content-Security-Policy", contentSecurityPolicy)
 		next.ServeHTTP(w, r)
 	})
 }

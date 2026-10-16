@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -34,6 +35,13 @@ type UserError struct {
 
 func (e *UserError) Error() string { return e.Message }
 func (e *UserError) Unwrap() error { return e.Err }
+
+// UserMessage is the text that is safe to show a person; callers that only
+// know errors in general look for this method.
+func (e *UserError) UserMessage() string { return e.Message }
+
+// modelName is what a model name may look like: it goes into a command line.
+var modelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$`)
 
 // Options configure the adapter.
 type Options struct {
@@ -121,6 +129,8 @@ func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run,
 		return nil, &UserError{Message: "Claude Code can only run in Ask mode (read-only) in this version."}
 	case strings.TrimSpace(o.Prompt) == "":
 		return nil, &UserError{Message: "The prompt is empty. Write what the agent should look into."}
+	case o.Model != "" && !modelName.MatchString(o.Model):
+		return nil, &UserError{Message: "That model name isn't valid. Use letters, digits, dots, dashes and colons."}
 	}
 	dir, err := platform.LongPath(o.Dir)
 	if err != nil {
@@ -128,6 +138,14 @@ func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run,
 	}
 	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
 		return nil, &UserError{Message: "The repo folder doesn't exist any more. Check the project's folder.", Err: err}
+	}
+	// A repo that configures Claude Code itself (settings with hooks, MCP
+	// servers, agent definitions) could run its own commands even in Ask mode.
+	// No agent runs there until the user can trust a repo (SF-09, invariant 10).
+	if f := ownAgentConfig(dir, exists); f != "" {
+		return nil, &UserError{Message: fmt.Sprintf(
+			"This repo has its own Claude Code configuration (%s), which could run commands. "+
+				"Yggdrasil doesn't run agents in such a repo until you can trust it once, which arrives in a later version.", f)}
 	}
 	bin, err := platform.Resolve(a.opts.Binary, "", o.Env)
 	if err != nil {
@@ -140,6 +158,7 @@ func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run,
 	cleanup := func() { _ = os.RemoveAll(work) } // our own temp folder only
 	settings, hookConfig, err := writeConfigFiles(work, a.opts.HookExecutable, HookConfig{
 		LogPath: filepath.Join(work, "hook.log"), MaxDepth: o.MaxSubagentDepth, MaxConcurrent: o.MaxConcurrentSubagents,
+		AllowedTools: askTools, AllowedDir: dir,
 	})
 	if err != nil {
 		cleanup()
@@ -166,6 +185,12 @@ func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run,
 	r := &run{events: make(chan agents.Event), done: make(chan struct{})}
 	go r.loop(ctx, proc, pr, pw, newParser(dir), stderr, cleanup)
 	return r, nil
+}
+
+// exists reports whether a file or folder exists.
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // run is one Claude Code session. Two goroutines belong to it, and both end

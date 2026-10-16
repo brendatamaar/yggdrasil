@@ -62,6 +62,23 @@ describe("composer", () => {
     expect(saved).not.toContain("Look at the cart");
   });
 
+  it("sends the name the person typed, and only that, as the title", async () => {
+    const created = { task: { id: "tsk_9", title: "Cart review", status: "running" } };
+    const api = renderHome((c) => {
+      if (c.method === "POST") return { status: 201, body: created };
+      if (c.path === "/api/tasks/tsk_9") return { body: created };
+      return undefined;
+    });
+    await screen.findByRole("button", { name: "Start task" });
+    fill("Look at src/secret.go and token=abc", "prj_1", "rep_1");
+    fireEvent.change(screen.getByLabelText("Task name (optional)"), { target: { value: "  Cart review  " } });
+    fireEvent.click(screen.getByRole("button", { name: "Start task" }));
+    await screen.findByRole("heading", { name: "Cart review" });
+    const body = api.calls.find((c) => c.method === "POST")?.body as { title?: string; prompt: string };
+    expect(body.title).toBe("Cart review");
+    expect(body.prompt).toContain("src/secret.go");
+  });
+
   it("shows the server's message and hint when the task is refused", async () => {
     renderHome((c) =>
       c.method === "POST"

@@ -32,8 +32,11 @@ type Deps struct {
 	// Env builds the clean environment of every agent run (SF-04).
 	Env safety.EnvBuilder
 	// Log defaults to a redacting text logger on stderr.
-	Log     *slog.Logger
-	Version string
+	Log *slog.Logger
+	// Redactor masks tokens in agent output before it is stored or sent.
+	// Default: the built-in patterns of safety.NewRedactor().
+	Redactor safety.Redactor
+	Version  string
 	// Assets is the embedded frontend build (the contents of web/dist).
 	Assets fs.FS
 	// AllowedOrigins are extra browser origins that may call the API, such as
@@ -49,6 +52,7 @@ type Server struct {
 	adapters map[string]agents.Adapter
 	env      safety.EnvBuilder
 	log      *slog.Logger
+	redactor safety.Redactor
 	version  string
 	assets   assets
 
@@ -77,9 +81,13 @@ func New(d Deps) (*Server, error) {
 	case d.Env == nil:
 		return nil, errors.New("api: an environment builder is required")
 	}
+	redactor := d.Redactor
+	if redactor == nil {
+		redactor = safety.NewRedactor()
+	}
 	log := d.Log
 	if log == nil {
-		log = slog.New(safety.NewLogHandler(slog.NewTextHandler(os.Stderr, nil), safety.NewRedactor()))
+		log = slog.New(safety.NewLogHandler(slog.NewTextHandler(os.Stderr, nil), redactor))
 	}
 	as, err := loadAssets(d.Assets)
 	if err != nil {
@@ -87,7 +95,7 @@ func New(d Deps) (*Server, error) {
 	}
 	ctx, stop := context.WithCancel(context.Background())
 	s := &Server{
-		store: d.Store, audit: d.Audit, adapters: d.Adapters, env: d.Env, log: log,
+		store: d.Store, audit: d.Audit, adapters: d.Adapters, env: d.Env, log: log, redactor: redactor,
 		version: d.Version, assets: as, allowedOrigins: d.AllowedOrigins,
 		hub: newHub(log), ctx: ctx, stop: stop, cancel: map[core.TaskID]context.CancelFunc{},
 	}
@@ -155,7 +163,11 @@ func (s *Server) Run(ctx context.Context, ln net.Listener) error {
 // It is safe to call more than once.
 func (s *Server) Close() {
 	s.closeOnce.Do(func() {
+		// Under s.mu, so start() either sees the stop or has already added its
+		// task to the group before Wait begins.
+		s.mu.Lock()
 		s.stop()
+		s.mu.Unlock()
 		s.hub.closeAll()
 		_ = s.group.Wait()
 		s.hub.wait()

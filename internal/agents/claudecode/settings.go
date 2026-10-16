@@ -23,8 +23,12 @@ const (
 	envDisableBackground = "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"
 )
 
-// askTools are the only tools an Ask-mode run may use: read-only.
+// askTools are the only tools an Ask-mode run may use: read-only. The hook
+// enforces this list too (HookConfig.AllowedTools); the flags below only ask.
 var askTools = []string{"Read", "Grep", "Glob"}
+
+// askDisallowed are tools named in --disallowedTools as a second request.
+var askDisallowed = []string{"Edit", "Write", "MultiEdit", "NotebookEdit", "Bash", "PowerShell"}
 
 // hookTimeoutSec bounds one hook call; the CLI default is 600 s.
 const hookTimeoutSec = 30
@@ -41,6 +45,7 @@ func buildArgs(settingsPath string, o agents.StartOptions) []string {
 		"--setting-sources", "project",
 		"--permission-mode", "dontAsk",
 		"--allowedTools", strings.Join(askTools, ","),
+		"--disallowedTools", strings.Join(askDisallowed, ","),
 	}
 	if o.Model != "" {
 		args = append(args, "--model", o.Model)

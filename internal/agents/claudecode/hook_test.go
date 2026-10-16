@@ -200,6 +200,45 @@ func TestHookWithoutConfiguration(t *testing.T) {
 	}
 }
 
+// Ask mode is enforced by the hook, not only requested through flags (SF-06).
+func TestHookEnforcesAskModeAndTheRepoFolder(t *testing.T) {
+	repo := t.TempDir()
+	h := newHookEnv(t, 2, 4)
+	data, err := json.Marshal(HookConfig{LogPath: h.log, MaxDepth: 2, MaxConcurrent: 4, AllowedTools: askTools, AllowedDir: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(h.cfgPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tool := range []string{"Bash", "Edit", "Write", "WebFetch"} {
+		code, stderr := h.call("PreToolUse", map[string]any{"tool_name": tool, "tool_input": map[string]any{"command": "x"}})
+		if code != 2 || !strings.Contains(stderr, "Ask mode") {
+			t.Errorf("%s: exit %d, stderr %q", tool, code, stderr)
+		}
+	}
+	if code, stderr := h.call("PreToolUse", map[string]any{"tool_name": "Read", "tool_input": map[string]any{"file_path": filepath.Join(repo, "a.go")}}); code != 0 {
+		t.Errorf("a read inside the repo: exit %d, stderr %q", code, stderr)
+	}
+	code, stderr := h.call("PreToolUse", map[string]any{"tool_name": "Read", "tool_input": map[string]any{"file_path": filepath.Join("..", "secret")}})
+	if code != 2 || strings.Contains(stderr, repo) {
+		t.Errorf("a read outside the repo: exit %d, stderr %q", code, stderr)
+	}
+	// A sub-agent call is judged by the sub-agent rules, not the tool list.
+	if code, _ := h.call("PreToolUse", agentCall(nil)); code != 0 {
+		t.Errorf("a plain sub-agent was denied: exit %d", code)
+	}
+	// The same call from inside a sub-agent is held to the same rules.
+	if code, _ := h.call("PreToolUse", map[string]any{"tool_name": "Bash", "agent_id": "a1", "tool_input": map[string]any{"command": "x"}}); code != 2 {
+		t.Errorf("Bash from a sub-agent: exit %d, want 2", code)
+	}
+	// Events after the call only log: they never block.
+	if code, _ := h.call("PostToolUse", map[string]any{"tool_name": "Bash"}); code != 0 {
+		t.Errorf("PostToolUse of a refused tool blocked: exit %d", code)
+	}
+}
+
 func TestHookBlocksWhenItCannotWriteItsLog(t *testing.T) {
 	h := newHookEnv(t, 0, 0)
 	data, _ := json.Marshal(HookConfig{LogPath: filepath.Join(t.TempDir(), "no", "such", "dir", "hook.log")})

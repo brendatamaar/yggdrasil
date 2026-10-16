@@ -33,11 +33,15 @@ export function Composer() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [prompt, setPrompt] = useState("");
+  const [title, setTitle] = useState("");
   const [{ projectId, repoId }, setIds] = useState(loadIds);
   const [agent, setAgent] = useState("mock");
 
   const create = useMutation({
-    mutationFn: () => createTask({ projectId, repoIds: [repoId], prompt, mode: "ask", agent }),
+    // The title is what the person typed. The server never makes one from the
+    // prompt, because lists and notifications show titles.
+    mutationFn: () =>
+      createTask({ projectId, repoIds: [repoId], prompt, mode: "ask", agent, ...(title.trim() ? { title: title.trim() } : {}) }),
     onSuccess: async (task) => {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ projectId, repoId }));
       await queryClient.invalidateQueries({ queryKey: taskKeys.all });
@@ -54,6 +58,21 @@ export function Composer() {
 
   return (
     <form onSubmit={submit} className="mx-auto max-w-3xl space-y-3" aria-label="New task">
+      <div>
+        <label htmlFor="task-title" className="mb-1 block text-sm">
+          Task name (optional)
+        </label>
+        <input
+          id="task-title"
+          className={field}
+          maxLength={80}
+          placeholder="Shown in lists and notifications"
+          value={title}
+          onChange={(e) => {
+            setTitle(e.target.value);
+          }}
+        />
+      </div>
       <div>
         <label htmlFor="prompt" className="mb-1 block text-sm font-medium">
           What should the agent look into?

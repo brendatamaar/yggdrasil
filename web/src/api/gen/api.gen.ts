@@ -3,6 +3,99 @@ import type * as agents from "./agents.gen";
 import type * as core from "./core.gen";
 
 //////////
+// source: errors.go
+
+
+//////////
+// source: hub.go
+
+/**
+ * hub fans messages out to WebSocket clients by topic. Publishing never
+ * blocks: a client whose buffer is full is dropped, because it would
+ * otherwise hold up every task event (and the run that produces them).
+ */
+
+//////////
+// source: middleware.go
+
+/**
+ * statusWriter records the status for the access log. It keeps the optional
+ * interfaces the WebSocket upgrade needs.
+ */
+/**
+ * contentSecurityPolicy: the page loads only its own files, can't be framed
+ * and can only talk to its own origin (the WebSocket included; the ws: sources
+ * cover browsers that don't count 'self' for ws://). Inline styles are allowed
+ * because the grid and Radix set styles on elements.
+ */
+
+//////////
+// source: server.go
+/*
+Package api is Yggdrasil's HTTP server: REST endpoints, the WebSocket hub
+and the embedded UI, bound to the loopback interface (SF-01).
+*/
+
+/**
+ * Deps are what the server needs. Store, Audit and Env are required.
+ */
+export interface Deps {
+  Store?: any /* db.Store */;
+  Audit: any /* audit.Writer */;
+  Adapters: { [key: string]: any /* agents.Adapter */};
+  /**
+   * Env builds the clean environment of every agent run (SF-04).
+   */
+  Env: any /* safety.EnvBuilder */;
+  /**
+   * Log defaults to a redacting text logger on stderr.
+   */
+  Log?: any /* slog.Logger */;
+  /**
+   * Redactor masks tokens in agent output before it is stored or sent.
+   * Default: the built-in patterns of safety.NewRedactor().
+   */
+  Redactor: any /* safety.Redactor */;
+  Version: string;
+  /**
+   * Assets is the embedded frontend build (the contents of web/dist).
+   */
+  Assets: any /* fs.FS */;
+  /**
+   * AllowedOrigins are extra browser origins that may call the API, such as
+   * the Vite dev server (http://localhost:5173).
+   */
+  AllowedOrigins: string[];
+}
+/**
+ * Server serves the API. Create it with New, run it with Run (or use Handler
+ * in tests) and stop it with Close.
+ */
+export interface Server {
+}
+
+//////////
+// source: static.go
+
+/**
+ * assets is the allowlist of files the server may return: every regular file
+ * of the embedded build, read once at startup. Nothing is looked up on disk
+ * per request, so a crafted path can only miss (it never reaches a file), and
+ * Windows device names (CON, NUL...) are not in the map.
+ */
+
+//////////
+// source: tasks.go
+
+/**
+ * maxTitleRunes bounds a task title.
+ */
+/**
+ * sink persists every event and then publishes it, in that order, so a client
+ * that backfills over REST never misses an event it was not sent live.
+ */
+
+//////////
 // source: types.go
 
 /**
@@ -88,6 +181,12 @@ export interface WSMessage {
 export interface CreateTaskRequest {
   projectId: core.ProjectID;
   repoIds: core.RepoID[];
+  /**
+   * Title is the task's name, shown in lists and notifications. It is never
+   * made from the prompt, which can hold code or paths (docs/AGENTS.md 5.9).
+   * Empty gives "Task <short id>".
+   */
+  title?: string;
   prompt: string;
   mode: core.TaskMode;
   agent: string;
