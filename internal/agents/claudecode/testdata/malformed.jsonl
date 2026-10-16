@@ -1,0 +1,8 @@
+{"type":"system","subtype":"init","session_id":"44444444-4444-4444-8444-444444444444","model":"claude-fictional-haiku"}
+{"type":"assistant","message":{"id":"msg_bad01","content":[{"type":"text","text":"cut off
+not json at all
+
+{"type":"assistant","message":{"id":"msg_bad02","content":42},"session_id":"44444444-4444-4444-8444-444444444444"}
+{"type":"brand_new_line_type","detail":"a future CLI version"}
+{"type":"assistant","message":{"id":"msg_bad03","role":"assistant","content":[{"type":"text","text":"Still going."},{"type":"future_block","x":1}]},"parent_tool_use_id":null,"session_id":"44444444-4444-4444-8444-444444444444"}
+{"type":"result","subtype":"success","is_error":false,"result":"Still going.","session_id":"44444444-4444-4444-8444-444444444444"}
