@@ -72,6 +72,17 @@ type tool struct {
 	required bool
 	// why says what the tool is for and where to get it, for the "not found" line.
 	why string
+	// accept, when set, judges the version line; a non-nil result says why the
+	// version can't be used.
+	accept func(versionLine string) error
+}
+
+// python3Only refuses Python 2, which `python` still is on some machines.
+func python3Only(line string) error {
+	if strings.HasPrefix(line, "Python 3.") {
+		return nil
+	}
+	return advice("found " + line + ", but Yggdrasil works with Python 3. Install Python 3 from https://www.python.org and put it first in the PATH.")
 }
 
 var tools = []tool{
@@ -89,8 +100,8 @@ var tools = []tool{
 		why: "Only needed for Maven repos that have no mvnw wrapper. See https://maven.apache.org."},
 	{name: ".NET", bin: "dotnet", args: []string{"--version"},
 		why: "Only needed for .NET repos. Get the SDK from https://dotnet.microsoft.com."},
-	{name: "Python", bin: "python", args: []string{"--version"},
-		why: "Only needed for Python repos. Get it from https://www.python.org."},
+	{name: "Python", bin: "python", args: []string{"--version"}, accept: python3Only,
+		why: "Only needed for Python repos. Get Python 3 from https://www.python.org."},
 	{name: "uv", bin: "uv", args: []string{"--version"},
 		why: "Only needed for Python repos that use uv. See https://docs.astral.sh/uv."},
 }
@@ -128,6 +139,11 @@ func toolProbe(t tool, env []string) probe {
 	return probe{name: t.name, required: t.required, check: func(ctx context.Context) (string, error) {
 		line, err := versionOf(ctx, env, t.bin, t.args)
 		switch {
+		case err == nil && t.accept != nil:
+			if verr := t.accept(line); verr != nil {
+				return "", verr
+			}
+			return line, nil
 		case err == nil:
 			return line, nil
 		case errors.Is(err, platform.ErrNotFound):

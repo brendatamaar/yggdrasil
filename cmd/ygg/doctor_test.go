@@ -117,6 +117,37 @@ func TestToolProbeReadsTheFirstLineOfTheVersion(t *testing.T) {
 	}
 }
 
+func TestPythonTwoIsNotAccepted(t *testing.T) {
+	for _, ok := range []string{"Python 3.12.1", "Python 3.9.0"} {
+		if err := python3Only(ok); err != nil {
+			t.Errorf("%s refused: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"Python 2.7.18", "Python 4.0", "python", ""} {
+		err := python3Only(bad)
+		if err == nil || !strings.Contains(err.Error(), "Python 3") {
+			t.Errorf("%q accepted or unhelpful: %v", bad, err)
+		}
+	}
+
+	// Through the probe: a fake tool printing a Python 2 version is reported.
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tl := tool{name: "Python", bin: exe, args: []string{"--version"}, accept: python3Only, why: "Only for tests."}
+	_, err = toolProbe(tl, fakeToolEnvFor(t, "version")).check(context.Background()) // prints "faketool 1.2.3"
+	if err == nil || !strings.Contains(err.Error(), "faketool 1.2.3") || !strings.Contains(err.Error(), "Python 3") {
+		t.Errorf("a version the tool's accept rejects: %v", err)
+	}
+	// And the real list uses it for Python only.
+	for _, tl := range tools {
+		if (tl.name == "Python") != (tl.accept != nil) {
+			t.Errorf("%s: accept = %v", tl.name, tl.accept != nil)
+		}
+	}
+}
+
 func TestDataDirProbe(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "new", "ygg")
 	detail, err := dataDirProbe(dir).check(context.Background())
