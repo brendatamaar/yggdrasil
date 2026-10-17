@@ -45,9 +45,9 @@ func classify(err error) error {
 	}
 	switch code {
 	case codeConstraintUnique, codeConstraintPrimaryKey:
-		return fmt.Errorf("%w: %v", ErrConflict, err)
+		return fmt.Errorf("%w: %s", ErrConflict, err.Error()) // text only: the driver type must not leak
 	case codeConstraintForeignKey:
-		return fmt.Errorf("%w: %v", ErrNotFound, err)
+		return fmt.Errorf("%w: %s", ErrNotFound, err.Error()) // text only: the driver type must not leak
 	}
 	return err
 }
