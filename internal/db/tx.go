@@ -20,7 +20,8 @@ import (
 type Tx struct{ q *gen.Queries }
 
 // Commit runs fn in one write transaction. If fn returns an error, or the
-// commit fails, nothing is written. fn must use only the Tx it gets: calling
+// commit fails, nothing is written. A UNIQUE or PRIMARY KEY violation comes
+// back as ErrConflict and a FOREIGN KEY violation as ErrNotFound. fn must use only the Tx it gets: calling
 // the Store from inside fn would wait forever for the one write connection.
 func (s *Store) Commit(ctx context.Context, fn func(*Tx) error) error {
 	tx, err := s.db.Write.BeginTx(ctx, nil)
@@ -28,10 +29,10 @@ func (s *Store) Commit(ctx context.Context, fn func(*Tx) error) error {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 	if err := fn(&Tx{q: gen.New(tx)}); err != nil {
-		return errors.Join(err, tx.Rollback())
+		return errors.Join(classify(err), tx.Rollback())
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
+		return classify(fmt.Errorf("commit transaction: %w", err))
 	}
 	return nil
 }
