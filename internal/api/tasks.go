@@ -307,6 +307,11 @@ func (s *Server) start(task core.Task, repo core.Repo, adapter agents.Adapter) {
 	s.group.Go(func() error {
 		defer func() {
 			cancel()
+			// Cancelling ctx stops only the agent's own process tree; the
+			// task job may still hold other processes the task started.
+			if err := platform.KillTask(string(task.ID)); err != nil {
+				s.log.Error("kill task processes", "task", task.ID, "err", err)
+			}
 			s.mu.Lock()
 			delete(s.cancel, task.ID)
 			s.mu.Unlock()
