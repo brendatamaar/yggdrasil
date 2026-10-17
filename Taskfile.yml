@@ -101,6 +101,18 @@ tasks:
       - task: web
         vars: { SCRIPT: typecheck }
 
+  smoke:
+    desc: Windows smoke test of bin/ygg (demo agent and a fake Claude Code; no real agent)
+    cmds:
+      - task: build
+      - powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke.ps1
+
+  smoke:real:
+    desc: Smoke test with the real Claude Code CLI (model haiku; uses a little quota, never in CI)
+    cmds:
+      - task: build
+      - powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke.ps1 -RealAgent
+
   fixtures:
     desc: Generate fixtures/demo-project (fictional acme-shop repos)
     cmds:

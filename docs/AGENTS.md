@@ -53,6 +53,8 @@ Yggdrasil is a local server with a browser UI that combines a multi-repo workspa
 | Lint (golangci-lint + ESLint) | `task lint` |
 | Type check frontend | `task typecheck` |
 | Generate `fixtures/demo-project/` | `task fixtures` |
+| Windows smoke test of the built binary (demo agent, fake Claude Code; also in CI) | `task smoke` |
+| Smoke test with the real Claude Code (Haiku, uses a little quota; manual only, never in CI) | `task smoke:real` |
 | Dependency license check (Go + npm) | `task license` |
 | Phase 0 spike tests (each spike is its own module) | `task spikes:test` |
 | Validate the GoReleaser config (no publishing) | `task release:check` |
