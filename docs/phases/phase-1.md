@@ -318,7 +318,8 @@ Proposed tag: **`v0.2.0`**, for you to create. I did not tag, push or start Phas
   - **Cause:** `claude` is a `.cmd` shim in a folder with a space. `platform.Start` handed it to `os/exec`, and cmd.exe strips the outer quotes of a command line that starts with a quote and holds more than two, so it looked for `C:\Program`. `claude --version` worked because it has no quoted argument. Reproduced at the OS level by `TestBatchFileInAFolderWithSpacesTakesArgumentsWithSpaces`, which failed with the same message before the fix.
   - **Fix (`internal/platform/batch_windows.go`):** a `.cmd` or `.bat` is run as `cmd.exe /d /s /c ""<file>" "<arg>"..."`. Because a batch file is a shell that may expand its arguments again without quotes, arguments holding `" % & | < > ^ !`, a line break or a NUL are refused, not escaped. Backslashes before a closing quote are doubled.
   - **Consequence for the adapter:** the prompt is free text, so it is no longer an argument: it goes to the CLI on **stdin** (`claude -p` reads it from there), which also removes the 8,191-character line limit of cmd.exe. A model name and a session ID are validated before they reach a command line. Tests: any prompt (quotes, `&`, `%`, line breaks, a dash, emoji, 28 KB) arrives whole; the full chain through a `claude.cmd` in `...\Program Files\nodejs`.
-  - **Still to confirm by hand:** that the real CLI reads the prompt from stdin with `--output-format stream-json` (see step 6b below).
+  - **Confirmed by hand (the human, 2026-10-17): 6b passed** after the fix: the real Claude Code ran in a clean repo, with the prompt on stdin, `--disallowedTools` accepted, and the hook reading its configuration from `YGG_HOOK_CONFIG` (a missing configuration would have denied every tool call).
+- 6c (Ask mode and the repo folder enforced by the hook) and 6d (Cancel leaves no process): not reported yet.
 - Steps 7 to 10: not reported yet.
 
 ### Decision
