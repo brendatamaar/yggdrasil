@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -95,6 +96,7 @@ func selfExe(t testing.TB) string {
 //	sleep <lifetime>
 //	pwd                          print the working directory
 //	exit <code>
+//	env                          print each environment entry as ENV:<entry>
 //	child <pidfile> <lifetime>   start a "sleep" grandchild, write its pid, sleep
 //	orphan <pidfile> <lifetime>  like child, but exit at once and leave the grandchild
 //	listen <portfile>            listen on 127.0.0.1, write the port, sleep
@@ -118,6 +120,12 @@ func runHelper(mode string, args []string) error {
 			return err
 		}
 		fmt.Println(wd)
+	case "env":
+		env := os.Environ()
+		sort.Strings(env)
+		for _, kv := range env {
+			fmt.Println("ENV:" + kv)
+		}
 	case "exit":
 		n, _ := strconv.Atoi(args[0])
 		os.Exit(n)
