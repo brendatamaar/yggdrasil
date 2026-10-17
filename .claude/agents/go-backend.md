@@ -23,6 +23,8 @@ Rules:
 - Errors wrapped with context; user-facing messages in plain language.
 - Tests with temp git repos and fixtures only. Never real repos, hosts, agent CLIs or model APIs. Run with `-race`.
 
+Functional core (docs/AGENTS.md 5.11): if your brief names a design doc, read it first and follow it. Decisions go in `internal/core/<domain>` as pure `step` functions that return commands as data. IO, clock reads, randomness, goroutines and logging stay in your package, which parses at the boundary, persists state and audit in one transaction, then runs the commands.
+
 Definition of done:
 - `task generate`, `task lint` and `task test` pass in your worktree.
 - Every requirement ID in your brief is implemented or explicitly listed as not done.

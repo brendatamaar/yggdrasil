@@ -2,6 +2,7 @@ package archtest
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -95,6 +96,30 @@ func onlyInternalImports(name, folder string, allowed ...string) rule {
 	}}
 }
 
+// corePureStdlib is what the functional core may import from the standard
+// library. Paths match exactly, so "math" does not admit math/rand. time is
+// here for its types (time.Time, time.Duration); clock reads are the linter's job.
+var corePureStdlib = []string{
+	"cmp", "encoding/json", "errors", "fmt", "maps", "math", "math/bits",
+	"slices", "sort", "strconv", "strings", "time", "unicode", "unicode/utf8",
+}
+
+// corePure keeps internal/core and its subpackages free of effects: pure
+// standard library packages and other core packages only.
+var corePure = rule{name: "core imports only pure packages", check: func(f file) []string {
+	if !inDir(f, "internal/core") || f.test {
+		return nil
+	}
+	var out []string
+	for _, imp := range f.imports {
+		if slices.Contains(corePureStdlib, imp) || imp == internalPrefix+"core" || strings.HasPrefix(imp, internalPrefix+"core/") {
+			continue
+		}
+		out = append(out, violation(f, "imports %q, which the functional core may not (allowed: %s and internal/core/...); move the effect to the owning package and return a command (docs/AGENTS.md 5.11)", imp, strings.Join(corePureStdlib, ", ")))
+	}
+	return out
+}}
+
 // rules are the architecture rules of docs/AGENTS.md sections 5 and 6.
 var rules = []rule{
 	// 5.3 Processes: every child process starts through platform.Start.
@@ -118,6 +143,8 @@ var rules = []rule{
 
 	// 5.1: the data model imports nothing from the rest of Yggdrasil.
 	onlyInternalImports("core is a leaf", "internal/core"),
+	// 5.11: the functional core has no effects.
+	corePure,
 	// Leaves that everything else builds on.
 	onlyInternalImports("safety is a leaf", "internal/safety"),
 	onlyInternalImports("platform is a leaf", "internal/platform"),

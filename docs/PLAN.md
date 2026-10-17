@@ -6,6 +6,8 @@
 
 Requirement IDs refer to docs/PRD.md. Stack and conventions are in docs/PRD.md section 5.1 and docs/AGENTS.md.
 
+Items marked **Core:** have a pure decision part. It goes in the named `internal/core/<domain>` package, and effects go in the owning package (docs/AGENTS.md 5.11). Design these with `/functional-effect:design` when planning the phase.
+
 ---
 
 ## Phase 0 — Spikes and project setup → `v0.1.0`
@@ -71,7 +73,9 @@ Goal: the workspace half matches the personal tool.
 - [ ] Git hosts: GitLab (multiple instances), GitHub, Gitea; MR/PR and pipeline status; MR inbox; MR creation via push options; optional tokens (GH-01–GH-04).
 - [ ] Toolchain module interface (BL-10) and `docs/writing-a-toolchain.md` draft.
 - [ ] Toolchain modules: Node, Maven (with dependency ordering), Gradle, and the custom command fallback (BL-01, BL-02, BL-04, BL-11, BL-15).
+  - **Core:** Maven dependency ordering (BL-02) is pure, in `internal/core/builds`; detection and runs in `internal/builds`.
 - [ ] Builds: ordered steps, queue, presets, live logs, history, artifacts (BL-03, BL-05–BL-07).
+  - **Core:** queue and step state machine in `internal/core/builds`; execution, logs and artifacts in `internal/builds`.
 - [ ] Code search with editor links (XR-01).
 - [ ] Home: hero scene, composer placeholder, suggestion chips (UI-01).
 - [ ] Widgets: Git activity, Merge requests, Needs attention, CI failures, Builds, Recent areas, This machine (UI-03).
@@ -88,18 +92,23 @@ Goal: the agent half matches the personal tool, with stronger enforcement.
 
 - [ ] Worktree creation with auto-generated short names (AG-07, WE-04).
 - [ ] Ask mode, Code mode, current-branch mode (opt-in, warning), whole-project mode (AG-06–AG-09).
+  - **Core:** mode rules in `internal/core/guard`.
 - [ ] Mode switching per message (AG-10).
 - [ ] **OpenCode reference adapter** (AG-03, D6), tested with a local model through Ollama. Building it here proves the adapter interface with two real agents before more features depend on it.
 - [ ] Parallel agents with `maxAgents` (default 2, with a settings hint when the machine has room for more), queue, one editor per main checkout (AG-11, D7).
+  - **Core:** queue and `maxAgents` admission in `internal/core/tasks`.
 - [ ] Agent board: Working / Needs you / Review / Done (AG-12).
 - [ ] Composer: scope, agent, model, saved prompts, `@` file mentions (AG-13).
 - [ ] Transcript with inline tool calls, diffs, turn durations; session resume (AG-14).
 - [ ] Sub-agent visibility: nested transcript tree, per-sub-agent usage counted toward the task (AG-21).
 - [ ] Sub-agent limits: depth and concurrency caps per task; agent-native sub-agent worktrees blocked (AG-22).
+  - **Core:** sub-agent depth and concurrency caps in `internal/core/tasks`.
 - [ ] Usage display and agent usage widget (AG-15).
 - [ ] Draft buttons for commit messages and MR descriptions (AG-20).
 - [ ] Proposals: lifecycle, confirmation UI, execution, audit (RV-02).
+  - **Core:** lifecycle state machine in `internal/core/proposals`; execution and audit in `internal/proposals`.
 - [ ] Path guard and command allowlist enforced by Yggdrasil; "limited enforcement" handling (SF-06).
+  - **Core:** path and command decisions in `internal/core/guard`; the shell supplies resolved paths and commands as input.
 - [ ] Ask-mode integrity check (SF-07).
 - [ ] Repo trust: detect repo-supplied agent hooks and MCP servers, show what they would run, require trust once per repo; untrusted repos are Ask-only (SF-09).
 - [ ] MCP server with all read, build, dev-server, safe-git and proposal tools; `propose_agent_file` naming (MCP-01–MCP-06).
@@ -169,10 +178,12 @@ Goal: the dashboard becomes the agent's to-do list.
 - [ ] Plan mode: on by default for whole-project tasks, skippable per task, skip remembered per project; off by default for single-repo tasks (AG-17, D10).
 - [ ] Checkpoints with rewind inside the worktree (AG-18).
 - [ ] Budgets per task, covering sub-agents and sub-tasks; use `--max-budget-usd` for Claude Code (AG-16).
+  - **Core:** budget accounting and limits in `internal/core/tasks`.
 - [ ] Overlap warnings between running tasks, including sibling sub-tasks (AG-19).
 - [ ] Sub-tasks: "Run as sub-tasks" from an approved plan, manual split, and `propose_subtasks` MCP tool (AG-23, MCP-05).
 - [ ] Sub-task rules: one level only, cap on children, shared `maxAgents` queue, budget split, scope and mode never wider than the parent (AG-24).
 - [ ] Sibling dependencies with acyclic validation; a failed child blocks its dependents and moves the parent to "Needs you" (AG-25).
+  - **Core:** sub-task validation for AG-24 and AG-25 (depth, cap, scope, mode, budget split, acyclic dependencies, blocked dependents) in `internal/core/tasks`.
 - [ ] Results: per-child verification, proposals merged into the parent's change set with merge order, optional integration pass, parent card with child progress on the board (AG-26).
 
 **Exit:** a whole-project task can be planned, approved, run with a budget, rewound, and finished. The same task can also be run as sub-tasks: `shop-api` and `shop-web` children on different agents, `shop-web` waiting for `shop-api`, ending in one change set with linked MRs.
@@ -194,6 +205,7 @@ Goal: the dashboard becomes the agent's to-do list.
 ## Phase 9 — Automation and cross-repo intelligence → `v0.10.0`
 
 - [ ] Scheduled agent tasks, results as proposals, missed runs reported (AU-01).
+  - **Core:** schedule decisions (due, missed) in `internal/core/scheduler`; time enters as input.
 - [ ] Release notes across a project (AU-03).
 - [ ] Re-check `gotreesitter` maturity (release status, Java/TypeScript grammar quality, query engine) before starting XR-02 (D13).
 - [ ] API contract checks, layered: `oasdiff` when an OpenAPI spec exists; `gotreesitter` for Spring mappings and frontend call sites; optional agent impact summary (XR-02).

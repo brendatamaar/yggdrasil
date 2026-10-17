@@ -67,7 +67,8 @@ Before finishing any change: run `task generate`, `task lint`, `task typecheck`,
 cmd/
   ygg/               # main: wires config, server, embedded web assets; `doctor` subcommand
 internal/
-  core/              # data model: projects, repos, worktrees, tasks, change sets, proposals
+  core/              # functional core: domain types and pure decisions (docs/AGENTS.md 5.11);
+                     #   subpackages per domain: core/builds, core/proposals, core/guard, core/tasks, ...
   db/
     migrations/      # goose migrations (never edit an applied one)
     queries/         # SQL for sqlc
@@ -193,6 +194,21 @@ These are not style preferences. Breaking them is a bug.
 - Server state goes through TanStack Query; UI-only state in Zustand. No duplicating server data in stores.
 - Each widget is a self-contained module in `web/src/widgets/<name>/` implementing the shared widget interface. Widgets must not import from each other.
 - Accessible primitives (Radix) for menus, dialogs, popovers. Core flows must work with the keyboard.
+
+### 5.11 Functional core
+- **Decisions are pure functions** in `internal/core` and its subpackages (`internal/core/<domain>`, e.g. `core/builds`, `core/proposals`, `core/guard`, `core/tasks`). A decision takes the current state and one input and returns the new state plus a list of commands: `(state₂, commands) = step(state₁, input)`. Commands are plain data that describe an effect ("start build step", "write audit entry"). The core never performs them.
+- **No effects in the core:** no IO (files, network, database, processes), no clock reads, no random values, no goroutines, no logging. `internal/archtest` limits core imports to an allowlist of pure standard library packages.
+- State, input and command are closed sets of variants. States that carry different data per variant are sealed interfaces. Plain status values (`TaskStatus`, `ProposalStatus`, ...) can stay string constants with `Validate`. Don't model state combinations with boolean flags. A step that receives an input it doesn't handle in the current state returns the state unchanged and no commands.
+- **Effects live in the owning package** (`internal/builds`, `internal/proposals`, `internal/scheduler`, ...). That package:
+  1. parses outside data (HTTP bodies, database rows, CLI output, config) into core types at the boundary and rejects invalid values there;
+  2. loads the state and calls `step`;
+  3. persists the new state and its audit entries in one transaction;
+  4. interprets the commands (through `platform.Start`, `internal/git`, sqlc queries, HTTP clients).
+- **Time is a command, never a clock read in the core.** The current time and generated IDs arrive as fields of an input. A delay or timeout is a command ("wake at T") that the owning package schedules and later feeds back as an input.
+- **Tests:**
+  - one property test per invariant of a step: random input sequences, with the invariant checked after every step;
+  - each boundary parser gets a round-trip test (`parse(format(x)) == x`), an accepted ⇒ valid test, one test per rejection rule, and a fuzz target;
+  - every capability that has a fake (store, clock, process runner, git host) gets one contract suite, run against both the fake and the real implementation. Use recorded fixtures where the real one can't run in CI.
 
 ## 6. Safety invariants
 

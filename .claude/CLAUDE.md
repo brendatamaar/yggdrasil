@@ -24,21 +24,25 @@ Subagents available (`.claude/agents/`):
    - tasks with PRD IDs, owner agent, files/packages each task owns;
    - dependencies, and which tasks can run in parallel;
    - **no two parallel tasks may own the same file or package.**
+   - for every task that has states, retries, queues or external calls: run `/functional-effect:design <feature>` first and link the design doc from `docs/phases/phase-<n>.md`.
    Show the breakdown to the human and wait for approval before spawning anyone.
 
 2. **Foundations before fan-out.** Shared contracts (interfaces, `Event` types, core types, migrations, Taskfile, generated code) are done first, by you or by one agent, then **committed to `main`**.
+   This includes the pure core types of every designed feature (`internal/core/<domain>`: state, input, command and the `step` signature).
    Subagent worktrees branch from the default branch, **not from your current HEAD**. Anything uncommitted on `main` is invisible to them.
 
 3. **Parallel batches.** Spawn at most **3 implementation subagents at once**. Each brief must contain:
    - goal and PRD IDs;
+   - the design doc path, if the task has one, and "follow the functional-effect:model skill (docs/AGENTS.md 5.11)";
    - files/packages it owns, and what it must not touch;
    - interfaces and types it must use (with paths);
    - definition of done (which `task` commands must pass);
    - "commit on your branch and end with the report format from your agent file".
 
 4. **Integrate one branch at a time.** For each finished subagent: read its report, review its diff, `git merge --no-ff <branch>` into `main`, then run `task generate`, `task lint`, `task typecheck`, `task test`, `task test:web`. Fix breakage before merging the next branch. If two branches conflict on a shared contract, stop and resolve the contract yourself.
+   After each designed feature lands on `main`, produce its test map from the design doc (invariants → property tests, boundary parsers → round-trip / accepted ⇒ valid / rejects-each-rule / fuzz, capabilities with fakes → contract suites), the same map `/functional-effect:test` would derive, and brief `test-engineer` with it, including "show each test can fail". Don't write the tests yourself.
 
-5. **Review gate.** After each batch is merged, run `safety-reviewer` on `git diff <batch-start>..main`. Fix every **Blocking** finding (delegate or fix yourself), then re-run the reviewer until PASS.
+5. **Review gate.** After each batch is merged, run `safety-reviewer` and `functional-effect:fe-reviewer` on `git diff <batch-start>..main`. Fix every **Blocking** and **Must-fix** finding (delegate or fix yourself), then re-run both until neither reports one.
 
 6. **Bookkeeping.** Tick docs/PLAN.md checkboxes, update `docs/CHANGELOG.md`, and record decisions or deviations in `docs/phases/phase-<n>.md`. If a requirement must change, update docs/PRD.md and say so.
 

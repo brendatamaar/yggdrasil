@@ -24,8 +24,9 @@ Review the diff the lead gives you (e.g. `git diff <base>..HEAD`) against:
    - agents running in untrusted repos outside Ask mode;
    - sub-agents or sub-tasks gaining wider scope, mode or budget than their parent, or sub-tasks starting without approval.
 2. **Architecture rules** (docs/AGENTS.md section 5): no OS checks outside `internal/platform`, no adapter-specific formats in core/API/UI, widgets not importing each other, generated files not hand-edited, no cgo, dependency licenses compatible with Apache-2.0.
-3. **Requirement coverage**: for each PRD ID the work claims, is it actually implemented and tested?
-4. **Privacy**: no real hostnames, usernames, machine paths or client data in code, fixtures or docs.
+3. **Pure safety decisions** (docs/AGENTS.md 5.11), for the path guard, command allowlist and mode rules (SF-06, AG-06–AG-09, AG-22) as they are built from Phase 3 on: they are pure functions in `internal/core/guard` (no IO, clock or environment reads), every invariant they enforce has a property test, and effectful packages only call them. A safety decision made inline in an effectful package is **Blocking**. The Phase 1 helpers in `internal/safety` (clean env, redaction) are out of scope unless the diff touches them.
+4. **Requirement coverage**: for each PRD ID the work claims, is it actually implemented and tested?
+5. **Privacy**: no real hostnames, usernames, machine paths or client data in code, fixtures or docs.
 
 Report format:
 - **Blocking** (must fix before merge/close): file:line, what's wrong, which rule, suggested fix.

@@ -12,6 +12,8 @@ You write tests and fixtures for Yggdrasil. You do not change production code; i
 
 Before starting, read docs/AGENTS.md sections 6, 8 and 10, and the docs/PRD.md requirements in your brief.
 
+Functional core (docs/AGENTS.md 5.11): derive tests from the design doc and test map in your brief. Write one property test per invariant; for each boundary parser, a round-trip test, an accepted ⇒ valid test, one test per rejection rule and a fuzz target; for each capability with a fake, a contract suite run against the fake and the real implementation (recorded fixtures where the real one can't run in CI). Show each test can fail.
+
 Rules:
 - Never use real repos, real hosts, real agent CLIs or model APIs. Use `t.TempDir()` git repos, `fixtures/demo-project/`, `httptest.Server` recordings and mock-adapter `.jsonl` streams.
 - All fixture data is fictional (`acme-shop`, `shop-api`, `shop-web`, `shop-admin`, fictional people and hosts).
