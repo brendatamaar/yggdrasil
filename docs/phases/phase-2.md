@@ -1,0 +1,188 @@
+# Phase 2 — Workspace parity
+
+## Functional core review (2026-10-17, baseline)
+
+**Scope:** `--all` over `.functional-effect.json` core + shell: `internal/core`, `internal/db`, `cmd/ygg`, `internal/api`, `internal/platform`, `web/src/main.tsx`. 67 files, not counting generated `internal/db/gen`. No design documents: `docs/design/` doesn't exist yet. The review ran as three reviewers: core+db+cmd, api+web, and platform.
+
+**Mechanical check** (`fe-check scan`):
+
+```
+Model Functional Effect: 4 core file(s) checked, no effects found.
+```
+
+The check only scans `internal/core/**`. Core today holds types and `Validate` only. No `step` function exists yet, so every lifecycle decision currently lives in the shell.
+
+Labels: **fix now** means it blocks Phase 2 work that builds on this code, or it breaks purity or a safety rule. **fix when touched** means record it and fix it the next time the code changes.
+
+### internal/core
+
+| label | sev | file:line | problem | fix in model terms |
+|---|---|---|---|---|
+| fix now | Should | model.go:118-139 | `BuildStep` has optional `ExitCode`/`StartedAt`/`FinishedAt` (a sum type in disguise), and `Build.Status` can disagree with the step statuses. | In `core/builds`, use a sealed `StepState` (`Queued` / `Running{StartedAt, Attempt}` / `Finished{Outcome, ExitCode, …}`) and derive build status from the steps. Keep `core.Build` as the read model only. |
+| fix now | Should | model.go:118-128, migration build_steps | Steps have no attempt or run ID, so a late exit from a cancelled or re-run step can't be told apart from the current one. | Carry `Attempt` on `Running`, the `StartStep` command and the `StepExited` input. `step` ignores an input with a stale attempt. Persist it in migration 00002. |
+| fix now | Consider | model.go JSON tags, tygo.yaml:9 | Core is the tygo source, so core types are also the wire format, and sealed interfaces won't map through tygo. | Keep `core/builds` types free of tags. Put build DTOs in `internal/api` and convert at the boundary. |
+| when touched | Should | model.go:104-116 | `Proposal.Kind` + `Payload json.RawMessage` is untyped, and which IDs are required depends on the kind without anything enforcing it. | Use a sealed `ProposalAction` and parse into it in `internal/proposals`. This becomes fix now if MR-via-push-options (GH-04) goes through proposals. |
+| when touched | Should | model.go:71-91 | `Task.Validate` skips `ProjectID`, the `ParentTaskID` form, each `RepoID`, and the "ScopeRepo ⇒ exactly one repo" rule. | Add those checks, with one rejection test per rule. |
+| when touched | Should | enums.go:43-49, 77-83; ids.go:19 | `WorktreeStatus`, `ChangeSetStatus` and `AuditID` have no `Validate`. | Add `Validate` and call it in the store. |
+| when touched | Consider | model.go:64-67, 115 | `FinishedAt`/`SessionID`/`DecidedAt` are optional fields tied to status. | Let `step` set them from `Input.Now`. |
+| when touched | Consider | model.go:146-150 | `AuditEntry.Actor`/`Subject` encode a sum type as strings. | Use a typed `Actor` with a parser, and a `Subject` built from typed IDs. |
+| when touched | Consider | core_test.go:19-66 | Enum and `Task.Validate` tests cover only some rules. | Table tests: accept every constant, and one rejection test per rule. |
+
+### internal/db
+
+| label | sev | file:line | problem | fix in model terms |
+|---|---|---|---|---|
+| fix now | **Must** | db.go:124-127; store.go:867; internal/audit/sqlite.go:39 | State and its audit entry can't be committed in one transaction, because the audit writer uses its own write connection and `WithTx` forbids `Writer()` inside it. This breaks 5.11 step 3 and invariant 8. | Add a tx-scoped unit of work, `Store.Commit(ctx, func(*db.Tx) error)`, with typed writes and `AppendAudit`. Redaction becomes a pure helper. The audit ID and time come from the input. |
+| fix now | **Must** | queries/builds.sql:11,21; tasks.sql:16; proposals.sql:15; change_sets.sql:11; worktrees.sql:12 | Every update is a blind `WHERE id = ?`, so a cancel racing a step finish can overwrite `cancelled` with `succeeded`. | Migration 00002 adds `version` (builds and build_steps first, then tasks and proposals): `UPDATE … WHERE id=? AND version=?`. When 0 rows change, return `ErrConflict`; the owner reloads and re-runs `step`. |
+| fix now | Should | store.go:832-855 | `UpdateBuildStatus` decides `finished_at` from the status and reads the clock. | `core/builds.step` sets times from `Input.Now`, and the store persists the state it is given (`SaveBuild(tx, state, expectedVersion)`). |
+| fix now | Should | (missing) | There is no outbox and no restart reconciliation, so after a crash, steps stay `running` forever. | Decide in the builds design doc: a `commands` outbox with deterministic IDs, or at minimum a startup `ProcessLost{BuildID, Attempt}` input. |
+| fix now | Should | store.go:139-140, 204-205, 311-315 | UNIQUE and FK violations come back as raw driver errors, and `ErrSubTaskDepth` is detected by matching a string. WS-01 makes "already tracked" a normal outcome. | Map SQLite extended codes (2067, 787, 1811) to `ErrConflict`/`ErrNotFound`/`ErrSubTaskDepth`. The owning package turns them into domain outcomes. |
+| fix now | Should | store.go:125-135, 189-199 | `CreateProject`/`CreateRepo` validate only the ID. | Add `core.Project.Validate`/`core.Repo.Validate`, and move path parsing (now in seed.go:22-39) into a WS-01 boundary parser shared by the API and seed. |
+| when touched | Should | store.go:363-376, 687-700 | Task and proposal status updates decide timestamps and allow any transition (`executed → pending`). | `core/tasks` and `core/proposals` step functions own transitions; the store saves with a version check. |
+| when touched | Consider | store.go:265-270, 527-530, 607-611, 718-721 | Row → core mapping casts strings without `Validate`. | Call `Validate` in each `xxxFrom`. |
+| when touched | Consider | queries/tasks.sql:25 | `ListTaskRepos ORDER BY repo_id` loses the order of `RepoIDs`. | Add a `position` column, or document the order as a set. |
+| when touched | Consider | store.go:35-42, 126-131 | The store fills in empty IDs and `time.Now()`. | The owner generates them and passes them as input fields; `Create*` rejects an empty ID. |
+| when touched | Consider | store.go:244-271, 330-340 | N+1 queries in task lists. | Use a join or `IN` query. |
+
+### cmd/ygg
+
+| label | sev | file:line | problem | fix in model terms |
+|---|---|---|---|---|
+| when touched | Should | seed.go:53-70, 86-115 | Find-or-create is decided inline (check-then-act) and committed in four separate writes. | Use a pure `track(state, TrackRepo{…})` returning `ProjectCreated`/`RepoCreated`/`AlreadyTracked`/`NameTakenAtOtherPath`, committed through `Store.Commit` (WS-01). |
+| when touched | Consider | seed.go:29-31, 107 | `LongPath` adds `\\?\` only for long paths, so the equality check depends on path length. | Normalise to one canonical form in the shared path parser. |
+
+### internal/api
+
+| label | sev | file:line | problem | fix in model terms |
+|---|---|---|---|---|
+| fix now | **Must** | tasks.go:185-199, 330-336, 340-347, 372-376 | State and audit entries are written separately (same root cause as the db finding). | Use `Store.Commit`, with audit emitted as `WriteAudit` commands committed alongside the state. |
+| fix now | Should | hub.go:54-90; tasks.go:277 | `nextSeq` and `publish` take the lock separately, so concurrent publishes can arrive out of order, and `ws.ts` then reports a false gap and refetches. | Add `hub.publishNext(topic, data)` that assigns the seq and enqueues under one lock. |
+| fix now | Should | hub.go:124-131; types.go:57-62, 77 | Topics are raw strings checked by a bool function, and Phase 2 adds repo, build and build-log topics. | Make `Topic` a closed type with `ParseTopic`/`String`, plus round-trip, rejects-each-rule and fuzz tests. |
+| fix now | Should | errors.go:27-40 | `fail` matches db sentinels directly, so Phase 2 git, host and build errors would leak through or become 500s. | Define error classes (NotFound/Conflict/Invalid/Unavailable, each with a user message) that owning packages translate their errors into. |
+| fix now | Should | server.go:28-72 | `Deps` takes a concrete `*db.Store`, and handlers make decisions themselves. New endpoints would copy this pattern. | Handler parses the request into a core input → calls a narrow api-side interface (`RepoService`, `BuildService`) implemented by the owning package. No `*db.Store` in new handlers. |
+| when touched | **Must** | tasks.go:184-200, 326-347 | Tasks run in an in-memory goroutine with no startup reconciliation, so a crash leaves them `queued`/`running` forever. | Phase 3 `core/tasks` gets a `Recovered{Now}` input. `core/builds` should include the same input from the start. |
+| when touched | Should | tasks.go:119-202 | Create rules (prompt, Ask-only SF-06, one repo, repo∈project) are decided inline in the handler. | Move them to `core/tasks.step(None, CreateTask{…})`. The Ask rule moves to `core/guard`. |
+| when touched | Should | tasks.go:146-149, 204-205 | The model-name rule exists only in this handler. | Add a `core.ModelName` value type with `ParseModelName`. |
+| when touched | Should | tasks.go:273-279; store.go:363-376 | `setStatus` writes any status with no from-state guard. | Status changes come only from `step`, saved with a version check. |
+| when touched | Should | tasks.go:340-347 | `running` is published before the `task.start` audit entry. | Fixed by `Store.Commit`; until then, swap the order. |
+| when touched | Should | tasks.go:378-389 | The `RunStatus → TaskStatus` mapping happens inline. | Make it a `RunFinished{Status, Now}` input. |
+| when touched | Should | tasks.go:24-27 | Sub-agent caps (AG-22) are api constants. | Move them to `core/tasks` and carry them on the task. |
+| when touched | Should | tasks.go:289-290 | `failTask` drops errors with `_ =`. | Log them, or turn it into a `RunAborted` input. |
+| when touched | Consider | tasks.go:298-304 | DB and audit IO happen while holding `s.mu`. | Release the lock first. |
+| when touched | Consider | tasks.go:36-61, 102 | N+1 queries, filtering in Go, and an unbounded events list. | Add an sqlc query with filters and a limit, and a `limit` parameter. |
+| when touched | Consider | tasks.go:38 | The `project` query param isn't validated. | Parse it with `core.ProjectID.Validate`, and return 404 when unknown. |
+| when touched | Consider | types.go:49-52; hub.go:35 | `MsgGap` is never sent, and the `tasks` seq resets on restart. | Send `MsgGap` on subscribe or drop, or remove it. |
+| when touched | Consider | middleware.go:29 | Requests without an Origin header are allowed on state-changing methods. | Require `Origin` or `Sec-Fetch-Site: same-origin` on non-GET methods. |
+| when touched | Consider | types.go:10-12 | The comment points to the wrong generated file path. | Fix the comment. |
+
+### internal/platform
+
+| label | sev | file:line | problem | fix in model terms |
+|---|---|---|---|---|
+| fix now | **Must** | pty_windows.go:101, 168 | `StartPTY` passes a resolved `.cmd`/`.bat` straight to `CreateProcess`. This skips `batchArgOK` (BatBadBut-style injection), and cmd.exe then searches cwd (the worktree) for argv[0]. Breaks invariant 5 and the promise in resolve.go:18. | If `isBatchFile(exe)`, build the line with `batchCommandLine` and run comspec, as `Start` does (start_windows.go:62-72). Or refuse batch files in `StartPTY` until Phase 5. Add a test with `a&b`. |
+| fix now | Should | start_windows.go:22-27, 91, 158-167; pty_windows.go:72, 319-328; platform.go:54-56 | With `Spec.TaskID` set, cancelling any one process's ctx kills the whole task job, so cancelling a build would kill the agent and dev servers too. | ctx cancel kills only the process's own job. Task-wide kill becomes an explicit `KillTask(taskID)` emitted from a `CancelTask` command. Update tasks_windows_test.go:16. |
+| fix now | Should | platform.go:62-70 | `Start` is a package function with no interface, fake or contract suite. | Add a consumer-side `StartFunc`, plus `platformtest` with a fake and a `ProcessContract(t, start)` run against both. Move the clauses from platform_windows_test.go:350-686 into it. |
+| fix now | Should | batch_windows.go:37, 47-49, 70 | `errBatchArg` is unexported, and its message names only some of the refused characters. | Export `ErrBatchArg` and a pure `BatchArgsOK(argv)` that names the character, so builds can reject a preset when it is saved (BL-05, BL-15). |
+| fix now | Should | paths.go:21-24 | `CheckPath` doesn't normalise `\\.\UNC\`, so `\\.\UNC\wsl$\…` passes PL-04. | Strip the `\\.\unc\` and `\\?\`/`\\.\` prefixes. Add a fuzz target ("accepted ⇒ no wsl host") and one test per rejection rule. |
+| fix now | Should | platform_test.go:13-31 | No test proves a child sees only `Spec.Env`, and `StartPTY` builds its own env block (invariant 3, AGENTS.md 8). | Helper mode that prints its environment: set `GITHUB_TOKEN`, start through both `Start` and `StartPTY`, and assert the child env equals `Spec.Env`. |
+| fix now | Consider | batch_windows.go:47 | BL-15 custom commands may need `&&` or pipes, which the batch path refuses. | Decide in the builds design doc: argv-only steps, or an explicit audited `Spec.Shell`. |
+| when touched | Should | pty_windows.go:383-391 | When `Close` times out, it leaks the drain goroutine and two handles. | On timeout, still close `in`/`out` and wait briefly for `drained`. |
+| when touched | Consider | shell_windows.go:144-153; open_windows.go:69-78 | The Explorer COM fallback ignores ctx, so it can hang the WS-08 handler. | `select` on `ctx.Done()` vs `errc`. |
+| when touched | Consider | paths.go:41-58 | `ShortDirName` maps invalid UTF-8 to U+FFFD without adding the hash, so two names can collide. | Set `changed`, and add a property/fuzz test. |
+| when touched | Consider | ports_windows.go:55-86 | Stale parent pids can attribute an unrelated process's ports. | Extract a pure `descendants(edges, root)` that checks creation times. |
+| when touched | Consider | ports_windows.go:110-126 | `tablePorts` parses kernel bytes with no fuzz test. | Add a fuzz target. |
+| when touched | Consider | pty_windows.go:264-282 | `envBlock` doesn't de-duplicate keys or sort by key. | Make it a pure function: case-insensitive dedup (last wins), sorted by key, with unit tests. |
+| when touched | Consider | pty.go:16 | `Size.validate` is unexported. | Export `NewSize(cols, rows) (Size, error)`. |
+| when touched | Consider | start_windows.go:133; start_unix.go:73 | `ErrWaitDelay` is swallowed, so a truncated log looks complete. | Return an `OutputTruncated` flag or sentinel. |
+| when touched | Consider | paths.go:17-31 | A drive letter mapped to `\\wsl$` passes `CheckPath`. | Resolve mapped drives before the check. |
+| when touched | Consider | open_unix.go:66 | `go cmd.Wait()` has no owner. | Document it, or double-fork. |
+
+### Fine
+
+- **internal/core:** types, `Validate` and `Terminal` only. No effects, clock reads or IDs. Plain statuses are validated string enums. Purity is enforced by archtest `corePure` and depguard/forbidigo.
+- **internal/db:** pool split, pragmas, `BEGIN IMMEDIATE`, rollback on error, embedded migrations. STRICT tables with CHECK enums, plus triggers for one-level sub-tasks and an append-only audit log. Tests use real SQLite under `t.TempDir()` with a path containing a space.
+- **cmd/ygg:** `config.go` parses env at the boundary, with one test per rule. There is a single entry point. `doctor` runs only through `platform.Start` with the clean env and a timeout, and makes no retries.
+- **internal/api:** strict Host/Origin guard, loopback-only listener, static allowlist with traversal and device-name rejection. Every goroutine has an owner. Publishing never blocks. The sink redacts before it stores and publishes. No internal text appears in error bodies.
+- **web/src/main.tsx:** no findings.
+- **internal/platform:** job-object nesting with suspended start, breakaway for editors, `ErrNoEnv` on every entry point, cwd never searched, `runtime.GOOS` kept inside the package. Pure helpers are already split out (`wrapperFile`, `candidates`, `batchCommandLine`, `checkPTYSpec`, `tablePorts`). The only retry is a read-only one.
+
+### Gaps that matter for Phase 2
+
+- **Boundary parsers without round-trip / rejects-each-rule / fuzz tests:**
+  - api: CreateTask (no accepted ⇒ valid, no fuzz), `validTopic`, `cleanAssetPath`, `splitHost`/`originAllowed` (a security boundary, with no fuzz), `after`.
+  - db: `fmtTime`/`parseTime`, row → core mappers.
+  - cmd: the seed path parser, `listenAddr`.
+  - platform: `CheckPath`, `tablePorts`, `ShortDirName`, `batchCommandLine`, `LongPath` add/strip, `Size.validate`.
+  - core: `Task.Validate` (incomplete).
+- **Fakes without a contract suite:**
+  - `agents/mock.Adapter` plus five ad-hoc adapters in api_test.go:562-823, with no `agents.Adapter` contract suite.
+  - No `Start`/`Process` fake yet; builds need one.
+  - A future `BuildStore` fake needs a contract suite against SQLite, covering conflict, not-found and duplicate-ID.
+- **Decisions made inline in effectful code:**
+  - store lifecycle timestamps and transitions (store.go:363, 687, 832).
+  - seed find-or-create.
+  - error classification by string match (store.go:312).
+  - api create rules, run outcome mapping, `failTask`/`setStatus`, sub-agent caps.
+  - platform: LongPath prefix logic, process-tree walk, COMSPEC fallback.
+- **Property tests:** none yet, because there are no `step` functions. `core/builds` needs them from day one:
+  - steps run in order;
+  - a finished build has no running step;
+  - a stale-attempt exit changes nothing;
+  - cancel is terminal;
+  - Maven ordering is a topological order, and a cycle is rejected.
+- **Retries on non-idempotent operations:** none found.
+
+### Fix now, in order
+
+1. **platform:** route batch files in `StartPTY` through `batchCommandLine`, or refuse them (safety, invariant 5).
+2. **platform:** add a child-env test for `Start` and `StartPTY` (safety, invariant 3).
+3. **platform:** normalise `\\.\UNC\` in `CheckPath` and add a fuzz test (PL-04; WS-01 feeds user paths into it).
+4. **db + api:** add the `Store.Commit` unit of work so state and audit commit in one transaction (5.11 step 3, invariant 8).
+5. **db + core:** migration 00002 with a `version` column and step `Attempt`; `ErrConflict` on a version mismatch.
+6. **db + api:** map SQLite errors to `ErrConflict`/`ErrNotFound`/`ErrSubTaskDepth`, and add api error classes.
+7. **platform:** separate ctx cancel from task-job kill, and add an explicit `KillTask`.
+8. **platform:** injectable `StartFunc` + `platformtest` fake + `ProcessContract` suite.
+9. **platform:** export `ErrBatchArg`/`BatchArgsOK`.
+10. **api:** atomic `hub.publishNext`, and a closed `Topic` type with parser tests.
+11. **api:** set the handler → service-interface pattern for new endpoints (no `*db.Store`).
+12. **core + db:** `Project.Validate`/`Repo.Validate` and a shared WS-01 path parser.
+13. **Builds design doc** (`/functional-effect:design builds`): decide these there, before any code:
+    - sealed `StepState`;
+    - the store persists times it is given and never decides them;
+    - outbox vs `ProcessLost` restart reconciliation;
+    - argv-only steps vs `Spec.Shell` for BL-15;
+    - tag-free `core/builds` types with DTOs in api.
+
+## Pre-phase fixes (review items 1–13)
+
+The human approved the recommendations above (2026-10-17). These fixes are Phase 2 foundations: they land on `main` before any Phase 2 feature work.
+
+### Decisions
+
+- **Step state:** a sealed `StepState` in `internal/core/builds`; build status is derived from the steps.
+- **Timestamps:** `step` sets them from `Input.Now`. The store persists what it is given and never reads the clock for lifecycle fields.
+- **Restart recovery:** a `ProcessLost{BuildID, Attempt, Now}` input at startup, not an outbox. The job object already kills every build process when ygg dies, so there is nothing to resume; a Maven or npm step can't continue halfway. The user re-runs the build. Revisit the outbox if a later feature needs to resume commands (e.g. proposal execution).
+- **Custom commands (BL-15):** argv-only. Each command is one `StartStep`, with no shell entry point. `&&` and pipes are rejected when the preset is saved, with a message to split the command into steps.
+- **Wire types:** `internal/core/builds` types carry no JSON tags. Build DTOs live in `internal/api` and are converted at the boundary.
+- **Item 12, split:** `core.Project.Validate`/`core.Repo.Validate` land now. The shared path parser moves into the WS-01 owning package when that task is planned, because the package doesn't exist yet.
+- **Item 11:** a convention, not code. The lead documents it in `internal/api/doc.go`, and the first Phase 2 endpoint follows it.
+
+### Tasks
+
+| # | Items | Owner | Owns | Must not touch | Depends on |
+|---|---|---|---|---|---|
+| F0 | 13 | lead | `docs/design/builds.md` (via `/functional-effect:design builds`) | code | — |
+| F1 | 11 | lead | `internal/api/doc.go` | anything else | — |
+| A | 1, 2, 3, 9, then 7, 8 | `platform-windows` | `internal/platform/**`, new `internal/platform/platformtest/` | `internal/api`, `internal/agents`, `cmd` | — |
+| B | 4, 5, 6, 12 (Validate) | `go-backend` | `internal/db/**` (new migration `00002`, queries, gen), `internal/audit/**`, `internal/core/{model,enums,ids,core_test}.go`, `internal/api/{tasks,errors,server}.go`, `cmd/ygg/{app,seed}.go` and their tests | `internal/platform`, `internal/api/{hub,types}.go`, `internal/core/builds` | F0 (the attempt column) |
+| C | 10 | `go-backend` | `internal/api/hub.go`, `internal/api/types.go` (topic part), new `internal/api/hub_test.go` | `internal/api/tasks.go`, `api_test.go`, other packages | — |
+| I | — | lead | integration: wire `platform.KillTask` into task cancel, switch `tasks.go` to `hub.publishNext`/`Topic`, run all `task` checks | — | A, B, C |
+| R | — | lead | `safety-reviewer` + `fe-reviewer` on `git diff <batch-start>..main`, then fix every Blocking/Must-fix finding | — | I |
+
+**Parallel:** A, B and C run at once, with disjoint file ownership. B waits only for F0's migration decision (attempt on `build_steps`). C keeps the existing `TopicTasks`/`TopicTaskPrefix` string constants, so `tasks.go` still compiles until integration.
+
+**Migration 00002 (B):** `version INTEGER NOT NULL DEFAULT 0` on `builds`, `build_steps`, `tasks` and `proposals`, plus `attempt INTEGER NOT NULL DEFAULT 0` on `build_steps`. Every status update becomes `… WHERE id = ? AND version = ?`, and 0 rows on an existing row returns `db.ErrConflict`.
+
+**Store.Commit (B):** `Store.Commit(ctx, func(*db.Tx) error)` runs in one `BEGIN IMMEDIATE`. `Tx` exposes typed writes plus `AppendAudit(core.AuditEntry)`. `audit` becomes a pure `Prepare(entry, redactor, id, now) (core.AuditEntry, error)` that validates and redacts. Every existing state write plus audit pair in `api/tasks.go` and `cmd/ygg/seed.go` moves into a single `Commit`.
+
+**Definition of done (each branch):** `task generate`, `task lint`, `task typecheck`, `task test` and `task test:web` all pass. Each branch ends with the report format from its agent file.
