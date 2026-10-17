@@ -14,8 +14,12 @@ import (
 //
 //	// Start starts a process in the main job (nested in the task job when
 //	// spec.TaskID is set). It fails if spec.Env is nil. Cancelling ctx kills
-//	// the process tree.
+//	// this process's tree only.
 //	func Start(ctx context.Context, spec Spec) (Process, error)
+//
+//	// KillTask kills every process started with that Spec.TaskID (no-op if
+//	// none is running).
+//	func KillTask(taskID string) error
 //
 //	// StartPTY starts a process attached to a pseudo-terminal, in a job too.
 //	func StartPTY(ctx context.Context, spec PTYSpec) (PTY, error)
@@ -51,8 +55,10 @@ type Spec struct {
 	Dir  string
 	// Env is the full environment; nil is an error (ErrNoEnv).
 	Env []string
-	// TaskID puts the process in that task's nested job, so cancelling the
-	// task kills only its tree. Empty means the main job only.
+	// TaskID puts the process in that task's nested job, so KillTask(TaskID)
+	// kills the task's processes and nothing else. Cancelling a process's
+	// context kills only that process's tree, not its siblings. Empty means the
+	// main job only.
 	TaskID string
 	Stdin  io.Reader
 	Stdout io.Writer

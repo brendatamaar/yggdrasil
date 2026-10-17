@@ -11,25 +11,51 @@ import (
 	"time"
 )
 
-// Documented on Start: a TaskID process's context cancel kills the whole task
-// job, siblings of the same task included.
-func TestContextCancelOfOneProcessKillsWholeTaskJob(t *testing.T) {
+// Cancelling one process's context kills that process's tree and spares its
+// siblings in the same task.
+func TestContextCancelSparesSiblingInTask(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
 	_, child1, grand1 := startTree(t, ctx, "shared-cancel")
 	_, child2, grand2 := startTree(t, context.Background(), "shared-cancel")
-	_, childOther, grandOther := startTree(t, context.Background(), "other-task")
 
 	cancel()
+	for _, p := range []*proc{child1, grand1} {
+		if !p.exited(waitTimeout) {
+			t.Errorf("%s (pid %d) is still alive after its context was cancelled", p.name, p.pid)
+		}
+	}
+	for _, p := range []*proc{child2, grand2} {
+		if p.exited(500 * time.Millisecond) {
+			t.Errorf("%s (pid %d) died with a sibling's context", p.name, p.pid)
+		}
+	}
+}
+
+// KillTask kills every process of the task, and only that task.
+func TestKillTaskKillsAllProcessesOfTheTask(t *testing.T) {
+	_, child1, grand1 := startTree(t, context.Background(), "kill-me")
+	_, child2, grand2 := startTree(t, context.Background(), "kill-me")
+	_, childOther, grandOther := startTree(t, context.Background(), "other-task")
+
+	if err := KillTask("kill-me"); err != nil {
+		t.Fatal(err)
+	}
 	for _, p := range []*proc{child1, grand1, child2, grand2} {
 		if !p.exited(waitTimeout) {
-			t.Errorf("%s (pid %d) of the cancelled task is still alive", p.name, p.pid)
+			t.Errorf("%s (pid %d) of the killed task is still alive", p.name, p.pid)
 		}
 	}
 	for _, p := range []*proc{childOther, grandOther} {
-		if p.exited(0) {
+		if p.exited(500 * time.Millisecond) {
 			t.Errorf("%s (pid %d) of another task died", p.name, p.pid)
+		}
+	}
+	// Unknown or finished tasks are a no-op.
+	for _, id := range []string{"kill-me", "never-existed", ""} {
+		if err := KillTask(id); err != nil {
+			t.Errorf("KillTask(%q) = %v, want nil", id, err)
 		}
 	}
 }

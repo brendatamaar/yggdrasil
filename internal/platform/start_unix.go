@@ -13,7 +13,8 @@ import (
 
 // Unix support is minimal (docs/AGENTS.md 5.2): each process leads its own
 // process group, and killing the group kills the tree. There are no task
-// groups; Spec.TaskID is ignored and ctx cancel kills the process's tree.
+// jobs; KillTask walks a registry (taskreg_unix.go) and ctx cancel kills only that
+// process's group.
 
 const waitDelay = 2 * time.Second
 
@@ -52,17 +53,19 @@ func Start(ctx context.Context, spec Spec) (Process, error) {
 		return nil, fmt.Errorf("start %s: %w", exe, err)
 	}
 	p := &process{cmd: cmd, done: make(chan struct{})}
+	p.unreg = registerTask(spec.TaskID, func() { _ = p.Kill() })
 	p.stop = context.AfterFunc(ctx, func() { _ = p.Kill() })
 	go p.run()
 	return p, nil
 }
 
 type process struct {
-	cmd  *exec.Cmd
-	stop func() bool
-	done chan struct{}
-	code int
-	err  error
+	cmd   *exec.Cmd
+	stop  func() bool
+	unreg func()
+	done  chan struct{}
+	code  int
+	err   error
 }
 
 func (p *process) run() {
@@ -76,6 +79,7 @@ func (p *process) run() {
 	}
 	p.err = err
 	p.stop()
+	p.unreg()
 	close(p.done)
 }
 
