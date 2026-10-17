@@ -313,7 +313,8 @@ Proposed tag: **`v0.2.0`**, for you to create. I did not tag, push or start Phas
 
 - Step 1 **passed**: `task build`, `ygg version`, `ygg doctor` (exit 0 with one optional tool missing; with Git removed from PATH: `FAIL git` with a hint and exit 1). It showed Python 2.7.18 as usable; fixed (`0c028330`), Python 2 is now refused.
 - Step 2 **passed**: `ygg seed` printed the IDs; the demo task streamed with a nested sub-agent (1 tool call, 2.3 s, 190 tokens; second sub-agent 752 ms, 70 tokens), total 770 tokens and $0.0115, ending "The agent finished"; the task name was shown, not the prompt. The human also confirmed that nothing looked wrong.
-- Steps 3 to 10: not reported yet.
+- Steps 3, 4 and 5 **passed** (Customize and its persistence; ending `ygg.exe` leaves nothing behind, with the demo agent, which starts no process, so the real test is step 6; `YGG_ADDR=0.0.0.0` refused, a foreign Host header gets 403).
+- Steps 6 to 10: not reported yet.
 
 ### Decision
 
