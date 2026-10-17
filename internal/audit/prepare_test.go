@@ -116,7 +116,7 @@ func TestCommitRollsBackStateAndAuditTogether(t *testing.T) {
 	}
 	boom := errors.New("later write failed")
 	err = store.Commit(ctx, func(tx *db.Tx) error {
-		if _, err := tx.CreateProject(ctx, core.Project{ID: "p", Name: "acme-shop", Path: "/work/acme-shop"}); err != nil {
+		if _, err := tx.CreateProject(ctx, core.Project{ID: "p", Name: "acme-shop", Path: "/work/acme-shop", CreatedAt: time.Now()}); err != nil {
 			return err
 		}
 		if err := tx.AppendAudit(ctx, entry); err != nil {

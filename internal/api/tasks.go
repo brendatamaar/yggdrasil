@@ -193,10 +193,12 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	}
 	// The task and its audit entry are one commit: no task without an entry.
 	var task core.Task
+	created := time.Now().UTC()
 	err = s.store.Commit(ctx, func(tx *db.Tx) error {
 		t, err := tx.CreateTask(ctx, core.Task{
 			ID: id, ProjectID: project.ID, Title: taskTitle(req.Title, id), Prompt: prompt, Scope: core.ScopeRepo,
 			RepoIDs: []core.RepoID{repo.ID}, Mode: core.ModeAsk, Agent: req.Agent, Model: req.Model, Status: core.TaskQueued,
+			CreatedAt: created, UpdatedAt: created,
 		})
 		if err != nil {
 			return err
@@ -320,7 +322,7 @@ func (s *Server) transition(ctx context.Context, task *core.Task, status core.Ta
 	}
 	var version int64
 	err = s.store.Commit(ctx, func(tx *db.Tx) error {
-		v, err := tx.UpdateTaskStatus(ctx, task.ID, status, task.Version)
+		v, err := tx.UpdateTaskStatus(ctx, task.ID, status, task.Version, time.Now().UTC())
 		if err != nil {
 			return err
 		}
@@ -452,7 +454,7 @@ func (s *Server) setSession(ctx context.Context, task *core.Task, session string
 	}
 	var version int64
 	err = s.store.Commit(ctx, func(tx *db.Tx) error {
-		v, err := tx.SetTaskSession(ctx, task.ID, session, task.Version)
+		v, err := tx.SetTaskSession(ctx, task.ID, session, task.Version, time.Now().UTC())
 		if err != nil {
 			return err
 		}

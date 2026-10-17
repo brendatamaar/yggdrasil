@@ -200,29 +200,12 @@ func TestStaleVersionIsAConflict(t *testing.T) {
 		t.Fatalf("stale proposal update = %v, want ErrConflict", err)
 	}
 
-	b, err := s.CreateBuild(ctx, core.Build{TaskID: &task.ID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.UpdateBuildStatus(ctx, b.ID, core.BuildCancelled, b.Version); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.UpdateBuildStatus(ctx, b.ID, core.BuildSucceeded, b.Version); !errors.Is(err, ErrConflict) {
-		t.Fatalf("stale build update = %v, want ErrConflict", err)
-	}
-	if gb, err := s.GetBuild(ctx, b.ID); err != nil || gb.Status != core.BuildCancelled {
-		t.Fatalf("build = %+v, %v; cancelled must not be overwritten", gb, err)
-	}
-
 	// A missing row is NotFound, not a conflict.
 	if _, err := s.UpdateTaskStatus(ctx, "nope", core.TaskDone, 0); !errors.Is(err, ErrNotFound) || errors.Is(err, ErrConflict) {
 		t.Fatalf("missing task = %v, want ErrNotFound", err)
 	}
 	if _, err := s.UpdateProposalStatus(ctx, "nope", core.ProposalFailed, 0); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing proposal = %v, want ErrNotFound", err)
-	}
-	if _, err := s.UpdateBuildStatus(ctx, "nope", core.BuildFailed, 0); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("missing build = %v, want ErrNotFound", err)
 	}
 }
 
@@ -235,15 +218,10 @@ func TestBuildStepFieldsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := s.CreateBuild(ctx, core.Build{TaskID: &task.ID, Steps: []core.BuildStep{
-		{RepoID: r.ID, Name: "verify", Status: core.BuildQueued, Argv: []string{"go", "test", "./..."}},
+	b, err := s.InsertBuild(ctx, core.Build{TaskID: &task.ID, Steps: []core.BuildStep{
+		{RepoID: r.ID, Name: "verify", Status: core.BuildInterrupted, Attempt: 2, Outcome: "interrupted", Argv: []string{"go", "test", "./..."}},
 	}})
 	if err != nil {
-		t.Fatal(err)
-	}
-	st := b.Steps[0]
-	st.Status, st.Attempt, st.Outcome = core.BuildInterrupted, 2, "interrupted"
-	if err := s.UpdateBuildStep(ctx, b.ID, st); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.GetBuild(ctx, b.ID)

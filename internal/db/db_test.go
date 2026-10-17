@@ -290,18 +290,13 @@ func TestStoreRoundTrip(t *testing.T) {
 		t.Fatalf("proposal = %+v, %v", gotP, err)
 	}
 
-	b, err := s.CreateBuild(ctx, core.Build{TaskID: &task.ID, WorktreeID: &wt.ID, Steps: []core.BuildStep{
+	code := 0
+	fin := time.Now().UTC()
+	b, err := s.InsertBuild(ctx, core.Build{TaskID: &task.ID, WorktreeID: &wt.ID, Status: core.BuildSucceeded, FinishedAt: &fin, Steps: []core.BuildStep{
 		{RepoID: r.ID, Name: "build", Status: core.BuildQueued},
-		{RepoID: r.ID, Name: "test", Status: core.BuildQueued},
+		{RepoID: r.ID, Name: "test", Status: core.BuildSucceeded, ExitCode: &code},
 	}})
 	if err != nil {
-		t.Fatal(err)
-	}
-	code := 0
-	if err := s.UpdateBuildStep(ctx, b.ID, core.BuildStep{Index: 1, Status: core.BuildSucceeded, ExitCode: &code}); err != nil {
-		t.Fatal(err)
-	}
-	if v, err := s.UpdateBuildStatus(ctx, b.ID, core.BuildSucceeded, b.Version); err != nil || v != 1 {
 		t.Fatal(err)
 	}
 	gotB, err := s.GetBuild(ctx, b.ID)
