@@ -21,6 +21,9 @@ packages:
     type_mappings: *std
   - path: github.com/brendatamaar/yggdrasil/internal/api
     output_path: web/src/api/gen/api.gen.ts
+    # Go-only closed topic type; topics cross the wire as strings.
+    exclude_files:
+      - topic.go
     frontmatter: |
       import type * as agents from "./agents.gen";
       import type * as core from "./core.gen";

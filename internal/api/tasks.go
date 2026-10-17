@@ -274,7 +274,7 @@ func (s *Server) setStatus(ctx context.Context, task core.Task, status core.Task
 	if err := s.store.UpdateTaskStatus(ctx, task.ID, status); err != nil {
 		return err
 	}
-	s.hub.publish(TopicTasks, s.hub.nextSeq(TopicTasks), TaskStatusMessage{TaskID: task.ID, Title: task.Title, Status: status})
+	s.hub.publishNext(tasksTopic{}, TaskStatusMessage{TaskID: task.ID, Title: task.Title, Status: status})
 	return nil
 }
 
@@ -461,6 +461,6 @@ func (k sink) Append(ctx context.Context, id core.TaskID, e agents.Event) error 
 	if err := k.s.store.AppendTaskEvent(ctx, db.TaskEvent{TaskID: id, Seq: e.Seq, Kind: string(e.Kind), At: e.At, Data: data}); err != nil {
 		return err
 	}
-	k.s.hub.publish(TopicTaskPrefix+string(id), e.Seq, e)
+	k.s.hub.publishSeq(taskTopic{ID: id}, e.Seq, e)
 	return nil
 }

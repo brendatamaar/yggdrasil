@@ -478,7 +478,7 @@ func TestSlowClientIsDroppedWithoutBlocking(t *testing.T) {
 	big := strings.Repeat("x", 32<<10)
 	start := time.Now()
 	for range 4000 { // never read by the client: its buffer and the socket fill up
-		e.srv.hub.publish(TopicTasks, e.srv.hub.nextSeq(TopicTasks), map[string]string{"pad": big})
+		e.srv.hub.publishNext(tasksTopic{}, map[string]string{"pad": big})
 	}
 	if d := time.Since(start); d > 20*time.Second {
 		t.Fatalf("publishing took %v: a slow client blocked it", d)

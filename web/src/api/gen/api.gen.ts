@@ -96,10 +96,6 @@ export interface Server {
  */
 
 //////////
-// source: topic.go
-
-
-//////////
 // source: types.go
 
 /**

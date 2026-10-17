@@ -58,28 +58,6 @@ func (h *hub) publishSeq(t wsTopic, seq int64, data any) {
 	h.send(t, seq, false, data)
 }
 
-// nextSeq returns the next sequence number of a topic.
-//
-// Deprecated: removed once tasks.go uses publishNext/publishSeq.
-func (h *hub) nextSeq(topic string) int64 {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.seq[topic]++
-	return h.seq[topic]
-}
-
-// publish sends data on topic with the given sequence number.
-//
-// Deprecated: removed once tasks.go uses publishNext/publishSeq.
-func (h *hub) publish(topic string, seq int64, data any) {
-	h.send(rawTopic(topic), seq, false, data)
-}
-
-type rawTopic string // an unparsed name, for the deprecated wrappers only
-
-func (rawTopic) isTopic()         {}
-func (r rawTopic) String() string { return string(r) }
-
 func (h *hub) send(t wsTopic, seq int64, assign bool, data any) {
 	topic := t.String()
 	raw, err := json.Marshal(data)
