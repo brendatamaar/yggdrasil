@@ -5,13 +5,10 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
-
-	"github.com/brendatamaar/yggdrasil/internal/core"
 )
 
 const (
@@ -49,8 +46,21 @@ func newHub(log *slog.Logger) *hub {
 	return &hub{log: log, clients: map[*client]struct{}{}, seq: map[string]int64{}}
 }
 
-// nextSeq returns the next sequence number of a topic that has no sequence of
-// its own (events carry theirs).
+// publishNext assigns the topic's next sequence number and enqueues the
+// message in one critical section, so subscribers see numbers in order.
+func (h *hub) publishNext(t wsTopic, data any) {
+	h.send(t, 0, true, data)
+}
+
+// publishSeq sends data on t with a sequence number the stream carries itself
+// (task events).
+func (h *hub) publishSeq(t wsTopic, seq int64, data any) {
+	h.send(t, seq, false, data)
+}
+
+// nextSeq returns the next sequence number of a topic.
+//
+// Deprecated: removed once tasks.go uses publishNext/publishSeq.
 func (h *hub) nextSeq(topic string) int64 {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -59,18 +69,35 @@ func (h *hub) nextSeq(topic string) int64 {
 }
 
 // publish sends data on topic with the given sequence number.
+//
+// Deprecated: removed once tasks.go uses publishNext/publishSeq.
 func (h *hub) publish(topic string, seq int64, data any) {
+	h.send(rawTopic(topic), seq, false, data)
+}
+
+type rawTopic string // an unparsed name, for the deprecated wrappers only
+
+func (rawTopic) isTopic()         {}
+func (r rawTopic) String() string { return string(r) }
+
+func (h *hub) send(t wsTopic, seq int64, assign bool, data any) {
+	topic := t.String()
 	raw, err := json.Marshal(data)
 	if err != nil {
 		h.log.Error("encode ws data", "topic", topic, "err", err)
 		return
 	}
+	h.mu.Lock()
+	if assign {
+		h.seq[topic]++
+		seq = h.seq[topic]
+	}
 	msg, err := json.Marshal(WSMessage{Type: MsgEvent, Topic: topic, Seq: seq, Data: raw})
 	if err != nil {
+		h.mu.Unlock()
 		h.log.Error("encode ws message", "topic", topic, "err", err)
 		return
 	}
-	h.mu.Lock()
 	var slow []*client
 	for c := range h.clients {
 		if _, ok := c.topics[topic]; !ok {
@@ -120,15 +147,6 @@ func (h *hub) closeAll() {
 }
 
 func (h *hub) wait() { h.wg.Wait() }
-
-// validTopic accepts "tasks" and "task:<id>".
-func validTopic(topic string) bool {
-	if topic == TopicTasks {
-		return true
-	}
-	id, ok := strings.CutPrefix(topic, TopicTaskPrefix)
-	return ok && core.TaskID(id).Validate() == nil
-}
 
 // serveWS upgrades the request and serves one client until it disconnects or
 // the server stops. Host and Origin were checked by the guard middleware
@@ -204,20 +222,22 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 		}
 		switch msg.Type {
 		case MsgSubscribe, MsgUnsubscribe:
-			if !validTopic(msg.Topic) {
+			topic, err := parseTopic(msg.Topic)
+			if err != nil {
 				h.reply(c, WSMessage{Type: MsgError, Topic: msg.Topic, Data: errData("Unknown topic.")})
 				continue
 			}
+			key := topic.String()
 			h.mu.Lock()
 			tooMany := false
 			if msg.Type == MsgSubscribe {
-				if _, have := c.topics[msg.Topic]; !have && len(c.topics) >= maxTopicsPerClient {
+				if _, have := c.topics[key]; !have && len(c.topics) >= maxTopicsPerClient {
 					tooMany = true
 				} else {
-					c.topics[msg.Topic] = struct{}{}
+					c.topics[key] = struct{}{}
 				}
 			} else {
-				delete(c.topics, msg.Topic)
+				delete(c.topics, key)
 			}
 			h.mu.Unlock()
 			if tooMany {
