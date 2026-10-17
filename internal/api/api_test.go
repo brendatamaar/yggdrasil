@@ -689,6 +689,52 @@ func (r stubRun) Events() <-chan agents.Event { return r.ch }
 func (stubRun) SessionID() string             { return "" }
 func (stubRun) Wait() error                   { return nil }
 
+// A run that cannot start says why on the page, not only in the log. A message
+// meant for people is shown as it is; anything else becomes a generic line.
+func TestStartFailureIsExplainedInTheTranscript(t *testing.T) {
+	e := newEnv(t, "plain", 0, func(d *Deps) {
+		d.Adapters["refuses"] = startFailAdapter{mock.New(mock.Options{}), userError("This repo has its own Claude Code configuration (.claude/settings.local.json).")}
+		d.Adapters["breaks"] = startFailAdapter{mock.New(mock.Options{}), errString(`open C:\Users\someone\secret.db: access denied`)}
+	})
+	for agent, want := range map[string]string{"refuses": "own Claude Code configuration", "breaks": "could not be started"} {
+		req := e.createReq()
+		req.Agent = agent
+		resp, data := e.do(t, http.MethodPost, "/api/tasks", req)
+		var tr TaskResponse
+		if resp.StatusCode != 201 || json.Unmarshal(data, &tr) != nil {
+			t.Fatalf("%s: create = %d %s", agent, resp.StatusCode, data)
+		}
+		e.waitStatus(t, tr.Task.ID, core.TaskFailed)
+
+		var er TaskEventsResponse
+		deadline := time.Now().Add(5 * time.Second)
+		for len(er.Events) < 2 && time.Now().Before(deadline) {
+			_, data = e.do(t, http.MethodGet, "/api/tasks/"+string(tr.Task.ID)+"/events", nil)
+			if err := json.Unmarshal(data, &er); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		if len(er.Events) != 2 || er.Events[0].Kind != agents.EventError || !strings.Contains(er.Events[0].Error, want) ||
+			er.Events[1].Kind != agents.EventStatus || er.Events[1].Status != agents.RunFailed {
+			t.Fatalf("%s: events = %+v", agent, er.Events)
+		}
+		if strings.Contains(string(data), "someone") || strings.Contains(string(data), "secret.db") {
+			t.Errorf("%s: an internal error reached the transcript: %s", agent, data)
+		}
+	}
+}
+
+type startFailAdapter struct {
+	*mock.Adapter
+	err error
+}
+
+func (startFailAdapter) Name() string { return "refuses" }
+func (a startFailAdapter) Start(context.Context, agents.StartOptions) (agents.Run, error) {
+	return nil, a.err
+}
+
 // A panic inside a run fails that task; it doesn't take the server down.
 func TestPanicInARunFailsOnlyThatTask(t *testing.T) {
 	e := newEnv(t, "plain", 0, func(d *Deps) { d.Adapters["panics"] = panicAdapter{mock.New(mock.Options{})} })

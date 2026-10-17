@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -364,6 +365,7 @@ func (s *Server) runTask(ctx context.Context, task core.Task, repo core.Repo, ad
 	}, sink{s})
 	if err != nil {
 		s.log.Error("run task", "task", task.ID, "err", err)
+		s.explainFailure(bg, task.ID, err)
 		return
 	}
 	if res.SessionID != "" {
@@ -381,6 +383,33 @@ func (s *Server) runTask(ctx context.Context, task core.Task, repo core.Repo, ad
 	default:
 		if res.Err != nil {
 			s.log.Warn("agent run failed", "task", task.ID, "err", res.Err)
+		}
+	}
+}
+
+// explainFailure puts the reason a run could not start into the task's
+// transcript, so the person sees it on the page and not only in the log. Only
+// a message meant for people is shown (an adapter's UserMessage); anything else
+// becomes a generic line. It does nothing once the run has produced events:
+// the transcript then already says what happened.
+func (s *Server) explainFailure(ctx context.Context, id core.TaskID, cause error) {
+	msg := "The agent could not be started. The Yggdrasil log has the details."
+	var um interface{ UserMessage() string }
+	if errors.As(cause, &um) {
+		msg = um.UserMessage()
+	}
+	existing, err := s.store.ListTaskEvents(ctx, id, 0)
+	if err != nil || len(existing) > 0 {
+		return
+	}
+	now := time.Now().UTC()
+	for _, e := range []agents.Event{
+		{Seq: 1, Kind: agents.EventError, At: now, IsError: true, Error: msg},
+		{Seq: 2, Kind: agents.EventStatus, At: now, Status: agents.RunFailed},
+	} {
+		if err := (sink{s}).Append(ctx, id, e); err != nil {
+			s.log.Error("store failure explanation", "task", id, "err", err)
+			return
 		}
 	}
 }
