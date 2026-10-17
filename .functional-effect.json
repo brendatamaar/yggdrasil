@@ -1,0 +1,14 @@
+{
+  "core": ["internal/core/**"],
+  "shell": [
+    "cmd/**",
+    "internal/api/**",
+    "internal/db/**",
+    "internal/platform/**",
+    "web/src/main.tsx"
+  ],
+  "exclude": [],
+  "mode": "deny",
+  "stopCheck": "changed",
+  "verify": { "command": "go test ./internal/core/...", "timeout": 120 }
+}

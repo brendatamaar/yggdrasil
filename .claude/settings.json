@@ -80,7 +80,8 @@
       "PowerShell(git branch -d *)",
       "PowerShell(git branch --delete *)",
       "PowerShell(git clean *)",
-      "PowerShell(Remove-Item *)"
+      "PowerShell(Remove-Item *)",
+      "Read(./.env)"
     ]
   }
 }

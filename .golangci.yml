@@ -7,13 +7,41 @@ linters:
   default: standard
   enable:
     - bodyclose
+    - depguard
     - errorlint
     - forbidigo
+    - gochecksumtype
     - gosec
     - misspell
     - nilerr
     - unconvert
   settings:
+    # Model Functional Effect: internal/core is a pure functional core (.functional-effect.json).
+    depguard:
+      rules:
+        functional-core:
+          files:
+            - "**/internal/core/**"
+            - "!$test"
+          deny:
+            - pkg: os
+              desc: "functional core: no filesystem/env/process access; use an Input or a Command"
+            - pkg: net
+              desc: "functional core: no network access; return a Command"
+            - pkg: database/sql
+              desc: "functional core: no database access; return a Command"
+            - pkg: io/ioutil
+              desc: "functional core: no filesystem access"
+            - pkg: math/rand
+              desc: "functional core: randomness arrives as an Input field"
+            - pkg: crypto/rand
+              desc: "functional core: randomness arrives as an Input field"
+            - pkg: log
+              desc: "functional core: logging is output; emit a Command or log in the shell"
+    # Exhaustive type switches over sealed interfaces marked //sumtype:decl;
+    # a default branch does not count as handling every variant.
+    gochecksumtype:
+      default-signifies-exhaustive: false
     forbidigo:
       analyze-types: true
       forbid:
@@ -29,6 +57,13 @@ linters:
         - pattern: ^os\.Environ$
           pkg: ^os$
           msg: use the clean environment from internal/safety (docs/AGENTS.md 5.3)
+        # Model Functional Effect: core-only (see exclusions below).
+        - pattern: ^time\.(Now|Since|Until|Sleep|After|AfterFunc|Tick|NewTimer|NewTicker)$
+          pkg: ^time$
+          msg: "functional core: the clock arrives as an Input field"
+        - pattern: ^fmt\.(Print|Println|Printf|Fprint|Fprintln|Fprintf)$
+          pkg: ^fmt$
+          msg: "functional core: printing is output; do it in the shell"
   exclusions:
     presets:
       - std-error-handling
@@ -41,6 +76,13 @@ linters:
         text: os\.Environ
       - path: _test\.go$
         linters: [gosec]
+      # Functional-core forbidigo patterns apply only to non-test files in internal/core.
+      - path-except: ^internal/core/
+        linters: [forbidigo]
+        text: "functional core:"
+      - path: _test\.go$
+        linters: [forbidigo]
+        text: "functional core:"
 
 formatters:
   enable:
