@@ -153,7 +153,7 @@ func (s *Store) InsertBuild(ctx context.Context, b core.Build) (core.Build, erro
 			if err := tx.q.CreateBuildStep(ctx, gen.CreateBuildStepParams{
 				BuildID: string(b.ID), Idx: int64(i), RepoID: string(st.RepoID), Name: st.Name, Status: string(st.Status),
 				ExitCode: nullInt(st.ExitCode), LogPath: st.LogPath, StartedAt: fmtNullTime(st.StartedAt), FinishedAt: fmtNullTime(st.FinishedAt),
-				Argv: argv, Attempt: int64(st.Attempt), Outcome: nullText(st.Outcome),
+				Argv: argv, Attempt: int64(st.Attempt), Outcome: nullText(string(st.Outcome)),
 			}); err != nil {
 				return fmt.Errorf("insert build step: %w", err)
 			}

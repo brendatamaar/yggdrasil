@@ -293,8 +293,8 @@ func TestStoreRoundTrip(t *testing.T) {
 	code := 0
 	fin := time.Now().UTC()
 	b, err := s.InsertBuild(ctx, core.Build{TaskID: &task.ID, WorktreeID: &wt.ID, Status: core.BuildSucceeded, FinishedAt: &fin, Steps: []core.BuildStep{
-		{RepoID: r.ID, Name: "build", Status: core.BuildQueued},
-		{RepoID: r.ID, Name: "test", Status: core.BuildSucceeded, ExitCode: &code},
+		{RepoID: r.ID, Name: "build", Status: core.StepQueued},
+		{RepoID: r.ID, Name: "test", Status: core.StepSucceeded, ExitCode: &code},
 	}})
 	if err != nil {
 		t.Fatal(err)

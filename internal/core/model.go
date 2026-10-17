@@ -175,20 +175,20 @@ type Proposal struct {
 
 // BuildStep is one command of a build.
 type BuildStep struct {
-	Index      int         `json:"index"`
-	RepoID     RepoID      `json:"repoId"`
-	Name       string      `json:"name"`
-	Status     BuildStatus `json:"status"`
-	ExitCode   *int        `json:"exitCode,omitempty"`
-	LogPath    string      `json:"logPath,omitempty"`
-	StartedAt  *time.Time  `json:"startedAt,omitempty"`
-	FinishedAt *time.Time  `json:"finishedAt,omitempty"`
+	Index      int        `json:"index"`
+	RepoID     RepoID     `json:"repoId"`
+	Name       string     `json:"name"`
+	Status     StepStatus `json:"status"`
+	ExitCode   *int       `json:"exitCode,omitempty"`
+	LogPath    string     `json:"logPath,omitempty"`
+	StartedAt  *time.Time `json:"startedAt,omitempty"`
+	FinishedAt *time.Time `json:"finishedAt,omitempty"`
 	// Argv is the command line, Attempt the run counter of the step and
-	// Outcome how the last attempt ended (succeeded, failed, start_failed,
-	// cancelled, interrupted); Outcome is empty until the step has finished.
-	Argv    []string `json:"argv,omitempty"`
-	Attempt int      `json:"attempt,omitempty"`
-	Outcome string   `json:"outcome,omitempty"`
+	// Outcome how the last attempt ended; Outcome is empty until the step has
+	// finished.
+	Argv    []string    `json:"argv,omitempty"`
+	Attempt int         `json:"attempt,omitempty"`
+	Outcome StepOutcome `json:"outcome,omitempty"`
 }
 
 // Build is an ordered sequence of build steps.

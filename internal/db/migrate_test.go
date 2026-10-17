@@ -65,7 +65,7 @@ func TestMigration00002KeepsData(t *testing.T) {
 		t.Fatalf("build after up = %+v", b)
 	}
 	st := b.Steps[0]
-	if st.Name != "verify" || st.Status != core.BuildSucceeded || st.ExitCode == nil || *st.ExitCode != 0 ||
+	if st.Name != "verify" || st.Status != core.StepSucceeded || st.ExitCode == nil || *st.ExitCode != 0 ||
 		st.LogPath != "logs/b1-0.log" || st.StartedAt == nil || len(st.Argv) != 0 || st.Attempt != 0 || st.Outcome != "" {
 		t.Fatalf("step after up = %+v", st)
 	}
@@ -219,7 +219,7 @@ func TestBuildStepFieldsRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, err := s.InsertBuild(ctx, core.Build{TaskID: &task.ID, Steps: []core.BuildStep{
-		{RepoID: r.ID, Name: "verify", Status: core.BuildInterrupted, Attempt: 2, Outcome: "interrupted", Argv: []string{"go", "test", "./..."}},
+		{RepoID: r.ID, Name: "verify", Status: core.StepInterrupted, Attempt: 2, Outcome: core.OutcomeInterrupted, Argv: []string{"go", "test", "./..."}},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -229,7 +229,7 @@ func TestBuildStepFieldsRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := got.Steps[0]
-	if len(g.Argv) != 3 || g.Argv[2] != "./..." || g.Attempt != 2 || g.Outcome != "interrupted" || g.Status != core.BuildInterrupted {
+	if len(g.Argv) != 3 || g.Argv[2] != "./..." || g.Attempt != 2 || g.Outcome != core.OutcomeInterrupted || g.Status != core.StepInterrupted {
 		t.Fatalf("step = %+v", g)
 	}
 }

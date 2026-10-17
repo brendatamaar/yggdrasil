@@ -475,10 +475,21 @@ func buildStepFrom(r gen.BuildStep) (core.BuildStep, error) {
 	if err := json.Unmarshal([]byte(r.Argv), &argv); err != nil {
 		return core.BuildStep{}, fmt.Errorf("bad argv in database for step %d of build %s: %w", r.Idx, r.BuildID, err)
 	}
+	status := core.StepStatus(r.Status)
+	if err := status.Validate(); err != nil {
+		return core.BuildStep{}, fmt.Errorf("bad step %d of build %s in database: %w", r.Idx, r.BuildID, err)
+	}
+	var outcome core.StepOutcome
+	if r.Outcome.Valid {
+		outcome = core.StepOutcome(r.Outcome.String)
+		if err := outcome.Validate(); err != nil {
+			return core.BuildStep{}, fmt.Errorf("bad step %d of build %s in database: %w", r.Idx, r.BuildID, err)
+		}
+	}
 	return core.BuildStep{
-		Index: int(r.Idx), RepoID: core.RepoID(r.RepoID), Name: r.Name, Status: core.BuildStatus(r.Status),
+		Index: int(r.Idx), RepoID: core.RepoID(r.RepoID), Name: r.Name, Status: status,
 		ExitCode: code, LogPath: r.LogPath, StartedAt: start, FinishedAt: fin,
-		Argv: argv, Attempt: int(r.Attempt), Outcome: r.Outcome.String,
+		Argv: argv, Attempt: int(r.Attempt), Outcome: outcome,
 	}, nil
 }
 
@@ -503,6 +514,10 @@ func nullInt(p *int) sql.NullInt64 {
 }
 
 func (s *Store) buildFrom(ctx context.Context, q *gen.Queries, r gen.Build) (core.Build, error) {
+	status := core.BuildStatus(r.Status)
+	if err := status.Validate(); err != nil {
+		return core.Build{}, fmt.Errorf("bad build %s in database: %w", r.ID, err)
+	}
 	at, err := parseTime(r.CreatedAt)
 	if err != nil {
 		return core.Build{}, err
@@ -525,7 +540,7 @@ func (s *Store) buildFrom(ctx context.Context, q *gen.Queries, r gen.Build) (cor
 	}
 	return core.Build{
 		ID: core.BuildID(r.ID), WorktreeID: strPtr[core.WorktreeID](r.WorktreeID), TaskID: strPtr[core.TaskID](r.TaskID),
-		Status: core.BuildStatus(r.Status), Steps: steps, CreatedAt: at, FinishedAt: fin, Version: r.Version,
+		Status: status, Steps: steps, CreatedAt: at, FinishedAt: fin, Version: r.Version,
 	}, nil
 }
 
