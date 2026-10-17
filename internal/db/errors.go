@@ -45,9 +45,9 @@ func classify(err error) error {
 	}
 	switch code {
 	case codeConstraintUnique, codeConstraintPrimaryKey:
-		return fmt.Errorf("%w: %w", ErrConflict, err)
+		return fmt.Errorf("%w: %v", ErrConflict, err)
 	case codeConstraintForeignKey:
-		return fmt.Errorf("%w: %w", ErrNotFound, err)
+		return fmt.Errorf("%w: %v", ErrNotFound, err)
 	}
 	return err
 }
