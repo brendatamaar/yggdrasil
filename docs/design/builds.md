@@ -137,7 +137,7 @@ Each one is checked after every step of a random input sequence (`run(None, inpu
 | `WriteAudit{Action, Subject, Detail}` | one | yes: written in the same `Store.Commit` as the state, never after | — |
 | `Publish{BuildChanged}` | one, after commit | yes: subscribers refetch by build ID | — |
 | `Wake` | one, after commit | yes: coalesced; tells the queue worker to re-run `Next` | `Admit` to the chosen build |
-| `StartStep{BuildID, Index, Attempt, Target, Argv, TaskID?}` | one start, then a **stream** of log lines, then one exit | **no**: starts a process. Key `(BuildID, Index, Attempt)`; the interpreter refuses a second start for a key it has already started | `StepExited` or `StepStartFailed` |
+| `StartStep{BuildID, Index, Attempt, Target, Argv}` | one start, then a **stream** of log lines, then one exit | **no**: starts a process. Key `(BuildID, Index, Attempt)`; the interpreter refuses a second start for a key it has already started | `StepExited` or `StepStartFailed` |
 | `KillStep{BuildID, Index, Attempt}` | one | yes: cancels the step's ctx; a no-op if it has already exited or is unknown | none directly (the `StepExited` follows) |
 | `CollectArtifacts{BuildID, Target, RepoIDs}` | one | yes: read-only glob of the toolchain's artifact patterns | `ArtifactsCollected` |
 
@@ -161,7 +161,7 @@ handle(buildID, input)                              // internal/builds; all inpu
   → interpret effect commands (after commit, outside the tx):
       StartStep → resolve argv[0] (platform.Resolve, repo dir: mvnw.cmd, npm.cmd, …)
                 → open log file <dataDir>/logs/builds/<buildID>/<index>-<attempt>.log
-                → start(ctx_step, platform.Spec{Argv, Dir, Env: safety.Clean(), TaskID?, Stdout/Stderr: redacting line writer → file + hub})
+                → start(ctx_step, platform.Spec{Argv, Dir, Env: safety.Clean(), no TaskID, Stdout/Stderr: redacting line writer → file + hub})
                 → goroutine (owned by the service errgroup): Wait → enqueue StepExited
                   (start error → StepStartFailed with the reason classified)
       KillStep  → cancel ctx_step                   // platform kills that process's own job only
@@ -239,8 +239,8 @@ Nothing needs more than three fakes per test: the service tests use the store, s
 - **State:** the `builds`, `build_steps` and new `build_artifacts` tables. There is no event log, inbox or outbox (decision: `ProcessLost` instead of an outbox). Effects run only after `Commit` returns, never inside the transaction or the HTTP handler. The handler returns 202 once `Enqueue`/`Cancel` has committed.
 - **Expected version:** `builds.version` is incremented on every `SaveBuild`. `build_steps` rows are rewritten with the build in the same transaction, so they need no version of their own. The review's per-step version is not needed, because steps are only ever saved with their build.
 - **Migration `00002` (task B):** SQLite can't alter a CHECK constraint, so `builds` and `build_steps` are rebuilt (create new, copy, drop, rename, recreate indexes).
-  - `builds`: add `version INTEGER NOT NULL DEFAULT 0`, `actor TEXT NOT NULL DEFAULT 'user'`, `created_at` kept (it is `QueuedAt`), `started_at TEXT`, `result_step INTEGER`, `preset_id TEXT`. Status adds `interrupted`.
-  - `build_steps`: add `argv TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(argv))`, `attempt INTEGER NOT NULL DEFAULT 0`, `outcome TEXT` (`succeeded|failed|start_failed|cancelled|interrupted`), `start_failure TEXT`, `log_truncated INTEGER NOT NULL DEFAULT 0`. Status adds `skipped` and `interrupted`.
+  - `builds`: add `version INTEGER NOT NULL DEFAULT 0`, `actor TEXT NOT NULL DEFAULT 'user'`, `created_at` kept (it is `QueuedAt`), `started_at TEXT`, `result_step INTEGER`, `preset_id TEXT`. `cancelled_at TEXT` (non-null with a live step = `Cancelling`; on `Finished` = when the cancel came), `artifacts_collected_at TEXT` (non-null = `Artifacts` collected, even if empty), `target TEXT NOT NULL DEFAULT 'main' CHECK (target IN ('main','worktree'))` with `worktree_id` required when `target = 'worktree'` (CHECK) and `ON DELETE RESTRICT` (a worktree with builds can't vanish under a queued build). Status adds `interrupted`. Index `builds(status, created_at, id)` for `ListQueued`, `CountRunning`, `ListActive` and `Next`'s order.
+  - `build_steps`: add `argv TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(argv))`, `attempt INTEGER NOT NULL DEFAULT 0`, `outcome TEXT` (`succeeded|failed|start_failed|cancelled|interrupted`), `start_failure TEXT CHECK (start_failure IN ('not_found','bad_args','dir_missing','other'))`, `log_truncated INTEGER NOT NULL DEFAULT 0`. Status adds `skipped` and `interrupted`.
   - new `build_artifacts(build_id, repo_id, path, size, PRIMARY KEY (build_id, path))`.
   - new `build_presets(id, project_id, name, steps TEXT CHECK (json_valid(steps)), created_at, version)`.
   - `tasks` and `proposals` get `version INTEGER NOT NULL DEFAULT 0` too.
@@ -260,7 +260,7 @@ Nothing needs more than three fakes per test: the service tests use the store, s
 |---|---|---|---|
 | HTTP `POST /api/builds` JSON | `builds.ParseRequest(raw, repos)` | `corebuilds.Spec` | zero steps; >64 steps; unknown repo; worktree not belonging to the step's repo; empty argv; NUL in any arg; shell metacharacters (`platform.BatchArgsOK`, applied on every OS so presets stay portable); name empty or >200 runes |
 | Preset save `POST /api/build-presets` | `builds.ParsePreset` | `corebuilds.Preset{ID, ProjectID, Name, Steps}` | same rules as above, plus a duplicate name in the project → domain outcome 409 |
-| DB rows (`builds` + `build_steps` + `build_artifacts`) | `db.buildFromRows` | `corebuilds.State` + version | unknown status/outcome, missing argv for a started step, step count ≠ spec count, `Running` without exactly one running step → error (corrupt row: die, logged) |
+| DB rows (`builds` + `build_steps` + `build_artifacts`) | `db.buildFromRows` | `corebuilds.State` + version | unknown status/outcome, missing argv for a started step, step count ≠ spec count, `Running`/`Cancelling` without exactly one running step, `target = worktree` without a worktree, `cancelled_at` on a `Queued` row → error (corrupt row: die, logged) |
 | Preset row `steps` JSON | `db.presetFromRow` | `corebuilds.Preset` | same as ParsePreset |
 | Process result | interpreter `exitInput(err, waitResult)` | `StepExited` / `StepStartFailed` | — (total function, classifies every error) |
 | `pom.xml` | `maven.ParsePOM(r io.Reader)` (`encoding/xml`, no network, no parent resolution beyond the reactor) | `corebuilds.Module{RepoID, Coord, Deps []Coord}` | malformed XML, missing `artifactId`, documents over 4 MiB |

@@ -186,3 +186,25 @@ The human approved the recommendations above (2026-10-17). These fixes are Phase
 **Store.Commit (B):** `Store.Commit(ctx, func(*db.Tx) error)` runs in one `BEGIN IMMEDIATE`. `Tx` exposes typed writes plus `AppendAudit(core.AuditEntry)`. `audit` becomes a pure `Prepare(entry, redactor, id, now) (core.AuditEntry, error)` that validates and redacts. Every existing state write plus audit pair in `api/tasks.go` and `cmd/ygg/seed.go` moves into a single `Commit`.
 
 **Definition of done (each branch):** `task generate`, `task lint`, `task typecheck`, `task test` and `task test:web` all pass. Each branch ends with the report format from its agent file.
+
+### Review gate 1 (2026-10-18)
+
+`safety-reviewer` and `fe-reviewer` reviewed `1bd49f1..main`. There were no Blocking findings.
+
+**Must-fix findings:**
+- cmd.exe searches the worktree for commands run inside a batch file;
+- the `Store` still exports write methods that skip the audit entry;
+- migration 00002 can't store the `Cancelling` state.
+
+**Decisions:**
+- **Migration 00002 is amended in place, not followed by a 00003.** It has never been applied outside test databases (the local data dir is at version 1), and a 00003 would rebuild the same tables again. This is a one-time exception to "never edit an applied migration"; from the next tag on, 00002 is frozen.
+- **Build steps carry no `TaskID`.** A build is stopped only by its own `Cancel`, and ending an agent run (`KillTask`) never kills a build. The design doc is updated to match.
+- **`builds.worktree_id` is `ON DELETE RESTRICT` with an explicit `target` column.** A queued worktree build can never silently fall back to the main checkout.
+- **`AppendAudit` redacts again as a backstop** (`NewStore` takes the redactor's function). It does this on top of `audit.Prepare` and the archtest rule.
+
+**Fix batch R2:**
+
+| Task | Owner | Owns |
+|---|---|---|
+| P2 | `platform-windows` | `internal/platform/**` |
+| D2 | `go-backend` | `internal/db/**` (amend 00002), `internal/audit/**`, `internal/core/{model,enums,core_test}.go`, `internal/api/{tasks,errors,server}.go` and their tests, `internal/archtest/**`, `cmd/ygg/**` |
