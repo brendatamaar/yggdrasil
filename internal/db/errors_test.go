@@ -98,7 +98,7 @@ func TestOtherTriggerAbortIsNotMapped(t *testing.T) {
 
 func TestClassifyLeavesOtherErrorsAlone(t *testing.T) {
 	plain := errors.New("disk full")
-	if got := classify(plain); got != plain {
+	if got := classify(plain); !errors.Is(got, plain) || got.Error() != plain.Error() {
 		t.Errorf("classify changed a plain error: %v", got)
 	}
 	if classify(nil) != nil {
