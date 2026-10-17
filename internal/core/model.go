@@ -2,7 +2,9 @@ package core
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -18,6 +20,17 @@ type Project struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
+// Validate checks the fields that must hold before a project is stored.
+func (p Project) Validate() error {
+	if err := p.ID.Validate(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(p.Name) == "" {
+		return fmt.Errorf("project %s has no name", p.ID)
+	}
+	return nil
+}
+
 // Repo is a tracked git repository inside a project.
 type Repo struct {
 	ID            RepoID    `json:"id"`
@@ -29,6 +42,45 @@ type Repo struct {
 	// and MCP servers (SF-09).
 	Trusted   bool      `json:"trusted"`
 	CreatedAt time.Time `json:"createdAt"`
+}
+
+// Validate checks the fields that must hold before a repo is stored. The
+// path is checked by its shape only (this package touches no filesystem):
+// it must look absolute on Windows or Unix.
+func (r Repo) Validate() error {
+	if err := r.ID.Validate(); err != nil {
+		return err
+	}
+	if err := r.ProjectID.Validate(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(r.Name) == "" {
+		return fmt.Errorf("repo %s has no name", r.ID)
+	}
+	if err := checkAbsPath(r.Path); err != nil {
+		return fmt.Errorf("repo %s: %w", r.ID, err)
+	}
+	return nil
+}
+
+// checkAbsPath accepts a path that looks absolute: "/x", `\x` (including UNC
+// and extended-length paths) or `C:\x` / `C:/x`. It is a shape check; whether
+// the folder exists is the caller's business.
+func checkAbsPath(p string) error {
+	if strings.TrimSpace(p) == "" {
+		return errors.New("the path is empty")
+	}
+	if strings.ContainsRune(p, 0) {
+		return errors.New("the path holds a NUL character")
+	}
+	if p[0] == '/' || p[0] == '\\' {
+		return nil
+	}
+	if len(p) >= 3 && p[1] == ':' && (p[2] == '\\' || p[2] == '/') &&
+		(p[0] >= 'A' && p[0] <= 'Z' || p[0] >= 'a' && p[0] <= 'z') {
+		return nil
+	}
+	return fmt.Errorf("the path %q isn't absolute", p)
 }
 
 // Worktree is a git worktree created by Yggdrasil for a task.

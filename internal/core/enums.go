@@ -156,3 +156,21 @@ func (s BuildStatus) Validate() error {
 	}
 	return fmt.Errorf("unknown build status %q", string(s))
 }
+
+// Validate reports whether s is a known worktree status.
+func (s WorktreeStatus) Validate() error {
+	switch s {
+	case WorktreeActive, WorktreeMerged, WorktreeRemoved:
+		return nil
+	}
+	return fmt.Errorf("unknown worktree status %q", string(s))
+}
+
+// Validate reports whether s is a known change set status.
+func (s ChangeSetStatus) Validate() error {
+	switch s {
+	case ChangeSetOpen, ChangeSetShipped, ChangeSetClosed:
+		return nil
+	}
+	return fmt.Errorf("unknown change set status %q", string(s))
+}

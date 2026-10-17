@@ -49,3 +49,6 @@ func (id ProposalID) Validate() error { return checkID("proposal id", string(id)
 
 // Validate reports whether the ID is well formed.
 func (id BuildID) Validate() error { return checkID("build id", string(id)) }
+
+// Validate reports whether the ID is well formed.
+func (id AuditID) Validate() error { return checkID("audit id", string(id)) }
