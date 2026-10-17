@@ -18,16 +18,33 @@ func CheckPath(path string) error {
 	if strings.TrimSpace(path) == "" {
 		return errors.New("the folder path is empty. Choose a folder")
 	}
-	p := strings.ToLower(strings.ReplaceAll(path, "/", `\`))
-	if rest, ok := strings.CutPrefix(p, `\\?\unc\`); ok {
-		p = `\\` + rest
-	}
+	p := normalizeUNC(path)
 	for _, host := range []string{`\\wsl$`, `\\wsl.localhost`} {
 		if p == host || strings.HasPrefix(p, host+`\`) {
 			return fmt.Errorf("%w (%s)", ErrWSLPath, path)
 		}
 	}
 	return nil
+}
+
+// normalizeUNC lower-cases path, turns / into \ and strips the Win32 namespace
+// prefixes (\\?\, \\.\, \??\): \\?\UNC\host\share and \\.\UNC\host\share
+// become \\host\share, and \\?\C:\x becomes C:\x.
+func normalizeUNC(path string) string {
+	p := strings.ToLower(strings.ReplaceAll(path, "/", `\`))
+	for _, prefix := range []string{`\\?\`, `\\.\`, `\??\`} {
+		if rest, ok := strings.CutPrefix(p, prefix); ok {
+			if unc, ok := strings.CutPrefix(rest, `unc\`); ok {
+				return `\\` + unc
+			}
+			if strings.HasPrefix(rest, `\`) {
+				// \\?\\wsl$ and \\?\\\wsl$: treat any extra slashes as a UNC host.
+				return `\\` + strings.TrimLeft(rest, `\`)
+			}
+			return rest
+		}
+	}
+	return p
 }
 
 // ShortDirName turns name into a directory name that is valid on Windows and

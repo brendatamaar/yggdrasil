@@ -147,11 +147,14 @@ func releaseTask(t *taskJob) {
 	releaseTaskLocked(t)
 }
 
-// terminate kills the task's tree. A no-op once the task job is closed.
-func (t *taskJob) terminate() error {
+// KillTask kills every process of the task taskID (its task job), the
+// processes of StartPTY too. It does nothing if no process of that task is
+// running. Cancelling one process's context does not do this.
+func KillTask(taskID string) error {
 	jobs.mu.Lock()
 	defer jobs.mu.Unlock()
-	if t.refs == 0 {
+	t := jobs.tasks[taskID]
+	if t == nil || t.refs == 0 {
 		return nil
 	}
 	return terminateJob(t.h)

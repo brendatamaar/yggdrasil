@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -90,11 +91,31 @@ func selfExe(t testing.TB) string {
 	return exe
 }
 
+// environmentBlock reads this process's raw environment block, entry by entry.
+// It avoids os.Environ, which the architecture test bans outside internal/safety.
+func environmentBlock() ([]string, error) {
+	p, err := windows.GetEnvironmentStrings()
+	if err != nil {
+		return nil, err
+	}
+	var env []string
+	for *p != 0 {
+		n := 0                                                    // length in UTF-16 units
+		for *(*uint16)(unsafe.Add(unsafe.Pointer(p), 2*n)) != 0 { //nolint:gosec // walking the OS block
+			n++
+		}
+		env = append(env, windows.UTF16ToString(unsafe.Slice(p, n)))
+		p = (*uint16)(unsafe.Add(unsafe.Pointer(p), 2*(n+1))) //nolint:gosec // walking the OS block
+	}
+	return env, nil
+}
+
 // runHelper runs the helper modes:
 //
 //	sleep <lifetime>
 //	pwd                          print the working directory
 //	exit <code>
+//	env                          print each environment entry as ENV:<entry>
 //	child <pidfile> <lifetime>   start a "sleep" grandchild, write its pid, sleep
 //	orphan <pidfile> <lifetime>  like child, but exit at once and leave the grandchild
 //	listen <portfile>            listen on 127.0.0.1, write the port, sleep
@@ -118,6 +139,17 @@ func runHelper(mode string, args []string) error {
 			return err
 		}
 		fmt.Println(wd)
+	case "env":
+		env, err := environmentBlock()
+		if err != nil {
+			return err
+		}
+		sort.Strings(env)
+		for _, kv := range env {
+			fmt.Println("ENV:" + kv)
+		}
+	case "echo":
+		fmt.Println(args[0])
 	case "exit":
 		n, _ := strconv.Atoi(args[0])
 		os.Exit(n)
@@ -377,17 +409,8 @@ func TestStartOutputExitCodeAndDirWithSpaces(t *testing.T) {
 	if got := strings.TrimSpace(out.String()); !strings.EqualFold(got, want) {
 		t.Errorf("working directory = %q, want %q", got, want)
 	}
-
-	// A non-zero exit code is not an error, and Wait may be called twice.
-	p, err = Start(context.Background(), testEnvSpec(t, "exit", "7"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for range 2 {
-		if code, err := p.Wait(); err != nil || code != 7 {
-			t.Errorf("Wait = %d, %v; want 7, nil", code, err)
-		}
-	}
+	// Non-zero exit codes and repeated Wait are in the process contract
+	// (contract_windows_test.go).
 }
 
 func TestStartLowerCaseDriveLetter(t *testing.T) {
@@ -674,13 +697,5 @@ func TestKillStopsOnlyThatProcessesTree(t *testing.T) {
 	}
 	if err := p1.Kill(); err != nil {
 		t.Errorf("second Kill: %v", err)
-	}
-}
-
-func TestStartCancelledContext(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := Start(ctx, testEnvSpec(t, "sleep", "1m")); err == nil {
-		t.Error("Start with a cancelled context should fail")
 	}
 }

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -22,8 +21,8 @@ const waitDelay = 2 * time.Second
 // Start starts spec in the main job, nested in its task job when spec.TaskID
 // is set (spike B2). The process is created suspended, assigned to its jobs
 // and only then resumed, so it cannot start a child that escapes. Cancelling
-// ctx kills the task's tree, or just this process's tree without a TaskID: pass
-// the task's own context for every process of a task.
+// ctx kills this process's tree only, never its siblings in the same task; to
+// stop a whole task call KillTask.
 func Start(ctx context.Context, spec Spec) (Process, error) {
 	if spec.Env == nil {
 		return nil, ErrNoEnv
@@ -62,12 +61,9 @@ func Start(ctx context.Context, spec Spec) (Process, error) {
 	if isBatchFile(exe) {
 		// An npm shim (claude.cmd) is run by cmd.exe, which must be given the
 		// command line in a form it reads correctly (see batch_windows.go).
-		comspec := envGet(spec.Env, "COMSPEC")
-		if comspec == "" || !filepath.IsAbs(comspec) {
-			comspec = filepath.Join(envGet(spec.Env, "SystemRoot"), "System32", "cmd.exe")
-		}
-		if !filepath.IsAbs(comspec) || !isRegular(comspec) {
-			return nil, fmt.Errorf("platform: the command interpreter %q was not found; set COMSPEC or SystemRoot", comspec)
+		comspec, err := batchComspec(spec.Env)
+		if err != nil {
+			return nil, err
 		}
 		line, err := batchCommandLine(comspec, exe, spec.Argv)
 		if err != nil {
@@ -88,7 +84,7 @@ func Start(ctx context.Context, spec Spec) (Process, error) {
 	}
 	// Registered after the jobs exist, so a cancelled ctx fires on a process
 	// that is already in them.
-	p.stop = context.AfterFunc(ctx, p.cancelTree)
+	p.stop = context.AfterFunc(ctx, func() { _ = p.Kill() })
 	go p.run()
 	return p, nil
 }
@@ -153,17 +149,6 @@ func (p *process) release() {
 	if task != nil {
 		releaseTask(task)
 	}
-}
-
-func (p *process) cancelTree() {
-	p.mu.Lock()
-	task := p.task
-	p.mu.Unlock()
-	if task != nil {
-		_ = task.terminate()
-		return
-	}
-	_ = p.Kill()
 }
 
 func (p *process) Pid() int { return p.cmd.Process.Pid }

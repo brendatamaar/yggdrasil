@@ -48,6 +48,7 @@ func StartPTY(ctx context.Context, spec PTYSpec) (PTY, error) {
 		return nil, fmt.Errorf("start %s: %w", exe, err)
 	}
 	p := &unixPTY{master: master, cmd: cmd, done: make(chan struct{})}
+	p.unreg = registerTask(spec.TaskID, func() { _ = p.kill() })
 	p.stop = context.AfterFunc(ctx, func() { _ = p.kill() })
 	go p.run()
 	return p, nil
@@ -61,6 +62,7 @@ type unixPTY struct {
 	master *os.File
 	cmd    *exec.Cmd
 	stop   func() bool
+	unreg  func()
 
 	done chan struct{}
 	code int
@@ -80,6 +82,7 @@ func (p *unixPTY) run() {
 	}
 	p.err = err
 	p.stop()
+	p.unreg()
 	// Take background children along, like the hangup of a closing terminal.
 	_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGHUP)
 	close(p.done)

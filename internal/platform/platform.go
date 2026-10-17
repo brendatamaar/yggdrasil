@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"errors"
 	"io"
 )
@@ -14,8 +15,12 @@ import (
 //
 //	// Start starts a process in the main job (nested in the task job when
 //	// spec.TaskID is set). It fails if spec.Env is nil. Cancelling ctx kills
-//	// the process tree.
+//	// this process's tree only.
 //	func Start(ctx context.Context, spec Spec) (Process, error)
+//
+//	// KillTask kills every process started with that Spec.TaskID (no-op if
+//	// none is running).
+//	func KillTask(taskID string) error
 //
 //	// StartPTY starts a process attached to a pseudo-terminal, in a job too.
 //	func StartPTY(ctx context.Context, spec PTYSpec) (PTY, error)
@@ -39,6 +44,12 @@ import (
 //	// ListeningPorts returns the TCP ports a process tree listens on (DV-02).
 //	func ListeningPorts(pid int) ([]int, error)
 
+// StartFunc is the signature of Start. Packages that run processes take a
+// StartFunc, so tests can pass the fake in internal/platform/platformtest.
+type StartFunc func(context.Context, Spec) (Process, error)
+
+var _ StartFunc = Start
+
 // ErrNoEnv is returned by Start and StartPTY when Spec.Env is nil. The
 // environment must come from internal/safety, never from the parent process
 // (SF-04).
@@ -51,8 +62,10 @@ type Spec struct {
 	Dir  string
 	// Env is the full environment; nil is an error (ErrNoEnv).
 	Env []string
-	// TaskID puts the process in that task's nested job, so cancelling the
-	// task kills only its tree. Empty means the main job only.
+	// TaskID puts the process in that task's nested job, so KillTask(TaskID)
+	// kills the task's processes and nothing else. Cancelling a process's
+	// context kills only that process's tree, not its siblings. Empty means the
+	// main job only.
 	TaskID string
 	Stdin  io.Reader
 	Stdout io.Writer

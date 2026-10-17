@@ -26,8 +26,8 @@ const procThreadAttributeJobList = 0x0002000D
 // process is created inside the main job (and the task job when spec.TaskID is
 // set, plus a job of its own) and cannot spawn a child that escapes: no
 // suspended start is needed. spec.Stdin, Stdout and Stderr are not used; the
-// terminal is the I/O. Cancelling ctx kills the same tree as Start does,
-// the whole task job when spec.TaskID is set.
+// terminal is the I/O. Cancelling ctx kills this terminal's tree only, as
+// Start does; KillTask stops a whole task.
 //
 // Close order: ClosePseudoConsole first, then drain the output pipe to EOF,
 // then close both pipes. Callers must keep calling Read until it fails: the
@@ -69,7 +69,7 @@ func StartPTY(ctx context.Context, spec PTYSpec) (PTY, error) {
 	}
 	// Registered after the jobs exist, so a cancelled ctx fires on a process
 	// that is already in them.
-	p.stop = context.AfterFunc(ctx, p.cancelTree)
+	p.stop = context.AfterFunc(ctx, func() { _ = p.kill() })
 	go p.run()
 	return p, nil
 }
@@ -98,7 +98,19 @@ type conPTY struct {
 }
 
 func newConPTY(spec PTYSpec, exe, dir string) (*conPTY, error) {
-	cmdLine, err := windows.UTF16PtrFromString(windows.ComposeCommandLine(spec.Argv))
+	line := windows.ComposeCommandLine(spec.Argv)
+	if isBatchFile(exe) {
+		// Same rule as Start: cmd.exe runs the batch file, with checked arguments.
+		comspec, err := batchComspec(spec.Env)
+		if err != nil {
+			return nil, err
+		}
+		if line, err = batchCommandLine(comspec, exe, spec.Argv); err != nil {
+			return nil, err
+		}
+		exe = comspec
+	}
+	cmdLine, err := windows.UTF16PtrFromString(line)
 	if err != nil {
 		return nil, fmt.Errorf("platform: command line: %w", err)
 	}
@@ -314,17 +326,6 @@ func (p *conPTY) release() {
 	if task != nil {
 		releaseTask(task)
 	}
-}
-
-func (p *conPTY) cancelTree() {
-	p.mu.Lock()
-	task := p.task
-	p.mu.Unlock()
-	if task != nil {
-		_ = task.terminate()
-		return
-	}
-	_ = p.kill()
 }
 
 func (p *conPTY) kill() error {
