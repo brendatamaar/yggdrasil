@@ -355,7 +355,7 @@ Results on the lead's machine (2026-10-17): `task smoke` 8 of 8 PASS. `task smok
 - Batch 1 and Batch 2 should-fix items listed above (env value check, ws backoff, `-` option paths, pipes on PTY close timeout, `ctrlCMu` span, scan breadth).
 - No project or repo pages: tracking is `ygg seed` until WS-01.
 - The bundle is 563 KB; code splitting is a polish item.
-- Phase 0 leftovers in PLAN.md (domain name; the CI checkboxes were never ticked although CI is green) are for you.
+- Phase 0 leftovers in PLAN.md (the domain name; the `go:embed` box) are for you. The CI boxes were ticked on 2026-10-17.
 - The `.claude/agents/frontend.md` file still names `types.gen.ts` (the lead cannot edit `.claude/`).
 
 - Known limits: the redactor masks `Basic <8+ chars>` prose; SQLite triggers can be dropped by anyone who can write the DB file.
