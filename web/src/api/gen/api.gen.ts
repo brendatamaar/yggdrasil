@@ -65,6 +65,11 @@ export interface Deps {
    * the Vite dev server (http://localhost:5173).
    */
   AllowedOrigins: string[];
+  /**
+   * KillTask stops every process still running for a task ID (agent
+   * helpers, anything the task started). Default: platform.KillTask.
+   */
+  KillTask: any;
 }
 /**
  * Server serves the API. Create it with New, run it with Run (or use Handler
