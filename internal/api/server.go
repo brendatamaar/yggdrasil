@@ -18,16 +18,14 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/brendatamaar/yggdrasil/internal/agents"
-	"github.com/brendatamaar/yggdrasil/internal/audit"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
 
-// Deps are what the server needs. Store, Audit and Env are required.
+// Deps are what the server needs. Store and Env are required.
 type Deps struct {
 	Store    *db.Store
-	Audit    audit.Writer
 	Adapters map[string]agents.Adapter
 	// Env builds the clean environment of every agent run (SF-04).
 	Env safety.EnvBuilder
@@ -48,7 +46,6 @@ type Deps struct {
 // in tests) and stop it with Close.
 type Server struct {
 	store    *db.Store
-	audit    audit.Writer
 	adapters map[string]agents.Adapter
 	env      safety.EnvBuilder
 	log      *slog.Logger
@@ -76,8 +73,6 @@ func New(d Deps) (*Server, error) {
 	switch {
 	case d.Store == nil:
 		return nil, errors.New("api: a store is required")
-	case d.Audit == nil:
-		return nil, errors.New("api: an audit writer is required")
 	case d.Env == nil:
 		return nil, errors.New("api: an environment builder is required")
 	}
@@ -95,7 +90,7 @@ func New(d Deps) (*Server, error) {
 	}
 	ctx, stop := context.WithCancel(context.Background())
 	s := &Server{
-		store: d.Store, audit: d.Audit, adapters: d.Adapters, env: d.Env, log: log, redactor: redactor,
+		store: d.Store, adapters: d.Adapters, env: d.Env, log: log, redactor: redactor,
 		version: d.Version, assets: as, allowedOrigins: d.AllowedOrigins,
 		hub: newHub(log), ctx: ctx, stop: stop, cancel: map[core.TaskID]context.CancelFunc{},
 	}

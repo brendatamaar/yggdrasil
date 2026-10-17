@@ -2,7 +2,9 @@ package core
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -18,6 +20,17 @@ type Project struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
+// Validate checks the fields that must hold before a project is stored.
+func (p Project) Validate() error {
+	if err := p.ID.Validate(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(p.Name) == "" {
+		return fmt.Errorf("project %s has no name", p.ID)
+	}
+	return nil
+}
+
 // Repo is a tracked git repository inside a project.
 type Repo struct {
 	ID            RepoID    `json:"id"`
@@ -29,6 +42,45 @@ type Repo struct {
 	// and MCP servers (SF-09).
 	Trusted   bool      `json:"trusted"`
 	CreatedAt time.Time `json:"createdAt"`
+}
+
+// Validate checks the fields that must hold before a repo is stored. The
+// path is checked by its shape only (this package touches no filesystem):
+// it must look absolute on Windows or Unix.
+func (r Repo) Validate() error {
+	if err := r.ID.Validate(); err != nil {
+		return err
+	}
+	if err := r.ProjectID.Validate(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(r.Name) == "" {
+		return fmt.Errorf("repo %s has no name", r.ID)
+	}
+	if err := checkAbsPath(r.Path); err != nil {
+		return fmt.Errorf("repo %s: %w", r.ID, err)
+	}
+	return nil
+}
+
+// checkAbsPath accepts a path that looks absolute: "/x", `\x` (including UNC
+// and extended-length paths) or `C:\x` / `C:/x`. It is a shape check; whether
+// the folder exists is the caller's business.
+func checkAbsPath(p string) error {
+	if strings.TrimSpace(p) == "" {
+		return errors.New("the path is empty")
+	}
+	if strings.ContainsRune(p, 0) {
+		return errors.New("the path holds a NUL character")
+	}
+	if p[0] == '/' || p[0] == '\\' {
+		return nil
+	}
+	if len(p) >= 3 && p[1] == ':' && (p[2] == '\\' || p[2] == '/') &&
+		(p[0] >= 'A' && p[0] <= 'Z' || p[0] >= 'a' && p[0] <= 'z') {
+		return nil
+	}
+	return fmt.Errorf("the path %q isn't absolute", p)
 }
 
 // Worktree is a git worktree created by Yggdrasil for a task.
@@ -65,6 +117,9 @@ type Task struct {
 	CreatedAt  time.Time  `json:"createdAt"`
 	UpdatedAt  time.Time  `json:"updatedAt"`
 	FinishedAt *time.Time `json:"finishedAt,omitempty"`
+	// Version is the row version for expected-version updates. It is a
+	// storage detail and never leaves the server.
+	Version int64 `json:"-"`
 }
 
 // Validate checks the fields that must hold before a task is stored.
@@ -113,6 +168,9 @@ type Proposal struct {
 	Payload   json.RawMessage `json:"payload,omitempty"`
 	CreatedAt time.Time       `json:"createdAt"`
 	DecidedAt *time.Time      `json:"decidedAt,omitempty"`
+	// Version is the row version for expected-version updates. It is a
+	// storage detail and never leaves the server.
+	Version int64 `json:"-"`
 }
 
 // BuildStep is one command of a build.
@@ -125,6 +183,12 @@ type BuildStep struct {
 	LogPath    string      `json:"logPath,omitempty"`
 	StartedAt  *time.Time  `json:"startedAt,omitempty"`
 	FinishedAt *time.Time  `json:"finishedAt,omitempty"`
+	// Argv is the command line, Attempt the run counter of the step and
+	// Outcome how the last attempt ended (succeeded, failed, start_failed,
+	// cancelled, interrupted); Outcome is empty until the step has finished.
+	Argv    []string `json:"argv,omitempty"`
+	Attempt int      `json:"attempt,omitempty"`
+	Outcome string   `json:"outcome,omitempty"`
 }
 
 // Build is an ordered sequence of build steps.
@@ -136,6 +200,9 @@ type Build struct {
 	Steps      []BuildStep `json:"steps"`
 	CreatedAt  time.Time   `json:"createdAt"`
 	FinishedAt *time.Time  `json:"finishedAt,omitempty"`
+	// Version is the row version for expected-version updates. It is a
+	// storage detail and never leaves the server.
+	Version int64 `json:"-"`
 }
 
 // AuditEntry is one row of the audit log (SF-05). Detail is redacted before

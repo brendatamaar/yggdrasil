@@ -36,8 +36,8 @@ func (q *Queries) CreateBuild(ctx context.Context, arg CreateBuildParams) error 
 }
 
 const createBuildStep = `-- name: CreateBuildStep :exec
-INSERT INTO build_steps (build_id, idx, repo_id, name, status, exit_code, log_path, started_at, finished_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO build_steps (build_id, idx, repo_id, name, status, exit_code, log_path, started_at, finished_at, argv, attempt, outcome)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateBuildStepParams struct {
@@ -50,6 +50,9 @@ type CreateBuildStepParams struct {
 	LogPath    string
 	StartedAt  sql.NullString
 	FinishedAt sql.NullString
+	Argv       string
+	Attempt    int64
+	Outcome    sql.NullString
 }
 
 func (q *Queries) CreateBuildStep(ctx context.Context, arg CreateBuildStepParams) error {
@@ -63,12 +66,15 @@ func (q *Queries) CreateBuildStep(ctx context.Context, arg CreateBuildStepParams
 		arg.LogPath,
 		arg.StartedAt,
 		arg.FinishedAt,
+		arg.Argv,
+		arg.Attempt,
+		arg.Outcome,
 	)
 	return err
 }
 
 const getBuild = `-- name: GetBuild :one
-SELECT id, worktree_id, task_id, status, created_at, finished_at FROM builds WHERE id = ?
+SELECT id, worktree_id, task_id, status, created_at, finished_at, version, actor, started_at, result_step, preset_id FROM builds WHERE id = ?
 `
 
 func (q *Queries) GetBuild(ctx context.Context, id string) (Build, error) {
@@ -81,12 +87,17 @@ func (q *Queries) GetBuild(ctx context.Context, id string) (Build, error) {
 		&i.Status,
 		&i.CreatedAt,
 		&i.FinishedAt,
+		&i.Version,
+		&i.Actor,
+		&i.StartedAt,
+		&i.ResultStep,
+		&i.PresetID,
 	)
 	return i, err
 }
 
 const listBuildSteps = `-- name: ListBuildSteps :many
-SELECT build_id, idx, repo_id, name, status, exit_code, log_path, started_at, finished_at FROM build_steps WHERE build_id = ? ORDER BY idx
+SELECT build_id, idx, repo_id, name, status, exit_code, log_path, started_at, finished_at, argv, attempt, outcome, start_failure, log_truncated FROM build_steps WHERE build_id = ? ORDER BY idx
 `
 
 func (q *Queries) ListBuildSteps(ctx context.Context, buildID string) ([]BuildStep, error) {
@@ -108,6 +119,11 @@ func (q *Queries) ListBuildSteps(ctx context.Context, buildID string) ([]BuildSt
 			&i.LogPath,
 			&i.StartedAt,
 			&i.FinishedAt,
+			&i.Argv,
+			&i.Attempt,
+			&i.Outcome,
+			&i.StartFailure,
+			&i.LogTruncated,
 		); err != nil {
 			return nil, err
 		}
@@ -123,7 +139,7 @@ func (q *Queries) ListBuildSteps(ctx context.Context, buildID string) ([]BuildSt
 }
 
 const listBuildsByTask = `-- name: ListBuildsByTask :many
-SELECT id, worktree_id, task_id, status, created_at, finished_at FROM builds WHERE task_id = ? ORDER BY created_at, id
+SELECT id, worktree_id, task_id, status, created_at, finished_at, version, actor, started_at, result_step, preset_id FROM builds WHERE task_id = ? ORDER BY created_at, id
 `
 
 func (q *Queries) ListBuildsByTask(ctx context.Context, taskID sql.NullString) ([]Build, error) {
@@ -142,6 +158,11 @@ func (q *Queries) ListBuildsByTask(ctx context.Context, taskID sql.NullString) (
 			&i.Status,
 			&i.CreatedAt,
 			&i.FinishedAt,
+			&i.Version,
+			&i.Actor,
+			&i.StartedAt,
+			&i.ResultStep,
+			&i.PresetID,
 		); err != nil {
 			return nil, err
 		}
@@ -157,17 +178,23 @@ func (q *Queries) ListBuildsByTask(ctx context.Context, taskID sql.NullString) (
 }
 
 const updateBuildStatus = `-- name: UpdateBuildStatus :execrows
-UPDATE builds SET status = ?, finished_at = ? WHERE id = ?
+UPDATE builds SET status = ?, finished_at = ?, version = version + 1 WHERE id = ? AND version = ?
 `
 
 type UpdateBuildStatusParams struct {
 	Status     string
 	FinishedAt sql.NullString
 	ID         string
+	Version    int64
 }
 
 func (q *Queries) UpdateBuildStatus(ctx context.Context, arg UpdateBuildStatusParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, updateBuildStatus, arg.Status, arg.FinishedAt, arg.ID)
+	result, err := q.db.ExecContext(ctx, updateBuildStatus,
+		arg.Status,
+		arg.FinishedAt,
+		arg.ID,
+		arg.Version,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -175,7 +202,7 @@ func (q *Queries) UpdateBuildStatus(ctx context.Context, arg UpdateBuildStatusPa
 }
 
 const updateBuildStep = `-- name: UpdateBuildStep :execrows
-UPDATE build_steps SET status = ?, exit_code = ?, log_path = ?, started_at = ?, finished_at = ?
+UPDATE build_steps SET status = ?, exit_code = ?, log_path = ?, started_at = ?, finished_at = ?, attempt = ?, outcome = ?
 WHERE build_id = ? AND idx = ?
 `
 
@@ -185,6 +212,8 @@ type UpdateBuildStepParams struct {
 	LogPath    string
 	StartedAt  sql.NullString
 	FinishedAt sql.NullString
+	Attempt    int64
+	Outcome    sql.NullString
 	BuildID    string
 	Idx        int64
 }
@@ -196,6 +225,8 @@ func (q *Queries) UpdateBuildStep(ctx context.Context, arg UpdateBuildStepParams
 		arg.LogPath,
 		arg.StartedAt,
 		arg.FinishedAt,
+		arg.Attempt,
+		arg.Outcome,
 		arg.BuildID,
 		arg.Idx,
 	)

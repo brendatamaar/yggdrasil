@@ -91,6 +91,12 @@ const (
 	BuildSucceeded BuildStatus = "succeeded"
 	BuildFailed    BuildStatus = "failed"
 	BuildCancelled BuildStatus = "cancelled"
+	// BuildInterrupted: ygg stopped while the build ran, so its process tree
+	// is gone (the job object guarantees it).
+	BuildInterrupted BuildStatus = "interrupted"
+	// BuildSkipped is for a step that never ran because an earlier one failed
+	// or the build was cancelled.
+	BuildSkipped BuildStatus = "skipped"
 )
 
 // Validate reports whether m is a known mode.
@@ -151,8 +157,26 @@ func (s ProposalStatus) Validate() error {
 // Validate reports whether s is a known build status.
 func (s BuildStatus) Validate() error {
 	switch s {
-	case BuildQueued, BuildRunning, BuildSucceeded, BuildFailed, BuildCancelled:
+	case BuildQueued, BuildRunning, BuildSucceeded, BuildFailed, BuildCancelled, BuildInterrupted, BuildSkipped:
 		return nil
 	}
 	return fmt.Errorf("unknown build status %q", string(s))
+}
+
+// Validate reports whether s is a known worktree status.
+func (s WorktreeStatus) Validate() error {
+	switch s {
+	case WorktreeActive, WorktreeMerged, WorktreeRemoved:
+		return nil
+	}
+	return fmt.Errorf("unknown worktree status %q", string(s))
+}
+
+// Validate reports whether s is a known change set status.
+func (s ChangeSetStatus) Validate() error {
+	switch s {
+	case ChangeSetOpen, ChangeSetShipped, ChangeSetClosed:
+		return nil
+	}
+	return fmt.Errorf("unknown change set status %q", string(s))
 }

@@ -37,11 +37,10 @@ and the embedded UI, bound to the loopback interface (SF-01).
 */
 
 /**
- * Deps are what the server needs. Store, Audit and Env are required.
+ * Deps are what the server needs. Store and Env are required.
  */
 export interface Deps {
   Store?: any /* db.Store */;
-  Audit: any /* audit.Writer */;
   Adapters: { [key: string]: any /* agents.Adapter */};
   /**
    * Env builds the clean environment of every agent run (SF-04).

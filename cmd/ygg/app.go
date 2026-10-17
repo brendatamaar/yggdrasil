@@ -15,7 +15,6 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/agents/claudecode"
 	"github.com/brendatamaar/yggdrasil/internal/agents/mock"
 	"github.com/brendatamaar/yggdrasil/internal/api"
-	"github.com/brendatamaar/yggdrasil/internal/audit"
 	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
@@ -27,7 +26,6 @@ type app struct {
 	log   *slog.Logger
 	db    *db.DB
 	store *db.Store
-	audit audit.Writer
 	srv   *api.Server
 }
 
@@ -38,16 +36,16 @@ func newLogger(w io.Writer, level slog.Level, r safety.Redactor) *slog.Logger {
 
 // openStore opens the database in the data folder and returns what the
 // commands share.
-func openStore(ctx context.Context, cfg config, r safety.Redactor) (*db.DB, *db.Store, audit.Writer, error) {
+func openStore(ctx context.Context, cfg config) (*db.DB, *db.Store, error) {
 	if err := os.MkdirAll(cfg.dataDir, 0o700); err != nil {
-		return nil, nil, nil, fmt.Errorf("create the data folder %s: %w", cfg.dataDir, err)
+		return nil, nil, fmt.Errorf("create the data folder %s: %w", cfg.dataDir, err)
 	}
 	d, err := db.Open(ctx, filepath.Join(cfg.dataDir, "ygg.db"))
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("open the database in %s: %w", cfg.dataDir, err)
+		return nil, nil, fmt.Errorf("open the database in %s: %w", cfg.dataDir, err)
 	}
 	store := db.NewStore(d)
-	return d, store, audit.NewSQLiteWriter(store, r), nil
+	return d, store, nil
 }
 
 // newApp wires the application. assets is the embedded frontend.
@@ -55,7 +53,7 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	redactor := safety.NewRedactor()
 	log := newLogger(logOut, cfg.level, redactor)
 
-	d, store, aud, err := openStore(ctx, cfg, redactor)
+	d, store, err := openStore(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -78,14 +76,14 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	}
 
 	srv, err := api.New(api.Deps{
-		Store: store, Audit: aud, Adapters: adapters, Env: safety.NewEnvBuilder(), Log: log,
+		Store: store, Adapters: adapters, Env: safety.NewEnvBuilder(), Log: log,
 		Redactor: redactor, Version: version, Assets: assets,
 	})
 	if err != nil {
 		_ = d.Close()
 		return nil, fmt.Errorf("start the server: %w", err)
 	}
-	return &app{cfg: cfg, log: log, db: d, store: store, audit: aud, srv: srv}, nil
+	return &app{cfg: cfg, log: log, db: d, store: store, srv: srv}, nil
 }
 
 // run serves on ln until ctx is cancelled. On the way out the server stops

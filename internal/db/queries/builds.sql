@@ -8,15 +8,15 @@ SELECT * FROM builds WHERE id = ?;
 SELECT * FROM builds WHERE task_id = ? ORDER BY created_at, id;
 
 -- name: UpdateBuildStatus :execrows
-UPDATE builds SET status = ?, finished_at = ? WHERE id = ?;
+UPDATE builds SET status = ?, finished_at = ?, version = version + 1 WHERE id = ? AND version = ?;
 
 -- name: CreateBuildStep :exec
-INSERT INTO build_steps (build_id, idx, repo_id, name, status, exit_code, log_path, started_at, finished_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO build_steps (build_id, idx, repo_id, name, status, exit_code, log_path, started_at, finished_at, argv, attempt, outcome)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: ListBuildSteps :many
 SELECT * FROM build_steps WHERE build_id = ? ORDER BY idx;
 
 -- name: UpdateBuildStep :execrows
-UPDATE build_steps SET status = ?, exit_code = ?, log_path = ?, started_at = ?, finished_at = ?
+UPDATE build_steps SET status = ?, exit_code = ?, log_path = ?, started_at = ?, finished_at = ?, attempt = ?, outcome = ?
 WHERE build_id = ? AND idx = ?;

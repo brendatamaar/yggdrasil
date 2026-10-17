@@ -20,7 +20,6 @@ import (
 
 	"github.com/brendatamaar/yggdrasil/internal/agents"
 	"github.com/brendatamaar/yggdrasil/internal/agents/mock"
-	"github.com/brendatamaar/yggdrasil/internal/audit"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
@@ -49,7 +48,7 @@ func newEnv(t *testing.T, fixture string, delay time.Duration, extra ...func(*De
 	store := db.NewStore(d)
 	redactor := safety.NewRedactor()
 	deps := Deps{
-		Store: store, Audit: audit.NewSQLiteWriter(store, redactor), Env: safety.NewEnvBuilder(),
+		Store: store, Redactor: redactor, Env: safety.NewEnvBuilder(),
 		Adapters: map[string]agents.Adapter{"mock": mock.New(mock.Options{Fixture: fixture, Delay: delay})},
 		Version:  "test",
 		Assets: fstest.MapFS{

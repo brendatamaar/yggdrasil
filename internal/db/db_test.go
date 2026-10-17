@@ -167,8 +167,8 @@ func TestAuditLogAppendOnly(t *testing.T) {
 	d := openTest(t)
 	s := NewStore(d)
 	ctx := context.Background()
-	e := core.AuditEntry{ID: "a1", At: time.Now(), Actor: "system", Action: "test", Subject: "task:1"}
-	if err := s.InsertAudit(ctx, e); err != nil {
+	e := core.AuditEntry{ID: "aud_1", At: time.Now(), Actor: "system", Action: "test", Subject: "task:1"}
+	if err := s.Commit(ctx, func(tx *Tx) error { return tx.AppendAudit(ctx, e) }); err != nil {
 		t.Fatal(err)
 	}
 	for _, q := range []string{"UPDATE audit_log SET actor = 'x'", "DELETE FROM audit_log"} {
@@ -191,7 +191,7 @@ func TestConcurrentWriters(t *testing.T) {
 	errs := make(chan error, 2*n)
 	for i := range n {
 		wg.Go(func() {
-			_, err := s.CreateProject(ctx, core.Project{Name: "p" + string(rune('A'+i/26)) + string(rune('a'+i%26)), Path: "x"})
+			_, err := s.CreateProject(ctx, core.Project{Name: "p" + string(rune('A'+i/26)) + string(rune('a'+i%26)), Path: "/x"})
 			errs <- err
 			// readers run next to the writer
 			_, err = s.ListProjects(ctx)
@@ -228,7 +228,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateTaskStatus(ctx, task.ID, core.TaskDone); err != nil {
+	if v, err := s.UpdateTaskStatus(ctx, task.ID, core.TaskDone, task.Version); err != nil || v != 1 {
 		t.Fatal(err)
 	}
 	got, err := s.GetTask(ctx, task.ID)
@@ -238,7 +238,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	if _, err := s.GetTask(ctx, "nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing task: %v", err)
 	}
-	if err := s.UpdateTaskStatus(ctx, "nope", core.TaskDone); !errors.Is(err, ErrNotFound) {
+	if _, err := s.UpdateTaskStatus(ctx, "nope", core.TaskDone, 0); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("update missing task: %v", err)
 	}
 
@@ -280,7 +280,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	if err != nil || prop.Status != core.ProposalPending {
 		t.Fatalf("proposal = %+v, %v", prop, err)
 	}
-	if err := s.UpdateProposalStatus(ctx, prop.ID, core.ProposalConfirmed); err != nil {
+	if v, err := s.UpdateProposalStatus(ctx, prop.ID, core.ProposalConfirmed, prop.Version); err != nil || v != 1 {
 		t.Fatal(err)
 	}
 	if pending, err := s.ListProposals(ctx, core.ProposalPending); err != nil || len(pending) != 0 {
@@ -301,7 +301,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	if err := s.UpdateBuildStep(ctx, b.ID, core.BuildStep{Index: 1, Status: core.BuildSucceeded, ExitCode: &code}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateBuildStatus(ctx, b.ID, core.BuildSucceeded); err != nil {
+	if v, err := s.UpdateBuildStatus(ctx, b.ID, core.BuildSucceeded, b.Version); err != nil || v != 1 {
 		t.Fatal(err)
 	}
 	gotB, err := s.GetBuild(ctx, b.ID)

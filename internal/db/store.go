@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
@@ -17,6 +16,11 @@ import (
 
 // ErrNotFound is returned when a row does not exist.
 var ErrNotFound = errors.New("not found")
+
+// ErrConflict is returned when a write collides with the stored state: the
+// row changed since the caller read it (stale version), or a unique key is
+// already taken. The owner reloads and decides again.
+var ErrConflict = errors.New("conflict")
 
 // ErrSubTaskDepth is returned when a task would become a sub-task of a
 // sub-task, or a sub-task would get sub-tasks (AG-24).
@@ -121,27 +125,6 @@ func projectFrom(r gen.Project) (core.Project, error) {
 	return core.Project{ID: core.ProjectID(r.ID), Name: r.Name, Path: r.Path, CreatedAt: at}, err
 }
 
-// CreateProject stores p. An empty ID or zero CreatedAt is filled in.
-func (s *Store) CreateProject(ctx context.Context, p core.Project) (core.Project, error) {
-	if p.ID == "" {
-		p.ID = core.ProjectID(NewID("prj"))
-	}
-	if p.CreatedAt.IsZero() {
-		p.CreatedAt = time.Now()
-	}
-	p.CreatedAt = p.CreatedAt.UTC().Truncate(time.Millisecond)
-	if err := p.ID.Validate(); err != nil {
-		return p, err
-	}
-	err := s.db.Writer().CreateProject(ctx, gen.CreateProjectParams{
-		ID: string(p.ID), Name: p.Name, Path: p.Path, CreatedAt: fmtTime(p.CreatedAt),
-	})
-	if err != nil {
-		return p, fmt.Errorf("create project: %w", err)
-	}
-	return p, nil
-}
-
 // GetProject returns one project.
 func (s *Store) GetProject(ctx context.Context, id core.ProjectID) (core.Project, error) {
 	r, err := s.db.Reader().GetProject(ctx, string(id))
@@ -185,28 +168,6 @@ func b2i(b bool) int64 {
 	return 0
 }
 
-// CreateRepo stores r. An empty ID or zero CreatedAt is filled in.
-func (s *Store) CreateRepo(ctx context.Context, r core.Repo) (core.Repo, error) {
-	if r.ID == "" {
-		r.ID = core.RepoID(NewID("rep"))
-	}
-	if r.CreatedAt.IsZero() {
-		r.CreatedAt = time.Now()
-	}
-	r.CreatedAt = r.CreatedAt.UTC().Truncate(time.Millisecond)
-	if err := r.ID.Validate(); err != nil {
-		return r, err
-	}
-	err := s.db.Writer().CreateRepo(ctx, gen.CreateRepoParams{
-		ID: string(r.ID), ProjectID: string(r.ProjectID), Name: r.Name, Path: r.Path,
-		DefaultBranch: r.DefaultBranch, Trusted: b2i(r.Trusted), CreatedAt: fmtTime(r.CreatedAt),
-	})
-	if err != nil {
-		return r, fmt.Errorf("create repo: %w", err)
-	}
-	return r, nil
-}
-
 // GetRepo returns one repo.
 func (s *Store) GetRepo(ctx context.Context, id core.RepoID) (core.Repo, error) {
 	r, err := s.db.Reader().GetRepo(ctx, string(id))
@@ -231,12 +192,6 @@ func (s *Store) ListRepos(ctx context.Context, project core.ProjectID) ([]core.R
 		out = append(out, v)
 	}
 	return out, nil
-}
-
-// SetRepoTrusted records the user's answer to the repo-hooks prompt (SF-09).
-func (s *Store) SetRepoTrusted(ctx context.Context, id core.RepoID, trusted bool) error {
-	n, err := s.db.Writer().SetRepoTrusted(ctx, gen.SetRepoTrustedParams{Trusted: b2i(trusted), ID: string(id)})
-	return updated("set repo trusted "+string(id), n, err)
 }
 
 // Tasks
@@ -266,55 +221,8 @@ func (s *Store) taskFrom(ctx context.Context, q *gen.Queries, r gen.Task) (core.
 		ID: core.TaskID(r.ID), ProjectID: core.ProjectID(r.ProjectID), ParentTaskID: strPtr[core.TaskID](r.ParentTaskID),
 		Title: r.Title, Prompt: r.Prompt, Scope: core.TaskScope(r.Scope), RepoIDs: ids,
 		Mode: core.TaskMode(r.Mode), Agent: r.Agent, Model: r.Model, Status: core.TaskStatus(r.Status),
-		SessionID: r.SessionID, CreatedAt: created, UpdatedAt: upd, FinishedAt: fin,
+		SessionID: r.SessionID, CreatedAt: created, UpdatedAt: upd, FinishedAt: fin, Version: r.Version,
 	}, nil
-}
-
-// CreateTask validates and stores t with its repo scope. An empty ID or zero
-// times are filled in; an empty status becomes draft. A sub-task of a
-// sub-task returns ErrSubTaskDepth.
-func (s *Store) CreateTask(ctx context.Context, t core.Task) (core.Task, error) {
-	if t.ID == "" {
-		t.ID = core.TaskID(NewID("tsk"))
-	}
-	if t.Status == "" {
-		t.Status = core.TaskDraft
-	}
-	now := time.Now().UTC().Truncate(time.Millisecond)
-	if t.CreatedAt.IsZero() {
-		t.CreatedAt = now
-	}
-	if t.UpdatedAt.IsZero() {
-		t.UpdatedAt = t.CreatedAt
-	}
-	t.CreatedAt, t.UpdatedAt = t.CreatedAt.UTC().Truncate(time.Millisecond), t.UpdatedAt.UTC().Truncate(time.Millisecond)
-	if err := t.Validate(); err != nil {
-		return t, err
-	}
-	err := s.db.WithTx(ctx, func(q *gen.Queries) error {
-		err := q.CreateTask(ctx, gen.CreateTaskParams{
-			ID: string(t.ID), ProjectID: string(t.ProjectID), ParentTaskID: nullStr(t.ParentTaskID),
-			Title: t.Title, Prompt: t.Prompt, Scope: string(t.Scope), Mode: string(t.Mode), Agent: t.Agent,
-			Model: t.Model, Status: string(t.Status), SessionID: t.SessionID,
-			CreatedAt: fmtTime(t.CreatedAt), UpdatedAt: fmtTime(t.UpdatedAt), FinishedAt: fmtNullTime(t.FinishedAt),
-		})
-		if err != nil {
-			return err
-		}
-		for _, r := range t.RepoIDs {
-			if err := q.AddTaskRepo(ctx, gen.AddTaskRepoParams{TaskID: string(t.ID), RepoID: string(r)}); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		if strings.Contains(err.Error(), "sub-tasks are one level only") {
-			return t, fmt.Errorf("create task: %w", ErrSubTaskDepth)
-		}
-		return t, fmt.Errorf("create task: %w", err)
-	}
-	return t, nil
 }
 
 // GetTask returns one task with its repo scope.
@@ -359,40 +267,6 @@ func (s *Store) ListSubTasks(ctx context.Context, parent core.TaskID) ([]core.Ta
 	return s.tasksFrom(ctx, q, rows)
 }
 
-// UpdateTaskStatus sets the status; finished_at is set when the status is terminal.
-func (s *Store) UpdateTaskStatus(ctx context.Context, id core.TaskID, status core.TaskStatus) error {
-	if err := status.Validate(); err != nil {
-		return err
-	}
-	now := time.Now()
-	var fin *time.Time
-	if status.Terminal() {
-		fin = &now
-	}
-	n, err := s.db.Writer().UpdateTaskStatus(ctx, gen.UpdateTaskStatusParams{
-		Status: string(status), UpdatedAt: fmtTime(now), FinishedAt: fmtNullTime(fin), ID: string(id),
-	})
-	return updated("update task "+string(id), n, err)
-}
-
-// SetTaskSession records the agent's resumable session ID.
-func (s *Store) SetTaskSession(ctx context.Context, id core.TaskID, session string) error {
-	n, err := s.db.Writer().UpdateTaskSession(ctx, gen.UpdateTaskSessionParams{
-		SessionID: session, UpdatedAt: fmtTime(time.Now()), ID: string(id),
-	})
-	return updated("update task session "+string(id), n, err)
-}
-
-// AddTaskDependency makes task start after dependsOn (AG-25). The caller
-// validates that the order is acyclic.
-func (s *Store) AddTaskDependency(ctx context.Context, task, dependsOn core.TaskID) error {
-	err := s.db.Writer().AddTaskDependency(ctx, gen.AddTaskDependencyParams{TaskID: string(task), DependsOnTaskID: string(dependsOn)})
-	if err != nil {
-		return fmt.Errorf("add task dependency: %w", err)
-	}
-	return nil
-}
-
 // TaskDependencies returns the tasks that must finish before task starts.
 func (s *Store) TaskDependencies(ctx context.Context, task core.TaskID) ([]core.TaskID, error) {
 	ids, err := s.db.Reader().ListTaskDependencies(ctx, string(task))
@@ -414,31 +288,6 @@ func worktreeFrom(r gen.Worktree) (core.Worktree, error) {
 		ID: core.WorktreeID(r.ID), RepoID: core.RepoID(r.RepoID), TaskID: core.TaskID(r.TaskID), Name: r.Name,
 		Path: r.Path, Branch: r.Branch, Status: core.WorktreeStatus(r.Status), CreatedAt: at,
 	}, err
-}
-
-// CreateWorktree stores w. An empty ID, status or zero CreatedAt is filled in.
-func (s *Store) CreateWorktree(ctx context.Context, w core.Worktree) (core.Worktree, error) {
-	if w.ID == "" {
-		w.ID = core.WorktreeID(NewID("wt"))
-	}
-	if w.Status == "" {
-		w.Status = core.WorktreeActive
-	}
-	if w.CreatedAt.IsZero() {
-		w.CreatedAt = time.Now()
-	}
-	w.CreatedAt = w.CreatedAt.UTC().Truncate(time.Millisecond)
-	if err := w.ID.Validate(); err != nil {
-		return w, err
-	}
-	err := s.db.Writer().CreateWorktree(ctx, gen.CreateWorktreeParams{
-		ID: string(w.ID), RepoID: string(w.RepoID), TaskID: string(w.TaskID), Name: w.Name, Path: w.Path,
-		Branch: w.Branch, Status: string(w.Status), CreatedAt: fmtTime(w.CreatedAt),
-	})
-	if err != nil {
-		return w, fmt.Errorf("create worktree: %w", err)
-	}
-	return w, nil
 }
 
 // GetWorktree returns one worktree.
@@ -467,12 +316,6 @@ func (s *Store) ListWorktrees(ctx context.Context, task core.TaskID) ([]core.Wor
 	return out, nil
 }
 
-// UpdateWorktreeStatus sets the status of a worktree.
-func (s *Store) UpdateWorktreeStatus(ctx context.Context, id core.WorktreeID, status core.WorktreeStatus) error {
-	n, err := s.db.Writer().UpdateWorktreeStatus(ctx, gen.UpdateWorktreeStatusParams{Status: string(status), ID: string(id)})
-	return updated("update worktree "+string(id), n, err)
-}
-
 // Task events
 
 // TaskEvent is one stored agent event. Data is the whole agents.Event as
@@ -483,17 +326,6 @@ type TaskEvent struct {
 	Kind   string
 	At     time.Time
 	Data   json.RawMessage
-}
-
-// AppendTaskEvent stores one event of a task.
-func (s *Store) AppendTaskEvent(ctx context.Context, e TaskEvent) error {
-	err := s.db.Writer().AppendTaskEvent(ctx, gen.AppendTaskEventParams{
-		TaskID: string(e.TaskID), Seq: e.Seq, Kind: e.Kind, At: fmtTime(e.At), Data: jsonText(e.Data, "{}"),
-	})
-	if err != nil {
-		return fmt.Errorf("append task event: %w", err)
-	}
-	return nil
 }
 
 // ListTaskEvents returns the events of a task with Seq greater than after.
@@ -530,37 +362,6 @@ func changeSetFrom(r gen.ChangeSet) (core.ChangeSet, error) {
 	}, nil
 }
 
-// CreateChangeSet stores c. An empty ID, status or zero CreatedAt is filled in.
-func (s *Store) CreateChangeSet(ctx context.Context, c core.ChangeSet) (core.ChangeSet, error) {
-	if c.ID == "" {
-		c.ID = core.ChangeSetID(NewID("cs"))
-	}
-	if c.Status == "" {
-		c.Status = core.ChangeSetOpen
-	}
-	if c.MergeOrder == nil {
-		c.MergeOrder = []core.RepoID{}
-	}
-	if c.CreatedAt.IsZero() {
-		c.CreatedAt = time.Now()
-	}
-	c.CreatedAt = c.CreatedAt.UTC().Truncate(time.Millisecond)
-	if err := c.ID.Validate(); err != nil {
-		return c, err
-	}
-	order, err := json.Marshal(c.MergeOrder)
-	if err != nil {
-		return c, fmt.Errorf("encode merge order: %w", err)
-	}
-	err = s.db.Writer().CreateChangeSet(ctx, gen.CreateChangeSetParams{
-		ID: string(c.ID), TaskID: string(c.TaskID), Status: string(c.Status), MergeOrder: string(order), CreatedAt: fmtTime(c.CreatedAt),
-	})
-	if err != nil {
-		return c, fmt.Errorf("create change set: %w", err)
-	}
-	return c, nil
-}
-
 // GetChangeSet returns one change set.
 func (s *Store) GetChangeSet(ctx context.Context, id core.ChangeSetID) (core.ChangeSet, error) {
 	r, err := s.db.Reader().GetChangeSet(ctx, string(id))
@@ -587,12 +388,6 @@ func (s *Store) ListChangeSets(ctx context.Context, task core.TaskID) ([]core.Ch
 	return out, nil
 }
 
-// UpdateChangeSetStatus sets the status of a change set.
-func (s *Store) UpdateChangeSetStatus(ctx context.Context, id core.ChangeSetID, status core.ChangeSetStatus) error {
-	n, err := s.db.Writer().UpdateChangeSetStatus(ctx, gen.UpdateChangeSetStatusParams{Status: string(status), ID: string(id)})
-	return updated("update change set "+string(id), n, err)
-}
-
 // Proposals
 
 func proposalFrom(r gen.Proposal) (core.Proposal, error) {
@@ -607,40 +402,8 @@ func proposalFrom(r gen.Proposal) (core.Proposal, error) {
 	return core.Proposal{
 		ID: core.ProposalID(r.ID), ChangeSetID: strPtr[core.ChangeSetID](r.ChangeSetID), TaskID: strPtr[core.TaskID](r.TaskID),
 		RepoID: strPtr[core.RepoID](r.RepoID), Kind: core.ProposalKind(r.Kind), Status: core.ProposalStatus(r.Status),
-		Summary: r.Summary, Payload: json.RawMessage(r.Payload), CreatedAt: at, DecidedAt: dec,
+		Summary: r.Summary, Payload: json.RawMessage(r.Payload), CreatedAt: at, DecidedAt: dec, Version: r.Version,
 	}, nil
-}
-
-// CreateProposal stores p. An empty ID, status or zero CreatedAt is filled in.
-func (s *Store) CreateProposal(ctx context.Context, p core.Proposal) (core.Proposal, error) {
-	if p.ID == "" {
-		p.ID = core.ProposalID(NewID("prop"))
-	}
-	if p.Status == "" {
-		p.Status = core.ProposalPending
-	}
-	if p.CreatedAt.IsZero() {
-		p.CreatedAt = time.Now()
-	}
-	p.CreatedAt = p.CreatedAt.UTC().Truncate(time.Millisecond)
-	if err := p.ID.Validate(); err != nil {
-		return p, err
-	}
-	if err := p.Kind.Validate(); err != nil {
-		return p, err
-	}
-	if err := p.Status.Validate(); err != nil {
-		return p, err
-	}
-	err := s.db.Writer().CreateProposal(ctx, gen.CreateProposalParams{
-		ID: string(p.ID), ChangeSetID: nullStr(p.ChangeSetID), TaskID: nullStr(p.TaskID), RepoID: nullStr(p.RepoID),
-		Kind: string(p.Kind), Status: string(p.Status), Summary: p.Summary, Payload: jsonText(p.Payload, "{}"),
-		CreatedAt: fmtTime(p.CreatedAt), DecidedAt: fmtNullTime(p.DecidedAt),
-	})
-	if err != nil {
-		return p, fmt.Errorf("create proposal: %w", err)
-	}
-	return p, nil
 }
 
 // GetProposal returns one proposal.
@@ -682,23 +445,6 @@ func (s *Store) ListChangeSetProposals(ctx context.Context, cs core.ChangeSetID)
 	return proposalsFrom(rows)
 }
 
-// UpdateProposalStatus sets the status; decided_at is set for every status
-// except pending.
-func (s *Store) UpdateProposalStatus(ctx context.Context, id core.ProposalID, status core.ProposalStatus) error {
-	if err := status.Validate(); err != nil {
-		return err
-	}
-	var decided *time.Time
-	if status != core.ProposalPending {
-		now := time.Now()
-		decided = &now
-	}
-	n, err := s.db.Writer().UpdateProposalStatus(ctx, gen.UpdateProposalStatusParams{
-		Status: string(status), DecidedAt: fmtNullTime(decided), ID: string(id),
-	})
-	return updated("update proposal "+string(id), n, err)
-}
-
 // Builds
 
 func buildStepFrom(r gen.BuildStep) (core.BuildStep, error) {
@@ -715,62 +461,35 @@ func buildStepFrom(r gen.BuildStep) (core.BuildStep, error) {
 		c := int(r.ExitCode.Int64)
 		code = &c
 	}
+	argv := []string{}
+	if err := json.Unmarshal([]byte(r.Argv), &argv); err != nil {
+		return core.BuildStep{}, fmt.Errorf("bad argv in database for step %d of build %s: %w", r.Idx, r.BuildID, err)
+	}
 	return core.BuildStep{
 		Index: int(r.Idx), RepoID: core.RepoID(r.RepoID), Name: r.Name, Status: core.BuildStatus(r.Status),
 		ExitCode: code, LogPath: r.LogPath, StartedAt: start, FinishedAt: fin,
+		Argv: argv, Attempt: int(r.Attempt), Outcome: r.Outcome.String,
 	}, nil
 }
+
+func argvText(argv []string) (string, error) {
+	if argv == nil {
+		return "[]", nil
+	}
+	b, err := json.Marshal(argv)
+	if err != nil {
+		return "", fmt.Errorf("encode argv: %w", err)
+	}
+	return string(b), nil
+}
+
+func nullText(s string) sql.NullString { return sql.NullString{String: s, Valid: s != ""} }
 
 func nullInt(p *int) sql.NullInt64 {
 	if p == nil {
 		return sql.NullInt64{}
 	}
 	return sql.NullInt64{Int64: int64(*p), Valid: true}
-}
-
-// CreateBuild stores b and its steps in one transaction. An empty ID, status
-// or zero CreatedAt is filled in; step indexes are set to their position.
-func (s *Store) CreateBuild(ctx context.Context, b core.Build) (core.Build, error) {
-	if b.ID == "" {
-		b.ID = core.BuildID(NewID("bld"))
-	}
-	if b.Status == "" {
-		b.Status = core.BuildQueued
-	}
-	if b.CreatedAt.IsZero() {
-		b.CreatedAt = time.Now()
-	}
-	b.CreatedAt = b.CreatedAt.UTC().Truncate(time.Millisecond)
-	if err := b.ID.Validate(); err != nil {
-		return b, err
-	}
-	if b.Steps == nil {
-		b.Steps = []core.BuildStep{}
-	}
-	err := s.db.WithTx(ctx, func(q *gen.Queries) error {
-		err := q.CreateBuild(ctx, gen.CreateBuildParams{
-			ID: string(b.ID), WorktreeID: nullStr(b.WorktreeID), TaskID: nullStr(b.TaskID), Status: string(b.Status),
-			CreatedAt: fmtTime(b.CreatedAt), FinishedAt: fmtNullTime(b.FinishedAt),
-		})
-		if err != nil {
-			return err
-		}
-		for i, st := range b.Steps {
-			b.Steps[i].Index = i
-			err := q.CreateBuildStep(ctx, gen.CreateBuildStepParams{
-				BuildID: string(b.ID), Idx: int64(i), RepoID: string(st.RepoID), Name: st.Name, Status: string(st.Status),
-				ExitCode: nullInt(st.ExitCode), LogPath: st.LogPath, StartedAt: fmtNullTime(st.StartedAt), FinishedAt: fmtNullTime(st.FinishedAt),
-			})
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return b, fmt.Errorf("create build: %w", err)
-	}
-	return b, nil
 }
 
 func (s *Store) buildFrom(ctx context.Context, q *gen.Queries, r gen.Build) (core.Build, error) {
@@ -796,7 +515,7 @@ func (s *Store) buildFrom(ctx context.Context, q *gen.Queries, r gen.Build) (cor
 	}
 	return core.Build{
 		ID: core.BuildID(r.ID), WorktreeID: strPtr[core.WorktreeID](r.WorktreeID), TaskID: strPtr[core.TaskID](r.TaskID),
-		Status: core.BuildStatus(r.Status), Steps: steps, CreatedAt: at, FinishedAt: fin,
+		Status: core.BuildStatus(r.Status), Steps: steps, CreatedAt: at, FinishedAt: fin, Version: r.Version,
 	}, nil
 }
 
@@ -828,32 +547,6 @@ func (s *Store) ListBuilds(ctx context.Context, task core.TaskID) ([]core.Build,
 	return out, nil
 }
 
-// UpdateBuildStatus sets the status; finished_at is set when the build ended.
-func (s *Store) UpdateBuildStatus(ctx context.Context, id core.BuildID, status core.BuildStatus) error {
-	if err := status.Validate(); err != nil {
-		return err
-	}
-	var fin *time.Time
-	if status != core.BuildQueued && status != core.BuildRunning {
-		now := time.Now()
-		fin = &now
-	}
-	n, err := s.db.Writer().UpdateBuildStatus(ctx, gen.UpdateBuildStatusParams{Status: string(status), FinishedAt: fmtNullTime(fin), ID: string(id)})
-	return updated("update build "+string(id), n, err)
-}
-
-// UpdateBuildStep replaces the mutable fields of step st.Index of a build.
-func (s *Store) UpdateBuildStep(ctx context.Context, id core.BuildID, st core.BuildStep) error {
-	if err := st.Status.Validate(); err != nil {
-		return err
-	}
-	n, err := s.db.Writer().UpdateBuildStep(ctx, gen.UpdateBuildStepParams{
-		Status: string(st.Status), ExitCode: nullInt(st.ExitCode), LogPath: st.LogPath,
-		StartedAt: fmtNullTime(st.StartedAt), FinishedAt: fmtNullTime(st.FinishedAt), BuildID: string(id), Idx: int64(st.Index),
-	})
-	return updated(fmt.Sprintf("update build %s step %d", id, st.Index), n, err)
-}
-
 // Audit log
 
 func auditFrom(r gen.AuditLog) (core.AuditEntry, error) {
@@ -861,17 +554,6 @@ func auditFrom(r gen.AuditLog) (core.AuditEntry, error) {
 	return core.AuditEntry{
 		ID: core.AuditID(r.ID), At: at, Actor: r.Actor, Action: r.Action, Subject: r.Subject, Detail: json.RawMessage(r.Detail),
 	}, err
-}
-
-// InsertAudit stores e as it is. Callers redact first: use internal/audit.
-func (s *Store) InsertAudit(ctx context.Context, e core.AuditEntry) error {
-	err := s.db.Writer().InsertAuditEntry(ctx, gen.InsertAuditEntryParams{
-		ID: string(e.ID), At: fmtTime(e.At), Actor: e.Actor, Action: e.Action, Subject: e.Subject, Detail: jsonText(e.Detail, "{}"),
-	})
-	if err != nil {
-		return fmt.Errorf("write audit entry: %w", err)
-	}
-	return nil
 }
 
 // ListAudit returns the newest audit entries, newest first. A non-empty

@@ -12,4 +12,4 @@ SELECT * FROM proposals WHERE status = ? ORDER BY created_at, id;
 SELECT * FROM proposals WHERE change_set_id = ? ORDER BY created_at, id;
 
 -- name: UpdateProposalStatus :execrows
-UPDATE proposals SET status = ?, decided_at = ? WHERE id = ?;
+UPDATE proposals SET status = ?, decided_at = ?, version = version + 1 WHERE id = ? AND version = ?;

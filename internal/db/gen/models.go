@@ -24,18 +24,44 @@ type Build struct {
 	Status     string
 	CreatedAt  string
 	FinishedAt sql.NullString
+	Version    int64
+	Actor      string
+	StartedAt  sql.NullString
+	ResultStep sql.NullInt64
+	PresetID   sql.NullString
+}
+
+type BuildArtifact struct {
+	BuildID string
+	RepoID  string
+	Path    string
+	Size    int64
+}
+
+type BuildPreset struct {
+	ID        string
+	ProjectID string
+	Name      string
+	Steps     string
+	CreatedAt string
+	Version   int64
 }
 
 type BuildStep struct {
-	BuildID    string
-	Idx        int64
-	RepoID     string
-	Name       string
-	Status     string
-	ExitCode   sql.NullInt64
-	LogPath    string
-	StartedAt  sql.NullString
-	FinishedAt sql.NullString
+	BuildID      string
+	Idx          int64
+	RepoID       string
+	Name         string
+	Status       string
+	ExitCode     sql.NullInt64
+	LogPath      string
+	StartedAt    sql.NullString
+	FinishedAt   sql.NullString
+	Argv         string
+	Attempt      int64
+	Outcome      sql.NullString
+	StartFailure sql.NullString
+	LogTruncated int64
 }
 
 type ChangeSet struct {
@@ -64,6 +90,7 @@ type Proposal struct {
 	Payload     string
 	CreatedAt   string
 	DecidedAt   sql.NullString
+	Version     int64
 }
 
 type Repo struct {
@@ -91,6 +118,7 @@ type Task struct {
 	CreatedAt    string
 	UpdatedAt    string
 	FinishedAt   sql.NullString
+	Version      int64
 }
 
 type TaskDependency struct {

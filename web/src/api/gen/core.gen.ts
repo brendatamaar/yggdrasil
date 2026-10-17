@@ -86,6 +86,16 @@ export const BuildRunning: BuildStatus = "running";
 export const BuildSucceeded: BuildStatus = "succeeded";
 export const BuildFailed: BuildStatus = "failed";
 export const BuildCancelled: BuildStatus = "cancelled";
+/**
+ * BuildInterrupted: ygg stopped while the build ran, so its process tree
+ * is gone (the job object guarantees it).
+ */
+export const BuildInterrupted: BuildStatus = "interrupted";
+/**
+ * BuildSkipped is for a step that never ran because an earlier one failed
+ * or the build was cancelled.
+ */
+export const BuildSkipped: BuildStatus = "skipped";
 
 //////////
 // source: ids.go
@@ -246,6 +256,14 @@ export interface BuildStep {
   logPath?: string;
   startedAt?: string;
   finishedAt?: string;
+  /**
+   * Argv is the command line, Attempt the run counter of the step and
+   * Outcome how the last attempt ended (succeeded, failed, start_failed,
+   * cancelled, interrupted); Outcome is empty until the step has finished.
+   */
+  argv?: string[];
+  attempt?: number /* int */;
+  outcome?: string;
 }
 /**
  * Build is an ordered sequence of build steps.

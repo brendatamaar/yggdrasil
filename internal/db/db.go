@@ -121,23 +121,6 @@ func (d *DB) Writer() *gen.Queries { return gen.New(d.Write) }
 // Reader returns queries bound to the read-only pool.
 func (d *DB) Reader() *gen.Queries { return gen.New(d.Read) }
 
-// WithTx runs fn in a write transaction (BEGIN IMMEDIATE). fn must only use
-// the queries it gets: calling d.Writer() inside it would wait forever for
-// the one write connection the transaction holds.
-func (d *DB) WithTx(ctx context.Context, fn func(*gen.Queries) error) error {
-	tx, err := d.Write.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	if err := fn(gen.New(d.Write).WithTx(tx)); err != nil {
-		return errors.Join(err, tx.Rollback())
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
-	}
-	return nil
-}
-
 // NewMigrator returns a goose provider for the embedded migrations. Do not
 // call its Close method: it closes db, which the caller still owns.
 func NewMigrator(db *sql.DB) (*goose.Provider, error) {
