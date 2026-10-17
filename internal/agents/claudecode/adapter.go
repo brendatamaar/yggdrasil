@@ -43,6 +43,10 @@ func (e *UserError) UserMessage() string { return e.Message }
 // modelName is what a model name may look like: it goes into a command line.
 var modelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$`)
 
+// sessionID is what a resumable session ID may look like (a UUID); it goes
+// into a command line too.
+var sessionID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,63}$`)
+
 // Options configure the adapter.
 type Options struct {
 	// Binary is the claude executable name or path. Default "claude".
@@ -131,6 +135,8 @@ func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run,
 		return nil, &UserError{Message: "The prompt is empty. Write what the agent should look into."}
 	case o.Model != "" && !modelName.MatchString(o.Model):
 		return nil, &UserError{Message: "That model name isn't valid. Use letters, digits, dots, dashes and colons."}
+	case o.ResumeSessionID != "" && !sessionID.MatchString(o.ResumeSessionID):
+		return nil, &UserError{Message: "That session ID isn't valid."}
 	}
 	dir, err := platform.LongPath(o.Dir)
 	if err != nil {
@@ -172,6 +178,7 @@ func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run,
 		Dir:    dir,
 		Env:    buildEnv(o.Env, o, hookConfig),
 		TaskID: string(o.TaskID),
+		Stdin:  strings.NewReader(o.Prompt), // see buildArgs: the prompt is never an argument
 		Stdout: pw,
 		Stderr: stderr,
 	})

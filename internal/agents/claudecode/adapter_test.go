@@ -68,6 +68,8 @@ func runFake(mode string) int {
 			}
 		}
 		_ = os.WriteFile(out+".args", []byte(strings.Join(os.Args[1:], "\x00")), 0o600)
+		prompt, _ := io.ReadAll(os.Stdin)
+		_ = os.WriteFile(out+".stdin", prompt, 0o600)
 		_ = os.WriteFile(out+".settingspath", []byte(settings), 0o600)
 		if data, err := os.ReadFile(settings); err == nil {
 			_ = os.WriteFile(out+".settings", data, 0o600)
@@ -309,8 +311,13 @@ func TestRunCommandLineEnvironmentAndCleanup(t *testing.T) {
 	}
 
 	argv := strings.Split(read(t, out+".args"), "\x00")
-	if argv[len(argv)-2] != "--" || argv[len(argv)-1] != o.Prompt {
-		t.Errorf("tail of the arguments = %q", argv[len(argv)-2:])
+	// The prompt reaches the CLI on stdin, exactly as written, and not as an
+	// argument.
+	if got := read(t, out+".stdin"); got != o.Prompt {
+		t.Errorf("stdin = %q, want the prompt %q", got, o.Prompt)
+	}
+	if slices.Contains(argv, o.Prompt) || slices.Contains(argv, "--") {
+		t.Errorf("the prompt or a separator is on the command line: %q", argv)
 	}
 	for _, want := range []string{"--forward-subagent-text", "--setting-sources", "dontAsk", "--allowedTools", "--max-budget-usd", "0.1", "--model", "haiku"} {
 		if !slices.Contains(argv, want) {
@@ -365,6 +372,68 @@ func TestRunCommandLineEnvironmentAndCleanup(t *testing.T) {
 	// The run folder (settings, hook configuration, log) is gone afterwards.
 	if _, err := os.Stat(read(t, out+".settingspath")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("the settings file outlived the run: %v", err)
+	}
+}
+
+// A prompt can hold anything a person types. It must arrive whole, which a
+// command line could not promise (quotes, percent signs, &, line breaks, a
+// leading dash, a long text).
+func TestAnyPromptArrivesWholeOnStdin(t *testing.T) {
+	prompts := []string{
+		"-x --dangerously-skip-permissions",
+		"say \"hi\" & echo %PATH% | more > out.txt\nsecond line\r\nthird",
+		"Baca README.md dan jawab (satu kalimat) — émoji 😀 dan 世界",
+		strings.Repeat("a long prompt ", 2000), // far past the 8191 characters cmd.exe allows
+	}
+	for i, prompt := range prompts {
+		a := newAdapter(t, "capture")
+		out := filepath.Join(t.TempDir(), "capture")
+		o := startOpts(t, "capture", map[string]string{fakeOut: out})
+		o.Prompt = prompt
+		res, err := agents.Execute(context.Background(), a, o, &collectSink{})
+		if err != nil || res.Status != agents.RunCompleted {
+			t.Fatalf("prompt %d: %+v, %v", i, res, err)
+		}
+		if got := read(t, out+".stdin"); got != prompt {
+			t.Errorf("prompt %d arrived as %d bytes, want %d", i, len(got), len(prompt))
+		}
+	}
+}
+
+// On Windows `claude` is often an npm shim, claude.cmd, in a folder with a
+// space (C:\Program Files\nodejs). The whole chain has to work: adapter,
+// platform.Start, cmd.exe, the program behind the shim, with the prompt on
+// stdin. This is the shape of the failure seen with the real CLI
+// ('C:\Program' is not recognized).
+func TestRunThroughACmdShimInAFolderWithSpaces(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "Program Files", "nodejs")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	shim := filepath.Join(dir, "claude.cmd")
+	body := "@echo off\r\n\"" + testExe(t) + "\" %*\r\n"
+	if err := os.WriteFile(shim, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := New(Options{Binary: shim, HookExecutable: testExe(t), TempDir: t.TempDir()})
+	out := filepath.Join(t.TempDir(), "capture")
+	o := startOpts(t, "capture", map[string]string{fakeOut: out})
+	o.Prompt = `Read "README.md" & tell me what it says (100%)`
+	res, err := agents.Execute(context.Background(), a, o, &collectSink{})
+	if err != nil || res.Status != agents.RunCompleted {
+		t.Fatalf("result = %+v, %v", res, err)
+	}
+	if got := read(t, out+".stdin"); got != o.Prompt {
+		t.Errorf("stdin = %q, want %q", got, o.Prompt)
+	}
+	argv := strings.Split(read(t, out+".args"), "\x00")
+	if !slices.Contains(argv, "--forward-subagent-text") || !slices.Contains(argv, "-p") {
+		t.Errorf("arguments through the shim = %q", argv)
+	}
+	// The settings path (a folder with a hyphen and digits, under the temp
+	// folder) arrived as one argument.
+	if i := slices.Index(argv, "--settings"); i < 0 || !strings.HasSuffix(argv[i+1], "settings.json") {
+		t.Errorf("--settings through the shim = %q", argv)
 	}
 }
 

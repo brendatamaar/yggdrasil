@@ -21,10 +21,15 @@ func TestBuildArgs(t *testing.T) {
 		"--permission-mode", "dontAsk",
 		"--allowedTools", "Read,Grep,Glob",
 		"--disallowedTools", "Edit,Write,MultiEdit,NotebookEdit,Bash,PowerShell",
-		"--", "-x look at the cart",
 	}
 	if !slices.Equal(args, want) {
 		t.Errorf("args =\n%q\nwant\n%q", args, want)
+	}
+	// The prompt is free text and is never an argument: it goes on stdin.
+	for _, a := range args {
+		if strings.Contains(a, "look at the cart") {
+			t.Errorf("the prompt is on the command line: %q", a)
+		}
 	}
 
 	o.Model, o.BudgetUSD, o.ResumeSessionID = "haiku", 0.25, "sess-1"
@@ -34,13 +39,13 @@ func TestBuildArgs(t *testing.T) {
 		if i < 0 || args[i+1] != pair[1] {
 			t.Errorf("missing %s %s in %q", pair[0], pair[1], args)
 		}
-		if i > slices.Index(args, "--") {
-			t.Errorf("%s comes after the prompt separator", pair[0])
-		}
 	}
-	// The prompt is always the last argument, right after "--".
-	if args[len(args)-2] != "--" || args[len(args)-1] != o.Prompt {
-		t.Errorf("tail = %q", args[len(args)-2:])
+	// Nothing left on the command line holds a character a .cmd shim would
+	// misread (cmd.exe runs claude.cmd): quotes, percent signs, & and so on.
+	for _, a := range args {
+		if strings.ContainsAny(a, "\"%&|<>^!\r\n") {
+			t.Errorf("argument %q would be refused by cmd.exe", a)
+		}
 	}
 	// Ask mode never lists a tool that writes or runs commands.
 	for _, tool := range askTools {

@@ -34,8 +34,12 @@ var askDisallowed = []string{"Edit", "Write", "MultiEdit", "NotebookEdit", "Bash
 const hookTimeoutSec = 30
 
 // buildArgs returns the claude arguments. Each flag is in `claude --help`
-// (2.1.299). "--" ends the options: a variadic flag such as --allowedTools
-// would otherwise take the prompt as one of its values.
+// (2.1.299). The prompt is not among them: it goes to the CLI on stdin. A
+// prompt is free text, and on Windows the CLI is often an npm shim (claude.cmd)
+// run by cmd.exe, which refuses or misreads quotes, percent signs, & and line
+// breaks in arguments and has a line length limit. Nothing left on the command
+// line comes from the person: flags, a validated model name, a session ID and
+// our own file path.
 func buildArgs(settingsPath string, o agents.StartOptions) []string {
 	args := []string{
 		"-p", "--output-format", "stream-json", "--verbose", "--forward-subagent-text",
@@ -56,7 +60,7 @@ func buildArgs(settingsPath string, o agents.StartOptions) []string {
 	if o.ResumeSessionID != "" {
 		args = append(args, "--resume", o.ResumeSessionID)
 	}
-	return append(args, "--", o.Prompt)
+	return args
 }
 
 // buildEnv returns the child environment: the clean environment plus the
