@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/brendatamaar/yggdrasil/internal/agents"
+	"github.com/brendatamaar/yggdrasil/internal/apperr"
 	"github.com/brendatamaar/yggdrasil/internal/audit"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	"github.com/brendatamaar/yggdrasil/internal/db"
@@ -40,7 +41,7 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	} else {
 		all, err := s.store.ListProjects(r.Context())
 		if err != nil {
-			s.fail(w, r, err)
+			s.fail(w, r, taskErr(err))
 			return
 		}
 		for _, p := range all {
@@ -51,7 +52,7 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	for _, p := range projects {
 		tasks, err := s.store.ListTasks(r.Context(), p)
 		if err != nil {
-			s.fail(w, r, err)
+			s.fail(w, r, taskErr(err))
 			return
 		}
 		for _, t := range tasks {
@@ -80,7 +81,7 @@ func (s *Server) lookupTask(w http.ResponseWriter, r *http.Request) (core.Task, 
 	}
 	task, err := s.store.GetTask(r.Context(), id)
 	if err != nil {
-		s.fail(w, r, err)
+		s.fail(w, r, taskErr(err))
 		return core.Task{}, false
 	}
 	return task, true
@@ -102,7 +103,7 @@ func (s *Server) taskEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.store.ListTaskEvents(r.Context(), task.ID, after)
 	if err != nil {
-		s.fail(w, r, err)
+		s.fail(w, r, taskErr(err))
 		return
 	}
 	events := make([]agents.Event, 0, len(rows))
@@ -155,12 +156,12 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	project, err := s.store.GetProject(ctx, req.ProjectID)
 	if err != nil {
-		s.fail(w, r, err)
+		s.fail(w, r, taskErr(err))
 		return
 	}
 	repo, err := s.store.GetRepo(ctx, req.RepoIDs[0])
 	if err != nil {
-		s.fail(w, r, err)
+		s.fail(w, r, taskErr(err))
 		return
 	}
 	// Only tracked repos of this project are visible to agents (invariant 6).
@@ -187,7 +188,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		"agent": req.Agent, "mode": core.ModeAsk, "repo": repo.ID, "promptChars": utf8.RuneCountInString(prompt),
 	})
 	if err != nil {
-		s.fail(w, r, err)
+		s.fail(w, r, taskErr(err))
 		return
 	}
 	// The task and its audit entry are one commit: no task without an entry.
@@ -204,11 +205,26 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		return tx.AppendAudit(ctx, entry)
 	})
 	if err != nil {
-		s.fail(w, r, err)
+		s.fail(w, r, taskErr(err))
 		return
 	}
 	s.start(task, repo, adapter)
 	writeJSON(w, http.StatusCreated, TaskResponse{Task: task})
+}
+
+// taskErr translates what the store reports about tasks, projects and repos
+// into an error class with a message for people. Other errors pass through
+// unchanged and become a generic 500 in fail.
+func taskErr(err error) error {
+	switch {
+	case errors.Is(err, db.ErrNotFound):
+		return apperr.New(apperr.NotFound, "That item doesn't exist (any more).", err)
+	case errors.Is(err, db.ErrSubTaskDepth):
+		return apperr.New(apperr.Conflict, "Sub-tasks can only be one level deep. Create the task without a parent.", err)
+	case errors.Is(err, db.ErrConflict):
+		return apperr.New(apperr.Conflict, "That item changed in the meantime.", err)
+	}
+	return err
 }
 
 // modelName is what a model name may look like: it goes into a command line.
@@ -253,7 +269,7 @@ func (s *Server) cancelTask(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	if running {
 		if err := s.record(r.Context(), "user", "task.cancel", task.ID, nil); err != nil {
-			s.fail(w, r, err)
+			s.fail(w, r, taskErr(err))
 			return
 		}
 		cancel()
