@@ -98,7 +98,19 @@ type conPTY struct {
 }
 
 func newConPTY(spec PTYSpec, exe, dir string) (*conPTY, error) {
-	cmdLine, err := windows.UTF16PtrFromString(windows.ComposeCommandLine(spec.Argv))
+	line := windows.ComposeCommandLine(spec.Argv)
+	if isBatchFile(exe) {
+		// Same rule as Start: cmd.exe runs the batch file, with checked arguments.
+		comspec, err := batchComspec(spec.Env)
+		if err != nil {
+			return nil, err
+		}
+		if line, err = batchCommandLine(comspec, exe, spec.Argv); err != nil {
+			return nil, err
+		}
+		exe = comspec
+	}
+	cmdLine, err := windows.UTF16PtrFromString(line)
 	if err != nil {
 		return nil, fmt.Errorf("platform: command line: %w", err)
 	}

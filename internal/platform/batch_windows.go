@@ -74,3 +74,17 @@ func batchCommandLine(comspec, batchFile string, argv []string) (string, error) 
 	b.WriteString(`"`)
 	return b.String(), nil
 }
+
+// batchComspec picks the command interpreter that runs batch files: COMSPEC
+// from env when absolute, else SystemRoot\System32\cmd.exe. Shared by Start
+// and StartPTY.
+func batchComspec(env []string) (string, error) {
+	comspec := envGet(env, "COMSPEC")
+	if comspec == "" || !filepath.IsAbs(comspec) {
+		comspec = filepath.Join(envGet(env, "SystemRoot"), "System32", "cmd.exe")
+	}
+	if !filepath.IsAbs(comspec) || !isRegular(comspec) {
+		return "", fmt.Errorf("platform: the command interpreter %q was not found; set COMSPEC or SystemRoot", comspec)
+	}
+	return comspec, nil
+}

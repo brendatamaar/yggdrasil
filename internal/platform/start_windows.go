@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -62,12 +61,9 @@ func Start(ctx context.Context, spec Spec) (Process, error) {
 	if isBatchFile(exe) {
 		// An npm shim (claude.cmd) is run by cmd.exe, which must be given the
 		// command line in a form it reads correctly (see batch_windows.go).
-		comspec := envGet(spec.Env, "COMSPEC")
-		if comspec == "" || !filepath.IsAbs(comspec) {
-			comspec = filepath.Join(envGet(spec.Env, "SystemRoot"), "System32", "cmd.exe")
-		}
-		if !filepath.IsAbs(comspec) || !isRegular(comspec) {
-			return nil, fmt.Errorf("platform: the command interpreter %q was not found; set COMSPEC or SystemRoot", comspec)
+		comspec, err := batchComspec(spec.Env)
+		if err != nil {
+			return nil, err
 		}
 		line, err := batchCommandLine(comspec, exe, spec.Argv)
 		if err != nil {
