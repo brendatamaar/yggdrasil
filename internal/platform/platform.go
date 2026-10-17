@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"errors"
 	"io"
 )
@@ -42,6 +43,12 @@ import (
 //
 //	// ListeningPorts returns the TCP ports a process tree listens on (DV-02).
 //	func ListeningPorts(pid int) ([]int, error)
+
+// StartFunc is the signature of Start. Packages that run processes take a
+// StartFunc, so tests can pass the fake in internal/platform/platformtest.
+type StartFunc func(context.Context, Spec) (Process, error)
+
+var _ StartFunc = Start
 
 // ErrNoEnv is returned by Start and StartPTY when Spec.Env is nil. The
 // environment must come from internal/safety, never from the parent process

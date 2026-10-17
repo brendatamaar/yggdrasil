@@ -12,9 +12,7 @@ import (
 
 func TestNilEnvRefused(t *testing.T) {
 	ctx := context.Background()
-	if _, err := Start(ctx, Spec{Argv: []string{"anything"}}); !errors.Is(err, ErrNoEnv) {
-		t.Errorf("Start with nil env: %v, want ErrNoEnv", err)
-	}
+	// Start with a nil env is in the process contract (contract_*_test.go).
 	// An empty but non-nil environment is a real (empty) environment.
 	if _, err := Start(ctx, Spec{Argv: []string{"anything"}, Env: []string{}}); errors.Is(err, ErrNoEnv) {
 		t.Errorf("Start with empty env: %v, want a lookup error", err)
