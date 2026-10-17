@@ -89,6 +89,37 @@ jobs:
       - name: Spike tests
         run: task spikes:test
 
+  # The built binary on Windows: demo task, loopback, static files and the kill
+  # test with a fake Claude Code (scripts/smoke.ps1). Never the real agent.
+  smoke:
+    name: Windows smoke test
+    runs-on: windows-latest
+    needs: windows
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+
+      - uses: pnpm/action-setup@v4
+        if: hashFiles('web/package.json') != ''
+        with:
+          package_json_file: web/package.json
+
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Smoke test (builds first)
+        run: task smoke
+
   # macOS and Linux are experimental: failures are reported but don't block.
   unix:
     name: ${{ matrix.os }} (allowed to fail)
