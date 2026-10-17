@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
 )
@@ -103,5 +104,45 @@ func TestClassifyLeavesOtherErrorsAlone(t *testing.T) {
 	}
 	if classify(nil) != nil {
 		t.Error("classify(nil) != nil")
+	}
+}
+
+// A panic inside Commit's callback rolls the transaction back and releases the
+// write connection: the next Commit must not wait for it.
+func TestCommitReleasesTheConnectionAfterAPanic(t *testing.T) {
+	d := openTest(t)
+	s := NewStore(d)
+	ctx := context.Background()
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("the panic was swallowed")
+			}
+		}()
+		_ = s.Commit(ctx, func(tx *Tx) error {
+			if _, err := tx.CreateProject(ctx, core.Project{ID: "p1", Name: "lost", CreatedAt: time.Now()}); err != nil {
+				t.Error(err)
+			}
+			panic("boom")
+		})
+	}()
+	done := make(chan error, 1)
+	go func() {
+		done <- s.Commit(ctx, func(tx *Tx) error {
+			_, err := tx.CreateProject(ctx, core.Project{ID: "p2", Name: "kept", CreatedAt: time.Now()})
+			return err
+		})
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Commit after a panic = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Commit after a panic hangs: the write connection was never released")
+	}
+	ps, err := s.ListProjects(ctx)
+	if err != nil || len(ps) != 1 || ps[0].ID != "p2" {
+		t.Fatalf("projects = %+v, %v; the panicked transaction must be rolled back", ps, err)
 	}
 }

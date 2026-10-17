@@ -19,8 +19,8 @@ import (
 // function passed to Commit.
 type Tx struct{ q *gen.Queries }
 
-// Commit runs fn in one write transaction. If fn returns an error, or the
-// commit fails, nothing is written. A UNIQUE or PRIMARY KEY violation comes
+// Commit runs fn in one write transaction. If fn returns an error or panics,
+// or the commit fails, nothing is written. A UNIQUE or PRIMARY KEY violation comes
 // back as ErrConflict and a FOREIGN KEY violation as ErrNotFound. fn must use only the Tx it gets: calling
 // the Store from inside fn would wait forever for the one write connection.
 func (s *Store) Commit(ctx context.Context, fn func(*Tx) error) error {
@@ -28,9 +28,20 @@ func (s *Store) Commit(ctx context.Context, fn func(*Tx) error) error {
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
+	// A panic in fn must not leave the transaction open: the one write
+	// connection would stay held and every later Commit would wait forever.
+	// Roll back and let the panic go on.
+	finished := false
+	defer func() {
+		if !finished {
+			_ = tx.Rollback()
+		}
+	}()
 	if err := fn(&Tx{q: gen.New(tx)}); err != nil {
+		finished = true
 		return errors.Join(classify(err), tx.Rollback())
 	}
+	finished = true
 	if err := tx.Commit(); err != nil {
 		return classify(fmt.Errorf("commit transaction: %w", err))
 	}
