@@ -22,6 +22,7 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/agents/mock"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	"github.com/brendatamaar/yggdrasil/internal/db"
+	"github.com/brendatamaar/yggdrasil/internal/db/dbtest"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
 
@@ -68,14 +69,8 @@ func newEnv(t *testing.T, fixture string, delay time.Duration, extra ...func(*De
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(func() { ts.Close(); srv.Close() })
 
-	project, err := store.CreateProject(ctx, core.Project{Name: "acme-shop", Path: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	repo, err := store.CreateRepo(ctx, core.Repo{ProjectID: project.ID, Name: "shop-api", Path: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
+	project := dbtest.Project(t, store, core.Project{Name: "acme-shop", Path: t.TempDir()})
+	repo := dbtest.Repo(t, store, core.Repo{ProjectID: project.ID, Name: "shop-api", Path: t.TempDir()})
 	return &env{srv: srv, ts: ts, store: store, project: project, repo: repo}
 }
 
@@ -294,14 +289,8 @@ func TestErrorFormat(t *testing.T) {
 
 func TestCreateTaskRefusals(t *testing.T) {
 	e := newEnv(t, "plain", 0)
-	other, err := e.store.CreateProject(context.Background(), core.Project{Name: "other", Path: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	otherRepo, err := e.store.CreateRepo(context.Background(), core.Repo{ProjectID: other.ID, Name: "x", Path: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
+	other := dbtest.Project(t, e.store, core.Project{Name: "other", Path: t.TempDir()})
+	otherRepo := dbtest.Repo(t, e.store, core.Repo{ProjectID: other.ID, Name: "x", Path: t.TempDir()})
 	mutate := map[string]func(*CreateTaskRequest){
 		"code mode":         func(r *CreateTaskRequest) { r.Mode = core.ModeCode },
 		"current branch":    func(r *CreateTaskRequest) { r.Mode = core.ModeCurrentBranch },

@@ -37,18 +37,6 @@ func (s *Store) Commit(ctx context.Context, fn func(*Tx) error) error {
 	return nil
 }
 
-// commit1 runs fn in a Commit and returns its value: the shape of every
-// single-write Store method.
-func commit1[T any](ctx context.Context, s *Store, fn func(*Tx) (T, error)) (T, error) {
-	var out T
-	err := s.Commit(ctx, func(tx *Tx) error {
-		v, err := fn(tx)
-		out = v
-		return err
-	})
-	return out, err
-}
-
 // Projects
 
 // CreateProject stores p. An empty ID or zero CreatedAt is filled in.
@@ -70,11 +58,6 @@ func (tx *Tx) CreateProject(ctx context.Context, p core.Project) (core.Project, 
 		return p, fmt.Errorf("create project: %w", err)
 	}
 	return p, nil
-}
-
-// CreateProject stores p in its own transaction.
-func (s *Store) CreateProject(ctx context.Context, p core.Project) (core.Project, error) {
-	return commit1(ctx, s, func(tx *Tx) (core.Project, error) { return tx.CreateProject(ctx, p) })
 }
 
 // Repos
@@ -101,20 +84,10 @@ func (tx *Tx) CreateRepo(ctx context.Context, r core.Repo) (core.Repo, error) {
 	return r, nil
 }
 
-// CreateRepo stores r in its own transaction.
-func (s *Store) CreateRepo(ctx context.Context, r core.Repo) (core.Repo, error) {
-	return commit1(ctx, s, func(tx *Tx) (core.Repo, error) { return tx.CreateRepo(ctx, r) })
-}
-
 // SetRepoTrusted records the user's answer to the repo-hooks prompt (SF-09).
 func (tx *Tx) SetRepoTrusted(ctx context.Context, id core.RepoID, trusted bool) error {
 	n, err := tx.q.SetRepoTrusted(ctx, gen.SetRepoTrustedParams{Trusted: b2i(trusted), ID: string(id)})
 	return updated("set repo trusted "+string(id), n, err)
-}
-
-// SetRepoTrusted records the answer in its own transaction.
-func (s *Store) SetRepoTrusted(ctx context.Context, id core.RepoID, trusted bool) error {
-	return s.Commit(ctx, func(tx *Tx) error { return tx.SetRepoTrusted(ctx, id, trusted) })
 }
 
 // Tasks
@@ -162,11 +135,6 @@ func (tx *Tx) CreateTask(ctx context.Context, t core.Task) (core.Task, error) {
 	return t, nil
 }
 
-// CreateTask stores t in its own transaction.
-func (s *Store) CreateTask(ctx context.Context, t core.Task) (core.Task, error) {
-	return commit1(ctx, s, func(tx *Tx) (core.Task, error) { return tx.CreateTask(ctx, t) })
-}
-
 // bumped finishes a versioned update (… SET …, version = version + 1 WHERE
 // id = ? AND version = ?) that changed n rows. Zero rows means either the row
 // is gone (ErrNotFound) or its version moved on (ErrConflict): probe tells
@@ -206,11 +174,6 @@ func (tx *Tx) UpdateTaskStatus(ctx context.Context, id core.TaskID, status core.
 	return bumped("update task "+string(id), n, err, version, func() error { _, err := tx.q.GetTask(ctx, string(id)); return err })
 }
 
-// UpdateTaskStatus sets the status in its own transaction.
-func (s *Store) UpdateTaskStatus(ctx context.Context, id core.TaskID, status core.TaskStatus, version int64) (int64, error) {
-	return commit1(ctx, s, func(tx *Tx) (int64, error) { return tx.UpdateTaskStatus(ctx, id, status, version) })
-}
-
 // SetTaskSession records the agent's resumable session ID if the task is
 // still at version, and returns the new version.
 func (tx *Tx) SetTaskSession(ctx context.Context, id core.TaskID, session string, version int64) (int64, error) {
@@ -218,11 +181,6 @@ func (tx *Tx) SetTaskSession(ctx context.Context, id core.TaskID, session string
 		SessionID: session, UpdatedAt: fmtTime(time.Now()), ID: string(id), Version: version,
 	})
 	return bumped("update task session "+string(id), n, err, version, func() error { _, err := tx.q.GetTask(ctx, string(id)); return err })
-}
-
-// SetTaskSession records the session in its own transaction.
-func (s *Store) SetTaskSession(ctx context.Context, id core.TaskID, session string, version int64) (int64, error) {
-	return commit1(ctx, s, func(tx *Tx) (int64, error) { return tx.SetTaskSession(ctx, id, session, version) })
 }
 
 // AddTaskDependency makes task start after dependsOn (AG-25). The caller
@@ -233,11 +191,6 @@ func (tx *Tx) AddTaskDependency(ctx context.Context, task, dependsOn core.TaskID
 		return fmt.Errorf("add task dependency: %w", err)
 	}
 	return nil
-}
-
-// AddTaskDependency stores the dependency in its own transaction.
-func (s *Store) AddTaskDependency(ctx context.Context, task, dependsOn core.TaskID) error {
-	return s.Commit(ctx, func(tx *Tx) error { return tx.AddTaskDependency(ctx, task, dependsOn) })
 }
 
 // Worktrees
@@ -270,11 +223,6 @@ func (tx *Tx) CreateWorktree(ctx context.Context, w core.Worktree) (core.Worktre
 	return w, nil
 }
 
-// CreateWorktree stores w in its own transaction.
-func (s *Store) CreateWorktree(ctx context.Context, w core.Worktree) (core.Worktree, error) {
-	return commit1(ctx, s, func(tx *Tx) (core.Worktree, error) { return tx.CreateWorktree(ctx, w) })
-}
-
 // UpdateWorktreeStatus sets the status of a worktree.
 func (tx *Tx) UpdateWorktreeStatus(ctx context.Context, id core.WorktreeID, status core.WorktreeStatus) error {
 	if err := status.Validate(); err != nil {
@@ -282,11 +230,6 @@ func (tx *Tx) UpdateWorktreeStatus(ctx context.Context, id core.WorktreeID, stat
 	}
 	n, err := tx.q.UpdateWorktreeStatus(ctx, gen.UpdateWorktreeStatusParams{Status: string(status), ID: string(id)})
 	return updated("update worktree "+string(id), n, err)
-}
-
-// UpdateWorktreeStatus sets the status in its own transaction.
-func (s *Store) UpdateWorktreeStatus(ctx context.Context, id core.WorktreeID, status core.WorktreeStatus) error {
-	return s.Commit(ctx, func(tx *Tx) error { return tx.UpdateWorktreeStatus(ctx, id, status) })
 }
 
 // Task events
@@ -302,7 +245,10 @@ func (tx *Tx) AppendTaskEvent(ctx context.Context, e TaskEvent) error {
 	return nil
 }
 
-// AppendTaskEvent stores the event in its own transaction.
+// AppendTaskEvent stores the event in its own transaction. It is the one
+// write that Store exports outside Commit: the transcript is a log of what the
+// agent said, not state that changes anything, so it has no audit entry by
+// design (internal/archtest allows exactly this method and Commit).
 func (s *Store) AppendTaskEvent(ctx context.Context, e TaskEvent) error {
 	return s.Commit(ctx, func(tx *Tx) error { return tx.AppendTaskEvent(ctx, e) })
 }
@@ -343,11 +289,6 @@ func (tx *Tx) CreateChangeSet(ctx context.Context, c core.ChangeSet) (core.Chang
 	return c, nil
 }
 
-// CreateChangeSet stores c in its own transaction.
-func (s *Store) CreateChangeSet(ctx context.Context, c core.ChangeSet) (core.ChangeSet, error) {
-	return commit1(ctx, s, func(tx *Tx) (core.ChangeSet, error) { return tx.CreateChangeSet(ctx, c) })
-}
-
 // UpdateChangeSetStatus sets the status of a change set.
 func (tx *Tx) UpdateChangeSetStatus(ctx context.Context, id core.ChangeSetID, status core.ChangeSetStatus) error {
 	if err := status.Validate(); err != nil {
@@ -355,11 +296,6 @@ func (tx *Tx) UpdateChangeSetStatus(ctx context.Context, id core.ChangeSetID, st
 	}
 	n, err := tx.q.UpdateChangeSetStatus(ctx, gen.UpdateChangeSetStatusParams{Status: string(status), ID: string(id)})
 	return updated("update change set "+string(id), n, err)
-}
-
-// UpdateChangeSetStatus sets the status in its own transaction.
-func (s *Store) UpdateChangeSetStatus(ctx context.Context, id core.ChangeSetID, status core.ChangeSetStatus) error {
-	return s.Commit(ctx, func(tx *Tx) error { return tx.UpdateChangeSetStatus(ctx, id, status) })
 }
 
 // Proposals
@@ -396,11 +332,6 @@ func (tx *Tx) CreateProposal(ctx context.Context, p core.Proposal) (core.Proposa
 	return p, nil
 }
 
-// CreateProposal stores p in its own transaction.
-func (s *Store) CreateProposal(ctx context.Context, p core.Proposal) (core.Proposal, error) {
-	return commit1(ctx, s, func(tx *Tx) (core.Proposal, error) { return tx.CreateProposal(ctx, p) })
-}
-
 // UpdateProposalStatus sets the status if the proposal is still at version;
 // decided_at is set for every status except pending. It returns the new
 // version. A stale version returns ErrConflict.
@@ -417,11 +348,6 @@ func (tx *Tx) UpdateProposalStatus(ctx context.Context, id core.ProposalID, stat
 		Status: string(status), DecidedAt: fmtNullTime(decided), ID: string(id), Version: version,
 	})
 	return bumped("update proposal "+string(id), n, err, version, func() error { _, err := tx.q.GetProposal(ctx, string(id)); return err })
-}
-
-// UpdateProposalStatus sets the status in its own transaction.
-func (s *Store) UpdateProposalStatus(ctx context.Context, id core.ProposalID, status core.ProposalStatus, version int64) (int64, error) {
-	return commit1(ctx, s, func(tx *Tx) (int64, error) { return tx.UpdateProposalStatus(ctx, id, status, version) })
 }
 
 // Builds
@@ -470,11 +396,6 @@ func (tx *Tx) CreateBuild(ctx context.Context, b core.Build) (core.Build, error)
 	return b, nil
 }
 
-// CreateBuild stores b in its own transaction.
-func (s *Store) CreateBuild(ctx context.Context, b core.Build) (core.Build, error) {
-	return commit1(ctx, s, func(tx *Tx) (core.Build, error) { return tx.CreateBuild(ctx, b) })
-}
-
 // UpdateBuildStatus sets the status if the build is still at version;
 // finished_at is set when the build ended. It returns the new version. A
 // stale version returns ErrConflict.
@@ -493,11 +414,6 @@ func (tx *Tx) UpdateBuildStatus(ctx context.Context, id core.BuildID, status cor
 	return bumped("update build "+string(id), n, err, version, func() error { _, err := tx.q.GetBuild(ctx, string(id)); return err })
 }
 
-// UpdateBuildStatus sets the status in its own transaction.
-func (s *Store) UpdateBuildStatus(ctx context.Context, id core.BuildID, status core.BuildStatus, version int64) (int64, error) {
-	return commit1(ctx, s, func(tx *Tx) (int64, error) { return tx.UpdateBuildStatus(ctx, id, status, version) })
-}
-
 // UpdateBuildStep replaces the mutable fields of step st.Index of a build.
 // Steps have no version of their own: they are saved with their build.
 func (tx *Tx) UpdateBuildStep(ctx context.Context, id core.BuildID, st core.BuildStep) error {
@@ -510,11 +426,6 @@ func (tx *Tx) UpdateBuildStep(ctx context.Context, id core.BuildID, st core.Buil
 		Attempt: int64(st.Attempt), Outcome: nullText(st.Outcome), BuildID: string(id), Idx: int64(st.Index),
 	})
 	return updated(fmt.Sprintf("update build %s step %d", id, st.Index), n, err)
-}
-
-// UpdateBuildStep replaces the step in its own transaction.
-func (s *Store) UpdateBuildStep(ctx context.Context, id core.BuildID, st core.BuildStep) error {
-	return s.Commit(ctx, func(tx *Tx) error { return tx.UpdateBuildStep(ctx, id, st) })
 }
 
 // Audit log

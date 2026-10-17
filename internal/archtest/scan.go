@@ -24,6 +24,8 @@ type file struct {
 	uses []string
 	// methods are the names called as x.Name(...) on any value.
 	methods []string
+	// storeMethods are the exported methods declared on Store or *Store.
+	storeMethods []string
 }
 
 // parse reads one source file. src is the content; name is its file name.
@@ -51,6 +53,15 @@ func parse(dir, name string, src any) (file, error) {
 		local[n] = p
 	}
 	ast.Inspect(af, func(n ast.Node) bool {
+		if fd, ok := n.(*ast.FuncDecl); ok && fd.Recv != nil && len(fd.Recv.List) == 1 && fd.Name.IsExported() {
+			t := fd.Recv.List[0].Type
+			if st, ok := t.(*ast.StarExpr); ok {
+				t = st.X
+			}
+			if id, ok := t.(*ast.Ident); ok && id.Name == "Store" {
+				f.storeMethods = append(f.storeMethods, fd.Name.Name)
+			}
+		}
 		sel, ok := n.(*ast.SelectorExpr)
 		if !ok {
 			return true
