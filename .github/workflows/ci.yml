@@ -23,7 +23,7 @@ jobs:
     name: Windows (required)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
@@ -96,7 +96,7 @@ jobs:
     runs-on: windows-latest
     needs: windows
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
@@ -130,7 +130,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
@@ -169,7 +169,7 @@ jobs:
     name: License check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
@@ -198,7 +198,7 @@ jobs:
     name: GoReleaser config
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
