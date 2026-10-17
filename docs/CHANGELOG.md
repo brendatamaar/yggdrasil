@@ -16,6 +16,7 @@ All notable changes to Yggdrasil are documented here. The format follows [Keep a
 - `YGG_DATA_DIR`, `YGG_LOG` and `YGG_MOCK_DELAY_MS` settings (IN-06).
 - Types are generated from Go into `web/src/api/gen` with `task generate` (`sqlc` and `tygo`).
 - Architecture tests that fail when a process is started outside `internal/platform`, the environment is read outside `internal/safety`, or a package imports one it must not (docs/AGENTS.md section 5).
+- `task smoke` (also in CI) checks the built `ygg.exe` on Windows: doctor, seed, a demo task, loopback and Host/Origin refusal, static files, the refusal of a repo with its own Claude Code configuration, and that killing `ygg` ends an agent's whole process tree; `task smoke:real` runs a short real Claude Code session (a sub-agent, the Ask-mode and repo-folder refusals, cancel).
 
 ### Changed
 - Only Ask mode (read-only) can be started in this version; Code mode needs worktrees and the path guard (Phase 3).

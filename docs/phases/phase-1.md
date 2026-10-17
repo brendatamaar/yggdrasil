@@ -293,6 +293,8 @@ Proposed tag: **`v0.2.0`**, for you to create. I did not tag, push or start Phas
 
 ### Manual verification on Windows (what only you can confirm)
 
+Most of these steps are now automated: see "Automated by `scripts/smoke.ps1`" below.
+
 1. **Clean build:** `task build`, then `bin\ygg.exe version`, `bin\ygg.exe doctor`. Expected: git and the data folder are `ok`; the rest `ok` or `--` with a hint. Run `doctor` once with Git renamed out of PATH: it must say `FAIL` and what to do, exit code 1.
 2. **Start and demo task:** `bin\ygg.exe seed <path of any local git repo>`, copy the two IDs; `bin\ygg.exe`; open `http://127.0.0.1:4747`; enter a prompt (and optionally a name), the IDs, agent "Demo agent", Start. Expected: the transcript streams (about 250 ms per event), a nested sub-agent block appears with tool-call count and duration, the status pill shows 1 running and then a notification "your task name: Done". Reload the page: the transcript is back. Check the notification shows the name or "Task xxxxxx", never your prompt.
 3. **Customize:** on the start page choose Customize, remove "This machine", reload (it stays removed), Add widget brings it back, Reset layout restores both.
@@ -319,8 +321,30 @@ Proposed tag: **`v0.2.0`**, for you to create. I did not tag, push or start Phas
   - **Fix (`internal/platform/batch_windows.go`):** a `.cmd` or `.bat` is run as `cmd.exe /d /s /c ""<file>" "<arg>"..."`. Because a batch file is a shell that may expand its arguments again without quotes, arguments holding `" % & | < > ^ !`, a line break or a NUL are refused, not escaped. Backslashes before a closing quote are doubled.
   - **Consequence for the adapter:** the prompt is free text, so it is no longer an argument: it goes to the CLI on **stdin** (`claude -p` reads it from there), which also removes the 8,191-character line limit of cmd.exe. A model name and a session ID are validated before they reach a command line. Tests: any prompt (quotes, `&`, `%`, line breaks, a dash, emoji, 28 KB) arrives whole; the full chain through a `claude.cmd` in `...\Program Files\nodejs`.
   - **Confirmed by hand (the human, 2026-10-17): 6b passed** after the fix: the real Claude Code ran in a clean repo, with the prompt on stdin, `--disallowedTools` accepted, and the hook reading its configuration from `YGG_HOOK_CONFIG` (a missing configuration would have denied every tool call).
-- 6c (Ask mode and the repo folder enforced by the hook) and 6d (Cancel leaves no process): not reported yet.
-- Steps 7 to 10: not reported yet.
+- 6c (Ask mode and the repo folder enforced by the hook) and 6d (Cancel leaves no process): **passed** with `task smoke:real` (2026-10-17, below).
+- Steps 7, 9 and 10: still manual (below).
+
+### Automated by `scripts/smoke.ps1` (2026-10-17)
+
+`task smoke` (also a CI job, `Windows smoke test`) builds and checks `bin\ygg.exe` with the demo agent and a fake `claude.cmd`; `task smoke:real` runs 6b to 6d with the real CLI (model `haiku`, needs the human's OK). Each run uses a temporary data folder and its own loopback port, stops only the PIDs it started and removes its folder.
+
+| Step above | Now | Smoke check |
+|---|---|---|
+| 1 clean build, version, doctor, doctor without Git | automatic | 1 |
+| 2 seed, demo task streams with a nested sub-agent, name not prompt | automatic (API); the look of the page is manual | 2, 3 |
+| 3 Customize | manual (visual, in the browser) | — |
+| 4 kill `ygg.exe` while an agent and its children run | automatic: a fake `claude.cmd` in `...\Program Files\nodejs` gets the prompt on stdin and starts a marked child; `Stop-Process -Force` on `ygg` leaves none of its tree within 5 s | 7, 8 |
+| 5 non-loopback `YGG_ADDR`, foreign Host and Origin | automatic | 4 |
+| 6a repo with its own `.claude` settings, reason in the transcript | automatic | 6 |
+| 6b to 6d real Claude Code | `task smoke:real` (opt-in, uses quota) | 6b, 6c, 6d |
+| 7 CSP | header automatic; the UI working without CSP errors in the browser console stays manual | 5 |
+| 8 platform tests on the desktop | `task test` runs them; `TestLongPathExpandsShortNames` is a PASS (2026-10-17) | — |
+| 9 from inside Windows Terminal | manual | — |
+| 10 Defender/EDR when the editor opens through Explorer | manual | — |
+
+What stays manual: how the UI looks and works in a browser (steps 2, 3, 7), the tests from inside Windows Terminal (9), and Defender/EDR (10).
+
+Results on the lead's machine (2026-10-17): `task smoke` 8 of 8 PASS. `task smoke:real` (CLI 2.1.299, haiku), the third run: 6b done with 2 Read calls, 1 sub-agent, 7 nested events, $0.0056, no error; 6c no `hello.txt`, clean tree, the secret marker in no event, task or data file, and the hook refused the read ("That path is outside the repo this task may read."); 6d cancelled 0.3 s after the request, none of the run's 22 processes left, no new `claude`/`node`. The first two runs failed on bugs in the script, not in `ygg`: it read the open database with a lock, and it counted `ygg`'s own `conhost.exe` (there before the task) as part of the run. No product bug was found.
 
 ### Decision
 
