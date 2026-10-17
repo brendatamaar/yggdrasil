@@ -1,5 +1,5 @@
 -- name: CreateBuild :exec
-INSERT INTO builds (id, worktree_id, task_id, status, created_at, finished_at) VALUES (?, ?, ?, ?, ?, ?);
+INSERT INTO builds (id, worktree_id, task_id, target, status, created_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetBuild :one
 SELECT * FROM builds WHERE id = ?;

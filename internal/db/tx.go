@@ -371,8 +371,12 @@ func (tx *Tx) CreateBuild(ctx context.Context, b core.Build) (core.Build, error)
 	if b.Steps == nil {
 		b.Steps = []core.BuildStep{}
 	}
+	target := "main"
+	if b.WorktreeID != nil {
+		target = "worktree"
+	}
 	err := tx.q.CreateBuild(ctx, gen.CreateBuildParams{
-		ID: string(b.ID), WorktreeID: nullStr(b.WorktreeID), TaskID: nullStr(b.TaskID), Status: string(b.Status),
+		ID: string(b.ID), WorktreeID: nullStr(b.WorktreeID), TaskID: nullStr(b.TaskID), Target: target, Status: string(b.Status),
 		CreatedAt: fmtTime(b.CreatedAt), FinishedAt: fmtNullTime(b.FinishedAt),
 	})
 	if err != nil {

@@ -34,7 +34,10 @@ func TestMigration00002KeepsData(t *testing.T) {
 		`INSERT INTO repos (id, project_id, name, path, created_at) VALUES ('r1', 'p1', 'shop-api', '/work/shop-api', '2026-01-01T00:00:00.000Z')`,
 		`INSERT INTO tasks (id, project_id, title, prompt, scope, mode, agent, status, created_at, updated_at)
 		 VALUES ('t1', 'p1', 't', 'p', 'repo', 'ask', 'mock', 'running', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+		`INSERT INTO worktrees (id, repo_id, task_id, name, path, branch, status, created_at)
+		 VALUES ('w1', 'r1', 't1', 'w', '/wt', 'ygg/w', 'active', '2026-01-01T00:00:00.000Z')`,
 		`INSERT INTO builds (id, task_id, status, created_at) VALUES ('b1', 't1', 'running', '2026-01-02T00:00:00.000Z')`,
+		`INSERT INTO builds (id, task_id, worktree_id, status, created_at) VALUES ('b3', 't1', 'w1', 'queued', '2026-01-02T00:00:01.000Z')`,
 		`INSERT INTO build_steps (build_id, idx, repo_id, name, status, exit_code, log_path, started_at)
 		 VALUES ('b1', 0, 'r1', 'verify', 'succeeded', 0, 'logs/b1-0.log', '2026-01-02T00:00:01.000Z')`,
 		`INSERT INTO build_steps (build_id, idx, repo_id, name, status) VALUES ('b1', 1, 'r1', 'build', 'queued')`,
@@ -72,6 +75,33 @@ func TestMigration00002KeepsData(t *testing.T) {
 	if p, err := s.GetProposal(ctx, "pr1"); err != nil || p.Version != 0 {
 		t.Fatalf("proposal after up = %+v, %v", p, err)
 	}
+	// Existing rows get an explicit target: a worktree build stays one.
+	if n := count(t, d, `SELECT count(*) FROM builds WHERE (id = 'b1' AND target = 'main' AND worktree_id IS NULL) OR (id = 'b3' AND target = 'worktree' AND worktree_id = 'w1')`); n != 2 {
+		t.Fatalf("target after the data migration is wrong for %d of 2 builds", 2-n)
+	}
+	if n := count(t, d, `SELECT count(*) FROM pragma_table_info('builds') WHERE name IN ('cancelled_at', 'artifacts_collected_at')`); n != 2 {
+		t.Fatal("cancelled_at or artifacts_collected_at is missing")
+	}
+	if n := count(t, d, `SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'builds_status_created'`); n != 1 {
+		t.Fatal("index on builds(status, created_at, id) is missing")
+	}
+	for name, q := range map[string]string{
+		"worktree target without a worktree":  `INSERT INTO builds (id, target, status, created_at) VALUES ('x1', 'worktree', 'queued', '2026-01-03T00:00:00.000Z')`,
+		"main target with a worktree":         `INSERT INTO builds (id, target, worktree_id, status, created_at) VALUES ('x2', 'main', 'w1', 'queued', '2026-01-03T00:00:00.000Z')`,
+		"unknown target":                      `INSERT INTO builds (id, target, status, created_at) VALUES ('x3', 'elsewhere', 'queued', '2026-01-03T00:00:00.000Z')`,
+		"unknown start_failure":               `INSERT INTO build_steps (build_id, idx, repo_id, name, status, start_failure) VALUES ('b1', 7, 'r1', 'x', 'queued', 'bogus')`,
+		"deleting a worktree that has builds": `DELETE FROM worktrees WHERE id = 'w1'`,
+	} {
+		if _, err := d.Write.ExecContext(ctx, q); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+	if _, err := d.Write.ExecContext(ctx, `INSERT INTO build_steps (build_id, idx, repo_id, name, status, outcome, start_failure) VALUES ('b1', 8, 'r1', 'x', 'failed', 'start_failed', 'not_found')`); err != nil {
+		t.Errorf("valid start_failure refused: %v", err)
+	}
+	if _, err := d.Write.ExecContext(ctx, `DELETE FROM build_steps WHERE build_id = 'b1' AND idx = 8`); err != nil {
+		t.Fatal(err)
+	}
 	// The rebuilt tables keep their foreign keys: deleting the build removes its steps.
 	if _, err := d.Write.ExecContext(ctx, `INSERT INTO builds (id, status, created_at) VALUES ('b2', 'interrupted', '2026-01-03T00:00:00.000Z')`); err != nil {
 		t.Fatalf("new status 'interrupted' refused: %v", err)
@@ -108,6 +138,12 @@ func TestMigration00002KeepsData(t *testing.T) {
 	if n := count(t, d, `SELECT count(*) FROM build_steps WHERE build_id = 'b1' AND idx = 1 AND status = 'cancelled'`); n != 1 {
 		t.Fatal("skipped step not mapped to cancelled")
 	}
+	if n := count(t, d, `SELECT count(*) FROM builds`); n != 2 {
+		t.Fatalf("builds after down = %d, want 2", n)
+	}
+	if n := count(t, d, `SELECT count(*) FROM pragma_table_info('builds') WHERE name IN ('target', 'cancelled_at', 'artifacts_collected_at')`); n != 0 {
+		t.Fatal("new build columns survived the down migration")
+	}
 	if n := count(t, d, `SELECT count(*) FROM pragma_table_info('tasks') WHERE name = 'version'`); n != 0 {
 		t.Fatal("tasks.version survived the down migration")
 	}
@@ -119,6 +155,9 @@ func TestMigration00002KeepsData(t *testing.T) {
 	}
 	if n := count(t, d, `SELECT count(*) FROM build_steps`); n != 2 {
 		t.Fatalf("steps after down and up = %d, want 2", n)
+	}
+	if n := count(t, d, `SELECT count(*) FROM builds WHERE (id = 'b1' AND target = 'main') OR (id = 'b3' AND target = 'worktree' AND worktree_id = 'w1')`); n != 2 {
+		t.Fatal("targets lost after down and up")
 	}
 }
 

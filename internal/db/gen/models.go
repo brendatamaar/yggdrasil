@@ -18,17 +18,20 @@ type AuditLog struct {
 }
 
 type Build struct {
-	ID         string
-	WorktreeID sql.NullString
-	TaskID     sql.NullString
-	Status     string
-	CreatedAt  string
-	FinishedAt sql.NullString
-	Version    int64
-	Actor      string
-	StartedAt  sql.NullString
-	ResultStep sql.NullInt64
-	PresetID   sql.NullString
+	ID                   string
+	WorktreeID           sql.NullString
+	TaskID               sql.NullString
+	Target               string
+	Status               string
+	CreatedAt            string
+	FinishedAt           sql.NullString
+	Version              int64
+	Actor                string
+	StartedAt            sql.NullString
+	ResultStep           sql.NullInt64
+	PresetID             sql.NullString
+	CancelledAt          sql.NullString
+	ArtifactsCollectedAt sql.NullString
 }
 
 type BuildArtifact struct {

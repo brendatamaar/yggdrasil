@@ -11,13 +11,14 @@ import (
 )
 
 const createBuild = `-- name: CreateBuild :exec
-INSERT INTO builds (id, worktree_id, task_id, status, created_at, finished_at) VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO builds (id, worktree_id, task_id, target, status, created_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateBuildParams struct {
 	ID         string
 	WorktreeID sql.NullString
 	TaskID     sql.NullString
+	Target     string
 	Status     string
 	CreatedAt  string
 	FinishedAt sql.NullString
@@ -28,6 +29,7 @@ func (q *Queries) CreateBuild(ctx context.Context, arg CreateBuildParams) error 
 		arg.ID,
 		arg.WorktreeID,
 		arg.TaskID,
+		arg.Target,
 		arg.Status,
 		arg.CreatedAt,
 		arg.FinishedAt,
@@ -74,7 +76,7 @@ func (q *Queries) CreateBuildStep(ctx context.Context, arg CreateBuildStepParams
 }
 
 const getBuild = `-- name: GetBuild :one
-SELECT id, worktree_id, task_id, status, created_at, finished_at, version, actor, started_at, result_step, preset_id FROM builds WHERE id = ?
+SELECT id, worktree_id, task_id, target, status, created_at, finished_at, version, actor, started_at, result_step, preset_id, cancelled_at, artifacts_collected_at FROM builds WHERE id = ?
 `
 
 func (q *Queries) GetBuild(ctx context.Context, id string) (Build, error) {
@@ -84,6 +86,7 @@ func (q *Queries) GetBuild(ctx context.Context, id string) (Build, error) {
 		&i.ID,
 		&i.WorktreeID,
 		&i.TaskID,
+		&i.Target,
 		&i.Status,
 		&i.CreatedAt,
 		&i.FinishedAt,
@@ -92,6 +95,8 @@ func (q *Queries) GetBuild(ctx context.Context, id string) (Build, error) {
 		&i.StartedAt,
 		&i.ResultStep,
 		&i.PresetID,
+		&i.CancelledAt,
+		&i.ArtifactsCollectedAt,
 	)
 	return i, err
 }
@@ -139,7 +144,7 @@ func (q *Queries) ListBuildSteps(ctx context.Context, buildID string) ([]BuildSt
 }
 
 const listBuildsByTask = `-- name: ListBuildsByTask :many
-SELECT id, worktree_id, task_id, status, created_at, finished_at, version, actor, started_at, result_step, preset_id FROM builds WHERE task_id = ? ORDER BY created_at, id
+SELECT id, worktree_id, task_id, target, status, created_at, finished_at, version, actor, started_at, result_step, preset_id, cancelled_at, artifacts_collected_at FROM builds WHERE task_id = ? ORDER BY created_at, id
 `
 
 func (q *Queries) ListBuildsByTask(ctx context.Context, taskID sql.NullString) ([]Build, error) {
@@ -155,6 +160,7 @@ func (q *Queries) ListBuildsByTask(ctx context.Context, taskID sql.NullString) (
 			&i.ID,
 			&i.WorktreeID,
 			&i.TaskID,
+			&i.Target,
 			&i.Status,
 			&i.CreatedAt,
 			&i.FinishedAt,
@@ -163,6 +169,8 @@ func (q *Queries) ListBuildsByTask(ctx context.Context, taskID sql.NullString) (
 			&i.StartedAt,
 			&i.ResultStep,
 			&i.PresetID,
+			&i.CancelledAt,
+			&i.ArtifactsCollectedAt,
 		); err != nil {
 			return nil, err
 		}

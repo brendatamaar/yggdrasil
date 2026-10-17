@@ -12,8 +12,12 @@ ALTER TABLE proposals ADD COLUMN version INTEGER NOT NULL DEFAULT 0;
 
 CREATE TABLE builds_new (
     id          TEXT PRIMARY KEY,
-    worktree_id TEXT REFERENCES worktrees (id) ON DELETE SET NULL,
+    -- A worktree with builds can not vanish under a queued build: RESTRICT.
+    worktree_id TEXT REFERENCES worktrees (id) ON DELETE RESTRICT,
     task_id     TEXT REFERENCES tasks (id) ON DELETE SET NULL,
+    -- Where the build runs. Explicit, so a build for a worktree can never
+    -- fall back to the main checkout when worktree_id is missing.
+    target      TEXT NOT NULL DEFAULT 'main' CHECK (target IN ('main', 'worktree')),
     status      TEXT NOT NULL CHECK (status IN
                     ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'interrupted')),
     -- created_at is when the build was queued.
@@ -23,7 +27,13 @@ CREATE TABLE builds_new (
     actor       TEXT NOT NULL DEFAULT 'user',
     started_at  TEXT,
     result_step INTEGER,
-    preset_id   TEXT
+    preset_id   TEXT,
+    -- Non-null with a live step is the Cancelling state; on a finished build
+    -- it is when the cancel came.
+    cancelled_at           TEXT,
+    -- Non-null once artifacts were collected, even if there were none.
+    artifacts_collected_at TEXT,
+    CHECK ((target = 'worktree') = (worktree_id IS NOT NULL))
 ) STRICT;
 
 CREATE TABLE build_steps_new (
@@ -42,13 +52,17 @@ CREATE TABLE build_steps_new (
     attempt         INTEGER NOT NULL DEFAULT 0,
     outcome         TEXT CHECK (outcome IS NULL OR outcome IN
                         ('succeeded', 'failed', 'start_failed', 'cancelled', 'interrupted')),
-    start_failure   TEXT,
+    start_failure   TEXT CHECK (start_failure IS NULL OR start_failure IN
+                        ('not_found', 'bad_args', 'dir_missing', 'other')),
     log_truncated   INTEGER NOT NULL DEFAULT 0 CHECK (log_truncated IN (0, 1)),
     PRIMARY KEY (build_id, idx)
 ) STRICT, WITHOUT ROWID;
 
-INSERT INTO builds_new (id, worktree_id, task_id, status, created_at, finished_at)
-SELECT id, worktree_id, task_id, status, created_at, finished_at FROM builds;
+INSERT INTO builds_new (id, worktree_id, task_id, target, status, created_at, finished_at)
+SELECT id, worktree_id, task_id,
+       CASE WHEN worktree_id IS NOT NULL THEN 'worktree' ELSE 'main' END,
+       status, created_at, finished_at
+FROM builds;
 
 INSERT INTO build_steps_new (build_id, idx, repo_id, name, status, exit_code, log_path, started_at, finished_at)
 SELECT build_id, idx, repo_id, name, status, exit_code, log_path, started_at, finished_at FROM build_steps;
@@ -58,6 +72,9 @@ DROP TABLE build_steps;
 DROP TABLE builds;
 ALTER TABLE builds_new RENAME TO builds;
 ALTER TABLE build_steps_new RENAME TO build_steps;
+
+-- ListQueued, CountRunning, ListActive and the queue order.
+CREATE INDEX builds_status_created ON builds (status, created_at, id);
 
 CREATE TABLE build_artifacts (
     build_id TEXT    NOT NULL REFERENCES builds (id) ON DELETE CASCADE,
