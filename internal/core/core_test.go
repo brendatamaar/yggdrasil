@@ -80,7 +80,7 @@ func TestEnumsAcceptEveryConstantAndRejectOthers(t *testing.T) {
 		"ProposalKind":    {[]validator{ProposalCommit, ProposalPush, ProposalMergeRequest, ProposalInstall, ProposalPublish, ProposalAgentFile, ProposalDeleteFiles, ProposalSubtasks}, []validator{ProposalKind(""), ProposalKind("rm_rf")}},
 		"ProposalStatus":  {[]validator{ProposalPending, ProposalConfirmed, ProposalRejected, ProposalExecuted, ProposalFailed}, []validator{ProposalStatus(""), ProposalStatus("maybe")}},
 		"ChangeSetStatus": {[]validator{ChangeSetOpen, ChangeSetShipped, ChangeSetClosed}, []validator{ChangeSetStatus(""), ChangeSetStatus("lost")}},
-		"BuildStatus":     {[]validator{BuildQueued, BuildRunning, BuildSucceeded, BuildFailed, BuildCancelled}, []validator{BuildStatus(""), BuildStatus("stuck")}},
+		"BuildStatus":     {[]validator{BuildQueued, BuildRunning, BuildSucceeded, BuildFailed, BuildCancelled, BuildInterrupted, BuildSkipped}, []validator{BuildStatus(""), BuildStatus("stuck")}},
 	}
 	for name, g := range groups {
 		for _, v := range g.good {

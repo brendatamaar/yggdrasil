@@ -228,7 +228,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateTaskStatus(ctx, task.ID, core.TaskDone); err != nil {
+	if v, err := s.UpdateTaskStatus(ctx, task.ID, core.TaskDone, task.Version); err != nil || v != 1 {
 		t.Fatal(err)
 	}
 	got, err := s.GetTask(ctx, task.ID)
@@ -238,7 +238,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	if _, err := s.GetTask(ctx, "nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing task: %v", err)
 	}
-	if err := s.UpdateTaskStatus(ctx, "nope", core.TaskDone); !errors.Is(err, ErrNotFound) {
+	if _, err := s.UpdateTaskStatus(ctx, "nope", core.TaskDone, 0); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("update missing task: %v", err)
 	}
 
@@ -280,7 +280,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	if err != nil || prop.Status != core.ProposalPending {
 		t.Fatalf("proposal = %+v, %v", prop, err)
 	}
-	if err := s.UpdateProposalStatus(ctx, prop.ID, core.ProposalConfirmed); err != nil {
+	if v, err := s.UpdateProposalStatus(ctx, prop.ID, core.ProposalConfirmed, prop.Version); err != nil || v != 1 {
 		t.Fatal(err)
 	}
 	if pending, err := s.ListProposals(ctx, core.ProposalPending); err != nil || len(pending) != 0 {
@@ -301,7 +301,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	if err := s.UpdateBuildStep(ctx, b.ID, core.BuildStep{Index: 1, Status: core.BuildSucceeded, ExitCode: &code}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateBuildStatus(ctx, b.ID, core.BuildSucceeded); err != nil {
+	if v, err := s.UpdateBuildStatus(ctx, b.ID, core.BuildSucceeded, b.Version); err != nil || v != 1 {
 		t.Fatal(err)
 	}
 	gotB, err := s.GetBuild(ctx, b.ID)

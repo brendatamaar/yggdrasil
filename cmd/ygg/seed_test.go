@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-
 )
 
 // gitRepo makes an empty folder that looks like a repo to seed: it only checks

@@ -13,10 +13,10 @@ SELECT * FROM tasks WHERE project_id = ? ORDER BY created_at, id;
 SELECT * FROM tasks WHERE parent_task_id = ? ORDER BY created_at, id;
 
 -- name: UpdateTaskStatus :execrows
-UPDATE tasks SET status = ?, updated_at = ?, finished_at = ? WHERE id = ?;
+UPDATE tasks SET status = ?, updated_at = ?, finished_at = ?, version = version + 1 WHERE id = ? AND version = ?;
 
 -- name: UpdateTaskSession :execrows
-UPDATE tasks SET session_id = ?, updated_at = ? WHERE id = ?;
+UPDATE tasks SET session_id = ?, updated_at = ?, version = version + 1 WHERE id = ? AND version = ?;
 
 -- name: AddTaskRepo :exec
 INSERT INTO task_repos (task_id, repo_id) VALUES (?, ?);

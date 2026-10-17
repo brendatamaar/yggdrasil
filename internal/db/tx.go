@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -165,10 +166,33 @@ func (s *Store) CreateTask(ctx context.Context, t core.Task) (core.Task, error) 
 	return commit1(ctx, s, func(tx *Tx) (core.Task, error) { return tx.CreateTask(ctx, t) })
 }
 
-// UpdateTaskStatus sets the status; finished_at is set when the status is terminal.
-func (tx *Tx) UpdateTaskStatus(ctx context.Context, id core.TaskID, status core.TaskStatus) error {
+// bumped finishes a versioned update (… SET …, version = version + 1 WHERE
+// id = ? AND version = ?) that changed n rows. Zero rows means either the row
+// is gone (ErrNotFound) or its version moved on (ErrConflict): probe tells
+// which. It returns the new version.
+func bumped(what string, n int64, err error, version int64, probe func() error) (int64, error) {
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", what, err)
+	}
+	if n > 0 {
+		return version + 1, nil
+	}
+	switch perr := probe(); {
+	case perr == nil:
+		return 0, fmt.Errorf("%s: %w", what, ErrConflict)
+	case errors.Is(perr, sql.ErrNoRows):
+		return 0, fmt.Errorf("%s: %w", what, ErrNotFound)
+	default:
+		return 0, fmt.Errorf("%s: %w", what, perr)
+	}
+}
+
+// UpdateTaskStatus sets the status if the task is still at version; finished_at
+// is set when the status is terminal. It returns the new version. A stale
+// version returns ErrConflict.
+func (tx *Tx) UpdateTaskStatus(ctx context.Context, id core.TaskID, status core.TaskStatus, version int64) (int64, error) {
 	if err := status.Validate(); err != nil {
-		return err
+		return 0, err
 	}
 	now := time.Now()
 	var fin *time.Time
@@ -176,27 +200,28 @@ func (tx *Tx) UpdateTaskStatus(ctx context.Context, id core.TaskID, status core.
 		fin = &now
 	}
 	n, err := tx.q.UpdateTaskStatus(ctx, gen.UpdateTaskStatusParams{
-		Status: string(status), UpdatedAt: fmtTime(now), FinishedAt: fmtNullTime(fin), ID: string(id),
+		Status: string(status), UpdatedAt: fmtTime(now), FinishedAt: fmtNullTime(fin), ID: string(id), Version: version,
 	})
-	return updated("update task "+string(id), n, err)
+	return bumped("update task "+string(id), n, err, version, func() error { _, err := tx.q.GetTask(ctx, string(id)); return err })
 }
 
 // UpdateTaskStatus sets the status in its own transaction.
-func (s *Store) UpdateTaskStatus(ctx context.Context, id core.TaskID, status core.TaskStatus) error {
-	return s.Commit(ctx, func(tx *Tx) error { return tx.UpdateTaskStatus(ctx, id, status) })
+func (s *Store) UpdateTaskStatus(ctx context.Context, id core.TaskID, status core.TaskStatus, version int64) (int64, error) {
+	return commit1(ctx, s, func(tx *Tx) (int64, error) { return tx.UpdateTaskStatus(ctx, id, status, version) })
 }
 
-// SetTaskSession records the agent's resumable session ID.
-func (tx *Tx) SetTaskSession(ctx context.Context, id core.TaskID, session string) error {
+// SetTaskSession records the agent's resumable session ID if the task is
+// still at version, and returns the new version.
+func (tx *Tx) SetTaskSession(ctx context.Context, id core.TaskID, session string, version int64) (int64, error) {
 	n, err := tx.q.UpdateTaskSession(ctx, gen.UpdateTaskSessionParams{
-		SessionID: session, UpdatedAt: fmtTime(time.Now()), ID: string(id),
+		SessionID: session, UpdatedAt: fmtTime(time.Now()), ID: string(id), Version: version,
 	})
-	return updated("update task session "+string(id), n, err)
+	return bumped("update task session "+string(id), n, err, version, func() error { _, err := tx.q.GetTask(ctx, string(id)); return err })
 }
 
 // SetTaskSession records the session in its own transaction.
-func (s *Store) SetTaskSession(ctx context.Context, id core.TaskID, session string) error {
-	return s.Commit(ctx, func(tx *Tx) error { return tx.SetTaskSession(ctx, id, session) })
+func (s *Store) SetTaskSession(ctx context.Context, id core.TaskID, session string, version int64) (int64, error) {
+	return commit1(ctx, s, func(tx *Tx) (int64, error) { return tx.SetTaskSession(ctx, id, session, version) })
 }
 
 // AddTaskDependency makes task start after dependsOn (AG-25). The caller
@@ -375,11 +400,12 @@ func (s *Store) CreateProposal(ctx context.Context, p core.Proposal) (core.Propo
 	return commit1(ctx, s, func(tx *Tx) (core.Proposal, error) { return tx.CreateProposal(ctx, p) })
 }
 
-// UpdateProposalStatus sets the status; decided_at is set for every status
-// except pending.
-func (tx *Tx) UpdateProposalStatus(ctx context.Context, id core.ProposalID, status core.ProposalStatus) error {
+// UpdateProposalStatus sets the status if the proposal is still at version;
+// decided_at is set for every status except pending. It returns the new
+// version. A stale version returns ErrConflict.
+func (tx *Tx) UpdateProposalStatus(ctx context.Context, id core.ProposalID, status core.ProposalStatus, version int64) (int64, error) {
 	if err := status.Validate(); err != nil {
-		return err
+		return 0, err
 	}
 	var decided *time.Time
 	if status != core.ProposalPending {
@@ -387,14 +413,14 @@ func (tx *Tx) UpdateProposalStatus(ctx context.Context, id core.ProposalID, stat
 		decided = &now
 	}
 	n, err := tx.q.UpdateProposalStatus(ctx, gen.UpdateProposalStatusParams{
-		Status: string(status), DecidedAt: fmtNullTime(decided), ID: string(id),
+		Status: string(status), DecidedAt: fmtNullTime(decided), ID: string(id), Version: version,
 	})
-	return updated("update proposal "+string(id), n, err)
+	return bumped("update proposal "+string(id), n, err, version, func() error { _, err := tx.q.GetProposal(ctx, string(id)); return err })
 }
 
 // UpdateProposalStatus sets the status in its own transaction.
-func (s *Store) UpdateProposalStatus(ctx context.Context, id core.ProposalID, status core.ProposalStatus) error {
-	return s.Commit(ctx, func(tx *Tx) error { return tx.UpdateProposalStatus(ctx, id, status) })
+func (s *Store) UpdateProposalStatus(ctx context.Context, id core.ProposalID, status core.ProposalStatus, version int64) (int64, error) {
+	return commit1(ctx, s, func(tx *Tx) (int64, error) { return tx.UpdateProposalStatus(ctx, id, status, version) })
 }
 
 // Builds
@@ -427,9 +453,14 @@ func (tx *Tx) CreateBuild(ctx context.Context, b core.Build) (core.Build, error)
 	}
 	for i, st := range b.Steps {
 		b.Steps[i].Index = i
-		err := tx.q.CreateBuildStep(ctx, gen.CreateBuildStepParams{
+		argv, err := argvText(st.Argv)
+		if err != nil {
+			return b, err
+		}
+		err = tx.q.CreateBuildStep(ctx, gen.CreateBuildStepParams{
 			BuildID: string(b.ID), Idx: int64(i), RepoID: string(st.RepoID), Name: st.Name, Status: string(st.Status),
 			ExitCode: nullInt(st.ExitCode), LogPath: st.LogPath, StartedAt: fmtNullTime(st.StartedAt), FinishedAt: fmtNullTime(st.FinishedAt),
+			Argv: argv, Attempt: int64(st.Attempt), Outcome: nullText(st.Outcome),
 		})
 		if err != nil {
 			return b, fmt.Errorf("create build: %w", err)
@@ -443,33 +474,39 @@ func (s *Store) CreateBuild(ctx context.Context, b core.Build) (core.Build, erro
 	return commit1(ctx, s, func(tx *Tx) (core.Build, error) { return tx.CreateBuild(ctx, b) })
 }
 
-// UpdateBuildStatus sets the status; finished_at is set when the build ended.
-func (tx *Tx) UpdateBuildStatus(ctx context.Context, id core.BuildID, status core.BuildStatus) error {
+// UpdateBuildStatus sets the status if the build is still at version;
+// finished_at is set when the build ended. It returns the new version. A
+// stale version returns ErrConflict.
+func (tx *Tx) UpdateBuildStatus(ctx context.Context, id core.BuildID, status core.BuildStatus, version int64) (int64, error) {
 	if err := status.Validate(); err != nil {
-		return err
+		return 0, err
 	}
 	var fin *time.Time
 	if status != core.BuildQueued && status != core.BuildRunning {
 		now := time.Now()
 		fin = &now
 	}
-	n, err := tx.q.UpdateBuildStatus(ctx, gen.UpdateBuildStatusParams{Status: string(status), FinishedAt: fmtNullTime(fin), ID: string(id)})
-	return updated("update build "+string(id), n, err)
+	n, err := tx.q.UpdateBuildStatus(ctx, gen.UpdateBuildStatusParams{
+		Status: string(status), FinishedAt: fmtNullTime(fin), ID: string(id), Version: version,
+	})
+	return bumped("update build "+string(id), n, err, version, func() error { _, err := tx.q.GetBuild(ctx, string(id)); return err })
 }
 
 // UpdateBuildStatus sets the status in its own transaction.
-func (s *Store) UpdateBuildStatus(ctx context.Context, id core.BuildID, status core.BuildStatus) error {
-	return s.Commit(ctx, func(tx *Tx) error { return tx.UpdateBuildStatus(ctx, id, status) })
+func (s *Store) UpdateBuildStatus(ctx context.Context, id core.BuildID, status core.BuildStatus, version int64) (int64, error) {
+	return commit1(ctx, s, func(tx *Tx) (int64, error) { return tx.UpdateBuildStatus(ctx, id, status, version) })
 }
 
 // UpdateBuildStep replaces the mutable fields of step st.Index of a build.
+// Steps have no version of their own: they are saved with their build.
 func (tx *Tx) UpdateBuildStep(ctx context.Context, id core.BuildID, st core.BuildStep) error {
 	if err := st.Status.Validate(); err != nil {
 		return err
 	}
 	n, err := tx.q.UpdateBuildStep(ctx, gen.UpdateBuildStepParams{
 		Status: string(st.Status), ExitCode: nullInt(st.ExitCode), LogPath: st.LogPath,
-		StartedAt: fmtNullTime(st.StartedAt), FinishedAt: fmtNullTime(st.FinishedAt), BuildID: string(id), Idx: int64(st.Index),
+		StartedAt: fmtNullTime(st.StartedAt), FinishedAt: fmtNullTime(st.FinishedAt),
+		Attempt: int64(st.Attempt), Outcome: nullText(st.Outcome), BuildID: string(id), Idx: int64(st.Index),
 	})
 	return updated(fmt.Sprintf("update build %s step %d", id, st.Index), n, err)
 }

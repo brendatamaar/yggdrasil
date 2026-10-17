@@ -117,6 +117,9 @@ type Task struct {
 	CreatedAt  time.Time  `json:"createdAt"`
 	UpdatedAt  time.Time  `json:"updatedAt"`
 	FinishedAt *time.Time `json:"finishedAt,omitempty"`
+	// Version is the row version for expected-version updates. It is a
+	// storage detail and never leaves the server.
+	Version int64 `json:"-"`
 }
 
 // Validate checks the fields that must hold before a task is stored.
@@ -165,6 +168,9 @@ type Proposal struct {
 	Payload   json.RawMessage `json:"payload,omitempty"`
 	CreatedAt time.Time       `json:"createdAt"`
 	DecidedAt *time.Time      `json:"decidedAt,omitempty"`
+	// Version is the row version for expected-version updates. It is a
+	// storage detail and never leaves the server.
+	Version int64 `json:"-"`
 }
 
 // BuildStep is one command of a build.
@@ -177,6 +183,12 @@ type BuildStep struct {
 	LogPath    string      `json:"logPath,omitempty"`
 	StartedAt  *time.Time  `json:"startedAt,omitempty"`
 	FinishedAt *time.Time  `json:"finishedAt,omitempty"`
+	// Argv is the command line, Attempt the run counter of the step and
+	// Outcome how the last attempt ended (succeeded, failed, start_failed,
+	// cancelled, interrupted); Outcome is empty until the step has finished.
+	Argv    []string `json:"argv,omitempty"`
+	Attempt int      `json:"attempt,omitempty"`
+	Outcome string   `json:"outcome,omitempty"`
 }
 
 // Build is an ordered sequence of build steps.
@@ -188,6 +200,9 @@ type Build struct {
 	Steps      []BuildStep `json:"steps"`
 	CreatedAt  time.Time   `json:"createdAt"`
 	FinishedAt *time.Time  `json:"finishedAt,omitempty"`
+	// Version is the row version for expected-version updates. It is a
+	// storage detail and never leaves the server.
+	Version int64 `json:"-"`
 }
 
 // AuditEntry is one row of the audit log (SF-05). Detail is redacted before

@@ -297,20 +297,24 @@ func (s *Server) record(ctx context.Context, actor, action string, task core.Tas
 // transition commits a status change together with its audit entry (one
 // transaction, invariant 8), then tells the clients (the "tasks" topic holds
 // only the ID, title and status). Nothing is published if the commit fails.
-func (s *Server) transition(ctx context.Context, task core.Task, status core.TaskStatus, actor, action string, detail map[string]any) error {
+func (s *Server) transition(ctx context.Context, task *core.Task, status core.TaskStatus, actor, action string, detail map[string]any) error {
 	e, err := s.entry(actor, action, task.ID, detail)
 	if err != nil {
 		return err
 	}
+	var version int64
 	err = s.store.Commit(ctx, func(tx *db.Tx) error {
-		if err := tx.UpdateTaskStatus(ctx, task.ID, status); err != nil {
+		v, err := tx.UpdateTaskStatus(ctx, task.ID, status, task.Version)
+		if err != nil {
 			return err
 		}
+		version = v
 		return tx.AppendAudit(ctx, e)
 	})
 	if err != nil {
 		return fmt.Errorf("%s: %w", action, err)
 	}
+	task.Version = version
 	s.hub.publishNext(tasksTopic{}, TaskStatusMessage{TaskID: task.ID, Title: task.Title, Status: status})
 	return nil
 }
@@ -324,7 +328,7 @@ func (s *Server) failTask(id core.TaskID, cause error) {
 		s.log.Error("load failed task", "task", id, "err", err)
 		return
 	}
-	if err := s.transition(bg, task, core.TaskFailed, "system", "task.fail", nil); err != nil {
+	if err := s.transition(bg, &task, core.TaskFailed, "system", "task.fail", nil); err != nil {
 		s.log.Error("store task failure", "task", id, "err", err)
 	}
 }
@@ -371,13 +375,13 @@ func (s *Server) runTask(ctx context.Context, task core.Task, repo core.Repo, ad
 	final := core.TaskFailed
 	defer func() {
 		// The status and its audit entry are one commit.
-		if err := s.transition(bg, task, final, "system", "task.finish", map[string]any{"status": final}); err != nil {
+		if err := s.transition(bg, &task, final, "system", "task.finish", map[string]any{"status": final}); err != nil {
 			s.log.Error("store final task status", "task", task.ID, "err", err)
 		}
 	}()
 
 	// These writes use bg: a cancel or a shutdown must not stop them half way.
-	if err := s.transition(bg, task, core.TaskRunning, "system", "task.start", map[string]any{"agent": task.Agent}); err != nil {
+	if err := s.transition(bg, &task, core.TaskRunning, "system", "task.start", map[string]any{"agent": task.Agent}); err != nil {
 		s.log.Error("set task running", "task", task.ID, "err", err)
 		return
 	}
@@ -405,7 +409,7 @@ func (s *Server) runTask(ctx context.Context, task core.Task, repo core.Repo, ad
 		return
 	}
 	if res.SessionID != "" {
-		if err := s.setSession(bg, task.ID, res.SessionID); err != nil {
+		if err := s.setSession(bg, &task, res.SessionID); err != nil {
 			s.log.Error("store task session", "task", task.ID, "err", err)
 		}
 	}
@@ -425,17 +429,25 @@ func (s *Server) runTask(ctx context.Context, task core.Task, repo core.Repo, ad
 
 // setSession stores the agent's session ID and its audit entry in one commit.
 // The ID itself is not audited.
-func (s *Server) setSession(ctx context.Context, id core.TaskID, session string) error {
-	e, err := s.entry("system", "task.session", id, nil)
+func (s *Server) setSession(ctx context.Context, task *core.Task, session string) error {
+	e, err := s.entry("system", "task.session", task.ID, nil)
 	if err != nil {
 		return err
 	}
-	return s.store.Commit(ctx, func(tx *db.Tx) error {
-		if err := tx.SetTaskSession(ctx, id, session); err != nil {
+	var version int64
+	err = s.store.Commit(ctx, func(tx *db.Tx) error {
+		v, err := tx.SetTaskSession(ctx, task.ID, session, task.Version)
+		if err != nil {
 			return err
 		}
+		version = v
 		return tx.AppendAudit(ctx, e)
 	})
+	if err != nil {
+		return err
+	}
+	task.Version = version
+	return nil
 }
 
 // explainFailure puts the reason a run could not start into the task's

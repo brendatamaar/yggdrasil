@@ -45,7 +45,7 @@ func (q *Queries) CreateProposal(ctx context.Context, arg CreateProposalParams) 
 }
 
 const getProposal = `-- name: GetProposal :one
-SELECT id, change_set_id, task_id, repo_id, kind, status, summary, payload, created_at, decided_at FROM proposals WHERE id = ?
+SELECT id, change_set_id, task_id, repo_id, kind, status, summary, payload, created_at, decided_at, version FROM proposals WHERE id = ?
 `
 
 func (q *Queries) GetProposal(ctx context.Context, id string) (Proposal, error) {
@@ -62,12 +62,13 @@ func (q *Queries) GetProposal(ctx context.Context, id string) (Proposal, error) 
 		&i.Payload,
 		&i.CreatedAt,
 		&i.DecidedAt,
+		&i.Version,
 	)
 	return i, err
 }
 
 const listProposalsByChangeSet = `-- name: ListProposalsByChangeSet :many
-SELECT id, change_set_id, task_id, repo_id, kind, status, summary, payload, created_at, decided_at FROM proposals WHERE change_set_id = ? ORDER BY created_at, id
+SELECT id, change_set_id, task_id, repo_id, kind, status, summary, payload, created_at, decided_at, version FROM proposals WHERE change_set_id = ? ORDER BY created_at, id
 `
 
 func (q *Queries) ListProposalsByChangeSet(ctx context.Context, changeSetID sql.NullString) ([]Proposal, error) {
@@ -90,6 +91,7 @@ func (q *Queries) ListProposalsByChangeSet(ctx context.Context, changeSetID sql.
 			&i.Payload,
 			&i.CreatedAt,
 			&i.DecidedAt,
+			&i.Version,
 		); err != nil {
 			return nil, err
 		}
@@ -105,7 +107,7 @@ func (q *Queries) ListProposalsByChangeSet(ctx context.Context, changeSetID sql.
 }
 
 const listProposalsByStatus = `-- name: ListProposalsByStatus :many
-SELECT id, change_set_id, task_id, repo_id, kind, status, summary, payload, created_at, decided_at FROM proposals WHERE status = ? ORDER BY created_at, id
+SELECT id, change_set_id, task_id, repo_id, kind, status, summary, payload, created_at, decided_at, version FROM proposals WHERE status = ? ORDER BY created_at, id
 `
 
 func (q *Queries) ListProposalsByStatus(ctx context.Context, status string) ([]Proposal, error) {
@@ -128,6 +130,7 @@ func (q *Queries) ListProposalsByStatus(ctx context.Context, status string) ([]P
 			&i.Payload,
 			&i.CreatedAt,
 			&i.DecidedAt,
+			&i.Version,
 		); err != nil {
 			return nil, err
 		}
@@ -143,17 +146,23 @@ func (q *Queries) ListProposalsByStatus(ctx context.Context, status string) ([]P
 }
 
 const updateProposalStatus = `-- name: UpdateProposalStatus :execrows
-UPDATE proposals SET status = ?, decided_at = ? WHERE id = ?
+UPDATE proposals SET status = ?, decided_at = ?, version = version + 1 WHERE id = ? AND version = ?
 `
 
 type UpdateProposalStatusParams struct {
 	Status    string
 	DecidedAt sql.NullString
 	ID        string
+	Version   int64
 }
 
 func (q *Queries) UpdateProposalStatus(ctx context.Context, arg UpdateProposalStatusParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, updateProposalStatus, arg.Status, arg.DecidedAt, arg.ID)
+	result, err := q.db.ExecContext(ctx, updateProposalStatus,
+		arg.Status,
+		arg.DecidedAt,
+		arg.ID,
+		arg.Version,
+	)
 	if err != nil {
 		return 0, err
 	}

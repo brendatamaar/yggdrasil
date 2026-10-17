@@ -17,6 +17,11 @@ import (
 // ErrNotFound is returned when a row does not exist.
 var ErrNotFound = errors.New("not found")
 
+// ErrConflict is returned when a write collides with the stored state: the
+// row changed since the caller read it (stale version), or a unique key is
+// already taken. The owner reloads and decides again.
+var ErrConflict = errors.New("conflict")
+
 // ErrSubTaskDepth is returned when a task would become a sub-task of a
 // sub-task, or a sub-task would get sub-tasks (AG-24).
 var ErrSubTaskDepth = errors.New("sub-tasks are one level only: a sub-task cannot have sub-tasks")
@@ -216,7 +221,7 @@ func (s *Store) taskFrom(ctx context.Context, q *gen.Queries, r gen.Task) (core.
 		ID: core.TaskID(r.ID), ProjectID: core.ProjectID(r.ProjectID), ParentTaskID: strPtr[core.TaskID](r.ParentTaskID),
 		Title: r.Title, Prompt: r.Prompt, Scope: core.TaskScope(r.Scope), RepoIDs: ids,
 		Mode: core.TaskMode(r.Mode), Agent: r.Agent, Model: r.Model, Status: core.TaskStatus(r.Status),
-		SessionID: r.SessionID, CreatedAt: created, UpdatedAt: upd, FinishedAt: fin,
+		SessionID: r.SessionID, CreatedAt: created, UpdatedAt: upd, FinishedAt: fin, Version: r.Version,
 	}, nil
 }
 
@@ -397,7 +402,7 @@ func proposalFrom(r gen.Proposal) (core.Proposal, error) {
 	return core.Proposal{
 		ID: core.ProposalID(r.ID), ChangeSetID: strPtr[core.ChangeSetID](r.ChangeSetID), TaskID: strPtr[core.TaskID](r.TaskID),
 		RepoID: strPtr[core.RepoID](r.RepoID), Kind: core.ProposalKind(r.Kind), Status: core.ProposalStatus(r.Status),
-		Summary: r.Summary, Payload: json.RawMessage(r.Payload), CreatedAt: at, DecidedAt: dec,
+		Summary: r.Summary, Payload: json.RawMessage(r.Payload), CreatedAt: at, DecidedAt: dec, Version: r.Version,
 	}, nil
 }
 
@@ -456,11 +461,29 @@ func buildStepFrom(r gen.BuildStep) (core.BuildStep, error) {
 		c := int(r.ExitCode.Int64)
 		code = &c
 	}
+	argv := []string{}
+	if err := json.Unmarshal([]byte(r.Argv), &argv); err != nil {
+		return core.BuildStep{}, fmt.Errorf("bad argv in database for step %d of build %s: %w", r.Idx, r.BuildID, err)
+	}
 	return core.BuildStep{
 		Index: int(r.Idx), RepoID: core.RepoID(r.RepoID), Name: r.Name, Status: core.BuildStatus(r.Status),
 		ExitCode: code, LogPath: r.LogPath, StartedAt: start, FinishedAt: fin,
+		Argv: argv, Attempt: int(r.Attempt), Outcome: r.Outcome.String,
 	}, nil
 }
+
+func argvText(argv []string) (string, error) {
+	if argv == nil {
+		return "[]", nil
+	}
+	b, err := json.Marshal(argv)
+	if err != nil {
+		return "", fmt.Errorf("encode argv: %w", err)
+	}
+	return string(b), nil
+}
+
+func nullText(s string) sql.NullString { return sql.NullString{String: s, Valid: s != ""} }
 
 func nullInt(p *int) sql.NullInt64 {
 	if p == nil {
@@ -492,7 +515,7 @@ func (s *Store) buildFrom(ctx context.Context, q *gen.Queries, r gen.Build) (cor
 	}
 	return core.Build{
 		ID: core.BuildID(r.ID), WorktreeID: strPtr[core.WorktreeID](r.WorktreeID), TaskID: strPtr[core.TaskID](r.TaskID),
-		Status: core.BuildStatus(r.Status), Steps: steps, CreatedAt: at, FinishedAt: fin,
+		Status: core.BuildStatus(r.Status), Steps: steps, CreatedAt: at, FinishedAt: fin, Version: r.Version,
 	}, nil
 }
 
