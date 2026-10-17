@@ -55,7 +55,7 @@ func TestMigration00002KeepsData(t *testing.T) {
 	if n := count(t, d, `SELECT count(*) FROM build_steps`); n != 2 {
 		t.Fatalf("build steps after the rebuild = %d, want 2 (a cascade deleted them?)", n)
 	}
-	s := NewStore(d)
+	s := NewStore(d, nil)
 	b, err := s.GetBuild(ctx, "b1")
 	if err != nil {
 		t.Fatal(err)
@@ -163,7 +163,7 @@ func TestMigration00002KeepsData(t *testing.T) {
 
 func TestStaleVersionIsAConflict(t *testing.T) {
 	d := openTest(t)
-	s := NewStore(d)
+	s := NewStore(d, nil)
 	ctx := context.Background()
 	p, r := seed(t, s)
 
@@ -211,7 +211,7 @@ func TestStaleVersionIsAConflict(t *testing.T) {
 
 func TestBuildStepFieldsRoundTrip(t *testing.T) {
 	d := openTest(t)
-	s := NewStore(d)
+	s := NewStore(d, nil)
 	ctx := context.Background()
 	p, r := seed(t, s)
 	task, err := s.CreateTask(ctx, newTask(p, r, nil))

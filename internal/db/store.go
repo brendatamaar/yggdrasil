@@ -31,10 +31,20 @@ var ErrSubTaskDepth = errors.New("sub-tasks are one level only: a sub-task canno
 const timeLayout = "2006-01-02T15:04:05.000Z"
 
 // Store maps the generated queries to internal/core types.
-type Store struct{ db *DB }
+type Store struct {
+	db     *DB
+	redact func(string) string
+}
 
-// NewStore returns a Store on d.
-func NewStore(d *DB) *Store { return &Store{db: d} }
+// NewStore returns a Store on d. redact masks secrets in every audit entry as
+// a backstop to audit.Prepare (invariant 4); pass safety.Redactor.Redact. A
+// nil redact masks nothing and is for tests of this package only.
+func NewStore(d *DB, redact func(string) string) *Store {
+	if redact == nil {
+		redact = func(s string) string { return s }
+	}
+	return &Store{db: d, redact: redact}
+}
 
 // NewID returns an opaque ID such as "tsk_9f86d081884c7d65".
 func NewID(prefix string) string {

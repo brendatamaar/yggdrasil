@@ -12,7 +12,7 @@ import (
 // empty is an error, and what the caller passes is what is stored.
 func TestStoreTakesIDsAndTimesFromTheCaller(t *testing.T) {
 	d := openTest(t)
-	s := NewStore(d)
+	s := NewStore(d, nil)
 	ctx := context.Background()
 	p, r := seed(t, s)
 	task, err := s.CreateTask(ctx, newTask(p, r, nil))

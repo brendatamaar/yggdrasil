@@ -46,8 +46,8 @@ func newEnv(t *testing.T, fixture string, delay time.Duration, extra ...func(*De
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
-	store := db.NewStore(d)
 	redactor := safety.NewRedactor()
+	store := db.NewStore(d, redactor.Redact)
 	deps := Deps{
 		Store: store, Redactor: redactor, Env: safety.NewEnvBuilder(),
 		Adapters: map[string]agents.Adapter{"mock": mock.New(mock.Options{Fixture: fixture, Delay: delay})},

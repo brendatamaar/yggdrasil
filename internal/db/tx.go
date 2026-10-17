@@ -17,7 +17,10 @@ import (
 // audit entry (AppendAudit) are committed together or not at all
 // (docs/AGENTS.md 5.11 step 3, invariant 8). A Tx is valid only inside the
 // function passed to Commit.
-type Tx struct{ q *gen.Queries }
+type Tx struct {
+	q      *gen.Queries
+	redact func(string) string
+}
 
 // Commit runs fn in one write transaction. If fn returns an error or panics,
 // or the commit fails, nothing is written. A UNIQUE or PRIMARY KEY violation comes
@@ -37,7 +40,7 @@ func (s *Store) Commit(ctx context.Context, fn func(*Tx) error) error {
 			_ = tx.Rollback()
 		}
 	}()
-	if err := fn(&Tx{q: gen.New(tx)}); err != nil {
+	if err := fn(&Tx{q: gen.New(tx), redact: s.redact}); err != nil {
 		finished = true
 		return errors.Join(classify(err), tx.Rollback())
 	}
@@ -363,10 +366,11 @@ func (tx *Tx) UpdateProposalStatus(ctx context.Context, id core.ProposalID, stat
 
 // Audit log
 
-// AppendAudit stores e as it is in the same transaction as the state it
-// describes (invariant 8). The entry must come from audit.Prepare, which
-// redacts it (invariant 4); this layer only rejects what the table could not
-// hold.
+// AppendAudit stores e in the same transaction as the state it describes
+// (invariant 8). The entry should come from audit.Prepare, which redacts it;
+// as a backstop (invariant 4) the actor, action, subject and detail are
+// redacted here again with the Store's redactor, so an entry that skipped
+// Prepare still cannot put a token in the log. Detail stays valid JSON.
 func (tx *Tx) AppendAudit(ctx context.Context, e core.AuditEntry) error {
 	if err := e.ID.Validate(); err != nil {
 		return err
@@ -377,11 +381,33 @@ func (tx *Tx) AppendAudit(ctx context.Context, e core.AuditEntry) error {
 	if len(e.Detail) > 0 && !json.Valid(e.Detail) {
 		return errors.New("audit detail is not valid JSON")
 	}
-	err := tx.q.InsertAuditEntry(ctx, gen.InsertAuditEntryParams{
-		ID: string(e.ID), At: fmtTime(e.At), Actor: e.Actor, Action: e.Action, Subject: e.Subject, Detail: jsonText(e.Detail, "{}"),
+	detail, err := redactJSON(tx.redact, e.Detail)
+	if err != nil {
+		return err
+	}
+	err = tx.q.InsertAuditEntry(ctx, gen.InsertAuditEntryParams{
+		ID: string(e.ID), At: fmtTime(e.At), Actor: tx.redact(e.Actor), Action: tx.redact(e.Action),
+		Subject: tx.redact(e.Subject), Detail: detail,
 	})
 	if err != nil {
 		return fmt.Errorf("write audit entry: %w", err)
 	}
 	return nil
+}
+
+// redactJSON redacts JSON text. If masking breaks the JSON (a secret with
+// characters JSON escapes), the redacted text is stored as a JSON string.
+func redactJSON(redact func(string) string, raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
+		return "{}", nil
+	}
+	red := redact(string(raw))
+	if json.Valid([]byte(red)) {
+		return red, nil
+	}
+	b, err := json.Marshal(red)
+	if err != nil {
+		return "", fmt.Errorf("encode audit detail: %w", err)
+	}
+	return string(b), nil
 }

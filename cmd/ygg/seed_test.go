@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
 
 // gitRepo makes an empty folder that looks like a repo to seed: it only checks
@@ -48,7 +50,7 @@ func TestSeedTracksARepoAndPrintsTheIDs(t *testing.T) {
 	}
 
 	// Tracking is audited (once, for what was created) and touched no file.
-	d, store, err := openStore(context.Background(), cfg)
+	d, store, err := openStore(context.Background(), cfg, safety.NewRedactor())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +102,7 @@ func TestSeedRefusesWhatIsNotARepo(t *testing.T) {
 		}
 	}
 	// Nothing was written for a refused folder.
-	d, store, err := openStore(context.Background(), cfg)
+	d, store, err := openStore(context.Background(), cfg, safety.NewRedactor())
 	if err != nil {
 		t.Fatal(err)
 	}

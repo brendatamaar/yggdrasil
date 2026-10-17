@@ -46,7 +46,7 @@ func seed(ctx context.Context, w io.Writer, cfg config, repoPath, projectName st
 		}
 	}
 
-	d, store, err := openStore(ctx, cfg)
+	d, store, err := openStore(ctx, cfg, safety.NewRedactor())
 	if err != nil {
 		return err
 	}

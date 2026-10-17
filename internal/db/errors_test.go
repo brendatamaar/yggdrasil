@@ -12,7 +12,7 @@ import (
 // One test per mapping of a SQLite extended result code to a sentinel.
 
 func TestUniqueViolationIsConflict(t *testing.T) {
-	s := NewStore(openTest(t))
+	s := NewStore(openTest(t), nil)
 	ctx := context.Background()
 	if _, err := s.CreateProject(ctx, core.Project{Name: "acme-shop", Path: "/work/a"}); err != nil {
 		t.Fatal(err)
@@ -28,7 +28,7 @@ func TestUniqueViolationIsConflict(t *testing.T) {
 }
 
 func TestPrimaryKeyViolationIsConflict(t *testing.T) {
-	s := NewStore(openTest(t))
+	s := NewStore(openTest(t), nil)
 	ctx := context.Background()
 	if _, err := s.CreateProject(ctx, core.Project{ID: "p1", Name: "one", Path: "/work/a"}); err != nil {
 		t.Fatal(err)
@@ -44,7 +44,7 @@ func TestPrimaryKeyViolationIsConflict(t *testing.T) {
 }
 
 func TestForeignKeyViolationIsNotFound(t *testing.T) {
-	s := NewStore(openTest(t))
+	s := NewStore(openTest(t), nil)
 	ctx := context.Background()
 	// A repo of a project that does not exist (SQLITE_CONSTRAINT_FOREIGNKEY, 787).
 	_, err := s.CreateRepo(ctx, core.Repo{ProjectID: "missing", Name: "shop-api", Path: "/work/shop-api"})
@@ -57,7 +57,7 @@ func TestForeignKeyViolationIsNotFound(t *testing.T) {
 }
 
 func TestSubTaskTriggerIsErrSubTaskDepth(t *testing.T) {
-	s := NewStore(openTest(t))
+	s := NewStore(openTest(t), nil)
 	ctx := context.Background()
 	p, r := seed(t, s)
 	parent, err := s.CreateTask(ctx, newTask(p, r, nil))
@@ -82,7 +82,7 @@ func TestSubTaskTriggerIsErrSubTaskDepth(t *testing.T) {
 func TestOtherTriggerAbortIsNotMapped(t *testing.T) {
 	d := openTest(t)
 	ctx := context.Background()
-	s := NewStore(d)
+	s := NewStore(d, nil)
 	e := core.AuditEntry{ID: "aud_1", Actor: "system", Action: "x", Subject: "task:1"}
 	if err := s.Commit(ctx, func(tx *Tx) error { return tx.AppendAudit(ctx, e) }); err != nil {
 		t.Fatal(err)
@@ -111,7 +111,7 @@ func TestClassifyLeavesOtherErrorsAlone(t *testing.T) {
 // write connection: the next Commit must not wait for it.
 func TestCommitReleasesTheConnectionAfterAPanic(t *testing.T) {
 	d := openTest(t)
-	s := NewStore(d)
+	s := NewStore(d, nil)
 	ctx := context.Background()
 	func() {
 		defer func() {

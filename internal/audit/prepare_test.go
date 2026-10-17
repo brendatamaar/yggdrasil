@@ -21,7 +21,7 @@ func openStore(t *testing.T) *db.Store {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
-	return db.NewStore(d)
+	return db.NewStore(d, safety.NewRedactor().Redact)
 }
 
 func TestPrepareRedactsAndStamps(t *testing.T) {
