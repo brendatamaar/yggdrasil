@@ -271,7 +271,7 @@ func (r *run) finish(ctx context.Context, p *parser, res waitResult, stderr *tai
 		status = agents.RunCompleted
 	}
 	if status == agents.RunFailed && !p.sawResult {
-		msg := fmt.Sprintf("Claude Code stopped before it finished (exit code %d).", res.code)
+		msg := fmt.Sprintf("Claude Code stopped before it finished (exit code %d). The Yggdrasil log has the details.", res.code)
 		r.events <- agents.Event{Kind: agents.EventError, At: time.Now().UTC(), IsError: true, Error: msg}
 		r.err = &UserError{Message: msg, Err: fmt.Errorf("claude stderr: %s", safety.NewRedactor().Redact(stderr.String()))}
 	}

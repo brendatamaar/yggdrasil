@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -724,6 +725,65 @@ func TestStartFailureIsExplainedInTheTranscript(t *testing.T) {
 		}
 	}
 }
+
+// When a run ends without a result, the cause behind the plain message (the
+// CLI's redacted stderr) is in the log, so the person can find out why.
+func TestRunFailureCauseIsLoggedNotShown(t *testing.T) {
+	var logs bytes.Buffer
+	e := newEnv(t, "plain", 0, func(d *Deps) {
+		d.Log = slog.New(slog.NewTextHandler(&logs, nil))
+		d.Adapters["fails"] = failedRunAdapter{mock.New(mock.Options{}), userCause{"Claude Code stopped before it finished (exit code 1).", errString("claude stderr: error: unknown option '--frobnicate'")}}
+	})
+	req := e.createReq()
+	req.Agent = "fails"
+	resp, data := e.do(t, http.MethodPost, "/api/tasks", req)
+	var tr TaskResponse
+	if resp.StatusCode != 201 || json.Unmarshal(data, &tr) != nil {
+		t.Fatalf("create = %d %s", resp.StatusCode, data)
+	}
+	e.waitStatus(t, tr.Task.ID, core.TaskFailed)
+	// The task is marked failed after the warning is logged.
+	if out := logs.String(); !strings.Contains(out, "agent run failed") || !strings.Contains(out, "unknown option") {
+		t.Errorf("the log lacks the cause:\n%s", out)
+	}
+	_, data = e.do(t, http.MethodGet, "/api/tasks/"+string(tr.Task.ID)+"/events", nil)
+	if strings.Contains(string(data), "unknown option") {
+		t.Errorf("the CLI's stderr reached the page: %s", data)
+	}
+}
+
+type userCause struct {
+	msg   string
+	cause error
+}
+
+func (e userCause) Error() string       { return e.msg }
+func (e userCause) Unwrap() error       { return e.cause }
+func (e userCause) UserMessage() string { return e.msg }
+
+// failedRunAdapter ends a run as failed with the given error.
+type failedRunAdapter struct {
+	*mock.Adapter
+	err error
+}
+
+func (failedRunAdapter) Name() string { return "fails" }
+func (a failedRunAdapter) Start(context.Context, agents.StartOptions) (agents.Run, error) {
+	ch := make(chan agents.Event, 2)
+	ch <- agents.Event{Kind: agents.EventStatus, Status: agents.RunStarted}
+	ch <- agents.Event{Kind: agents.EventStatus, Status: agents.RunFailed}
+	close(ch)
+	return failedRun{ch, a.err}, nil
+}
+
+type failedRun struct {
+	ch  chan agents.Event
+	err error
+}
+
+func (r failedRun) Events() <-chan agents.Event { return r.ch }
+func (failedRun) SessionID() string             { return "" }
+func (r failedRun) Wait() error                 { return r.err }
 
 type startFailAdapter struct {
 	*mock.Adapter

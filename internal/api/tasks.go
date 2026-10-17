@@ -382,7 +382,9 @@ func (s *Server) runTask(ctx context.Context, task core.Task, repo core.Repo, ad
 		final = core.TaskCancelled
 	default:
 		if res.Err != nil {
-			s.log.Warn("agent run failed", "task", task.ID, "err", res.Err)
+			// The cause behind the plain message (an adapter keeps the
+			// redacted stderr of its CLI there) goes to the log only.
+			s.log.Warn("agent run failed", "task", task.ID, "err", res.Err, "detail", errors.Unwrap(res.Err))
 		}
 	}
 }
