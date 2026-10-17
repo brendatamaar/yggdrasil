@@ -30,55 +30,6 @@ import type * as core from "./core.gen";
  */
 
 //////////
-// source: server.go
-/*
-Package api is Yggdrasil's HTTP server: REST endpoints, the WebSocket hub
-and the embedded UI, bound to the loopback interface (SF-01).
-*/
-
-/**
- * Deps are what the server needs. Store and Env are required.
- */
-export interface Deps {
-  Store?: any /* db.Store */;
-  Adapters: { [key: string]: any /* agents.Adapter */};
-  /**
-   * Env builds the clean environment of every agent run (SF-04).
-   */
-  Env: any /* safety.EnvBuilder */;
-  /**
-   * Log defaults to a redacting text logger on stderr.
-   */
-  Log?: any /* slog.Logger */;
-  /**
-   * Redactor masks tokens in agent output before it is stored or sent.
-   * Default: the built-in patterns of safety.NewRedactor().
-   */
-  Redactor: any /* safety.Redactor */;
-  Version: string;
-  /**
-   * Assets is the embedded frontend build (the contents of web/dist).
-   */
-  Assets: any /* fs.FS */;
-  /**
-   * AllowedOrigins are extra browser origins that may call the API, such as
-   * the Vite dev server (http://localhost:5173).
-   */
-  AllowedOrigins: string[];
-  /**
-   * KillTask stops every process still running for a task ID (agent
-   * helpers, anything the task started). Default: platform.KillTask.
-   */
-  KillTask: any;
-}
-/**
- * Server serves the API. Create it with New, run it with Run (or use Handler
- * in tests) and stop it with Close.
- */
-export interface Server {
-}
-
-//////////
 // source: static.go
 
 /**
