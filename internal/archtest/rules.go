@@ -137,9 +137,13 @@ var rules = []rule{
 	banOutside("os.Environ", "reads os.Environ", func(f file) bool { return f.uses1("os.Environ") }, "internal/safety"),
 	banOutside("syscall.Environ", "reads syscall.Environ", func(f file) bool { return f.uses1("syscall.Environ") }, "internal/safety"),
 
-	// Invariant 4: the audit insert that does not redact is for the audit
-	// package only (and the database tests that check the triggers).
-	banOutside("InsertAudit", "calls InsertAudit, which does not redact", func(f file) bool { return f.calls("InsertAudit") }, "internal/audit", "internal/db"),
+	// Invariant 4: Tx.AppendAudit writes the entry as given and does not
+	// redact. Outside the database package (whose tests check the triggers)
+	// and the audit package (which calls Prepare unqualified), a file that
+	// appends audit entries must make them with audit.Prepare.
+	banOutside("AppendAudit", "calls AppendAudit without audit.Prepare, which redacts", func(f file) bool {
+		return f.calls("AppendAudit") && !f.uses1(internalPrefix+"audit.Prepare")
+	}, "internal/db", "internal/audit"),
 
 	// 5.1: the data model imports nothing from the rest of Yggdrasil.
 	onlyInternalImports("core is a leaf", "internal/core"),
