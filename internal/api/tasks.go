@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/brendatamaar/yggdrasil/internal/agents"
+	"github.com/brendatamaar/yggdrasil/internal/audit"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/platform"
@@ -182,18 +183,27 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := core.TaskID(db.NewID("tsk"))
-	task, err := s.store.CreateTask(ctx, core.Task{
-		ID: id, ProjectID: project.ID, Title: taskTitle(req.Title, id), Prompt: prompt, Scope: core.ScopeRepo,
-		RepoIDs: []core.RepoID{repo.ID}, Mode: core.ModeAsk, Agent: req.Agent, Model: req.Model, Status: core.TaskQueued,
+	entry, err := s.entry("user", "task.create", id, map[string]any{
+		"agent": req.Agent, "mode": core.ModeAsk, "repo": repo.ID, "promptChars": utf8.RuneCountInString(prompt),
 	})
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	if err := s.record(ctx, "user", "task.create", task.ID, map[string]any{
-		"agent": task.Agent, "mode": task.Mode, "repo": repo.ID, "promptChars": utf8.RuneCountInString(prompt),
-	}); err != nil {
-		s.failTask(task.ID, err)
+	// The task and its audit entry are one commit: no task without an entry.
+	var task core.Task
+	err = s.store.Commit(ctx, func(tx *db.Tx) error {
+		t, err := tx.CreateTask(ctx, core.Task{
+			ID: id, ProjectID: project.ID, Title: taskTitle(req.Title, id), Prompt: prompt, Scope: core.ScopeRepo,
+			RepoIDs: []core.RepoID{repo.ID}, Mode: core.ModeAsk, Agent: req.Agent, Model: req.Model, Status: core.TaskQueued,
+		})
+		if err != nil {
+			return err
+		}
+		task = t
+		return tx.AppendAudit(ctx, entry)
+	})
+	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
@@ -251,43 +261,71 @@ func (s *Server) cancelTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, TaskResponse{Task: task})
 }
 
-// record writes an audit entry (SF-05). Detail never holds the prompt, only
-// its length, and the writer redacts it anyway.
-func (s *Server) record(ctx context.Context, actor, action string, task core.TaskID, detail map[string]any) error {
+// entry prepares an audit entry about a task (SF-05): pure, with the ID and
+// time chosen here, in the shell. Detail never holds the prompt, only its
+// length, and Prepare redacts it anyway (invariant 4).
+func (s *Server) entry(actor, action string, task core.TaskID, detail map[string]any) (core.AuditEntry, error) {
 	raw := json.RawMessage("{}")
 	if detail != nil {
 		b, err := json.Marshal(detail)
 		if err != nil {
-			return fmt.Errorf("encode audit detail: %w", err)
+			return core.AuditEntry{}, fmt.Errorf("encode audit detail: %w", err)
 		}
 		raw = b
 	}
-	if err := s.audit.Write(ctx, core.AuditEntry{Actor: actor, Action: action, Subject: "task:" + string(task), Detail: raw}); err != nil {
+	e, err := audit.Prepare(core.AuditEntry{Actor: actor, Action: action, Subject: "task:" + string(task), Detail: raw},
+		s.redactor, core.AuditID(db.NewID("aud")), time.Now())
+	if err != nil {
+		return core.AuditEntry{}, fmt.Errorf("prepare audit entry %s: %w", action, err)
+	}
+	return e, nil
+}
+
+// record commits an audit entry that has no state of its own, such as the
+// request to cancel a task.
+func (s *Server) record(ctx context.Context, actor, action string, task core.TaskID, detail map[string]any) error {
+	e, err := s.entry(actor, action, task, detail)
+	if err != nil {
+		return err
+	}
+	if err := s.store.Commit(ctx, func(tx *db.Tx) error { return tx.AppendAudit(ctx, e) }); err != nil {
 		return fmt.Errorf("write audit entry %s: %w", action, err)
 	}
 	return nil
 }
 
-// setStatus stores a status and tells the clients (the "tasks" topic holds
-// only the ID, title and status).
-func (s *Server) setStatus(ctx context.Context, task core.Task, status core.TaskStatus) error {
-	if err := s.store.UpdateTaskStatus(ctx, task.ID, status); err != nil {
+// transition commits a status change together with its audit entry (one
+// transaction, invariant 8), then tells the clients (the "tasks" topic holds
+// only the ID, title and status). Nothing is published if the commit fails.
+func (s *Server) transition(ctx context.Context, task core.Task, status core.TaskStatus, actor, action string, detail map[string]any) error {
+	e, err := s.entry(actor, action, task.ID, detail)
+	if err != nil {
 		return err
+	}
+	err = s.store.Commit(ctx, func(tx *db.Tx) error {
+		if err := tx.UpdateTaskStatus(ctx, task.ID, status); err != nil {
+			return err
+		}
+		return tx.AppendAudit(ctx, e)
+	})
+	if err != nil {
+		return fmt.Errorf("%s: %w", action, err)
 	}
 	s.hub.publishNext(tasksTopic{}, TaskStatusMessage{TaskID: task.ID, Title: task.Title, Status: status})
 	return nil
 }
 
 // failTask marks a task failed after something went wrong outside its run.
-// The audit entry comes first (invariant 8), as everywhere else.
 func (s *Server) failTask(id core.TaskID, cause error) {
 	s.log.Error("task failed", "task", id, "err", cause)
 	bg := context.WithoutCancel(s.ctx)
-	if err := s.record(bg, "system", "task.fail", id, nil); err != nil {
-		s.log.Error("audit task failure", "task", id, "err", err)
+	task, err := s.store.GetTask(bg, id)
+	if err != nil {
+		s.log.Error("load failed task", "task", id, "err", err)
+		return
 	}
-	if task, err := s.store.GetTask(bg, id); err == nil {
-		_ = s.setStatus(bg, task, core.TaskFailed)
+	if err := s.transition(bg, task, core.TaskFailed, "system", "task.fail", nil); err != nil {
+		s.log.Error("store task failure", "task", id, "err", err)
 	}
 }
 
@@ -332,22 +370,15 @@ func (s *Server) runTask(ctx context.Context, task core.Task, repo core.Repo, ad
 	bg := context.WithoutCancel(ctx) // final writes must survive a cancel
 	final := core.TaskFailed
 	defer func() {
-		// Audit first: once the status is visible, its audit entry exists.
-		if err := s.record(bg, "system", "task.finish", task.ID, map[string]any{"status": final}); err != nil {
-			s.log.Error("audit task finish", "task", task.ID, "err", err)
-		}
-		if err := s.setStatus(bg, task, final); err != nil {
+		// The status and its audit entry are one commit.
+		if err := s.transition(bg, task, final, "system", "task.finish", map[string]any{"status": final}); err != nil {
 			s.log.Error("store final task status", "task", task.ID, "err", err)
 		}
 	}()
 
 	// These writes use bg: a cancel or a shutdown must not stop them half way.
-	if err := s.setStatus(bg, task, core.TaskRunning); err != nil {
+	if err := s.transition(bg, task, core.TaskRunning, "system", "task.start", map[string]any{"agent": task.Agent}); err != nil {
 		s.log.Error("set task running", "task", task.ID, "err", err)
-		return
-	}
-	if err := s.record(bg, "system", "task.start", task.ID, map[string]any{"agent": task.Agent}); err != nil {
-		s.log.Error("audit task start", "task", task.ID, "err", err)
 		return
 	}
 	if ctx.Err() != nil { // cancelled before the agent started
@@ -374,9 +405,7 @@ func (s *Server) runTask(ctx context.Context, task core.Task, repo core.Repo, ad
 		return
 	}
 	if res.SessionID != "" {
-		if err := s.record(bg, "system", "task.session", task.ID, nil); err != nil {
-			s.log.Error("audit task session", "task", task.ID, "err", err)
-		} else if err := s.store.SetTaskSession(bg, task.ID, res.SessionID); err != nil {
+		if err := s.setSession(bg, task.ID, res.SessionID); err != nil {
 			s.log.Error("store task session", "task", task.ID, "err", err)
 		}
 	}
@@ -392,6 +421,21 @@ func (s *Server) runTask(ctx context.Context, task core.Task, repo core.Repo, ad
 			s.log.Warn("agent run failed", "task", task.ID, "err", res.Err, "detail", errors.Unwrap(res.Err))
 		}
 	}
+}
+
+// setSession stores the agent's session ID and its audit entry in one commit.
+// The ID itself is not audited.
+func (s *Server) setSession(ctx context.Context, id core.TaskID, session string) error {
+	e, err := s.entry("system", "task.session", id, nil)
+	if err != nil {
+		return err
+	}
+	return s.store.Commit(ctx, func(tx *db.Tx) error {
+		if err := tx.SetTaskSession(ctx, id, session); err != nil {
+			return err
+		}
+		return tx.AppendAudit(ctx, e)
+	})
 }
 
 // explainFailure puts the reason a run could not start into the task's

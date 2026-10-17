@@ -167,8 +167,8 @@ func TestAuditLogAppendOnly(t *testing.T) {
 	d := openTest(t)
 	s := NewStore(d)
 	ctx := context.Background()
-	e := core.AuditEntry{ID: "a1", At: time.Now(), Actor: "system", Action: "test", Subject: "task:1"}
-	if err := s.InsertAudit(ctx, e); err != nil {
+	e := core.AuditEntry{ID: "aud_1", At: time.Now(), Actor: "system", Action: "test", Subject: "task:1"}
+	if err := s.Commit(ctx, func(tx *Tx) error { return tx.AppendAudit(ctx, e) }); err != nil {
 		t.Fatal(err)
 	}
 	for _, q := range []string{"UPDATE audit_log SET actor = 'x'", "DELETE FROM audit_log"} {
@@ -191,7 +191,7 @@ func TestConcurrentWriters(t *testing.T) {
 	errs := make(chan error, 2*n)
 	for i := range n {
 		wg.Go(func() {
-			_, err := s.CreateProject(ctx, core.Project{Name: "p" + string(rune('A'+i/26)) + string(rune('a'+i%26)), Path: "x"})
+			_, err := s.CreateProject(ctx, core.Project{Name: "p" + string(rune('A'+i/26)) + string(rune('a'+i%26)), Path: "/x"})
 			errs <- err
 			// readers run next to the writer
 			_, err = s.ListProjects(ctx)

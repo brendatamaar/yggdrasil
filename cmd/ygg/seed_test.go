@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
 
 // gitRepo makes an empty folder that looks like a repo to seed: it only checks
@@ -50,12 +49,11 @@ func TestSeedTracksARepoAndPrintsTheIDs(t *testing.T) {
 	}
 
 	// Tracking is audited (once, for what was created) and touched no file.
-	d, store, aud, err := openStore(context.Background(), cfg, safety.NewRedactor())
+	d, store, err := openStore(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer d.Close()
-	_ = aud
 	for subject, action := range map[string]string{"project:" + ids[0]: "project.track", "repo:" + ids[1]: "repo.track"} {
 		rows, err := store.ListAudit(context.Background(), subject, 10)
 		if err != nil || len(rows) != 1 || rows[0].Action != action || rows[0].Actor != "user" {
@@ -103,7 +101,7 @@ func TestSeedRefusesWhatIsNotARepo(t *testing.T) {
 		}
 	}
 	// Nothing was written for a refused folder.
-	d, store, _, err := openStore(context.Background(), cfg, safety.NewRedactor())
+	d, store, err := openStore(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

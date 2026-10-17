@@ -8,7 +8,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
+	"github.com/brendatamaar/yggdrasil/internal/audit"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/platform"
@@ -44,28 +46,50 @@ func seed(ctx context.Context, w io.Writer, cfg config, repoPath, projectName st
 		}
 	}
 
-	d, store, aud, err := openStore(ctx, cfg, safety.NewRedactor())
+	d, store, err := openStore(ctx, cfg)
 	if err != nil {
 		return err
 	}
 	defer d.Close()
 
-	project, created, err := findOrCreateProject(ctx, store, projectName, filepath.Dir(abs))
+	// Decide what is missing, then create it together with its audit entries
+	// in one commit: tracking is all or nothing (invariant 8).
+	project, projectFound, err := findProject(ctx, store, projectName)
 	if err != nil {
 		return err
 	}
-	if created {
-		if err := aud.Write(ctx, core.AuditEntry{Actor: "user", Action: "project.track", Subject: "project:" + string(project.ID), Detail: detail(map[string]any{"name": project.Name})}); err != nil {
+	var repo core.Repo
+	repoFound := false
+	if projectFound {
+		if repo, repoFound, err = findRepo(ctx, store, project.ID, filepath.Base(abs), abs); err != nil {
 			return err
 		}
 	}
-	repo, created, err := findOrCreateRepo(ctx, store, project.ID, filepath.Base(abs), abs)
-	if err != nil {
-		return err
-	}
-	if created {
-		if err := aud.Write(ctx, core.AuditEntry{Actor: "user", Action: "repo.track", Subject: "repo:" + string(repo.ID), Detail: detail(map[string]any{"name": repo.Name})}); err != nil {
-			return err
+	if !projectFound || !repoFound {
+		redactor := safety.NewRedactor()
+		err = store.Commit(ctx, func(tx *db.Tx) error {
+			if !projectFound {
+				p, err := tx.CreateProject(ctx, core.Project{Name: projectName, Path: filepath.Dir(abs)})
+				if err != nil {
+					return err
+				}
+				project = p
+				if err := appendAudit(ctx, tx, redactor, "project.track", "project:"+string(p.ID), map[string]any{"name": p.Name}); err != nil {
+					return err
+				}
+			}
+			if !repoFound {
+				r, err := tx.CreateRepo(ctx, core.Repo{ProjectID: project.ID, Name: filepath.Base(abs), Path: abs})
+				if err != nil {
+					return err
+				}
+				repo = r
+				return appendAudit(ctx, tx, redactor, "repo.track", "repo:"+string(r.ID), map[string]any{"name": r.Name})
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("track the repo: %w", err)
 		}
 	}
 	fmt.Fprintf(w, "Project  %-20s %s\n", project.Name, project.ID)
@@ -75,29 +99,35 @@ func seed(ctx context.Context, w io.Writer, cfg config, repoPath, projectName st
 	return nil
 }
 
-func detail(v map[string]any) json.RawMessage {
-	b, err := json.Marshal(v)
+// appendAudit prepares one audit entry of a user action (the ID and time are
+// chosen here, in the shell) and adds it to the transaction.
+func appendAudit(ctx context.Context, tx *db.Tx, r safety.Redactor, action, subject string, detail map[string]any) error {
+	raw, err := json.Marshal(detail)
 	if err != nil {
-		return json.RawMessage("{}")
+		return fmt.Errorf("encode audit detail: %w", err)
 	}
-	return b
+	e, err := audit.Prepare(core.AuditEntry{Actor: "user", Action: action, Subject: subject, Detail: raw},
+		r, core.AuditID(db.NewID("aud")), time.Now())
+	if err != nil {
+		return err
+	}
+	return tx.AppendAudit(ctx, e)
 }
 
-func findOrCreateProject(ctx context.Context, store *db.Store, name, path string) (core.Project, bool, error) {
+func findProject(ctx context.Context, store *db.Store, name string) (core.Project, bool, error) {
 	all, err := store.ListProjects(ctx)
 	if err != nil {
 		return core.Project{}, false, err
 	}
 	for _, p := range all {
 		if p.Name == name {
-			return p, false, nil
+			return p, true, nil
 		}
 	}
-	p, err := store.CreateProject(ctx, core.Project{Name: name, Path: path})
-	return p, err == nil, err
+	return core.Project{}, false, nil
 }
 
-func findOrCreateRepo(ctx context.Context, store *db.Store, project core.ProjectID, name, path string) (core.Repo, bool, error) {
+func findRepo(ctx context.Context, store *db.Store, project core.ProjectID, name, path string) (core.Repo, bool, error) {
 	all, err := store.ListRepos(ctx, project)
 	if err != nil {
 		return core.Repo{}, false, err
@@ -107,9 +137,8 @@ func findOrCreateRepo(ctx context.Context, store *db.Store, project core.Project
 			if r.Path != path {
 				return core.Repo{}, false, errors.New("a repo called " + name + " is already tracked at another path: " + r.Path)
 			}
-			return r, false, nil
+			return r, true, nil
 		}
 	}
-	r, err := store.CreateRepo(ctx, core.Repo{ProjectID: project, Name: name, Path: path})
-	return r, err == nil, err
+	return core.Repo{}, false, nil
 }
