@@ -63,8 +63,8 @@ func (r Repo) Validate() error {
 	return nil
 }
 
-// checkAbsPath accepts a path that looks absolute: "/x", `\x` (including UNC
-// and extended-length paths) or `C:\x` / `C:/x`. It is a shape check; whether
+// checkAbsPath accepts a path that looks absolute: "/x", a UNC or
+// extended-length path, or `C:\x` / `C:/x`. It is a shape check; whether
 // the folder exists is the caller's business.
 func checkAbsPath(p string) error {
 	if strings.TrimSpace(p) == "" {
@@ -73,7 +73,10 @@ func checkAbsPath(p string) error {
 	if strings.ContainsRune(p, 0) {
 		return errors.New("the path holds a NUL character")
 	}
-	if p[0] == '/' || p[0] == '\\' {
+	// A Unix path, a UNC path (`\\host\share`) or an extended-length path
+	// (`\\?\C:\x`, `\??\C:\x`). A single leading backslash (`\work\x`) is
+	// drive-relative on Windows, so it is not absolute.
+	if p[0] == '/' || strings.HasPrefix(p, `\\`) || strings.HasPrefix(p, `\??\`) {
 		return nil
 	}
 	if len(p) >= 3 && p[1] == ':' && (p[2] == '\\' || p[2] == '/') &&
@@ -175,20 +178,20 @@ type Proposal struct {
 
 // BuildStep is one command of a build.
 type BuildStep struct {
-	Index      int         `json:"index"`
-	RepoID     RepoID      `json:"repoId"`
-	Name       string      `json:"name"`
-	Status     BuildStatus `json:"status"`
-	ExitCode   *int        `json:"exitCode,omitempty"`
-	LogPath    string      `json:"logPath,omitempty"`
-	StartedAt  *time.Time  `json:"startedAt,omitempty"`
-	FinishedAt *time.Time  `json:"finishedAt,omitempty"`
+	Index      int        `json:"index"`
+	RepoID     RepoID     `json:"repoId"`
+	Name       string     `json:"name"`
+	Status     StepStatus `json:"status"`
+	ExitCode   *int       `json:"exitCode,omitempty"`
+	LogPath    string     `json:"logPath,omitempty"`
+	StartedAt  *time.Time `json:"startedAt,omitempty"`
+	FinishedAt *time.Time `json:"finishedAt,omitempty"`
 	// Argv is the command line, Attempt the run counter of the step and
-	// Outcome how the last attempt ended (succeeded, failed, start_failed,
-	// cancelled, interrupted); Outcome is empty until the step has finished.
-	Argv    []string `json:"argv,omitempty"`
-	Attempt int      `json:"attempt,omitempty"`
-	Outcome string   `json:"outcome,omitempty"`
+	// Outcome how the last attempt ended; Outcome is empty until the step has
+	// finished.
+	Argv    []string    `json:"argv,omitempty"`
+	Attempt int         `json:"attempt,omitempty"`
+	Outcome StepOutcome `json:"outcome,omitempty"`
 }
 
 // Build is an ordered sequence of build steps.

@@ -36,7 +36,7 @@ func newLogger(w io.Writer, level slog.Level, r safety.Redactor) *slog.Logger {
 
 // openStore opens the database in the data folder and returns what the
 // commands share.
-func openStore(ctx context.Context, cfg config) (*db.DB, *db.Store, error) {
+func openStore(ctx context.Context, cfg config, r safety.Redactor) (*db.DB, *db.Store, error) {
 	if err := os.MkdirAll(cfg.dataDir, 0o700); err != nil {
 		return nil, nil, fmt.Errorf("create the data folder %s: %w", cfg.dataDir, err)
 	}
@@ -44,7 +44,7 @@ func openStore(ctx context.Context, cfg config) (*db.DB, *db.Store, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("open the database in %s: %w", cfg.dataDir, err)
 	}
-	store := db.NewStore(d)
+	store := db.NewStore(d, r.Redact)
 	return d, store, nil
 }
 
@@ -53,7 +53,7 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	redactor := safety.NewRedactor()
 	log := newLogger(logOut, cfg.level, redactor)
 
-	d, store, err := openStore(ctx, cfg)
+	d, store, err := openStore(ctx, cfg, redactor)
 	if err != nil {
 		return nil, err
 	}

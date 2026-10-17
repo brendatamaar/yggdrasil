@@ -46,7 +46,7 @@ func seed(ctx context.Context, w io.Writer, cfg config, repoPath, projectName st
 		}
 	}
 
-	d, store, err := openStore(ctx, cfg)
+	d, store, err := openStore(ctx, cfg, safety.NewRedactor())
 	if err != nil {
 		return err
 	}
@@ -67,9 +67,10 @@ func seed(ctx context.Context, w io.Writer, cfg config, repoPath, projectName st
 	}
 	if !projectFound || !repoFound {
 		redactor := safety.NewRedactor()
+		now := time.Now().UTC()
 		err = store.Commit(ctx, func(tx *db.Tx) error {
 			if !projectFound {
-				p, err := tx.CreateProject(ctx, core.Project{Name: projectName, Path: filepath.Dir(abs)})
+				p, err := tx.CreateProject(ctx, core.Project{ID: core.ProjectID(db.NewID("prj")), Name: projectName, Path: filepath.Dir(abs), CreatedAt: now})
 				if err != nil {
 					return err
 				}
@@ -79,7 +80,7 @@ func seed(ctx context.Context, w io.Writer, cfg config, repoPath, projectName st
 				}
 			}
 			if !repoFound {
-				r, err := tx.CreateRepo(ctx, core.Repo{ProjectID: project.ID, Name: filepath.Base(abs), Path: abs})
+				r, err := tx.CreateRepo(ctx, core.Repo{ID: core.RepoID(db.NewID("rep")), ProjectID: project.ID, Name: filepath.Base(abs), Path: abs, CreatedAt: now})
 				if err != nil {
 					return err
 				}

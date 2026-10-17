@@ -34,7 +34,10 @@ func TestMigration00002KeepsData(t *testing.T) {
 		`INSERT INTO repos (id, project_id, name, path, created_at) VALUES ('r1', 'p1', 'shop-api', '/work/shop-api', '2026-01-01T00:00:00.000Z')`,
 		`INSERT INTO tasks (id, project_id, title, prompt, scope, mode, agent, status, created_at, updated_at)
 		 VALUES ('t1', 'p1', 't', 'p', 'repo', 'ask', 'mock', 'running', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+		`INSERT INTO worktrees (id, repo_id, task_id, name, path, branch, status, created_at)
+		 VALUES ('w1', 'r1', 't1', 'w', '/wt', 'ygg/w', 'active', '2026-01-01T00:00:00.000Z')`,
 		`INSERT INTO builds (id, task_id, status, created_at) VALUES ('b1', 't1', 'running', '2026-01-02T00:00:00.000Z')`,
+		`INSERT INTO builds (id, task_id, worktree_id, status, created_at) VALUES ('b3', 't1', 'w1', 'queued', '2026-01-02T00:00:01.000Z')`,
 		`INSERT INTO build_steps (build_id, idx, repo_id, name, status, exit_code, log_path, started_at)
 		 VALUES ('b1', 0, 'r1', 'verify', 'succeeded', 0, 'logs/b1-0.log', '2026-01-02T00:00:01.000Z')`,
 		`INSERT INTO build_steps (build_id, idx, repo_id, name, status) VALUES ('b1', 1, 'r1', 'build', 'queued')`,
@@ -52,7 +55,7 @@ func TestMigration00002KeepsData(t *testing.T) {
 	if n := count(t, d, `SELECT count(*) FROM build_steps`); n != 2 {
 		t.Fatalf("build steps after the rebuild = %d, want 2 (a cascade deleted them?)", n)
 	}
-	s := NewStore(d)
+	s := NewStore(d, nil)
 	b, err := s.GetBuild(ctx, "b1")
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +65,7 @@ func TestMigration00002KeepsData(t *testing.T) {
 		t.Fatalf("build after up = %+v", b)
 	}
 	st := b.Steps[0]
-	if st.Name != "verify" || st.Status != core.BuildSucceeded || st.ExitCode == nil || *st.ExitCode != 0 ||
+	if st.Name != "verify" || st.Status != core.StepSucceeded || st.ExitCode == nil || *st.ExitCode != 0 ||
 		st.LogPath != "logs/b1-0.log" || st.StartedAt == nil || len(st.Argv) != 0 || st.Attempt != 0 || st.Outcome != "" {
 		t.Fatalf("step after up = %+v", st)
 	}
@@ -71,6 +74,33 @@ func TestMigration00002KeepsData(t *testing.T) {
 	}
 	if p, err := s.GetProposal(ctx, "pr1"); err != nil || p.Version != 0 {
 		t.Fatalf("proposal after up = %+v, %v", p, err)
+	}
+	// Existing rows get an explicit target: a worktree build stays one.
+	if n := count(t, d, `SELECT count(*) FROM builds WHERE (id = 'b1' AND target = 'main' AND worktree_id IS NULL) OR (id = 'b3' AND target = 'worktree' AND worktree_id = 'w1')`); n != 2 {
+		t.Fatalf("target after the data migration is wrong for %d of 2 builds", 2-n)
+	}
+	if n := count(t, d, `SELECT count(*) FROM pragma_table_info('builds') WHERE name IN ('cancelled_at', 'artifacts_collected_at')`); n != 2 {
+		t.Fatal("cancelled_at or artifacts_collected_at is missing")
+	}
+	if n := count(t, d, `SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'builds_status_created'`); n != 1 {
+		t.Fatal("index on builds(status, created_at, id) is missing")
+	}
+	for name, q := range map[string]string{
+		"worktree target without a worktree":  `INSERT INTO builds (id, target, status, created_at) VALUES ('x1', 'worktree', 'queued', '2026-01-03T00:00:00.000Z')`,
+		"main target with a worktree":         `INSERT INTO builds (id, target, worktree_id, status, created_at) VALUES ('x2', 'main', 'w1', 'queued', '2026-01-03T00:00:00.000Z')`,
+		"unknown target":                      `INSERT INTO builds (id, target, status, created_at) VALUES ('x3', 'elsewhere', 'queued', '2026-01-03T00:00:00.000Z')`,
+		"unknown start_failure":               `INSERT INTO build_steps (build_id, idx, repo_id, name, status, start_failure) VALUES ('b1', 7, 'r1', 'x', 'queued', 'bogus')`,
+		"deleting a worktree that has builds": `DELETE FROM worktrees WHERE id = 'w1'`,
+	} {
+		if _, err := d.Write.ExecContext(ctx, q); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+	if _, err := d.Write.ExecContext(ctx, `INSERT INTO build_steps (build_id, idx, repo_id, name, status, outcome, start_failure) VALUES ('b1', 8, 'r1', 'x', 'failed', 'start_failed', 'not_found')`); err != nil {
+		t.Errorf("valid start_failure refused: %v", err)
+	}
+	if _, err := d.Write.ExecContext(ctx, `DELETE FROM build_steps WHERE build_id = 'b1' AND idx = 8`); err != nil {
+		t.Fatal(err)
 	}
 	// The rebuilt tables keep their foreign keys: deleting the build removes its steps.
 	if _, err := d.Write.ExecContext(ctx, `INSERT INTO builds (id, status, created_at) VALUES ('b2', 'interrupted', '2026-01-03T00:00:00.000Z')`); err != nil {
@@ -108,6 +138,12 @@ func TestMigration00002KeepsData(t *testing.T) {
 	if n := count(t, d, `SELECT count(*) FROM build_steps WHERE build_id = 'b1' AND idx = 1 AND status = 'cancelled'`); n != 1 {
 		t.Fatal("skipped step not mapped to cancelled")
 	}
+	if n := count(t, d, `SELECT count(*) FROM builds`); n != 2 {
+		t.Fatalf("builds after down = %d, want 2", n)
+	}
+	if n := count(t, d, `SELECT count(*) FROM pragma_table_info('builds') WHERE name IN ('target', 'cancelled_at', 'artifacts_collected_at')`); n != 0 {
+		t.Fatal("new build columns survived the down migration")
+	}
 	if n := count(t, d, `SELECT count(*) FROM pragma_table_info('tasks') WHERE name = 'version'`); n != 0 {
 		t.Fatal("tasks.version survived the down migration")
 	}
@@ -120,11 +156,14 @@ func TestMigration00002KeepsData(t *testing.T) {
 	if n := count(t, d, `SELECT count(*) FROM build_steps`); n != 2 {
 		t.Fatalf("steps after down and up = %d, want 2", n)
 	}
+	if n := count(t, d, `SELECT count(*) FROM builds WHERE (id = 'b1' AND target = 'main') OR (id = 'b3' AND target = 'worktree' AND worktree_id = 'w1')`); n != 2 {
+		t.Fatal("targets lost after down and up")
+	}
 }
 
 func TestStaleVersionIsAConflict(t *testing.T) {
 	d := openTest(t)
-	s := NewStore(d)
+	s := NewStore(d, nil)
 	ctx := context.Background()
 	p, r := seed(t, s)
 
@@ -161,20 +200,6 @@ func TestStaleVersionIsAConflict(t *testing.T) {
 		t.Fatalf("stale proposal update = %v, want ErrConflict", err)
 	}
 
-	b, err := s.CreateBuild(ctx, core.Build{TaskID: &task.ID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.UpdateBuildStatus(ctx, b.ID, core.BuildCancelled, b.Version); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.UpdateBuildStatus(ctx, b.ID, core.BuildSucceeded, b.Version); !errors.Is(err, ErrConflict) {
-		t.Fatalf("stale build update = %v, want ErrConflict", err)
-	}
-	if gb, err := s.GetBuild(ctx, b.ID); err != nil || gb.Status != core.BuildCancelled {
-		t.Fatalf("build = %+v, %v; cancelled must not be overwritten", gb, err)
-	}
-
 	// A missing row is NotFound, not a conflict.
 	if _, err := s.UpdateTaskStatus(ctx, "nope", core.TaskDone, 0); !errors.Is(err, ErrNotFound) || errors.Is(err, ErrConflict) {
 		t.Fatalf("missing task = %v, want ErrNotFound", err)
@@ -182,29 +207,21 @@ func TestStaleVersionIsAConflict(t *testing.T) {
 	if _, err := s.UpdateProposalStatus(ctx, "nope", core.ProposalFailed, 0); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing proposal = %v, want ErrNotFound", err)
 	}
-	if _, err := s.UpdateBuildStatus(ctx, "nope", core.BuildFailed, 0); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("missing build = %v, want ErrNotFound", err)
-	}
 }
 
 func TestBuildStepFieldsRoundTrip(t *testing.T) {
 	d := openTest(t)
-	s := NewStore(d)
+	s := NewStore(d, nil)
 	ctx := context.Background()
 	p, r := seed(t, s)
 	task, err := s.CreateTask(ctx, newTask(p, r, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := s.CreateBuild(ctx, core.Build{TaskID: &task.ID, Steps: []core.BuildStep{
-		{RepoID: r.ID, Name: "verify", Status: core.BuildQueued, Argv: []string{"go", "test", "./..."}},
+	b, err := s.InsertBuild(ctx, core.Build{TaskID: &task.ID, Steps: []core.BuildStep{
+		{RepoID: r.ID, Name: "verify", Status: core.StepInterrupted, Attempt: 2, Outcome: core.OutcomeInterrupted, Argv: []string{"go", "test", "./..."}},
 	}})
 	if err != nil {
-		t.Fatal(err)
-	}
-	st := b.Steps[0]
-	st.Status, st.Attempt, st.Outcome = core.BuildInterrupted, 2, "interrupted"
-	if err := s.UpdateBuildStep(ctx, b.ID, st); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.GetBuild(ctx, b.ID)
@@ -212,7 +229,7 @@ func TestBuildStepFieldsRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := got.Steps[0]
-	if len(g.Argv) != 3 || g.Argv[2] != "./..." || g.Attempt != 2 || g.Outcome != "interrupted" || g.Status != core.BuildInterrupted {
+	if len(g.Argv) != 3 || g.Argv[2] != "./..." || g.Attempt != 2 || g.Outcome != core.OutcomeInterrupted || g.Status != core.StepInterrupted {
 		t.Fatalf("step = %+v", g)
 	}
 }

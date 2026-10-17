@@ -80,7 +80,9 @@ func TestEnumsAcceptEveryConstantAndRejectOthers(t *testing.T) {
 		"ProposalKind":    {[]validator{ProposalCommit, ProposalPush, ProposalMergeRequest, ProposalInstall, ProposalPublish, ProposalAgentFile, ProposalDeleteFiles, ProposalSubtasks}, []validator{ProposalKind(""), ProposalKind("rm_rf")}},
 		"ProposalStatus":  {[]validator{ProposalPending, ProposalConfirmed, ProposalRejected, ProposalExecuted, ProposalFailed}, []validator{ProposalStatus(""), ProposalStatus("maybe")}},
 		"ChangeSetStatus": {[]validator{ChangeSetOpen, ChangeSetShipped, ChangeSetClosed}, []validator{ChangeSetStatus(""), ChangeSetStatus("lost")}},
-		"BuildStatus":     {[]validator{BuildQueued, BuildRunning, BuildSucceeded, BuildFailed, BuildCancelled, BuildInterrupted, BuildSkipped}, []validator{BuildStatus(""), BuildStatus("stuck")}},
+		"BuildStatus":     {[]validator{BuildQueued, BuildRunning, BuildSucceeded, BuildFailed, BuildCancelled, BuildInterrupted}, []validator{BuildStatus(""), BuildStatus("stuck"), BuildStatus("skipped")}},
+		"StepStatus":      {[]validator{StepQueued, StepRunning, StepSucceeded, StepFailed, StepCancelled, StepSkipped, StepInterrupted}, []validator{StepStatus(""), StepStatus("stuck")}},
+		"StepOutcome":     {[]validator{OutcomeSucceeded, OutcomeFailed, OutcomeStartFailed, OutcomeCancelled, OutcomeInterrupted}, []validator{StepOutcome(""), StepOutcome("bogus")}},
 	}
 	for name, g := range groups {
 		for _, v := range g.good {

@@ -105,7 +105,7 @@ func TestMigrationsUpDownUp(t *testing.T) {
 
 func TestForeignKeyCascade(t *testing.T) {
 	d := openTest(t)
-	s := NewStore(d)
+	s := NewStore(d, nil)
 	ctx := context.Background()
 	p, r := seed(t, s)
 	task, err := s.CreateTask(ctx, newTask(p, r, nil))
@@ -131,7 +131,7 @@ func TestForeignKeyCascade(t *testing.T) {
 
 func TestSubTaskOneLevel(t *testing.T) {
 	d := openTest(t)
-	s := NewStore(d)
+	s := NewStore(d, nil)
 	ctx := context.Background()
 	p, r := seed(t, s)
 	parent, err := s.CreateTask(ctx, newTask(p, r, nil))
@@ -165,7 +165,7 @@ func TestSubTaskOneLevel(t *testing.T) {
 
 func TestAuditLogAppendOnly(t *testing.T) {
 	d := openTest(t)
-	s := NewStore(d)
+	s := NewStore(d, nil)
 	ctx := context.Background()
 	e := core.AuditEntry{ID: "aud_1", At: time.Now(), Actor: "system", Action: "test", Subject: "task:1"}
 	if err := s.Commit(ctx, func(tx *Tx) error { return tx.AppendAudit(ctx, e) }); err != nil {
@@ -184,7 +184,7 @@ func TestAuditLogAppendOnly(t *testing.T) {
 
 func TestConcurrentWriters(t *testing.T) {
 	d := openTest(t)
-	s := NewStore(d)
+	s := NewStore(d, nil)
 	ctx := context.Background()
 	const n = 40
 	var wg sync.WaitGroup
@@ -213,7 +213,7 @@ func TestConcurrentWriters(t *testing.T) {
 
 func TestStoreRoundTrip(t *testing.T) {
 	d := openTest(t)
-	s := NewStore(d)
+	s := NewStore(d, nil)
 	ctx := context.Background()
 	p, r := seed(t, s)
 
@@ -290,18 +290,13 @@ func TestStoreRoundTrip(t *testing.T) {
 		t.Fatalf("proposal = %+v, %v", gotP, err)
 	}
 
-	b, err := s.CreateBuild(ctx, core.Build{TaskID: &task.ID, WorktreeID: &wt.ID, Steps: []core.BuildStep{
-		{RepoID: r.ID, Name: "build", Status: core.BuildQueued},
-		{RepoID: r.ID, Name: "test", Status: core.BuildQueued},
+	code := 0
+	fin := time.Now().UTC()
+	b, err := s.InsertBuild(ctx, core.Build{TaskID: &task.ID, WorktreeID: &wt.ID, Status: core.BuildSucceeded, FinishedAt: &fin, Steps: []core.BuildStep{
+		{RepoID: r.ID, Name: "build", Status: core.StepQueued},
+		{RepoID: r.ID, Name: "test", Status: core.StepSucceeded, ExitCode: &code},
 	}})
 	if err != nil {
-		t.Fatal(err)
-	}
-	code := 0
-	if err := s.UpdateBuildStep(ctx, b.ID, core.BuildStep{Index: 1, Status: core.BuildSucceeded, ExitCode: &code}); err != nil {
-		t.Fatal(err)
-	}
-	if v, err := s.UpdateBuildStatus(ctx, b.ID, core.BuildSucceeded, b.Version); err != nil || v != 1 {
 		t.Fatal(err)
 	}
 	gotB, err := s.GetBuild(ctx, b.ID)

@@ -120,6 +120,28 @@ var corePure = rule{name: "core imports only pure packages", check: func(f file)
 	return out
 }}
 
+// storeAllowed reports whether name may be an exported method of db.Store.
+func storeAllowed(name string) bool {
+	return name == "Commit" || name == "AppendTaskEvent" || name == "TaskDependencies" ||
+		strings.HasPrefix(name, "Get") || strings.HasPrefix(name, "List")
+}
+
+// storeWrites forbids an exported write method on db.Store other than the
+// allowed set. Since only internal/db can declare methods on its own type,
+// this also means no package outside it can call an un-audited write.
+var storeWrites = rule{name: "Store exports no un-audited write", check: func(f file) []string {
+	if f.dir != "internal/db" || f.test {
+		return nil
+	}
+	var out []string
+	for _, m := range f.storeMethods {
+		if !storeAllowed(m) {
+			out = append(out, violation(f, "Store.%s is exported; writes go through Store.Commit with an audit entry (allowed: Commit, AppendTaskEvent, Get*, List*, TaskDependencies)", m))
+		}
+	}
+	return out
+}}
+
 // rules are the architecture rules of docs/AGENTS.md sections 5 and 6.
 var rules = []rule{
 	// 5.3 Processes: every child process starts through platform.Start.
@@ -144,6 +166,13 @@ var rules = []rule{
 	banOutside("AppendAudit", "calls AppendAudit without audit.Prepare, which redacts", func(f file) bool {
 		return f.calls("AppendAudit") && !f.uses1(internalPrefix+"audit.Prepare")
 	}, "internal/db", "internal/audit"),
+
+	// Invariant 8: every write of state goes through Store.Commit, with its
+	// audit entry in the same transaction. Store exports no other write:
+	// reads (Get*, List*, TaskDependencies), Commit, and AppendTaskEvent (the
+	// transcript is not audited by design). Test helpers live in _test.go
+	// files and in internal/db/dbtest.
+	storeWrites,
 
 	// 5.1: the data model imports nothing from the rest of Yggdrasil.
 	onlyInternalImports("core is a leaf", "internal/core"),

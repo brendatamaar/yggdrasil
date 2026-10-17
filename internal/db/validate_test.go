@@ -10,7 +10,7 @@ import (
 // The store refuses values the core calls invalid, before they reach SQL.
 func TestStoreRejectsInvalidValues(t *testing.T) {
 	d := openTest(t)
-	s := NewStore(d)
+	s := NewStore(d, nil)
 	ctx := context.Background()
 	p, r := seed(t, s)
 	task, err := s.CreateTask(ctx, newTask(p, r, nil))

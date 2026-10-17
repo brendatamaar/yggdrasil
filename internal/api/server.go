@@ -20,6 +20,7 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/agents"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	"github.com/brendatamaar/yggdrasil/internal/db"
+	"github.com/brendatamaar/yggdrasil/internal/platform"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
 
@@ -40,6 +41,9 @@ type Deps struct {
 	// AllowedOrigins are extra browser origins that may call the API, such as
 	// the Vite dev server (http://localhost:5173).
 	AllowedOrigins []string
+	// KillTask stops every process still running for a task ID (agent
+	// helpers, anything the task started). Default: platform.KillTask.
+	KillTask func(taskID string) error
 }
 
 // Server serves the API. Create it with New, run it with Run (or use Handler
@@ -57,6 +61,13 @@ type Server struct {
 	port           atomic.Int32 // the listener's port once Run has started
 
 	hub *hub
+
+	// killTask stops what is left of a task's processes before its final
+	// status is stored, so no client sees done or cancelled while they live.
+	killTask func(taskID string) error
+
+	// newTaskID makes the ID of a new task: randomness stays in the shell.
+	newTaskID func() core.TaskID
 
 	// ctx is the parent of every task run; Close cancels it.
 	ctx    context.Context
@@ -93,6 +104,11 @@ func New(d Deps) (*Server, error) {
 		store: d.Store, adapters: d.Adapters, env: d.Env, log: log, redactor: redactor,
 		version: d.Version, assets: as, allowedOrigins: d.AllowedOrigins,
 		hub: newHub(log), ctx: ctx, stop: stop, cancel: map[core.TaskID]context.CancelFunc{},
+	}
+	s.newTaskID = func() core.TaskID { return core.TaskID(db.NewID("tsk")) }
+	s.killTask = d.KillTask
+	if s.killTask == nil {
+		s.killTask = platform.KillTask
 	}
 	if s.adapters == nil {
 		s.adapters = map[string]agents.Adapter{}

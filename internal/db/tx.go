@@ -17,10 +17,13 @@ import (
 // audit entry (AppendAudit) are committed together or not at all
 // (docs/AGENTS.md 5.11 step 3, invariant 8). A Tx is valid only inside the
 // function passed to Commit.
-type Tx struct{ q *gen.Queries }
+type Tx struct {
+	q      *gen.Queries
+	redact func(string) string
+}
 
-// Commit runs fn in one write transaction. If fn returns an error, or the
-// commit fails, nothing is written. A UNIQUE or PRIMARY KEY violation comes
+// Commit runs fn in one write transaction. If fn returns an error or panics,
+// or the commit fails, nothing is written. A UNIQUE or PRIMARY KEY violation comes
 // back as ErrConflict and a FOREIGN KEY violation as ErrNotFound. fn must use only the Tx it gets: calling
 // the Store from inside fn would wait forever for the one write connection.
 func (s *Store) Commit(ctx context.Context, fn func(*Tx) error) error {
@@ -28,36 +31,44 @@ func (s *Store) Commit(ctx context.Context, fn func(*Tx) error) error {
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	if err := fn(&Tx{q: gen.New(tx)}); err != nil {
+	// A panic in fn must not leave the transaction open: the one write
+	// connection would stay held and every later Commit would wait forever.
+	// Roll back and let the panic go on.
+	finished := false
+	defer func() {
+		if !finished {
+			_ = tx.Rollback()
+		}
+	}()
+	if err := fn(&Tx{q: gen.New(tx), redact: s.redact}); err != nil {
+		finished = true
 		return errors.Join(classify(err), tx.Rollback())
 	}
+	finished = true
 	if err := tx.Commit(); err != nil {
 		return classify(fmt.Errorf("commit transaction: %w", err))
 	}
 	return nil
 }
 
-// commit1 runs fn in a Commit and returns its value: the shape of every
-// single-write Store method.
-func commit1[T any](ctx context.Context, s *Store, fn func(*Tx) (T, error)) (T, error) {
-	var out T
-	err := s.Commit(ctx, func(tx *Tx) error {
-		v, err := fn(tx)
-		out = v
-		return err
-	})
-	return out, err
+// needTime rejects a zero time: the store never reads the clock, so a caller
+// that forgot one gets an error and not "now".
+func needTime(what string, ts ...time.Time) error {
+	for _, t := range ts {
+		if t.IsZero() {
+			return fmt.Errorf("%s needs a time from the caller; the store does not read the clock", what)
+		}
+	}
+	return nil
 }
 
 // Projects
 
-// CreateProject stores p. An empty ID or zero CreatedAt is filled in.
+// CreateProject stores p. The caller supplies the ID and CreatedAt: the store
+// neither generates IDs nor reads the clock.
 func (tx *Tx) CreateProject(ctx context.Context, p core.Project) (core.Project, error) {
-	if p.ID == "" {
-		p.ID = core.ProjectID(NewID("prj"))
-	}
-	if p.CreatedAt.IsZero() {
-		p.CreatedAt = time.Now()
+	if err := needTime("project", p.CreatedAt); err != nil {
+		return p, err
 	}
 	p.CreatedAt = p.CreatedAt.UTC().Truncate(time.Millisecond)
 	if err := p.Validate(); err != nil {
@@ -72,20 +83,12 @@ func (tx *Tx) CreateProject(ctx context.Context, p core.Project) (core.Project, 
 	return p, nil
 }
 
-// CreateProject stores p in its own transaction.
-func (s *Store) CreateProject(ctx context.Context, p core.Project) (core.Project, error) {
-	return commit1(ctx, s, func(tx *Tx) (core.Project, error) { return tx.CreateProject(ctx, p) })
-}
-
 // Repos
 
-// CreateRepo stores r. An empty ID or zero CreatedAt is filled in.
+// CreateRepo stores r. The caller supplies the ID and CreatedAt.
 func (tx *Tx) CreateRepo(ctx context.Context, r core.Repo) (core.Repo, error) {
-	if r.ID == "" {
-		r.ID = core.RepoID(NewID("rep"))
-	}
-	if r.CreatedAt.IsZero() {
-		r.CreatedAt = time.Now()
+	if err := needTime("repo", r.CreatedAt); err != nil {
+		return r, err
 	}
 	r.CreatedAt = r.CreatedAt.UTC().Truncate(time.Millisecond)
 	if err := r.Validate(); err != nil {
@@ -101,40 +104,23 @@ func (tx *Tx) CreateRepo(ctx context.Context, r core.Repo) (core.Repo, error) {
 	return r, nil
 }
 
-// CreateRepo stores r in its own transaction.
-func (s *Store) CreateRepo(ctx context.Context, r core.Repo) (core.Repo, error) {
-	return commit1(ctx, s, func(tx *Tx) (core.Repo, error) { return tx.CreateRepo(ctx, r) })
-}
-
 // SetRepoTrusted records the user's answer to the repo-hooks prompt (SF-09).
 func (tx *Tx) SetRepoTrusted(ctx context.Context, id core.RepoID, trusted bool) error {
 	n, err := tx.q.SetRepoTrusted(ctx, gen.SetRepoTrustedParams{Trusted: b2i(trusted), ID: string(id)})
 	return updated("set repo trusted "+string(id), n, err)
 }
 
-// SetRepoTrusted records the answer in its own transaction.
-func (s *Store) SetRepoTrusted(ctx context.Context, id core.RepoID, trusted bool) error {
-	return s.Commit(ctx, func(tx *Tx) error { return tx.SetRepoTrusted(ctx, id, trusted) })
-}
-
 // Tasks
 
-// CreateTask validates and stores t with its repo scope. An empty ID or zero
-// times are filled in; an empty status becomes draft. A sub-task of a
-// sub-task returns ErrSubTaskDepth.
+// CreateTask validates and stores t with its repo scope. The caller supplies
+// the ID, CreatedAt and UpdatedAt; an empty status becomes draft. A sub-task
+// of a sub-task returns ErrSubTaskDepth.
 func (tx *Tx) CreateTask(ctx context.Context, t core.Task) (core.Task, error) {
-	if t.ID == "" {
-		t.ID = core.TaskID(NewID("tsk"))
-	}
 	if t.Status == "" {
 		t.Status = core.TaskDraft
 	}
-	now := time.Now().UTC().Truncate(time.Millisecond)
-	if t.CreatedAt.IsZero() {
-		t.CreatedAt = now
-	}
-	if t.UpdatedAt.IsZero() {
-		t.UpdatedAt = t.CreatedAt
+	if err := needTime("task", t.CreatedAt, t.UpdatedAt); err != nil {
+		return t, err
 	}
 	t.CreatedAt, t.UpdatedAt = t.CreatedAt.UTC().Truncate(time.Millisecond), t.UpdatedAt.UTC().Truncate(time.Millisecond)
 	if err := t.Validate(); err != nil {
@@ -162,11 +148,6 @@ func (tx *Tx) CreateTask(ctx context.Context, t core.Task) (core.Task, error) {
 	return t, nil
 }
 
-// CreateTask stores t in its own transaction.
-func (s *Store) CreateTask(ctx context.Context, t core.Task) (core.Task, error) {
-	return commit1(ctx, s, func(tx *Tx) (core.Task, error) { return tx.CreateTask(ctx, t) })
-}
-
 // bumped finishes a versioned update (… SET …, version = version + 1 WHERE
 // id = ? AND version = ?) that changed n rows. Zero rows means either the row
 // is gone (ErrNotFound) or its version moved on (ErrConflict): probe tells
@@ -188,14 +169,16 @@ func bumped(what string, n int64, err error, version int64, probe func() error) 
 	}
 }
 
-// UpdateTaskStatus sets the status if the task is still at version; finished_at
-// is set when the status is terminal. It returns the new version. A stale
-// version returns ErrConflict.
-func (tx *Tx) UpdateTaskStatus(ctx context.Context, id core.TaskID, status core.TaskStatus, version int64) (int64, error) {
+// UpdateTaskStatus sets the status if the task is still at version; now is
+// the update time, and finished_at when the status is terminal. It returns
+// the new version. A stale version returns ErrConflict.
+func (tx *Tx) UpdateTaskStatus(ctx context.Context, id core.TaskID, status core.TaskStatus, version int64, now time.Time) (int64, error) {
 	if err := status.Validate(); err != nil {
 		return 0, err
 	}
-	now := time.Now()
+	if err := needTime("task update", now); err != nil {
+		return 0, err
+	}
 	var fin *time.Time
 	if status.Terminal() {
 		fin = &now
@@ -206,23 +189,16 @@ func (tx *Tx) UpdateTaskStatus(ctx context.Context, id core.TaskID, status core.
 	return bumped("update task "+string(id), n, err, version, func() error { _, err := tx.q.GetTask(ctx, string(id)); return err })
 }
 
-// UpdateTaskStatus sets the status in its own transaction.
-func (s *Store) UpdateTaskStatus(ctx context.Context, id core.TaskID, status core.TaskStatus, version int64) (int64, error) {
-	return commit1(ctx, s, func(tx *Tx) (int64, error) { return tx.UpdateTaskStatus(ctx, id, status, version) })
-}
-
 // SetTaskSession records the agent's resumable session ID if the task is
-// still at version, and returns the new version.
-func (tx *Tx) SetTaskSession(ctx context.Context, id core.TaskID, session string, version int64) (int64, error) {
+// still at version (now is the update time), and returns the new version.
+func (tx *Tx) SetTaskSession(ctx context.Context, id core.TaskID, session string, version int64, now time.Time) (int64, error) {
+	if err := needTime("task update", now); err != nil {
+		return 0, err
+	}
 	n, err := tx.q.UpdateTaskSession(ctx, gen.UpdateTaskSessionParams{
-		SessionID: session, UpdatedAt: fmtTime(time.Now()), ID: string(id), Version: version,
+		SessionID: session, UpdatedAt: fmtTime(now), ID: string(id), Version: version,
 	})
 	return bumped("update task session "+string(id), n, err, version, func() error { _, err := tx.q.GetTask(ctx, string(id)); return err })
-}
-
-// SetTaskSession records the session in its own transaction.
-func (s *Store) SetTaskSession(ctx context.Context, id core.TaskID, session string, version int64) (int64, error) {
-	return commit1(ctx, s, func(tx *Tx) (int64, error) { return tx.SetTaskSession(ctx, id, session, version) })
 }
 
 // AddTaskDependency makes task start after dependsOn (AG-25). The caller
@@ -235,23 +211,16 @@ func (tx *Tx) AddTaskDependency(ctx context.Context, task, dependsOn core.TaskID
 	return nil
 }
 
-// AddTaskDependency stores the dependency in its own transaction.
-func (s *Store) AddTaskDependency(ctx context.Context, task, dependsOn core.TaskID) error {
-	return s.Commit(ctx, func(tx *Tx) error { return tx.AddTaskDependency(ctx, task, dependsOn) })
-}
-
 // Worktrees
 
-// CreateWorktree stores w. An empty ID, status or zero CreatedAt is filled in.
+// CreateWorktree stores w. The caller supplies the ID and CreatedAt; an empty
+// status becomes active.
 func (tx *Tx) CreateWorktree(ctx context.Context, w core.Worktree) (core.Worktree, error) {
-	if w.ID == "" {
-		w.ID = core.WorktreeID(NewID("wt"))
-	}
 	if w.Status == "" {
 		w.Status = core.WorktreeActive
 	}
-	if w.CreatedAt.IsZero() {
-		w.CreatedAt = time.Now()
+	if err := needTime("worktree", w.CreatedAt); err != nil {
+		return w, err
 	}
 	w.CreatedAt = w.CreatedAt.UTC().Truncate(time.Millisecond)
 	if err := w.ID.Validate(); err != nil {
@@ -270,11 +239,6 @@ func (tx *Tx) CreateWorktree(ctx context.Context, w core.Worktree) (core.Worktre
 	return w, nil
 }
 
-// CreateWorktree stores w in its own transaction.
-func (s *Store) CreateWorktree(ctx context.Context, w core.Worktree) (core.Worktree, error) {
-	return commit1(ctx, s, func(tx *Tx) (core.Worktree, error) { return tx.CreateWorktree(ctx, w) })
-}
-
 // UpdateWorktreeStatus sets the status of a worktree.
 func (tx *Tx) UpdateWorktreeStatus(ctx context.Context, id core.WorktreeID, status core.WorktreeStatus) error {
 	if err := status.Validate(); err != nil {
@@ -282,11 +246,6 @@ func (tx *Tx) UpdateWorktreeStatus(ctx context.Context, id core.WorktreeID, stat
 	}
 	n, err := tx.q.UpdateWorktreeStatus(ctx, gen.UpdateWorktreeStatusParams{Status: string(status), ID: string(id)})
 	return updated("update worktree "+string(id), n, err)
-}
-
-// UpdateWorktreeStatus sets the status in its own transaction.
-func (s *Store) UpdateWorktreeStatus(ctx context.Context, id core.WorktreeID, status core.WorktreeStatus) error {
-	return s.Commit(ctx, func(tx *Tx) error { return tx.UpdateWorktreeStatus(ctx, id, status) })
 }
 
 // Task events
@@ -302,26 +261,27 @@ func (tx *Tx) AppendTaskEvent(ctx context.Context, e TaskEvent) error {
 	return nil
 }
 
-// AppendTaskEvent stores the event in its own transaction.
+// AppendTaskEvent stores the event in its own transaction. It is the one
+// write that Store exports outside Commit: the transcript is a log of what the
+// agent said, not state that changes anything, so it has no audit entry by
+// design (internal/archtest allows exactly this method and Commit).
 func (s *Store) AppendTaskEvent(ctx context.Context, e TaskEvent) error {
 	return s.Commit(ctx, func(tx *Tx) error { return tx.AppendTaskEvent(ctx, e) })
 }
 
 // Change sets
 
-// CreateChangeSet stores c. An empty ID, status or zero CreatedAt is filled in.
+// CreateChangeSet stores c. The caller supplies the ID and CreatedAt; an empty
+// status becomes open.
 func (tx *Tx) CreateChangeSet(ctx context.Context, c core.ChangeSet) (core.ChangeSet, error) {
-	if c.ID == "" {
-		c.ID = core.ChangeSetID(NewID("cs"))
-	}
 	if c.Status == "" {
 		c.Status = core.ChangeSetOpen
 	}
 	if c.MergeOrder == nil {
 		c.MergeOrder = []core.RepoID{}
 	}
-	if c.CreatedAt.IsZero() {
-		c.CreatedAt = time.Now()
+	if err := needTime("change set", c.CreatedAt); err != nil {
+		return c, err
 	}
 	c.CreatedAt = c.CreatedAt.UTC().Truncate(time.Millisecond)
 	if err := c.ID.Validate(); err != nil {
@@ -343,11 +303,6 @@ func (tx *Tx) CreateChangeSet(ctx context.Context, c core.ChangeSet) (core.Chang
 	return c, nil
 }
 
-// CreateChangeSet stores c in its own transaction.
-func (s *Store) CreateChangeSet(ctx context.Context, c core.ChangeSet) (core.ChangeSet, error) {
-	return commit1(ctx, s, func(tx *Tx) (core.ChangeSet, error) { return tx.CreateChangeSet(ctx, c) })
-}
-
 // UpdateChangeSetStatus sets the status of a change set.
 func (tx *Tx) UpdateChangeSetStatus(ctx context.Context, id core.ChangeSetID, status core.ChangeSetStatus) error {
 	if err := status.Validate(); err != nil {
@@ -357,23 +312,16 @@ func (tx *Tx) UpdateChangeSetStatus(ctx context.Context, id core.ChangeSetID, st
 	return updated("update change set "+string(id), n, err)
 }
 
-// UpdateChangeSetStatus sets the status in its own transaction.
-func (s *Store) UpdateChangeSetStatus(ctx context.Context, id core.ChangeSetID, status core.ChangeSetStatus) error {
-	return s.Commit(ctx, func(tx *Tx) error { return tx.UpdateChangeSetStatus(ctx, id, status) })
-}
-
 // Proposals
 
-// CreateProposal stores p. An empty ID, status or zero CreatedAt is filled in.
+// CreateProposal stores p. The caller supplies the ID and CreatedAt; an empty
+// status becomes pending.
 func (tx *Tx) CreateProposal(ctx context.Context, p core.Proposal) (core.Proposal, error) {
-	if p.ID == "" {
-		p.ID = core.ProposalID(NewID("prop"))
-	}
 	if p.Status == "" {
 		p.Status = core.ProposalPending
 	}
-	if p.CreatedAt.IsZero() {
-		p.CreatedAt = time.Now()
+	if err := needTime("proposal", p.CreatedAt); err != nil {
+		return p, err
 	}
 	p.CreatedAt = p.CreatedAt.UTC().Truncate(time.Millisecond)
 	if err := p.ID.Validate(); err != nil {
@@ -396,22 +344,19 @@ func (tx *Tx) CreateProposal(ctx context.Context, p core.Proposal) (core.Proposa
 	return p, nil
 }
 
-// CreateProposal stores p in its own transaction.
-func (s *Store) CreateProposal(ctx context.Context, p core.Proposal) (core.Proposal, error) {
-	return commit1(ctx, s, func(tx *Tx) (core.Proposal, error) { return tx.CreateProposal(ctx, p) })
-}
-
 // UpdateProposalStatus sets the status if the proposal is still at version;
-// decided_at is set for every status except pending. It returns the new
-// version. A stale version returns ErrConflict.
-func (tx *Tx) UpdateProposalStatus(ctx context.Context, id core.ProposalID, status core.ProposalStatus, version int64) (int64, error) {
+// decided_at is set to decidedAt for every status except pending. It returns
+// the new version. A stale version returns ErrConflict.
+func (tx *Tx) UpdateProposalStatus(ctx context.Context, id core.ProposalID, status core.ProposalStatus, version int64, decidedAt time.Time) (int64, error) {
 	if err := status.Validate(); err != nil {
 		return 0, err
 	}
 	var decided *time.Time
 	if status != core.ProposalPending {
-		now := time.Now()
-		decided = &now
+		if err := needTime("proposal decision", decidedAt); err != nil {
+			return 0, err
+		}
+		decided = &decidedAt
 	}
 	n, err := tx.q.UpdateProposalStatus(ctx, gen.UpdateProposalStatusParams{
 		Status: string(status), DecidedAt: fmtNullTime(decided), ID: string(id), Version: version,
@@ -419,110 +364,13 @@ func (tx *Tx) UpdateProposalStatus(ctx context.Context, id core.ProposalID, stat
 	return bumped("update proposal "+string(id), n, err, version, func() error { _, err := tx.q.GetProposal(ctx, string(id)); return err })
 }
 
-// UpdateProposalStatus sets the status in its own transaction.
-func (s *Store) UpdateProposalStatus(ctx context.Context, id core.ProposalID, status core.ProposalStatus, version int64) (int64, error) {
-	return commit1(ctx, s, func(tx *Tx) (int64, error) { return tx.UpdateProposalStatus(ctx, id, status, version) })
-}
-
-// Builds
-
-// CreateBuild stores b and its steps. An empty ID, status or zero CreatedAt
-// is filled in; step indexes are set to their position.
-func (tx *Tx) CreateBuild(ctx context.Context, b core.Build) (core.Build, error) {
-	if b.ID == "" {
-		b.ID = core.BuildID(NewID("bld"))
-	}
-	if b.Status == "" {
-		b.Status = core.BuildQueued
-	}
-	if b.CreatedAt.IsZero() {
-		b.CreatedAt = time.Now()
-	}
-	b.CreatedAt = b.CreatedAt.UTC().Truncate(time.Millisecond)
-	if err := b.ID.Validate(); err != nil {
-		return b, err
-	}
-	if b.Steps == nil {
-		b.Steps = []core.BuildStep{}
-	}
-	err := tx.q.CreateBuild(ctx, gen.CreateBuildParams{
-		ID: string(b.ID), WorktreeID: nullStr(b.WorktreeID), TaskID: nullStr(b.TaskID), Status: string(b.Status),
-		CreatedAt: fmtTime(b.CreatedAt), FinishedAt: fmtNullTime(b.FinishedAt),
-	})
-	if err != nil {
-		return b, fmt.Errorf("create build: %w", err)
-	}
-	for i, st := range b.Steps {
-		b.Steps[i].Index = i
-		argv, err := argvText(st.Argv)
-		if err != nil {
-			return b, err
-		}
-		err = tx.q.CreateBuildStep(ctx, gen.CreateBuildStepParams{
-			BuildID: string(b.ID), Idx: int64(i), RepoID: string(st.RepoID), Name: st.Name, Status: string(st.Status),
-			ExitCode: nullInt(st.ExitCode), LogPath: st.LogPath, StartedAt: fmtNullTime(st.StartedAt), FinishedAt: fmtNullTime(st.FinishedAt),
-			Argv: argv, Attempt: int64(st.Attempt), Outcome: nullText(st.Outcome),
-		})
-		if err != nil {
-			return b, fmt.Errorf("create build: %w", err)
-		}
-	}
-	return b, nil
-}
-
-// CreateBuild stores b in its own transaction.
-func (s *Store) CreateBuild(ctx context.Context, b core.Build) (core.Build, error) {
-	return commit1(ctx, s, func(tx *Tx) (core.Build, error) { return tx.CreateBuild(ctx, b) })
-}
-
-// UpdateBuildStatus sets the status if the build is still at version;
-// finished_at is set when the build ended. It returns the new version. A
-// stale version returns ErrConflict.
-func (tx *Tx) UpdateBuildStatus(ctx context.Context, id core.BuildID, status core.BuildStatus, version int64) (int64, error) {
-	if err := status.Validate(); err != nil {
-		return 0, err
-	}
-	var fin *time.Time
-	if status != core.BuildQueued && status != core.BuildRunning {
-		now := time.Now()
-		fin = &now
-	}
-	n, err := tx.q.UpdateBuildStatus(ctx, gen.UpdateBuildStatusParams{
-		Status: string(status), FinishedAt: fmtNullTime(fin), ID: string(id), Version: version,
-	})
-	return bumped("update build "+string(id), n, err, version, func() error { _, err := tx.q.GetBuild(ctx, string(id)); return err })
-}
-
-// UpdateBuildStatus sets the status in its own transaction.
-func (s *Store) UpdateBuildStatus(ctx context.Context, id core.BuildID, status core.BuildStatus, version int64) (int64, error) {
-	return commit1(ctx, s, func(tx *Tx) (int64, error) { return tx.UpdateBuildStatus(ctx, id, status, version) })
-}
-
-// UpdateBuildStep replaces the mutable fields of step st.Index of a build.
-// Steps have no version of their own: they are saved with their build.
-func (tx *Tx) UpdateBuildStep(ctx context.Context, id core.BuildID, st core.BuildStep) error {
-	if err := st.Status.Validate(); err != nil {
-		return err
-	}
-	n, err := tx.q.UpdateBuildStep(ctx, gen.UpdateBuildStepParams{
-		Status: string(st.Status), ExitCode: nullInt(st.ExitCode), LogPath: st.LogPath,
-		StartedAt: fmtNullTime(st.StartedAt), FinishedAt: fmtNullTime(st.FinishedAt),
-		Attempt: int64(st.Attempt), Outcome: nullText(st.Outcome), BuildID: string(id), Idx: int64(st.Index),
-	})
-	return updated(fmt.Sprintf("update build %s step %d", id, st.Index), n, err)
-}
-
-// UpdateBuildStep replaces the step in its own transaction.
-func (s *Store) UpdateBuildStep(ctx context.Context, id core.BuildID, st core.BuildStep) error {
-	return s.Commit(ctx, func(tx *Tx) error { return tx.UpdateBuildStep(ctx, id, st) })
-}
-
 // Audit log
 
-// AppendAudit stores e as it is in the same transaction as the state it
-// describes (invariant 8). The entry must come from audit.Prepare, which
-// redacts it (invariant 4); this layer only rejects what the table could not
-// hold.
+// AppendAudit stores e in the same transaction as the state it describes
+// (invariant 8). The entry should come from audit.Prepare, which redacts it;
+// as a backstop (invariant 4) the actor, action, subject and detail are
+// redacted here again with the Store's redactor, so an entry that skipped
+// Prepare still cannot put a token in the log. Detail stays valid JSON.
 func (tx *Tx) AppendAudit(ctx context.Context, e core.AuditEntry) error {
 	if err := e.ID.Validate(); err != nil {
 		return err
@@ -533,11 +381,33 @@ func (tx *Tx) AppendAudit(ctx context.Context, e core.AuditEntry) error {
 	if len(e.Detail) > 0 && !json.Valid(e.Detail) {
 		return errors.New("audit detail is not valid JSON")
 	}
-	err := tx.q.InsertAuditEntry(ctx, gen.InsertAuditEntryParams{
-		ID: string(e.ID), At: fmtTime(e.At), Actor: e.Actor, Action: e.Action, Subject: e.Subject, Detail: jsonText(e.Detail, "{}"),
+	detail, err := redactJSON(tx.redact, e.Detail)
+	if err != nil {
+		return err
+	}
+	err = tx.q.InsertAuditEntry(ctx, gen.InsertAuditEntryParams{
+		ID: string(e.ID), At: fmtTime(e.At), Actor: tx.redact(e.Actor), Action: tx.redact(e.Action),
+		Subject: tx.redact(e.Subject), Detail: detail,
 	})
 	if err != nil {
 		return fmt.Errorf("write audit entry: %w", err)
 	}
 	return nil
+}
+
+// redactJSON redacts JSON text. If masking breaks the JSON (a secret with
+// characters JSON escapes), the redacted text is stored as a JSON string.
+func redactJSON(redact func(string) string, raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
+		return "{}", nil
+	}
+	red := redact(string(raw))
+	if json.Valid([]byte(red)) {
+		return red, nil
+	}
+	b, err := json.Marshal(red)
+	if err != nil {
+		return "", fmt.Errorf("encode audit detail: %w", err)
+	}
+	return string(b), nil
 }

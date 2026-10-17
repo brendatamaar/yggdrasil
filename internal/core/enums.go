@@ -94,9 +94,35 @@ const (
 	// BuildInterrupted: ygg stopped while the build ran, so its process tree
 	// is gone (the job object guarantees it).
 	BuildInterrupted BuildStatus = "interrupted"
-	// BuildSkipped is for a step that never ran because an earlier one failed
+)
+
+// StepStatus is the state of one build step.
+type StepStatus string
+
+const (
+	StepQueued    StepStatus = "queued"
+	StepRunning   StepStatus = "running"
+	StepSucceeded StepStatus = "succeeded"
+	StepFailed    StepStatus = "failed"
+	StepCancelled StepStatus = "cancelled"
+	// StepSkipped is for a step that never ran because an earlier one failed
 	// or the build was cancelled.
-	BuildSkipped BuildStatus = "skipped"
+	StepSkipped StepStatus = "skipped"
+	// StepInterrupted: ygg stopped while the step ran.
+	StepInterrupted StepStatus = "interrupted"
+)
+
+// StepOutcome is how the last attempt of a step ended. A step that has not
+// finished has no outcome (the empty value, which Validate rejects: check for
+// it before validating).
+type StepOutcome string
+
+const (
+	OutcomeSucceeded   StepOutcome = "succeeded"
+	OutcomeFailed      StepOutcome = "failed"
+	OutcomeStartFailed StepOutcome = "start_failed"
+	OutcomeCancelled   StepOutcome = "cancelled"
+	OutcomeInterrupted StepOutcome = "interrupted"
 )
 
 // Validate reports whether m is a known mode.
@@ -157,10 +183,28 @@ func (s ProposalStatus) Validate() error {
 // Validate reports whether s is a known build status.
 func (s BuildStatus) Validate() error {
 	switch s {
-	case BuildQueued, BuildRunning, BuildSucceeded, BuildFailed, BuildCancelled, BuildInterrupted, BuildSkipped:
+	case BuildQueued, BuildRunning, BuildSucceeded, BuildFailed, BuildCancelled, BuildInterrupted:
 		return nil
 	}
 	return fmt.Errorf("unknown build status %q", string(s))
+}
+
+// Validate reports whether s is a known step status.
+func (s StepStatus) Validate() error {
+	switch s {
+	case StepQueued, StepRunning, StepSucceeded, StepFailed, StepCancelled, StepSkipped, StepInterrupted:
+		return nil
+	}
+	return fmt.Errorf("unknown build step status %q", string(s))
+}
+
+// Validate reports whether o is a known step outcome.
+func (o StepOutcome) Validate() error {
+	switch o {
+	case OutcomeSucceeded, OutcomeFailed, OutcomeStartFailed, OutcomeCancelled, OutcomeInterrupted:
+		return nil
+	}
+	return fmt.Errorf("unknown build step outcome %q", string(o))
 }
 
 // Validate reports whether s is a known worktree status.

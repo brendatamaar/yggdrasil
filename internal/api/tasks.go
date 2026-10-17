@@ -183,7 +183,19 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id := core.TaskID(db.NewID("tsk"))
+	id := s.newTaskID()
+	created := time.Now().UTC()
+	newTask := core.Task{
+		ID: id, ProjectID: project.ID, Title: taskTitle(req.Title, id), Prompt: prompt, Scope: core.ScopeRepo,
+		RepoIDs: []core.RepoID{repo.ID}, Mode: core.ModeAsk, Agent: req.Agent, Model: req.Model, Status: core.TaskQueued,
+		CreatedAt: created, UpdatedAt: created,
+	}
+	// The request passed every check above; a task the core still calls
+	// invalid is the caller's input, not a server fault.
+	if err := newTask.Validate(); err != nil {
+		s.fail(w, r, apperr.New(apperr.Invalid, "That task can't be created. Check the project, repo and mode and try again.", err))
+		return
+	}
 	entry, err := s.entry("user", "task.create", id, map[string]any{
 		"agent": req.Agent, "mode": core.ModeAsk, "repo": repo.ID, "promptChars": utf8.RuneCountInString(prompt),
 	})
@@ -194,10 +206,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	// The task and its audit entry are one commit: no task without an entry.
 	var task core.Task
 	err = s.store.Commit(ctx, func(tx *db.Tx) error {
-		t, err := tx.CreateTask(ctx, core.Task{
-			ID: id, ProjectID: project.ID, Title: taskTitle(req.Title, id), Prompt: prompt, Scope: core.ScopeRepo,
-			RepoIDs: []core.RepoID{repo.ID}, Mode: core.ModeAsk, Agent: req.Agent, Model: req.Model, Status: core.TaskQueued,
-		})
+		t, err := tx.CreateTask(ctx, newTask)
 		if err != nil {
 			return err
 		}
@@ -320,7 +329,7 @@ func (s *Server) transition(ctx context.Context, task *core.Task, status core.Ta
 	}
 	var version int64
 	err = s.store.Commit(ctx, func(tx *db.Tx) error {
-		v, err := tx.UpdateTaskStatus(ctx, task.ID, status, task.Version)
+		v, err := tx.UpdateTaskStatus(ctx, task.ID, status, task.Version, time.Now().UTC())
 		if err != nil {
 			return err
 		}
@@ -365,11 +374,6 @@ func (s *Server) start(task core.Task, repo core.Repo, adapter agents.Adapter) {
 	s.group.Go(func() error {
 		defer func() {
 			cancel()
-			// Cancelling ctx stops only the agent's own process tree; the
-			// task job may still hold other processes the task started.
-			if err := platform.KillTask(string(task.ID)); err != nil {
-				s.log.Error("kill task processes", "task", task.ID, "err", err)
-			}
 			s.mu.Lock()
 			delete(s.cancel, task.ID)
 			s.mu.Unlock()
@@ -390,6 +394,13 @@ func (s *Server) runTask(ctx context.Context, task core.Task, repo core.Repo, ad
 	bg := context.WithoutCancel(ctx) // final writes must survive a cancel
 	final := core.TaskFailed
 	defer func() {
+		// Cancelling ctx stops only the agent's own process tree; the task
+		// job may still hold other processes the task started. They end
+		// before the final status is stored, so a client never sees done or
+		// cancelled while a process of the task lives.
+		if err := s.killTask(string(task.ID)); err != nil {
+			s.log.Error("kill task processes", "task", task.ID, "err", err)
+		}
 		// The status and its audit entry are one commit.
 		if err := s.transition(bg, &task, final, "system", "task.finish", map[string]any{"status": final}); err != nil {
 			s.log.Error("store final task status", "task", task.ID, "err", err)
@@ -452,7 +463,7 @@ func (s *Server) setSession(ctx context.Context, task *core.Task, session string
 	}
 	var version int64
 	err = s.store.Commit(ctx, func(tx *db.Tx) error {
-		v, err := tx.SetTaskSession(ctx, task.ID, session, task.Version)
+		v, err := tx.SetTaskSession(ctx, task.ID, session, task.Version, time.Now().UTC())
 		if err != nil {
 			return err
 		}

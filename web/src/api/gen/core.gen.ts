@@ -92,10 +92,34 @@ export const BuildCancelled: BuildStatus = "cancelled";
  */
 export const BuildInterrupted: BuildStatus = "interrupted";
 /**
- * BuildSkipped is for a step that never ran because an earlier one failed
+ * StepStatus is the state of one build step.
+ */
+export type StepStatus = string;
+export const StepQueued: StepStatus = "queued";
+export const StepRunning: StepStatus = "running";
+export const StepSucceeded: StepStatus = "succeeded";
+export const StepFailed: StepStatus = "failed";
+export const StepCancelled: StepStatus = "cancelled";
+/**
+ * StepSkipped is for a step that never ran because an earlier one failed
  * or the build was cancelled.
  */
-export const BuildSkipped: BuildStatus = "skipped";
+export const StepSkipped: StepStatus = "skipped";
+/**
+ * StepInterrupted: ygg stopped while the step ran.
+ */
+export const StepInterrupted: StepStatus = "interrupted";
+/**
+ * StepOutcome is how the last attempt of a step ended. A step that has not
+ * finished has no outcome (the empty value, which Validate rejects: check for
+ * it before validating).
+ */
+export type StepOutcome = string;
+export const OutcomeSucceeded: StepOutcome = "succeeded";
+export const OutcomeFailed: StepOutcome = "failed";
+export const OutcomeStartFailed: StepOutcome = "start_failed";
+export const OutcomeCancelled: StepOutcome = "cancelled";
+export const OutcomeInterrupted: StepOutcome = "interrupted";
 
 //////////
 // source: ids.go
@@ -251,19 +275,19 @@ export interface BuildStep {
   index: number /* int */;
   repoId: RepoID;
   name: string;
-  status: BuildStatus;
+  status: StepStatus;
   exitCode?: number /* int */;
   logPath?: string;
   startedAt?: string;
   finishedAt?: string;
   /**
    * Argv is the command line, Attempt the run counter of the step and
-   * Outcome how the last attempt ended (succeeded, failed, start_failed,
-   * cancelled, interrupted); Outcome is empty until the step has finished.
+   * Outcome how the last attempt ended; Outcome is empty until the step has
+   * finished.
    */
   argv?: string[];
   attempt?: number /* int */;
-  outcome?: string;
+  outcome?: StepOutcome;
 }
 /**
  * Build is an ordered sequence of build steps.
