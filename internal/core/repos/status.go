@@ -101,8 +101,60 @@ func (f Flag) Validate() error {
 
 // Flags derives the health flags of a view. "Problems" (WS-03) means any flag.
 func Flags(v View) []Flag {
-	// Implemented in batch B1 (docs/phases/phase-2.md).
+	switch x := v.(type) {
+	case Problem:
+		switch x.Kind {
+		case ProblemMissing:
+			return []Flag{FlagMissing}
+		case ProblemNotARepo:
+			return []Flag{FlagNotARepo}
+		case ProblemTimedOut:
+			return []Flag{FlagTimedOut}
+		case ProblemGitFailed:
+			return []Flag{FlagGitFailed}
+		}
+	case Fresh:
+		var fl []Flag
+		if x.Snap.Detached {
+			fl = append(fl, FlagDetached)
+		}
+		if !x.Snap.HasUpstream {
+			fl = append(fl, FlagNoUpstream)
+		}
+		if x.Snap.Conflicted > 0 {
+			fl = append(fl, FlagConflicts)
+		}
+		if x.Snap.Ahead > 0 && x.Snap.Behind > 0 {
+			fl = append(fl, FlagDiverged)
+		}
+		return fl
+	}
 	return nil
+}
+
+// SnapshotOf returns the numbers a view shows: the fresh snapshot, or the last
+// good one of a Problem view. ok is false when there are none.
+func SnapshotOf(v View) (Snapshot, bool) {
+	switch x := v.(type) {
+	case Fresh:
+		return x.Snap, true
+	case Problem:
+		if x.Last != nil {
+			return *x.Last, true
+		}
+	}
+	return Snapshot{}, false
+}
+
+// ViewAt returns when the view was read; ok is false for Unknown.
+func ViewAt(v View) (time.Time, bool) {
+	switch x := v.(type) {
+	case Fresh:
+		return x.At, true
+	case Problem:
+		return x.At, true
+	}
+	return time.Time{}, false
 }
 
 // Filter is a WS-03 repo filter. It is a closed set.
@@ -129,7 +181,21 @@ func (f Filter) Validate() error {
 // Matches reports whether a repo with this view (and failed-pipeline fact,
 // from git-hosts) belongs under the filter.
 func (f Filter) Matches(v View, failedPipeline bool) bool {
-	// Implemented in batch B1 (docs/phases/phase-2.md).
+	snap, has := SnapshotOf(v)
+	switch f {
+	case FilterAll:
+		return true
+	case FilterUncommitted:
+		return has && snap.Staged+snap.Unstaged+snap.Untracked+snap.Conflicted > 0
+	case FilterBehind:
+		return has && snap.Behind > 0
+	case FilterAhead:
+		return has && snap.Ahead > 0
+	case FilterFailedPipeline:
+		return failedPipeline
+	case FilterProblems:
+		return len(Flags(v)) > 0
+	}
 	return false
 }
 
@@ -147,6 +213,27 @@ type Counts struct {
 // git-hosts; the status core does not know about hosts. Per-project counts are
 // CountEntries over the entries of one project.
 func CountEntries(entries map[core.RepoID]Entry, failedPipelines map[core.RepoID]struct{}) Counts {
-	// Implemented in batch B1 (docs/phases/phase-2.md).
-	return Counts{}
+	var c Counts
+	for id, e := range entries {
+		_, failed := failedPipelines[id]
+		if FilterAll.Matches(e.View, failed) {
+			c.All++
+		}
+		if FilterUncommitted.Matches(e.View, failed) {
+			c.Uncommitted++
+		}
+		if FilterBehind.Matches(e.View, failed) {
+			c.Behind++
+		}
+		if FilterAhead.Matches(e.View, failed) {
+			c.Ahead++
+		}
+		if FilterFailedPipeline.Matches(e.View, failed) {
+			c.FailedPipeline++
+		}
+		if FilterProblems.Matches(e.View, failed) {
+			c.Problems++
+		}
+	}
+	return c
 }
