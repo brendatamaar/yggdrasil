@@ -237,3 +237,82 @@ The lead also fixed these Should-fix findings from gate 2:
 | gate 2 fe | `Fake.tasks` never drops finished processes | `platformtest/fake.go` |
 | baseline | Every remaining "fix when touched" row in the tables above | — |
 | WS-01 | Untracking a repo: keep build history (a status) or delete its builds in one transaction. Plus the shared path parser, and the seed find-or-create moving into a pure `track` step | WS-01 owning package |
+
+---
+
+## Phase 2 work breakdown (draft, 2026-10-18)
+
+Scope: docs/PLAN.md Phase 2. Already on `main`: `internal/git` (status, branches, log, show, diff, fetch, ff-only pull, checkout, worktrees), `platform.OpenEditor`/`OpenFolder`, the widget interface and registry, the builds design and its foundations.
+
+### Decisions for the human (the plan below assumes the recommendation)
+
+1. **User-initiated git actions on a main checkout** (ff-only pull, checkout, cross-repo branch switch; WS-06, WS-07). *Recommend:* they run directly after the user's click in the UI, with an audit entry. They are not proposals. Proposals (RV-02) cover commit, push, MR, install and publish. Agents only get fetch/pull through MCP (Phase 3). Extra guard: a pull or checkout is refused while a build runs in that repo's main checkout.
+2. **GH-03, MR creation via push options:** this is a push, so it is a proposal (RV-02), and proposals arrive in Phase 3. *Recommend:* move GH-03 to Phase 3. Phase 2 delivers GH-01, GH-02 and GH-04 (read-only host data).
+3. **Untracking a repo (WS-01):** *Recommend* a soft untrack (`repos.untracked_at`). The repo leaves every list and agents can't see it (SF-02), but its build history stays. Tracking the same path again restores it. Nothing on disk is touched.
+4. **Package names:**
+   - `internal/repos` (WS-01 to WS-08 shell), with core in `internal/core/repos`;
+   - `internal/search` (XR-01);
+   - `internal/hosts/{gitlab,github,gitea}`, with core in `internal/core/hosts`.
+
+### Designs (`/functional-effect:design`, one per stateful feature; written before the batch that needs them, each approved by the human)
+
+| Design | Covers | Why it needs one |
+|---|---|---|
+| `docs/design/builds.md` ✅ | BL-03, BL-04, BL-05–07, BL-09 | queue, step machine, processes |
+| `docs/design/repo-tracking.md` | WS-01 (+ seed) | find-or-create decision, untrack/restore, path boundary |
+| `docs/design/repo-status.md` | WS-02, WS-03, WS-04, the perf target | refresh scheduler, bounded concurrency, timeouts, cache, live counts |
+| `docs/design/git-actions.md` | WS-06, WS-07 | per-repo exclusivity, bulk with partial results, skip-dirty, build guard |
+| `docs/design/git-hosts.md` | GH-01, GH-02, GH-04 | external HTTP, optional tokens, polling with TTL, rate limits and backoff |
+| `docs/design/code-search.md` | XR-01 | `git grep` fan-out, limits, cancellation, streaming |
+
+No design needed:
+- WS-05 repo page: read-only calls into `internal/git`, whose parsers are already tested.
+- WS-08 open in editor: one platform call plus an editor setting.
+- Toolchain detection (BL-10): reads files only. Its manifest parsers still get the boundary test set: round-trip, accepted ⇒ valid, one test per rejection rule, and fuzz.
+
+### Shared contracts: batch F (committed to `main` before any fan-out)
+
+Owned by one `go-backend` agent, after the designs it needs are approved:
+- `internal/core/builds`, `internal/core/repos` and `internal/core/hosts`: the state, input and command types and the `Step` signatures from the designs. No logic yet beyond `Validate`.
+- `internal/builds/toolchain.go`: the `Toolchain` interface (`Detect`, `Commands`, `Artifacts`, optional `Order`).
+- Migration `00003`:
+  - `repos.untracked_at`;
+  - host instances and the repo → host mapping;
+  - an editor setting;
+  - whatever the repo-status and git-hosts designs need persisted.
+- `internal/api`:
+  - one file per area (`repos.go`, `builds.go`, `hosts.go`, `search.go`), each with stub handlers and its own `routesX(mux)`, called once from `server.go`;
+  - one DTO file per area (`types_<area>.go`);
+  - every new topic variant in `topic.go` (`repos`, `repo:<id>`, `builds`, `build:<id>`, `hosts`);
+  - the service interfaces plus `Clock`/`IDs` in `Deps`.
+- `task generate`, so the frontend gets every DTO type at once.
+
+After batch F, no two parallel tasks touch the same file.
+
+### Batches (at most 3 implementation agents at a time; review gate after each)
+
+| Batch | Task | Owner | Owns | PRD |
+|---|---|---|---|---|
+| B1 | builds core | `go-backend` | `internal/core/builds` (`Step`, `Run`, `Next`, `OrderModules`) + property tests I1–I11, Q1, O1 | BL-03, BL-04 |
+| B1 | repos: tracking + status | `go-backend` | `internal/core/repos`, `internal/repos` (tracking, status scheduler), `internal/api/repos.go` (tracking/status part), `cmd/ygg/seed.go` | WS-01–04 |
+| B1 | home + themes | `frontend` | `web/src/routes/index.tsx` hero/composer/chips, theme store and CSS | UI-01, UI-05 |
+| B2 | builds shell | `go-backend` | `internal/builds` (service, interpreter, queue worker, logs, artifacts, presets, `buildstest`), `internal/db` builds queries/`LoadBuild`/`SaveBuild`, `internal/api/builds.go`, `cmd/ygg` startup reconciliation | BL-03, BL-05–07, BL-09 |
+| B2 | toolchains | `go-backend` | `internal/builds/toolchains/{node,maven,gradle,custom}` + detection fixtures, `docs/writing-a-toolchain.md` | BL-01, BL-02, BL-10, BL-11, BL-15 |
+| B2 | projects + repo pages | `frontend` | `web/src/routes/projects*`, `web/src/routes/repos/*` | WS-02–05, WS-08 UI |
+| B3 | git actions + open | `go-backend` | `internal/repos` actions part (`actions.go`), `internal/api/repos.go` actions part | WS-06–08 |
+| B3 | git hosts | `go-backend` | `internal/core/hosts`, `internal/hosts/**`, `internal/api/hosts.go`, `.env.example` | GH-01, GH-02, GH-04 |
+| B3 | builds UI + MR inbox | `frontend` | `web/src/routes/builds*`, `web/src/routes/mrs*` | BL-05–07 UI, GH-02 UI |
+| B4 | code search | `go-backend` | `internal/search`, `internal/api/search.go` | XR-01 |
+| B4 | widgets | `frontend` | `web/src/widgets/{git-activity,merge-requests,needs-attention,ci-failures,builds,recent-areas}` | UI-03 |
+| B4 | tests + perf | `test-engineer` | test maps from each design, demo-project fixtures (multi-repo, Maven/Node/Gradle manifests, recorded host HTTP), the 50-repo perf check | all |
+
+`test-engineer` also gets each designed feature's test map right after that feature merges, in the same batch slot as the feature or the next one.
+
+B3 runs both `go-backend` agents in `internal/repos` and `internal/api/repos.go`, so each file is split by purpose (`actions.go`, and the actions handlers in their own `repos_actions.go`). The B1 repos task creates those files empty.
+
+### Exit criteria (from docs/PLAN.md)
+
+- The demo project shows correct status, MRs, pipelines and builds.
+- Daily workspace use is possible.
+- Status refresh for 50 repos finishes in under 10 seconds (perf test).
+- Review gates pass after every batch.
