@@ -134,6 +134,8 @@ type FakeResult struct {
 	Err  error
 	// Delay is how long the read takes; it ends early when ctx ends.
 	Delay time.Duration
+	// Gate, when not nil, blocks the read until it is closed or ctx ends.
+	Gate chan struct{}
 }
 
 // FakeReader is a scripted repos.StatusReader. It is safe for concurrent use.
@@ -185,6 +187,12 @@ func (f *FakeReader) Read(ctx context.Context, path corerepos.CleanPath) (corere
 		f.active--
 		f.mu.Unlock()
 	}()
+	if res.Gate != nil {
+		select {
+		case <-res.Gate:
+		case <-ctx.Done():
+		}
+	}
 	if res.Delay > 0 {
 		select {
 		case <-time.After(res.Delay):

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/brendatamaar/yggdrasil/internal/apperr"
 	"github.com/brendatamaar/yggdrasil/internal/core"
@@ -70,6 +71,9 @@ type StatusService struct {
 	log       *slog.Logger
 
 	pub atomic.Pointer[Publisher]
+	// sem bounds the reads that run at once (belt and braces: the core counts
+	// orphaned reads too).
+	sem *semaphore.Weighted
 
 	in      chan message
 	pubs    chan corerepos.RefreshCommand
@@ -85,8 +89,14 @@ type inputMsg struct{ in corerepos.RefreshInput }
 
 type snapshotMsg struct{ reply chan corerepos.Refresher }
 
+// reloadMsg asks the owner to load the active set and apply it. The owner
+// answers every reload it has queued with one load, so a reload can never
+// apply an older set after a newer one.
+type reloadMsg struct{ reply chan error }
+
 func (inputMsg) isMessage()    {}
 func (snapshotMsg) isMessage() {}
+func (reloadMsg) isMessage()   {}
 
 // NewStatusService returns a service. pub may be nil and set later with
 // SetPublisher. clock returns the current time (UTC).
@@ -102,6 +112,10 @@ func NewStatusService(src ActiveSource, reader StatusReader, clock func() time.T
 	for _, o := range opts {
 		o(s)
 	}
+	if s.max < 1 {
+		s.max = corerepos.DefaultMax
+	}
+	s.sem = semaphore.NewWeighted(int64(s.max))
 	if pub != nil {
 		s.pub.Store(&pub)
 	}
@@ -178,9 +192,43 @@ func (s *StatusService) own(ctx context.Context, g *errgroup.Group, active []cor
 				state = s.step(ctx, g, state, x.in)
 			case snapshotMsg:
 				x.reply <- copyState(state)
+			case reloadMsg:
+				state = s.reload(ctx, g, state, x)
 			}
 		}
 	}
+}
+
+// reload answers a reload and every other reload already queued with one load
+// of the active set, applying the queued inputs in order first.
+func (s *StatusService) reload(ctx context.Context, g *errgroup.Group, state corerepos.Refresher, first reloadMsg) corerepos.Refresher {
+	replies := []chan error{first.reply}
+drain:
+	for {
+		select {
+		case m := <-s.in:
+			switch y := m.(type) {
+			case reloadMsg:
+				replies = append(replies, y.reply)
+			case inputMsg:
+				state = s.step(ctx, g, state, y.in)
+			case snapshotMsg:
+				y.reply <- copyState(state)
+			}
+		default:
+			break drain
+		}
+	}
+	active, err := s.loadActive(ctx)
+	if err == nil {
+		state = s.step(ctx, g, state, corerepos.ReposChanged{Active: active})
+	} else {
+		err = fmt.Errorf("reload repos for status: %w", err)
+	}
+	for _, r := range replies {
+		r <- err
+	}
+	return state
 }
 
 // step runs the core and interprets its commands. A panic in the core is a
@@ -191,7 +239,7 @@ func (s *StatusService) step(ctx context.Context, g *errgroup.Group, state corer
 		defer func() {
 			if r := recover(); r != nil {
 				s.log.Error("repo status core panicked; restarting its state", "panic", fmt.Sprint(r))
-				next, cmds = s.restart(ctx)
+				next, cmds = s.restart(ctx, state)
 			}
 		}()
 		next, cmds = corerepos.Refresh(state, in)
@@ -211,20 +259,27 @@ func (s *StatusService) step(ctx context.Context, g *errgroup.Group, state corer
 	return next
 }
 
-func (s *StatusService) restart(ctx context.Context) (corerepos.Refresher, []corerepos.RefreshCommand) {
+// restart rebuilds the state from the active set. It keeps Seq and turns the
+// reads of the old state into orphans (Restarted), so attempts stay unique and
+// the bound holds while the old workers finish.
+func (s *StatusService) restart(ctx context.Context, old corerepos.Refresher) (corerepos.Refresher, []corerepos.RefreshCommand) {
 	active, err := s.loadActive(ctx)
 	if err != nil {
 		s.log.Error("repo status could not reload the repos", "err", err)
 	}
-	return corerepos.Refresh(corerepos.NewRefresher(s.max), corerepos.ReposChanged{Active: active})
+	return corerepos.Refresh(old.Restarted(), corerepos.ReposChanged{Active: active})
 }
 
 // read is one worker: it reads a repo within the read timeout and sends the
 // result back to the owner. It never blocks the owner.
 func (s *StatusService) read(ctx context.Context, c corerepos.ReadStatus) {
+	if err := s.sem.Acquire(ctx, 1); err != nil {
+		return // shutting down
+	}
 	rctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 	snap, kind, err := s.reader.Read(rctx, c.Path)
+	s.sem.Release(1)
 	if ctx.Err() != nil {
 		return // shutting down: the result is dropped
 	}
@@ -309,11 +364,18 @@ func (s *StatusService) Refresh(ctx context.Context, ids []core.RepoID, reason c
 // ReloadRepos re-reads the active set from the store and tells the status
 // about it. Repo tracking calls it after a commit. New repos are read at once.
 func (s *StatusService) ReloadRepos(ctx context.Context) error {
-	active, err := s.loadActive(ctx)
-	if err != nil {
-		return fmt.Errorf("reload repos for status: %w", err)
+	reply := make(chan error, 1)
+	if err := s.send(ctx, reloadMsg{reply: reply}); err != nil {
+		return err
 	}
-	return s.send(ctx, inputMsg{in: corerepos.ReposChanged{Active: active}})
+	select {
+	case err := <-reply:
+		return err
+	case <-s.done:
+		return errNotRunning
+	case <-ctx.Done():
+		return fmt.Errorf("reload repos for status: %w", ctx.Err())
+	}
 }
 
 // Snapshot returns a copy of the state: every entry, and which reads are in
@@ -335,6 +397,10 @@ func (s *StatusService) Snapshot(ctx context.Context) (corerepos.Refresher, erro
 
 func copyState(r corerepos.Refresher) corerepos.Refresher {
 	out := corerepos.NewRefresher(r.Max)
+	out.Seq = r.Seq
+	for k, v := range r.Orphans {
+		out.Orphans[k] = v
+	}
 	for k, v := range r.Entries {
 		out.Entries[k] = v
 	}
