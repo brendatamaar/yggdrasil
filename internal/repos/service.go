@@ -106,7 +106,7 @@ func (s *TrackingService) BrowseDirs(ctx context.Context, path string) (api.DirL
 }
 
 func (s *TrackingService) load(ctx context.Context) (corerepos.Workspace, error) {
-	ws, err := s.d.Store.LoadWorkspace(ctx)
+	ws, err := s.d.Store.GetWorkspace(ctx)
 	if err != nil {
 		return corerepos.Workspace{}, err
 	}

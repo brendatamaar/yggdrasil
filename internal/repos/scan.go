@@ -89,7 +89,7 @@ func ScanWith(ctx context.Context, w Walker, lim Limits) (corerepos.ScanResult, 
 		entries, err := w.ReadDir(rel)
 		if err != nil {
 			res.Skipped++
-			return false, nil
+			return false, nil //nolint:nilerr // an unreadable folder is counted in Skipped; the scan goes on
 		}
 		slices.SortFunc(entries, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
 		var subs []string

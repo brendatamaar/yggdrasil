@@ -12,7 +12,7 @@ import (
 )
 
 // The workspace store: the persistence of the repo-tracking step
-// (docs/design/repo-tracking.md). LoadWorkspace reads every project and repo
+// (docs/design/repo-tracking.md). GetWorkspace reads every project and repo
 // row, tracked or not; the write methods store the row commands Decide
 // returns. All writes happen inside Store.Commit through Tx.Workspace, in the
 // same transaction as their audit entries.
@@ -141,10 +141,10 @@ func loadWorkspace(ctx context.Context, q *gen.Queries) (corerepos.Workspace, er
 	return ws, nil
 }
 
-// LoadWorkspace reads every project and repo row, tracked or not, and the
+// GetWorkspace reads every project and repo row, tracked or not, and the
 // repos with a queued or running build of their main checkout (Busy). It is
 // for previews; a decision loads through Tx.Workspace in its own transaction.
-func (s *Store) LoadWorkspace(ctx context.Context) (corerepos.Workspace, error) {
+func (s *Store) GetWorkspace(ctx context.Context) (corerepos.Workspace, error) {
 	return loadWorkspace(ctx, s.db.reader())
 }
 

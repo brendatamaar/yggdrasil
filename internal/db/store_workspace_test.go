@@ -62,7 +62,7 @@ func WorkspaceStoreContract(t *testing.T, newStore func(t *testing.T) *Store) {
 
 	t.Run("round trip of Active and Untracked", func(t *testing.T) {
 		s := setup(t)
-		ws, err := s.LoadWorkspace(ctx)
+		ws, err := s.GetWorkspace(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -82,7 +82,7 @@ func WorkspaceStoreContract(t *testing.T, newStore func(t *testing.T) *Store) {
 			}
 			return w.MarkProjectUntracked(ctx, corerepos.MarkProjectUntracked{ProjectID: "prj_1", At: t1, ExpectVersion: 0})
 		})
-		ws, _ = s.LoadWorkspace(ctx)
+		ws, _ = s.GetWorkspace(ctx)
 		if got := ws.Projects["prj_1"]; got.Life != (corerepos.Untracked{At: t1}) || got.Version != 1 {
 			t.Errorf("untracked project = %#v", got)
 		}
@@ -150,7 +150,7 @@ func WorkspaceStoreContract(t *testing.T, newStore func(t *testing.T) *Store) {
 			}
 			return w.RestoreRepo(ctx, corerepos.RestoreRepo{ProjectID: "prj_1", RepoID: "rep_api", Since: t1, ExpectVersion: 1})
 		})
-		ws, _ := s.LoadWorkspace(ctx)
+		ws, _ := s.GetWorkspace(ctx)
 		p := ws.Projects["prj_1"]
 		if _, ok := p.Life.(corerepos.Active); !ok || p.Name != "shop2" || p.Version != 2 {
 			t.Errorf("project = %#v", p)
@@ -177,7 +177,7 @@ func WorkspaceStoreContract(t *testing.T, newStore func(t *testing.T) *Store) {
 		if !errors.Is(err, ErrNotFound) {
 			t.Errorf("unknown project = %v, want ErrNotFound", err)
 		}
-		ws, _ := s.LoadWorkspace(ctx)
+		ws, _ := s.GetWorkspace(ctx)
 		if ws.Projects["prj_1"].Name != "renamed" || ws.Projects["prj_1"].Version != 1 {
 			t.Errorf("the failed commit left a trace: %#v", ws.Projects["prj_1"])
 		}
@@ -185,7 +185,7 @@ func WorkspaceStoreContract(t *testing.T, newStore func(t *testing.T) *Store) {
 
 	t.Run("one decision bumps the version once", func(t *testing.T) {
 		s := setup(t)
-		ws, _ := s.LoadWorkspace(ctx)
+		ws, _ := s.GetWorkspace(ctx)
 		if v := ws.Projects["prj_1"].Version; v != 0 {
 			t.Fatalf("a new project with two repos has version %d, want 0", v)
 		}
@@ -195,7 +195,7 @@ func WorkspaceStoreContract(t *testing.T, newStore func(t *testing.T) *Store) {
 			}
 			return w.InsertRepo(ctx, repo("prj_1", "rep_y", "y", "y", 0))
 		})
-		ws, _ = s.LoadWorkspace(ctx)
+		ws, _ = s.GetWorkspace(ctx)
 		if v := ws.Projects["prj_1"].Version; v != 1 {
 			t.Errorf("version = %d, want 1", v)
 		}
@@ -211,7 +211,7 @@ func WorkspaceStoreContract(t *testing.T, newStore func(t *testing.T) *Store) {
 				return w.InsertRepo(ctx, repo("prj_1", "rep_z", "api", "z", 0))
 			},
 			"same active project name": func(ctx context.Context, w *WorkspaceTx) error {
-				return w.InsertProject(ctx, project("prj_2", "shop", `C:\work\other`))
+				return w.InsertProject(ctx, project("prj_2", "shop", `C:\work\elsewhere`))
 			},
 		} {
 			if err := commitWS(t, s, fn); !errors.Is(err, ErrConflict) {
@@ -233,7 +233,7 @@ func WorkspaceStoreContract(t *testing.T, newStore func(t *testing.T) *Store) {
 		exec(`INSERT INTO build_steps (build_id, idx, repo_id, name, status) VALUES ('b_run', 0, 'rep_api', 'verify', 'running')`)
 		exec(`INSERT INTO builds (id, target, status, created_at) VALUES ('b_done', 'main', 'succeeded', '2026-03-01T00:00:00.000Z')`)
 		exec(`INSERT INTO build_steps (build_id, idx, repo_id, name, status) VALUES ('b_done', 0, 'rep_web', 'verify', 'succeeded')`)
-		ws, err := s.LoadWorkspace(ctx)
+		ws, err := s.GetWorkspace(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
