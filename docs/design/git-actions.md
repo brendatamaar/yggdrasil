@@ -226,6 +226,8 @@ Each parser gets round-trip, accepted ⇒ valid, one test per rejection rule, an
 
 ## Open questions
 
+Approved by the human on 2026-10-18 with every recommendation below.
+
 1. **Concurrency:** `Max = 4` across batches. Fetch is network-bound, and 4 keeps self-hosted GitLab happy. *Recommend 4.*
 2. **Checkout of a remote-only branch:** `git checkout <name>` creates a local tracking branch from `origin/<name>`. git does this by default (DWIM), and it is still a non-destructive checkout. *Recommend allowing it*, and saying "created local branch tracking origin/<name>" in the outcome.
 3. **"Fetch all" scope:** every active repo in the project, or every active repo when started from the home page. *Recommend as stated.*

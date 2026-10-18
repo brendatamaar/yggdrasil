@@ -162,5 +162,7 @@ Each parser gets round-trip, accepted ⇒ valid, one test per rejection rule, an
 
 ## Open questions
 
+Approved by the human on 2026-10-18 with every recommendation below.
+
 1. **Streaming results to the browser:** not in Phase 2. One response is returned within 15 s. *Recommend*: add a WS stream later only if real projects need it.
 2. **Default scope:** every active repo of the current project. On the home page, all active repos. *Recommend as stated.*
