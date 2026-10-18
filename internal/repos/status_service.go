@@ -230,10 +230,9 @@ func (s *StatusService) read(ctx context.Context, c corerepos.ReadStatus) {
 	}
 	now := s.clock()
 	var in corerepos.RefreshInput
-	switch {
-	case err == nil:
+	if err == nil {
 		in = corerepos.StatusRead{ID: c.ID, Attempt: c.Attempt, Snap: snap, Now: now}
-	default:
+	} else {
 		if kind.Validate() != nil {
 			kind = corerepos.ProblemGitFailed
 		}

@@ -71,7 +71,7 @@ func (f *gitFx) runErr(dir string, args ...string) error {
 		return err
 	}
 	if code, err := p.Wait(); err != nil || code != 0 {
-		return fmt.Errorf("git %v: exit %d, err %v: %s", args, code, err, errb.String())
+		return fmt.Errorf("git %v: exit %d, err %w: %s", args, code, err, errb.String())
 	}
 	return nil
 }

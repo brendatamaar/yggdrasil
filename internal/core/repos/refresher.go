@@ -290,7 +290,7 @@ func (n *Refresher) request(ids []core.RepoID, reason RefreshReason, now time.Ti
 	}
 	front := reason == ReasonUser || reason == ReasonGitAction
 	var picked []core.RepoID
-	seen :=map[core.RepoID]struct{}{}
+	seen := map[core.RepoID]struct{}{}
 	for _, id := range ids {
 		e, ok := n.Entries[id]
 		_, dup := seen[id]

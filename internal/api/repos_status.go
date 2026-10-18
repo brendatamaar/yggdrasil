@@ -3,8 +3,8 @@ package api
 import (
 	"context"
 	"net/http"
-	"strings"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
