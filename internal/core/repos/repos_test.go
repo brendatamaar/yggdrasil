@@ -12,7 +12,7 @@ var (
 	_ = []Command{InsertProject{}, InsertRepo{}, RestoreProject{}, RestoreRepo{}, MarkRepoUntracked{},
 		MarkProjectUntracked{}, UpdateProject{}, WriteAudit{}, PublishReposChanged{}, RefreshStatus{}}
 	_ = []Outcome{Tracked{}, AlreadyTracked{}, NameTaken{}, Overlaps{}, RepoBusy{}, NotFound{},
-		NothingPicked{}, UntrackDone{}, Renamed{}}
+		NothingPicked{}, UntrackDone{}, Renamed{}, InvalidInput{}}
 	_ = []View{Unknown{}, Fresh{}, Problem{}}
 	_ = []RefreshInput{ReposChanged{}, RefreshRequested{}, Tick{}, StatusRead{}, StatusFailed{}}
 	_ = []RefreshCommand{ReadStatus{}, PublishStatus{}, PublishCounts{}}

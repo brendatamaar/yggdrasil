@@ -666,6 +666,18 @@ export interface RescanResponse {
   missing: core.RepoID[];
 }
 /**
+ * UntrackResponse is the body of the untrack endpoints (200). Nothing on disk
+ * is touched; the rows stay hidden and come back when the folder is tracked
+ * again.
+ */
+export interface UntrackResponse {
+  /**
+   * Repos are the repos that stopped being tracked (none when they already
+   * were untracked).
+   */
+  repos: core.RepoID[];
+}
+/**
  * RepoViewKind says what the status of a repo holds.
  */
 export type RepoViewKind = string;

@@ -7,7 +7,26 @@ package gen
 
 import (
 	"context"
+	"database/sql"
 )
+
+const clearRepoUntracked = `-- name: ClearRepoUntracked :execrows
+UPDATE repos SET untracked_at = NULL, trusted = 0 WHERE id = ? AND project_id = ?
+`
+
+type ClearRepoUntrackedParams struct {
+	ID        string
+	ProjectID string
+}
+
+// A restored repo is never trusted: its agent config may have changed (SF-09).
+func (q *Queries) ClearRepoUntracked(ctx context.Context, arg ClearRepoUntrackedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, clearRepoUntracked, arg.ID, arg.ProjectID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
 
 const createRepo = `-- name: CreateRepo :exec
 INSERT INTO repos (id, project_id, name, path, rel_path, default_branch, trusted, created_at)
@@ -85,6 +104,78 @@ func (q *Queries) GetRepoIncludingUntracked(ctx context.Context, id string) (Rep
 	return i, err
 }
 
+const listAllRepos = `-- name: ListAllRepos :many
+
+SELECT id, project_id, name, path, default_branch, trusted, created_at, untracked_at, rel_path FROM repos ORDER BY id
+`
+
+// Workspace loading and decisions of the repo-tracking step. They see
+// untracked rows on purpose (see projects.sql).
+func (q *Queries) ListAllRepos(ctx context.Context) ([]Repo, error) {
+	rows, err := q.db.QueryContext(ctx, listAllRepos)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Repo{}
+	for rows.Next() {
+		var i Repo
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Name,
+			&i.Path,
+			&i.DefaultBranch,
+			&i.Trusted,
+			&i.CreatedAt,
+			&i.UntrackedAt,
+			&i.RelPath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBusyBuildRepos = `-- name: ListBusyBuildRepos :many
+SELECT DISTINCT bs.repo_id FROM build_steps bs
+JOIN builds b ON b.id = bs.build_id
+WHERE b.target = 'main' AND b.status IN ('queued', 'running')
+ORDER BY bs.repo_id
+`
+
+// Repos whose main checkout has a queued or running build (Cancelling is a
+// running build with cancelled_at set).
+func (q *Queries) ListBusyBuildRepos(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listBusyBuildRepos)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var repo_id string
+		if err := rows.Scan(&repo_id); err != nil {
+			return nil, err
+		}
+		items = append(items, repo_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listReposByProject = `-- name: ListReposByProject :many
 SELECT id, project_id, name, path, default_branch, trusted, created_at, untracked_at, rel_path FROM repos WHERE project_id = ? AND untracked_at IS NULL ORDER BY name
 `
@@ -133,6 +224,24 @@ type SetRepoTrustedParams struct {
 
 func (q *Queries) SetRepoTrusted(ctx context.Context, arg SetRepoTrustedParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, setRepoTrusted, arg.Trusted, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setRepoUntracked = `-- name: SetRepoUntracked :execrows
+UPDATE repos SET untracked_at = ? WHERE id = ? AND project_id = ?
+`
+
+type SetRepoUntrackedParams struct {
+	UntrackedAt sql.NullString
+	ID          string
+	ProjectID   string
+}
+
+func (q *Queries) SetRepoUntracked(ctx context.Context, arg SetRepoUntrackedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setRepoUntracked, arg.UntrackedAt, arg.ID, arg.ProjectID)
 	if err != nil {
 		return 0, err
 	}

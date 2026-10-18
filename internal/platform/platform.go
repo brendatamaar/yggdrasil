@@ -41,6 +41,11 @@ import (
 //	// plain-language error.
 //	func CheckPath(path string) error
 //
+//	// IsReparsePoint reports whether path is a symlink or junction (never
+//	// followed by the folder scan); ListRoots lists the browser's roots.
+//	func IsReparsePoint(path string) (bool, error)
+//	func ListRoots() ([]string, error)
+//
 //	// ListeningPorts returns the TCP ports a process tree listens on (DV-02).
 //	func ListeningPorts(pid int) ([]int, error)
 

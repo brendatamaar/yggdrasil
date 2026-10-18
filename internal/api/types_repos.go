@@ -101,6 +101,15 @@ type RescanResponse struct {
 	Missing []core.RepoID `json:"missing"`
 }
 
+// UntrackResponse is the body of the untrack endpoints (200). Nothing on disk
+// is touched; the rows stay hidden and come back when the folder is tracked
+// again.
+type UntrackResponse struct {
+	// Repos are the repos that stopped being tracked (none when they already
+	// were untracked).
+	Repos []core.RepoID `json:"repos"`
+}
+
 // RepoViewKind says what the status of a repo holds.
 type RepoViewKind string
 

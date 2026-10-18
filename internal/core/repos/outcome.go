@@ -11,6 +11,8 @@ type Tracked struct {
 	ProjectID core.ProjectID
 	Added     []core.RepoID
 	Restored  []core.RepoID
+	// NewProject: the project row was created by this decision.
+	NewProject bool
 }
 
 // AlreadyTracked: nothing needed to change.
@@ -41,6 +43,11 @@ type UntrackDone struct {
 	Repos   []core.RepoID
 }
 
+// InvalidInput: the input broke a rule the shell's parsers should have
+// caught (a bad name or relative path, an ID already in use). The core
+// refuses it instead of trusting the caller.
+type InvalidInput struct{ Reason string }
+
 // Renamed: the project has its new name.
 type Renamed struct{ ProjectID core.ProjectID }
 
@@ -53,3 +60,4 @@ func (NotFound) isOutcome()       {}
 func (NothingPicked) isOutcome()  {}
 func (UntrackDone) isOutcome()    {}
 func (Renamed) isOutcome()        {}
+func (InvalidInput) isOutcome()   {}
