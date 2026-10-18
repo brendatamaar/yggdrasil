@@ -3,7 +3,6 @@ package builds
 import (
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
 )
@@ -121,21 +120,5 @@ func TestStatus(t *testing.T) {
 				t.Errorf("Status(%T) = %q is not a valid build status", c.s, got)
 			}
 		}
-	}
-}
-
-// The placeholders change nothing until batch B1 lands the logic.
-func TestPlaceholdersAreInert(t *testing.T) {
-	now := time.Unix(0, 0).UTC()
-	s := State(Queued{ID: "b1", QueuedAt: now})
-	got, cmds := Run(s, []Input{Admit{Now: now}, Cancel{Actor: "user", Now: now}})
-	if _, ok := got.(Queued); !ok || len(cmds) != 0 {
-		t.Fatalf("Run = %#v, %v", got, cmds)
-	}
-	if id, ok := Next([]QueuedRef{{ID: "b1", QueuedAt: now}}, 0, 1); ok || id != "" {
-		t.Fatalf("Next placeholder = %q, %v", id, ok)
-	}
-	if order, cycles := OrderModules(nil); order != nil || cycles != nil {
-		t.Fatal("OrderModules placeholder returned data")
 	}
 }
