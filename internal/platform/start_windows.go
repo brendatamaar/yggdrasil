@@ -51,7 +51,7 @@ func Start(ctx context.Context, spec Spec) (Process, error) {
 		Path:        exe,
 		Args:        spec.Argv,
 		Dir:         dir,
-		Env:         spec.Env,
+		Env:         withNoCurDir(spec.Env),
 		Stdin:       spec.Stdin,
 		Stdout:      spec.Stdout,
 		Stderr:      spec.Stderr,

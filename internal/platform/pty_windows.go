@@ -118,7 +118,7 @@ func newConPTY(spec PTYSpec, exe, dir string) (*conPTY, error) {
 	if err != nil {
 		return nil, fmt.Errorf("platform: program path: %w", err)
 	}
-	env, err := envBlock(spec.Env)
+	env, err := envBlock(withNoCurDir(spec.Env))
 	if err != nil {
 		return nil, err
 	}
