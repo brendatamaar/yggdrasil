@@ -44,6 +44,20 @@ type Deps struct {
 	// KillTask stops every process still running for a task ID (agent
 	// helpers, anything the task started). Default: platform.KillTask.
 	KillTask func(taskID string) error
+
+	// The services of the Phase 2 areas. A nil service registers no route
+	// (each routesX returns early), so the server runs with any subset.
+	Tracking TrackingService
+	Status   StatusService
+	Builds   BuildService
+	Hosts    HostsService
+	Search   SearchService
+
+	// Clock and IDs are the shell's time and randomness for handlers that
+	// make core inputs (docs/AGENTS.md 5.11). Defaults: time.Now().UTC() and
+	// db.NewID.
+	Clock func() time.Time
+	IDs   func(prefix string) string
 }
 
 // Server serves the API. Create it with New, run it with Run (or use Handler
@@ -65,6 +79,14 @@ type Server struct {
 	// killTask stops what is left of a task's processes before its final
 	// status is stored, so no client sees done or cancelled while they live.
 	killTask func(taskID string) error
+
+	tracking TrackingService
+	status   StatusService
+	builds   BuildService
+	hosts    HostsService
+	search   SearchService
+	clock    func() time.Time
+	ids      func(prefix string) string
 
 	// newTaskID makes the ID of a new task: randomness stays in the shell.
 	newTaskID func() core.TaskID
@@ -105,6 +127,14 @@ func New(d Deps) (*Server, error) {
 		version: d.Version, assets: as, allowedOrigins: d.AllowedOrigins,
 		hub: newHub(log), ctx: ctx, stop: stop, cancel: map[core.TaskID]context.CancelFunc{},
 	}
+	s.tracking, s.status, s.builds, s.hosts, s.search = d.Tracking, d.Status, d.Builds, d.Hosts, d.Search
+	s.clock, s.ids = d.Clock, d.IDs
+	if s.clock == nil {
+		s.clock = func() time.Time { return time.Now().UTC() }
+	}
+	if s.ids == nil {
+		s.ids = db.NewID
+	}
 	s.newTaskID = func() core.TaskID { return core.TaskID(db.NewID("tsk")) }
 	s.killTask = d.KillTask
 	if s.killTask == nil {
@@ -127,6 +157,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/tasks/{id}/events", s.taskEvents)
 	mux.HandleFunc("POST /api/tasks/{id}/cancel", s.cancelTask)
 	mux.HandleFunc("GET /ws", s.serveWS)
+	s.routesRepos(mux)
+	s.routesReposActions(mux)
+	s.routesBuilds(mux)
+	s.routesHosts(mux)
+	s.routesSearch(mux)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, ErrNotFound, "That API endpoint doesn't exist.", "")
 	})
