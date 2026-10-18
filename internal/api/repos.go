@@ -8,8 +8,8 @@ import (
 	corerepos "github.com/brendatamaar/yggdrasil/internal/core/repos"
 )
 
-// This file is owned by the repos task (WS-01 to WS-04). It holds the two
-// service interfaces below and routesRepos. The DTOs are in types_repos.go.
+// This file is owned by the repo-tracking task (WS-01). It holds the
+// tracking service interface and routesRepos. The DTOs are in types_repos.go.
 // The file is excluded from tygo (tygo.yaml): it holds Go-only wiring.
 
 // TrackingService is implemented by internal/repos (docs/design/repo-tracking.md).
@@ -40,20 +40,13 @@ type TrackingService interface {
 	RenameProject(ctx context.Context, project core.ProjectID, name string, actor corerepos.Actor) (corerepos.Outcome, error)
 }
 
-// StatusService is implemented by internal/repos (docs/design/repo-status.md).
-// The status is an in-memory read model.
-type StatusService interface {
-	// Entries returns a copy of the current status of every tracked repo.
-	Entries(ctx context.Context) (map[core.RepoID]corerepos.Entry, error)
-	// Refresh asks for a new read of the repos; empty ids means all.
-	Refresh(ctx context.Context, ids []core.RepoID, reason corerepos.RefreshReason) error
-}
-
-// routesRepos registers the tracking and status endpoints. It registers
-// nothing when the services are not wired.
+// routesRepos registers the tracking endpoints, and the status endpoints
+// through routesReposStatus (repos_status.go). Each part registers nothing
+// when its service is not wired.
 func (s *Server) routesRepos(mux *http.ServeMux) {
-	if s.tracking == nil && s.status == nil {
+	s.routesReposStatus(mux)
+	if s.tracking == nil {
 		return
 	}
-	_ = mux // the repos task adds its routes here
+	_ = mux // the repo-tracking task adds its routes here
 }

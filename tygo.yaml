@@ -29,6 +29,7 @@ packages:
       - server.go
       - repos.go
       - repos_actions.go
+      - repos_status.go
       - builds.go
       - hosts.go
       - search.go
