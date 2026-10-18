@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brendatamaar/yggdrasil/internal/api"
 	"github.com/brendatamaar/yggdrasil/internal/apperr"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	corerepos "github.com/brendatamaar/yggdrasil/internal/core/repos"
@@ -27,12 +26,26 @@ type refreshCall struct {
 	reason corerepos.RefreshReason
 }
 
-type recorder struct {
-	mu    sync.Mutex
-	calls []refreshCall
+type refreshRecorder struct {
+	mu      sync.Mutex
+	calls   []refreshCall
+	reloads int
 }
 
-func (r *recorder) Refresh(_ context.Context, ids []core.RepoID, reason corerepos.RefreshReason) error {
+func (r *refreshRecorder) ReloadRepos(context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.reloads++
+	return nil
+}
+
+func (r *refreshRecorder) reloadCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.reloads
+}
+
+func (r *refreshRecorder) Refresh(_ context.Context, ids []core.RepoID, reason corerepos.RefreshReason) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.calls = append(r.calls, refreshCall{ids: append([]core.RepoID(nil), ids...), reason: reason})
@@ -43,7 +56,7 @@ type env struct {
 	t     *testing.T
 	svc   *repos.TrackingService
 	store *db.Store
-	rec   *recorder
+	rec   *refreshRecorder
 	root  string
 }
 
@@ -56,7 +69,7 @@ func newEnv(t *testing.T) *env {
 	t.Cleanup(func() { _ = d.Close() })
 	red := safety.NewRedactor()
 	store := db.NewStore(d, red.Redact)
-	rec := &recorder{}
+	rec := &refreshRecorder{}
 	clock := time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC)
 	svc, err := repos.NewTrackingService(repos.Deps{
 		Store: store, Redactor: red, Status: rec,
@@ -181,9 +194,14 @@ func TestTrackUntrackRestoreLifecycle(t *testing.T) {
 	if err := e.store.Commit(ctx, func(tx *db.Tx) error { return tx.SetRepoTrusted(ctx, apiID, true) }); err != nil {
 		t.Fatal(err)
 	}
+	reloadsBefore := e.rec.reloadCount()
 	un, err := e.svc.UntrackRepo(ctx, apiID, "user")
 	if err != nil || len(un.(corerepos.UntrackDone).Repos) != 1 {
 		t.Fatalf("UntrackRepo = %#v, %v", un, err)
+	}
+	// The status service drops the untracked repo from its counts.
+	if e.rec.reloadCount() != reloadsBefore+1 {
+		t.Errorf("untrack reloaded the status %d times, want 1", e.rec.reloadCount()-reloadsBefore)
 	}
 	if _, err := e.store.GetRepo(ctx, apiID); err == nil {
 		t.Error("an untracked repo is still readable by GetRepo")
@@ -352,7 +370,6 @@ func TestBrowseDirs(t *testing.T) {
 	if _, err := e.svc.BrowseDirs(ctx, filepath.Join(e.root, "nope")); err == nil {
 		t.Error("a missing folder was listed")
 	}
-	var _ api.TrackingService = e.svc
 }
 
 func TestNilStatusRefresherIsFine(t *testing.T) {

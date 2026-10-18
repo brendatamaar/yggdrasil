@@ -99,3 +99,18 @@ func Rescan(scan ScanResult, ws Workspace, project core.ProjectID) RescanReport 
 	}
 	return rep
 }
+
+// DirListing is one folder of the folder browser (WS-01): its subfolders,
+// read from disk by the shell. Path is "" for the roots (drives on Windows).
+type DirListing struct {
+	Path    string
+	Parent  string
+	Entries []DirEntry
+}
+
+// DirEntry is one subfolder in a DirListing.
+type DirEntry struct {
+	Name   string
+	Path   string
+	IsRepo bool
+}

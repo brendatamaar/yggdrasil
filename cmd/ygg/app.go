@@ -10,12 +10,18 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/brendatamaar/yggdrasil/internal/agents"
 	"github.com/brendatamaar/yggdrasil/internal/agents/claudecode"
 	"github.com/brendatamaar/yggdrasil/internal/agents/mock"
 	"github.com/brendatamaar/yggdrasil/internal/api"
+	"github.com/brendatamaar/yggdrasil/internal/core"
 	"github.com/brendatamaar/yggdrasil/internal/db"
+	"github.com/brendatamaar/yggdrasil/internal/git"
+	"github.com/brendatamaar/yggdrasil/internal/repos"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
 
@@ -27,6 +33,9 @@ type app struct {
 	db    *db.DB
 	store *db.Store
 	srv   *api.Server
+	// status is the repo-status read model (WS-02). Its owner goroutine runs
+	// next to the server in run.
+	status *repos.StatusService
 }
 
 // newLogger writes redacted text logs: no token reaches a log (invariant 4).
@@ -75,23 +84,53 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		"claude-code": claudecode.New(claudecode.Options{HookExecutable: self, TempDir: runs}),
 	}
 
+	gitEnv, err := safety.NewEnvBuilder().Build(safety.EnvOptions{})
+	if err != nil {
+		_ = d.Close()
+		return nil, fmt.Errorf("prepare the git environment: %w", err)
+	}
+	g, err := git.New(gitEnv)
+	if err != nil {
+		_ = d.Close()
+		return nil, fmt.Errorf("prepare git: %w", err)
+	}
+	// The status service publishes through the server, and the server serves
+	// the status: build the service first, give it the publisher after New.
+	status := repos.NewStatusService(store, repos.NewGitReader(g), func() time.Time { return time.Now().UTC() }, nil, repos.WithLogger(log))
+	tracking, err := repos.NewTrackingService(repos.Deps{Store: store, Redactor: redactor, Status: status, Log: log})
+	if err != nil {
+		_ = d.Close()
+		return nil, fmt.Errorf("start repo tracking: %w", err)
+	}
+
 	srv, err := api.New(api.Deps{
 		Store: store, Adapters: adapters, Env: safety.NewEnvBuilder(), Log: log,
 		Redactor: redactor, Version: version, Assets: assets,
+		Tracking: tracking, Status: status,
 	})
 	if err != nil {
 		_ = d.Close()
 		return nil, fmt.Errorf("start the server: %w", err)
 	}
-	return &app{cfg: cfg, log: log, db: d, store: store, srv: srv}, nil
+	status.SetPublisher(statusPublisher{srv})
+	return &app{cfg: cfg, log: log, db: d, store: store, srv: srv, status: status}, nil
 }
+
+// statusPublisher sends repo-status changes to the browser.
+type statusPublisher struct{ srv *api.Server }
+
+func (p statusPublisher) RepoChanged(id core.RepoID) { p.srv.PublishRepoStatus(id) }
+func (p statusPublisher) CountsChanged()             { p.srv.PublishRepoCounts() }
 
 // run serves on ln until ctx is cancelled. On the way out the server stops
 // every task, then the database is closed. Closing the process-wide job (so no
 // child outlives ygg) is main's job: it happens once, when the process ends.
 func (a *app) run(ctx context.Context, ln net.Listener) error {
 	a.log.Info("Yggdrasil is running", "url", "http://"+ln.Addr().String(), "version", version, "data", a.cfg.dataDir)
-	serveErr := a.srv.Run(ctx, ln)
+	group, gctx := errgroup.WithContext(ctx)
+	group.Go(func() error { return a.status.Start(gctx) })
+	group.Go(func() error { return a.srv.Run(gctx, ln) })
+	serveErr := group.Wait()
 	closeErr := a.db.Close()
 	return errors.Join(serveErr, closeErr)
 }

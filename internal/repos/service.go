@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brendatamaar/yggdrasil/internal/api"
 	"github.com/brendatamaar/yggdrasil/internal/apperr"
 	"github.com/brendatamaar/yggdrasil/internal/audit"
 	"github.com/brendatamaar/yggdrasil/internal/core"
@@ -19,9 +18,12 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
 
-// StatusRefresher is what tracking needs from repo-status: read these repos
-// now. It is nil-safe: a nil refresher means no refresh.
+// StatusRefresher is what tracking needs from repo-status: reload the set of
+// active repos after any tracking change (so untracked repos leave the status
+// and the counts), and read the added or restored repos now. It is nil-safe:
+// a nil refresher means no refresh.
 type StatusRefresher interface {
+	ReloadRepos(ctx context.Context) error
 	Refresh(ctx context.Context, ids []core.RepoID, reason corerepos.RefreshReason) error
 }
 
@@ -45,8 +47,6 @@ type Deps struct {
 type TrackingService struct {
 	d Deps
 }
-
-var _ api.TrackingService = (*TrackingService)(nil)
 
 // NewTrackingService returns the service.
 func NewTrackingService(d Deps) (*TrackingService, error) {
@@ -78,29 +78,29 @@ func NewTrackingService(d Deps) (*TrackingService, error) {
 }
 
 // BrowseDirs implements api.TrackingService.
-func (s *TrackingService) BrowseDirs(ctx context.Context, path string) (api.DirListingResponse, error) {
+func (s *TrackingService) BrowseDirs(ctx context.Context, path string) (corerepos.DirListing, error) {
 	cp, err := ParseBrowsePath(path)
 	if err != nil {
-		return api.DirListingResponse{}, err
+		return corerepos.DirListing{}, err
 	}
 	if cp == "" {
 		roots, err := s.d.Dirs.Roots()
 		if err != nil {
-			return api.DirListingResponse{}, apperr.New(apperr.Unavailable, "The drives couldn't be listed.", err)
+			return corerepos.DirListing{}, apperr.New(apperr.Unavailable, "The drives couldn't be listed.", err)
 		}
-		out := api.DirListingResponse{Entries: make([]api.DirEntryDTO, 0, len(roots))}
+		out := corerepos.DirListing{Entries: make([]corerepos.DirEntry, 0, len(roots))}
 		for _, r := range roots {
-			out.Entries = append(out.Entries, api.DirEntryDTO{Name: r, Path: r})
+			out.Entries = append(out.Entries, corerepos.DirEntry{Name: r, Path: r})
 		}
 		return out, nil
 	}
 	dirs, err := s.d.Dirs.ListDirs(ctx, cp)
 	if err != nil {
-		return api.DirListingResponse{}, err
+		return corerepos.DirListing{}, err
 	}
-	out := api.DirListingResponse{Path: string(cp), Parent: parentOf(cp), Entries: make([]api.DirEntryDTO, 0, len(dirs))}
+	out := corerepos.DirListing{Path: string(cp), Parent: parentOf(cp), Entries: make([]corerepos.DirEntry, 0, len(dirs))}
 	for _, d := range dirs {
-		out.Entries = append(out.Entries, api.DirEntryDTO{Name: d.Name, Path: d.Path, IsRepo: d.IsRepo})
+		out.Entries = append(out.Entries, corerepos.DirEntry{Name: d.Name, Path: d.Path, IsRepo: d.IsRepo})
 	}
 	return out, nil
 }
@@ -360,6 +360,11 @@ func (s *TrackingService) appendAudit(ctx context.Context, tx *db.Tx, c corerepo
 // runAfter performs what follows a commit. It is best effort: the UI
 // refetches on reconnect and repo-status ticks catch up.
 func (s *TrackingService) runAfter(ctx context.Context, cmds []corerepos.Command) {
+	if s.d.Status != nil && len(cmds) > 0 {
+		if err := s.d.Status.ReloadRepos(ctx); err != nil {
+			s.d.Log.Warn("reload repos after tracking failed", "err", err)
+		}
+	}
 	for _, c := range cmds {
 		r, ok := c.(corerepos.RefreshStatus)
 		if !ok || s.d.Status == nil {

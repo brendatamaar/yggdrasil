@@ -21,7 +21,7 @@ import (
 type TrackingService interface {
 	// BrowseDirs lists the subfolders of path for the folder browser; an
 	// empty path lists the roots (drives on Windows).
-	BrowseDirs(ctx context.Context, path string) (DirListingResponse, error)
+	BrowseDirs(ctx context.Context, path string) (corerepos.DirListing, error)
 	// Preview scans path and sets what it found against the workspace.
 	Preview(ctx context.Context, path string) (corerepos.Preview, error)
 	// Projects returns the tracked projects with their tracked repos.
@@ -69,7 +69,15 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, dirListingDTO(out))
+}
+
+func dirListingDTO(l corerepos.DirListing) DirListingResponse {
+	out := DirListingResponse{Path: l.Path, Parent: l.Parent, Entries: make([]DirEntryDTO, 0, len(l.Entries))}
+	for _, e := range l.Entries {
+		out.Entries = append(out.Entries, DirEntryDTO{Name: e.Name, Path: e.Path, IsRepo: e.IsRepo})
+	}
+	return out
 }
 
 func candidateDTO(c corerepos.Candidate) CandidateDTO {

@@ -23,9 +23,9 @@ type fakeTracking struct {
 	id   string
 }
 
-func (f *fakeTracking) BrowseDirs(_ context.Context, path string) (DirListingResponse, error) {
+func (f *fakeTracking) BrowseDirs(_ context.Context, path string) (corerepos.DirListing, error) {
 	f.path = path
-	return DirListingResponse{Path: path, Entries: []DirEntryDTO{{Name: "shop", Path: path + "/shop", IsRepo: true}}}, f.err
+	return corerepos.DirListing{Path: path, Entries: []corerepos.DirEntry{{Name: "shop", Path: path + "/shop", IsRepo: true}}}, f.err
 }
 
 func (f *fakeTracking) Preview(_ context.Context, path string) (corerepos.Preview, error) {
