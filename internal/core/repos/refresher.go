@@ -288,11 +288,13 @@ func (n *Refresher) request(ids []core.RepoID, reason RefreshReason, now time.Ti
 	case ReasonTick:
 		minAge = MinAgeTick
 	}
+	front := reason == ReasonUser || reason == ReasonGitAction
 	var picked []core.RepoID
-	seen := map[core.RepoID]struct{}{}
+	seen :=map[core.RepoID]struct{}{}
 	for _, id := range ids {
 		e, ok := n.Entries[id]
-		if _, dup := seen[id]; !ok || dup || n.queued(id) {
+		_, dup := seen[id]
+		if !ok || dup || (n.queued(id) && !front) {
 			continue
 		}
 		seen[id] = struct{}{}
@@ -307,8 +309,10 @@ func (n *Refresher) request(ids []core.RepoID, reason RefreshReason, now time.Ti
 		}
 		picked = append(picked, id)
 	}
-	if reason == ReasonUser || reason == ReasonGitAction {
+	if front {
+		// A repo already waiting moves to the front: the user is looking at it.
 		for i := len(picked) - 1; i >= 0; i-- {
+			n.dequeue(picked[i])
 			n.enqueue(picked[i], true)
 		}
 		return
