@@ -332,3 +332,31 @@ Git actions (B3) land in their own files, `internal/repos/actions.go` and `inter
 - The status endpoints moved to `internal/api/repos_status.go` (`35945cd`), so tracking and status run in parallel.
 - **B1 running:** builds core; repo tracking; repo status. The batch F review gate is folded into the B1 gate.
 - **Schedule change:** home + themes (frontend) starts when the builds core task finishes, which keeps at most 3 agents running.
+
+### Review gate B1 (2026-10-19): failed, fixes in progress
+
+The gate covered batch F and the B1 backend (`79a8f67..main`).
+
+**Safety reviewer:**
+- Blocking:
+  - `ygg.exe` committed with real machine paths;
+  - a repo can be untracked while an agent task runs in it.
+- Must-fix:
+  - migration 00003's failure paths;
+  - the derived `rel_path` can be a value the parser rejects;
+  - no API tests for the untracked rules.
+
+**fe-reviewer:**
+- Must-fix: the status attempt guard (a late result from a removed and re-added repo is accepted), and R4/R5 tests that can't catch that.
+
+**Decisions:**
+- **`ygg.exe` removed from local history** (the human chose this). `git filter-branch` on the 86 unpushed commits (`origin/main..main`); `/ygg.exe`, `/ygg` and `*.exe` added to `.gitignore`. All commit hashes after `eb6feb8` changed. The old hashes quoted earlier in this file refer to the pre-rewrite history.
+- **Migration 00003 is amended in place** (same one-time exception as 00002: it never ran outside test databases; the local data dir is at version 1). It becomes a Go migration that pins one connection and runs `foreign_key_check`.
+- **`BusyTaskRunning` is brought forward from Phase 3.** Agents already run in Phase 1/2, so untracking a repo with a queued or running task is refused.
+
+**Fix batch:**
+
+| Task | Owner | Owns |
+|---|---|---|
+| R-status | `go-backend` | `internal/core/repos/refresher*.go`, `status*.go`; `internal/repos/status_*.go` + `repostest/status_contract.go`; `internal/api/repos_status.go` + its tests; `internal/core/builds` (small fixes) |
+| R-tracking | `go-backend` | the remaining `internal/core/repos` files; tracking files in `internal/repos`; `internal/db/**`; `internal/platform` (path canonical form); `internal/api/{repos,tasks}.go` + their tests; `cmd/ygg/seed.go` |
