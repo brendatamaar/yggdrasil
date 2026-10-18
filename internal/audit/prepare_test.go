@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
+	corerepos "github.com/brendatamaar/yggdrasil/internal/core/repos"
 	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
@@ -116,7 +117,7 @@ func TestCommitRollsBackStateAndAuditTogether(t *testing.T) {
 	}
 	boom := errors.New("later write failed")
 	err = store.Commit(ctx, func(tx *db.Tx) error {
-		if _, err := tx.CreateProject(ctx, core.Project{ID: "p", Name: "acme-shop", Path: "/work/acme-shop", CreatedAt: time.Now()}); err != nil {
+		if err := tx.Workspace().InsertProject(ctx, corerepos.InsertProject{Project: corerepos.Project{ID: "p", Name: "acme-shop", Path: "/work/acme-shop", Life: corerepos.Active{Since: time.Now()}}}); err != nil {
 			return err
 		}
 		if err := tx.AppendAudit(ctx, entry); err != nil {

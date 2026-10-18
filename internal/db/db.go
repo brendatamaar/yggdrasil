@@ -127,7 +127,7 @@ func NewMigrator(db *sql.DB) (*goose.Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	p, err := goose.NewProvider(goose.DialectSQLite3, db, fsys)
+	p, err := goose.NewProvider(goose.DialectSQLite3, db, fsys, goose.WithGoMigrations(migration00003()))
 	if err != nil {
 		return nil, fmt.Errorf("load migrations: %w", err)
 	}

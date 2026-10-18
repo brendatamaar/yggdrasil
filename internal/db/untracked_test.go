@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
+	corerepos "github.com/brendatamaar/yggdrasil/internal/core/repos"
 )
 
 // The contract for repo tracking (SF-02): a row with untracked_at set is
@@ -85,18 +86,38 @@ func TestCreateRepoDerivesRelPath(t *testing.T) {
 }
 
 func TestRelPathOf(t *testing.T) {
-	cases := []struct{ project, repo, name, want string }{
-		{"/work/acme", "/work/acme/shop-api", "x", "shop-api"},
-		{"/work/acme", "/work/acme", "x", "."},
-		{"/work/acme/", "/work/acme/a/b/", "x", "a/b"},
-		{`C:\Work\Acme`, `c:\work\acme\Shop`, "x", "Shop"},
-		{"/work/acme", "/work/acme-other/x", "x", "x"}, // a sibling with the same prefix is outside
-		{"/work/acme", "/elsewhere", "name", "name"},
-		{"/", "/top", "x", "top"},
+	cases := []struct {
+		project, repo, want string
+		ok                  bool
+	}{
+		{"/work/acme", "/work/acme/shop-api", "shop-api", true},
+		{"/work/acme", "/work/acme", ".", true},
+		{"/work/acme/", "/work/acme/a/b/", "a/b", true},
+		{`C:\Work\Acme`, `c:\work\acme\Shop`, "Shop", true},
+		{"/work/acme", "/work/acme-other/x", "", false}, // a sibling with the same prefix is outside
+		{"/work/acme", "/elsewhere", "", false},
+		{"/work/acme", "/work/acme/a:b", "", false}, // a folder the core would reject
+		{"/", "/top", "top", true},
 	}
 	for _, c := range cases {
-		if got := relPathOf(c.project, c.repo, c.name); got != c.want {
-			t.Errorf("relPathOf(%q, %q) = %q, want %q", c.project, c.repo, got, c.want)
+		if got, ok := derivedRel(c.project, c.repo); got != c.want || ok != c.ok {
+			t.Errorf("derivedRel(%q, %q) = %q, %v, want %q, %v", c.project, c.repo, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+func TestFallbackRelIsAlwaysAValidFolder(t *testing.T) {
+	for _, name := range []string{"a:b", "a/b", `a\b`, "..", ".", "   ", "shop-api", "ünï"} {
+		taken := map[string]bool{}
+		first := fallbackRel(name, "rep_1", taken)
+		second := fallbackRel(name, "rep_2", taken)
+		for _, rel := range []string{first, second} {
+			if _, err := corerepos.NewRelPath(rel); err != nil {
+				t.Errorf("fallbackRel(%q) = %q: %v", name, rel, err)
+			}
+		}
+		if first == second {
+			t.Errorf("fallbackRel(%q) gave %q twice", name, first)
 		}
 	}
 }
