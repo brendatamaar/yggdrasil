@@ -30,7 +30,7 @@ type sim struct {
 }
 
 var (
-	simPaths = []CleanPath{`/w`, `/w/a`, `/w/a/b`, `/w/c`, `/x`, `C:\Work\a`, `c:/work/A`, `C:\Work\a\b`, `C:\Work\c`}
+	simPaths = []CleanPath{`/w`, `/w/a`, `/w/a/b`, `/w/c`, `/x`, `C:\Work\a`, `C:/Work/a`, `C:\Work\a\b`, `C:\Work\c`}
 	simNames = []string{"p1", "p2", "p3", "p4"}
 	simRels  = []RelPath{".", "api", "web", "libs/x", "libs/y"}
 	simRepos = []string{"api", "web", "x", "libs/x"}

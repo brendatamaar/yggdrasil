@@ -25,7 +25,7 @@ func trackedShop(t *testing.T) Workspace {
 func TestBuildPreview(t *testing.T) {
 	ws := trackedShop(t)
 	scan := ScanResult{Repos: []RelPath{"web", "docs/site", "api", "api"}, Skipped: 2}
-	pv := BuildPreview(`c:/work/SHOP`, scan, ws) // another spelling of the same folder
+	pv := BuildPreview(`C:/Work/shop`, scan, ws) // the same folder with the other separator
 	if pv.Existing == nil || *pv.Existing != "prj_1" || pv.Skipped != 2 || pv.Truncated {
 		t.Fatalf("preview = %+v", pv)
 	}

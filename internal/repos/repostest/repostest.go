@@ -97,8 +97,8 @@ func (f *Fake) Scan(ctx context.Context, _ corerepos.CleanPath, lim repos.Limits
 }
 
 // CheckRepo implements repos.Scanner.
-func (f *Fake) CheckRepo(_ context.Context, _ corerepos.CleanPath, rel corerepos.RelPath) error {
-	return repos.CheckRepoWith(fakeWalker{f}, string(rel))
+func (f *Fake) CheckRepo(_ context.Context, _ corerepos.CleanPath, rel corerepos.RelPath) (corerepos.RelPath, error) {
+	return rel, repos.CheckRepoWith(fakeWalker{f}, string(rel))
 }
 
 // Caps says what a scanner under test can do.
@@ -107,6 +107,9 @@ type Caps struct {
 	Links bool
 	// Locked: the tree can hold folders that can't be read.
 	Locked bool
+	// CaseInsensitive: the scanner's disk ignores case, so CheckRepo must
+	// answer with the on-disk spelling.
+	CaseInsensitive bool
 }
 
 // Factory builds a scanner over tree and returns the folder to scan. The
@@ -244,7 +247,7 @@ func ScannerContract(t *testing.T, caps Caps, newScanner Factory) {
 		})
 		t.Run("CheckRepo refuses a path through a link", func(t *testing.T) {
 			s, root := newScanner(t, Tree{"lnk": Link, "lnk/outside": Repo})
-			if err := s.CheckRepo(ctx, root, "lnk/outside"); err == nil {
+			if _, err := s.CheckRepo(ctx, root, "lnk/outside"); err == nil {
 				t.Error("CheckRepo accepted a repo behind a link")
 			}
 		})
@@ -258,15 +261,24 @@ func ScannerContract(t *testing.T, caps Caps, newScanner Factory) {
 			}
 		})
 	}
+	if caps.CaseInsensitive {
+		t.Run("CheckRepo answers with the on-disk spelling", func(t *testing.T) {
+			s, root := newScanner(t, Tree{"Shop-Api": Repo})
+			got, err := s.CheckRepo(ctx, root, "shop-API")
+			if err != nil || got != "Shop-Api" {
+				t.Errorf("CheckRepo(shop-API) = %q, %v; want Shop-Api", got, err)
+			}
+		})
+	}
 	t.Run("CheckRepo", func(t *testing.T) {
 		s, root := newScanner(t, Tree{"api": Repo, "docs": Dir, "wt": RepoFile})
 		for _, ok := range []corerepos.RelPath{"api", "wt"} {
-			if err := s.CheckRepo(ctx, root, ok); err != nil {
+			if _, err := s.CheckRepo(ctx, root, ok); err != nil {
 				t.Errorf("CheckRepo(%s) = %v", ok, err)
 			}
 		}
 		for _, bad := range []corerepos.RelPath{"docs", "missing", "api/nope"} {
-			if err := s.CheckRepo(ctx, root, bad); err == nil {
+			if _, err := s.CheckRepo(ctx, root, bad); err == nil {
 				t.Errorf("CheckRepo(%s) accepted", bad)
 			}
 		}

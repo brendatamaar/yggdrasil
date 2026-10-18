@@ -166,13 +166,24 @@ func (s *TrackingService) withIDs(picks []corerepos.Pick) []corerepos.Pick {
 	return out
 }
 
-func (s *TrackingService) checkPicks(ctx context.Context, path corerepos.CleanPath, picks []corerepos.Pick) error {
+// checkPicks asks the disk about every pick and returns the picks spelled as
+// on disk; two spellings of one folder are one pick.
+func (s *TrackingService) checkPicks(ctx context.Context, path corerepos.CleanPath, picks []corerepos.Pick) ([]corerepos.Pick, error) {
+	seen := make(map[corerepos.RelPath]bool, len(picks))
+	out := make([]corerepos.Pick, 0, len(picks))
 	for _, p := range picks {
-		if err := s.d.Scanner.CheckRepo(ctx, path, p.RelPath); err != nil {
-			return err
+		rel, err := s.d.Scanner.CheckRepo(ctx, path, p.RelPath)
+		if err != nil {
+			return nil, err
 		}
+		if seen[rel] {
+			return nil, invalid(fmt.Sprintf("The repo folder %q is selected twice.", string(rel)), nil)
+		}
+		seen[rel] = true
+		p.RelPath = rel
+		out = append(out, p)
 	}
-	return nil
+	return out, nil
 }
 
 // Track implements api.TrackingService.
@@ -189,7 +200,8 @@ func (s *TrackingService) Track(ctx context.Context, path, name string, picks []
 	if err != nil {
 		return nil, err
 	}
-	if err := s.checkPicks(ctx, cp, ps); err != nil {
+	ps, err = s.checkPicks(ctx, cp, ps)
+	if err != nil {
 		return nil, err
 	}
 	return s.decide(ctx, func(now time.Time) corerepos.Input {
@@ -237,7 +249,8 @@ func (s *TrackingService) TrackRepos(ctx context.Context, project core.ProjectID
 	if err != nil {
 		return nil, err
 	}
-	if err := s.checkPicks(ctx, p.Path, ps); err != nil {
+	ps, err = s.checkPicks(ctx, p.Path, ps)
+	if err != nil {
 		return nil, err
 	}
 	return s.decide(ctx, func(now time.Time) corerepos.Input {
