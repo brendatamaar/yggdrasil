@@ -207,7 +207,7 @@ internal/builds service tests
 | StartStep | dir missing (worktree removed) | domain outcome | `StepStartFailed{dir_missing}` |
 | StartStep | log file can't be opened | domain outcome | `StepStartFailed{other}` with a message; the process is not started |
 | process | non-zero exit | domain outcome | `StepExited{code}` → Failed |
-| process | output cut after WaitDelay (`OutputTruncated`) | escape hatch | `LogTruncated` on the step; the step's outcome follows its exit code |
+| process | output cut after WaitDelay (`Process.Truncated()`) | escape hatch | `LogTruncated` on the step; the step's outcome follows its exit code |
 | process | ygg crashes or is killed | domain outcome (on restart) | the job object kills the tree; startup feeds `ProcessLost` → Interrupted |
 | commit ok, crash before StartStep | — | domain outcome (on restart) | the build is `Running` with no process → `ProcessLost` → Interrupted |
 | CollectArtifacts | glob/stat error | escape hatch | `ArtifactsCollected{}` with what was found; errors logged |
