@@ -25,3 +25,8 @@ coverage/
 .DS_Store
 Thumbs.db
 .idea/
+
+# Built binaries at the repo root (task build writes to bin/)
+/ygg
+/ygg.exe
+*.exe
