@@ -137,6 +137,22 @@ var corePure = rule{name: "core imports only pure packages", check: func(f file)
 	return out
 }}
 
+// coreSubpackages keeps each domain package under internal/core a leaf on
+// top of internal/core: it may import internal/core and nothing else of this
+// module, not even a sibling domain, so domains stay independent.
+var coreSubpackages = rule{name: "core domains import only core", check: func(f file) []string {
+	if !strings.HasPrefix(f.dir, "internal/core/") || f.test {
+		return nil
+	}
+	var out []string
+	for _, imp := range f.imports {
+		if strings.HasPrefix(imp, module) && imp != internalPrefix+"core" {
+			out = append(out, violation(f, "imports %s; a domain package under internal/core may import only internal/core", strings.TrimPrefix(imp, module)))
+		}
+	}
+	return out
+}}
+
 // storeAllowed reports whether name may be an exported method of db.Store.
 func storeAllowed(name string) bool {
 	return name == "Commit" || name == "AppendTaskEvent" || name == "TaskDependencies" ||
@@ -202,6 +218,7 @@ var rules = []rule{
 	onlyInternalImports("core is a leaf", "internal/core"),
 	// 5.11: the functional core has no effects.
 	corePure,
+	coreSubpackages,
 	// Leaves that everything else builds on.
 	onlyInternalImports("safety is a leaf", "internal/safety"),
 	onlyInternalImports("platform is a leaf", "internal/platform"),

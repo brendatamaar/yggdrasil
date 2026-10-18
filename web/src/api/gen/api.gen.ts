@@ -111,6 +111,28 @@ export const TopicTaskPrefix = "task:";
  */
 export const TopicTasks = "tasks";
 /**
+ * TopicRepos carries ReposChangedMessage: the repo list or its counts changed.
+ */
+export const TopicRepos = "repos";
+/**
+ * TopicRepoPrefix starts "repo:<id>", which carries RepoStatusDTO for that repo.
+ */
+export const TopicRepoPrefix = "repo:";
+/**
+ * TopicBuilds carries BuildChangedMessage for any build.
+ */
+export const TopicBuilds = "builds";
+/**
+ * TopicBuildPrefix starts "build:<id>", which carries BuildChangedMessage and
+ * BuildLogMessage for that build.
+ */
+export const TopicBuildPrefix = "build:";
+/**
+ * TopicHosts carries HostsChangedMessage: host instances or their MR and
+ * pipeline data changed.
+ */
+export const TopicHosts = "hosts";
+/**
  * TaskStatusMessage is the Data of a message on TopicTasks, sent whenever a
  * task changes status. It holds no prompt or output, so it is safe to show in
  * notifications (docs/AGENTS.md 5.9).
@@ -165,4 +187,602 @@ export interface TaskResponse {
  */
 export interface TaskEventsResponse {
   events: agents.Event[];
+}
+
+//////////
+// source: types_builds.go
+
+/**
+ * BuildTargetKind says where a build runs.
+ */
+export type BuildTargetKind = string;
+/**
+ * BuildTargetMain: in the main checkouts of the repos.
+ */
+export const BuildTargetMain: BuildTargetKind = "main";
+/**
+ * BuildTargetWorktree: in one task worktree.
+ */
+export const BuildTargetWorktree: BuildTargetKind = "worktree";
+/**
+ * BuildStepDTO is one step of a build.
+ */
+export interface BuildStepDTO {
+  index: number /* int */;
+  repoId: core.RepoID;
+  name: string;
+  status: core.StepStatus;
+  /**
+   * Outcome is empty until the step has ended.
+   */
+  outcome?: core.StepOutcome;
+  /**
+   * StartFailure is not_found, bad_args, dir_missing or other when Outcome
+   * is start_failed; StartMessage says what to do next.
+   */
+  startFailure?: string;
+  startMessage?: string;
+  exitCode?: number /* int */;
+  argv: string[];
+  attempt: number /* int */;
+  /**
+   * LogTruncated: the output was cut after the process ended.
+   */
+  logTruncated: boolean;
+  startedAt?: string;
+  finishedAt?: string;
+}
+/**
+ * BuildArtifactDTO is a file a successful build produced (BL-07).
+ */
+export interface BuildArtifactDTO {
+  repoId: core.RepoID;
+  /**
+   * Path is relative to the repo, with forward slashes.
+   */
+  path: string;
+  size: number /* int64 */;
+}
+/**
+ * BuildDTO is a build with its steps.
+ */
+export interface BuildDTO {
+  id: core.BuildID;
+  status: core.BuildStatus;
+  target: BuildTargetKind;
+  worktreeId?: core.WorktreeID;
+  taskId?: core.TaskID;
+  presetId?: string;
+  /**
+   * Actor is "user", "agent:<name>" or "system".
+   */
+  actor: string;
+  queuedAt: string;
+  startedAt?: string;
+  cancelledAt?: string;
+  finishedAt?: string;
+  steps: BuildStepDTO[];
+  /**
+   * ArtifactsCollected: Artifacts was looked up (it may be empty).
+   */
+  artifactsCollected: boolean;
+  artifacts: BuildArtifactDTO[];
+}
+/**
+ * BuildListResponse is the body of GET /api/builds, newest first.
+ */
+export interface BuildListResponse {
+  builds: BuildDTO[];
+}
+/**
+ * StepSpecDTO is one command to run: argv only, with no shell. The server
+ * refuses shell characters such as && and pipes; split them into steps.
+ */
+export interface StepSpecDTO {
+  repoId: core.RepoID;
+  name: string;
+  argv: string[];
+}
+/**
+ * EnqueueBuildRequest is the body of POST /api/builds. A WorktreeID builds in
+ * that task worktree instead of the main checkout.
+ */
+export interface EnqueueBuildRequest {
+  steps: StepSpecDTO[];
+  worktreeId?: core.WorktreeID;
+}
+/**
+ * EnqueueBuildResponse is the body of 202 Accepted for a new build.
+ */
+export interface EnqueueBuildResponse {
+  buildId: core.BuildID;
+}
+/**
+ * BuildPresetDTO is a saved list of steps for a project (BL-05).
+ */
+export interface BuildPresetDTO {
+  id: string;
+  projectId: core.ProjectID;
+  name: string;
+  steps: StepSpecDTO[];
+}
+/**
+ * SaveBuildPresetRequest is the body of POST /api/build-presets.
+ */
+export interface SaveBuildPresetRequest {
+  projectId: core.ProjectID;
+  name: string;
+  steps: StepSpecDTO[];
+}
+/**
+ * BuildPresetListResponse is the body of GET /api/build-presets?project=.
+ */
+export interface BuildPresetListResponse {
+  presets: BuildPresetDTO[];
+}
+/**
+ * StepLogResponse is the body of GET /api/builds/{id}/steps/{i}/log?after=.
+ * Next is the offset to ask for next.
+ */
+export interface StepLogResponse {
+  data: string;
+  next: number /* int64 */;
+}
+/**
+ * BuildChangedMessage is the data of a change message on the "builds" and
+ * "build:<id>" topics. The client refetches the build by ID.
+ */
+export interface BuildChangedMessage {
+  buildId: core.BuildID;
+  status: core.BuildStatus;
+}
+/**
+ * BuildLogMessage is one line of live output on a "build:<id>" topic. Lines
+ * are redacted before they are sent.
+ */
+export interface BuildLogMessage {
+  buildId: core.BuildID;
+  step: number /* int */;
+  attempt: number /* int */;
+  line: string;
+}
+
+//////////
+// source: types_hosts.go
+
+/**
+ * HostKind is a host product.
+ */
+export type HostKind = string;
+export const HostKindGitLab: HostKind = "gitlab";
+export const HostKindGitHub: HostKind = "github";
+export const HostKindGitea: HostKind = "gitea";
+/**
+ * HostPhase is where a host query stands, as the UI shows it.
+ */
+export type HostPhase = string;
+/**
+ * HostPhaseIdle: data is cached, or nothing was fetched yet.
+ */
+export const HostPhaseIdle: HostPhase = "idle";
+/**
+ * HostPhaseFetching: a request is in flight; the data shown is the last known.
+ */
+export const HostPhaseFetching: HostPhase = "fetching";
+/**
+ * HostPhaseRetrying: a transient error or a rate limit; retried at RetryAt.
+ */
+export const HostPhaseRetrying: HostPhase = "retrying";
+/**
+ * HostPhaseBlocked: polling stopped until the config changes or the user
+ * refreshes. BlockReason says why.
+ */
+export const HostPhaseBlocked: HostPhase = "blocked";
+/**
+ * HostInstanceDTO is a configured host (GET /api/hosts).
+ */
+export interface HostInstanceDTO {
+  /**
+   * ID is host[:port], e.g. "git.acme.dev".
+   */
+  id: string;
+  kind: HostKind;
+  base: string;
+  /**
+   * TokenConfigured is all the API says about a token.
+   */
+  tokenConfigured: boolean;
+}
+/**
+ * HostsResponse is the body of GET /api/hosts.
+ */
+export interface HostsResponse {
+  instances: HostInstanceDTO[];
+  /**
+   * ConfigProblems lists skipped config lines, e.g. "line 3: unknown kind".
+   * They never hold the value of a line.
+   */
+  configProblems: string[];
+  /**
+   * EnvPath is the file the config is read from.
+   */
+  envPath: string;
+}
+/**
+ * MergeRequestDTO is an MR or PR.
+ */
+export interface MergeRequestDTO {
+  number: number /* int */;
+  title: string;
+  url: string;
+  author: string;
+  /**
+   * Source and Target are branch names.
+   */
+  source: string;
+  target: string;
+  /**
+   * State is open, draft, merged or closed.
+   */
+  state: string;
+  updatedAt: string;
+}
+/**
+ * PipelineDTO is the latest CI run for a branch.
+ */
+export interface PipelineDTO {
+  /**
+   * Status is pending, running, success, failed, canceled, skipped or unknown.
+   */
+  status: string;
+  url: string;
+  updatedAt: string;
+}
+/**
+ * HostLinksDTO are links that always work, even without a token or data.
+ */
+export interface HostLinksDTO {
+  repo: string;
+  branch?: string;
+  mrList: string;
+  pipelines: string;
+}
+/**
+ * RepoHostResponse is the body of GET /api/repos/{id}/host.
+ */
+export interface RepoHostResponse {
+  linked: boolean;
+  /**
+   * NotLinked says why, in plain language, when Linked is false.
+   */
+  notLinked?: string;
+  instance?: string;
+  kind?: HostKind;
+  /**
+   * Project is the repo's path on the host, e.g. "acme-shop/shop-api".
+   */
+  project?: string;
+  branch?: string;
+  /**
+   * MR and Pipeline are for the current branch; nil when none was found.
+   */
+  mr?: MergeRequestDTO;
+  pipeline?: PipelineDTO;
+  links: HostLinksDTO;
+  phase: HostPhase;
+  /**
+   * BlockReason is unauthorized, not_found or unsupported when Phase is
+   * "blocked". RetryAt is set when Phase is "retrying".
+   */
+  blockReason?: string;
+  retryAt?: string;
+  fetchedAt?: string;
+  /**
+   * CredentialsInRemote is a health flag: the remote URL holds credentials
+   * (use a credential helper). The value is never sent.
+   */
+  credentialsInRemote: boolean;
+}
+/**
+ * InboxItemDTO is one MR in the inbox.
+ */
+export interface InboxItemDTO {
+  mr: MergeRequestDTO;
+  /**
+   * Instance is the host the MR is on.
+   */
+  instance: string;
+  /**
+   * Repo is "group/repo" on the host.
+   */
+  repo: string;
+  /**
+   * Role is review_requested, assigned or authored.
+   */
+  role: string;
+}
+/**
+ * InboxInstanceDTO is the polling state of one instance's inbox.
+ */
+export interface InboxInstanceDTO {
+  instance: string;
+  phase: HostPhase;
+  blockReason?: string;
+  retryAt?: string;
+  fetchedAt?: string;
+}
+/**
+ * InboxResponse is the body of GET /api/mrs: the inbox across instances,
+ * deduplicated by URL.
+ */
+export interface InboxResponse {
+  items: InboxItemDTO[];
+  instances: InboxInstanceDTO[];
+}
+/**
+ * RefreshHostsRequest is the body of POST /api/hosts/refresh. Empty lists
+ * mean everything.
+ */
+export interface RefreshHostsRequest {
+  repos: core.RepoID[];
+  instances: string[];
+}
+/**
+ * HostsChangedMessage is the data of a message on the "hosts" topic. Repo is
+ * set when one repo's data changed, Instance when one instance's inbox or
+ * state changed; with neither, everything may have changed.
+ */
+export interface HostsChangedMessage {
+  repo?: core.RepoID;
+  instance?: string;
+}
+
+//////////
+// source: types_repos.go
+
+/**
+ * DirEntryDTO is one folder in the folder browser (GET /api/fs/dirs).
+ */
+export interface DirEntryDTO {
+  name: string;
+  /**
+   * Path is the full path to send back to browse deeper or to preview.
+   */
+  path: string;
+  /**
+   * IsRepo: the folder has a .git folder or file.
+   */
+  isRepo: boolean;
+}
+/**
+ * DirListingResponse is the body of GET /api/fs/dirs?path=. An empty path
+ * lists the roots (drives on Windows).
+ */
+export interface DirListingResponse {
+  path: string;
+  /**
+   * Parent is "" at the roots.
+   */
+  parent: string;
+  entries: DirEntryDTO[];
+}
+/**
+ * PreviewRequest is the body of POST /api/projects/preview.
+ */
+export interface PreviewRequest {
+  path: string;
+}
+/**
+ * CandidateDTO is a git repo found under a folder.
+ */
+export interface CandidateDTO {
+  /**
+   * RelPath is under the project folder with forward slashes, "." for the
+   * folder itself.
+   */
+  relPath: string;
+  name: string;
+  /**
+   * KnownRepoID is the repo's row in the project, when there is one.
+   */
+  knownRepoId?: core.RepoID;
+  /**
+   * Active: that row is tracked.
+   */
+  active: boolean;
+}
+/**
+ * PreviewResponse is the body of POST /api/projects/preview.
+ */
+export interface PreviewResponse {
+  path: string;
+  candidates: CandidateDTO[];
+  /**
+   * Truncated: the scan hit its limits ("showing the first N").
+   */
+  truncated: boolean;
+  /**
+   * Skipped counts subfolders that could not be read.
+   */
+  skipped: number /* int */;
+  /**
+   * ExistingProjectID is set when the path is already a project.
+   */
+  existingProjectId?: core.ProjectID;
+}
+/**
+ * PickDTO is one candidate the user selected.
+ */
+export interface PickDTO {
+  relPath: string;
+  name: string;
+}
+/**
+ * TrackProjectRequest is the body of POST /api/projects.
+ */
+export interface TrackProjectRequest {
+  path: string;
+  name: string;
+  picks: PickDTO[];
+}
+/**
+ * TrackReposRequest is the body of POST /api/projects/{id}/repos.
+ */
+export interface TrackReposRequest {
+  picks: PickDTO[];
+}
+/**
+ * RenameProjectRequest is the body of PATCH /api/projects/{id}.
+ */
+export interface RenameProjectRequest {
+  name: string;
+}
+/**
+ * TrackResponse is the body of the tracking endpoints that succeed (201 for a
+ * new project, 200 otherwise). Conflicts are error responses (409).
+ */
+export interface TrackResponse {
+  projectId: core.ProjectID;
+  /**
+   * Added and Restored are the repos tracked for the first time and the
+   * repos that came back with their history.
+   */
+  added: core.RepoID[];
+  restored: core.RepoID[];
+  /**
+   * AlreadyTracked: nothing needed to change.
+   */
+  alreadyTracked: boolean;
+}
+/**
+ * RescanResponse is the body of POST /api/projects/{id}/rescan.
+ */
+export interface RescanResponse {
+  new: CandidateDTO[];
+  /**
+   * Missing are tracked repos whose folder is gone or no longer a repo;
+   * offer "stop tracking", never untrack automatically.
+   */
+  missing: core.RepoID[];
+}
+/**
+ * RepoViewKind says what the status of a repo holds.
+ */
+export type RepoViewKind = string;
+/**
+ * RepoViewUnknown: never read yet.
+ */
+export const RepoViewUnknown: RepoViewKind = "unknown";
+/**
+ * RepoViewFresh: the last read worked.
+ */
+export const RepoViewFresh: RepoViewKind = "fresh";
+/**
+ * RepoViewProblem: the last read failed; the numbers are the last good ones.
+ */
+export const RepoViewProblem: RepoViewKind = "problem";
+/**
+ * CommitRefDTO is the last commit of a repo.
+ */
+export interface CommitRefDTO {
+  oid: string;
+  subject: string;
+  author: string;
+  at: string;
+}
+/**
+ * RepoStatusDTO is the status of one repo (WS-02). It is also the data of a
+ * "repo:<id>" message.
+ */
+export interface RepoStatusDTO {
+  id: core.RepoID;
+  projectId: core.ProjectID;
+  name: string;
+  /**
+   * RelPath is under the project folder, "." for the folder itself.
+   */
+  relPath: string;
+  path: string;
+  trusted: boolean;
+  /**
+   * Refreshing: a read is in flight; the numbers are the last known ones.
+   */
+  refreshing: boolean;
+  view: RepoViewKind;
+  /**
+   * Problem is one of missing, not_a_repo, timed_out, git_failed when View
+   * is "problem", else empty. ProblemMessage says what to do next.
+   */
+  problem?: string;
+  problemMessage?: string;
+  /**
+   * Flags are the health flags: missing, not_a_repo, timed_out, git_failed,
+   * detached, no_upstream, conflicts, diverged. "Problems" means any flag.
+   */
+  flags: string[];
+  /**
+   * CheckedAt is when the numbers were read.
+   */
+  checkedAt?: string;
+  branch: string;
+  detached: boolean;
+  upstream: string;
+  hasUpstream: boolean;
+  ahead: number /* int */;
+  behind: number /* int */;
+  staged: number /* int */;
+  unstaged: number /* int */;
+  untracked: number /* int */;
+  conflicted: number /* int */;
+  lastCommit?: CommitRefDTO;
+  /**
+   * FailedPipeline: the current branch's pipeline failed (from git hosts).
+   */
+  failedPipeline: boolean;
+}
+/**
+ * RepoCountsDTO has one number per filter (WS-03, WS-04).
+ */
+export interface RepoCountsDTO {
+  all: number /* int */;
+  uncommitted: number /* int */;
+  behind: number /* int */;
+  ahead: number /* int */;
+  failedPipeline: number /* int */;
+  problems: number /* int */;
+}
+/**
+ * ProjectDTO is a tracked project with its tracked repos and counts.
+ */
+export interface ProjectDTO {
+  id: core.ProjectID;
+  name: string;
+  path: string;
+  repos: RepoStatusDTO[];
+  counts: RepoCountsDTO;
+}
+/**
+ * ReposResponse is the body of GET /api/repos?project=&filter=. Filter is one
+ * of all, uncommitted, behind, ahead, failed_pipeline, problems; the counts
+ * are for the unfiltered set.
+ */
+export interface ReposResponse {
+  projects: ProjectDTO[];
+  counts: RepoCountsDTO;
+}
+/**
+ * RefreshReposRequest is the body of POST /api/repos/refresh. Empty IDs means
+ * all repos. Reason is one of user, focus, git_action, build, tracking, tick;
+ * empty means user.
+ */
+export interface RefreshReposRequest {
+  ids: core.RepoID[];
+  reason?: string;
+}
+/**
+ * ReposChangedMessage is the data of a message on the "repos" topic: the list
+ * or the counts changed. The client refetches the list.
+ */
+export interface ReposChangedMessage {
+  counts: RepoCountsDTO;
 }

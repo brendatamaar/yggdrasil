@@ -61,6 +61,23 @@ const (
 	TopicTasks      = "tasks"
 )
 
+// TopicRepos carries ReposChangedMessage: the repo list or its counts changed.
+const TopicRepos = "repos"
+
+// TopicRepoPrefix starts "repo:<id>", which carries RepoStatusDTO for that repo.
+const TopicRepoPrefix = "repo:"
+
+// TopicBuilds carries BuildChangedMessage for any build.
+const TopicBuilds = "builds"
+
+// TopicBuildPrefix starts "build:<id>", which carries BuildChangedMessage and
+// BuildLogMessage for that build.
+const TopicBuildPrefix = "build:"
+
+// TopicHosts carries HostsChangedMessage: host instances or their MR and
+// pipeline data changed.
+const TopicHosts = "hosts"
+
 // TaskStatusMessage is the Data of a message on TopicTasks, sent whenever a
 // task changes status. It holds no prompt or output, so it is safe to show in
 // notifications (docs/AGENTS.md 5.9).

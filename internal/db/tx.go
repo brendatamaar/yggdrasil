@@ -94,8 +94,14 @@ func (tx *Tx) CreateRepo(ctx context.Context, r core.Repo) (core.Repo, error) {
 	if err := r.Validate(); err != nil {
 		return r, err
 	}
-	err := tx.q.CreateRepo(ctx, gen.CreateRepoParams{
+	// rel_path is derived from the project's folder; it is unique per project.
+	proj, err := tx.q.GetProjectAny(ctx, string(r.ProjectID))
+	if err != nil {
+		return r, found("create repo: project "+string(r.ProjectID), err)
+	}
+	err = tx.q.CreateRepo(ctx, gen.CreateRepoParams{
 		ID: string(r.ID), ProjectID: string(r.ProjectID), Name: r.Name, Path: r.Path,
+		RelPath:       relPathOf(proj.Path, r.Path, r.Name),
 		DefaultBranch: r.DefaultBranch, Trusted: b2i(r.Trusted), CreatedAt: fmtTime(r.CreatedAt),
 	})
 	if err != nil {

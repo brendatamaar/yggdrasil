@@ -10,8 +10,8 @@ import (
 )
 
 const createRepo = `-- name: CreateRepo :exec
-INSERT INTO repos (id, project_id, name, path, default_branch, trusted, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO repos (id, project_id, name, path, rel_path, default_branch, trusted, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateRepoParams struct {
@@ -19,6 +19,7 @@ type CreateRepoParams struct {
 	ProjectID     string
 	Name          string
 	Path          string
+	RelPath       string
 	DefaultBranch string
 	Trusted       int64
 	CreatedAt     string
@@ -30,6 +31,7 @@ func (q *Queries) CreateRepo(ctx context.Context, arg CreateRepoParams) error {
 		arg.ProjectID,
 		arg.Name,
 		arg.Path,
+		arg.RelPath,
 		arg.DefaultBranch,
 		arg.Trusted,
 		arg.CreatedAt,
@@ -38,9 +40,13 @@ func (q *Queries) CreateRepo(ctx context.Context, arg CreateRepoParams) error {
 }
 
 const getRepo = `-- name: GetRepo :one
-SELECT id, project_id, name, path, default_branch, trusted, created_at FROM repos WHERE id = ?
+
+SELECT id, project_id, name, path, default_branch, trusted, created_at, untracked_at, rel_path FROM repos WHERE id = ? AND untracked_at IS NULL
 `
 
+// Untracked repos (untracked_at set) are invisible to GetRepo and
+// ListReposByProject, which the API lists and task creation use (SF-02).
+// GetRepoIncludingUntracked serves history views (builds of an untracked repo).
 func (q *Queries) GetRepo(ctx context.Context, id string) (Repo, error) {
 	row := q.db.QueryRowContext(ctx, getRepo, id)
 	var i Repo
@@ -52,12 +58,35 @@ func (q *Queries) GetRepo(ctx context.Context, id string) (Repo, error) {
 		&i.DefaultBranch,
 		&i.Trusted,
 		&i.CreatedAt,
+		&i.UntrackedAt,
+		&i.RelPath,
+	)
+	return i, err
+}
+
+const getRepoIncludingUntracked = `-- name: GetRepoIncludingUntracked :one
+SELECT id, project_id, name, path, default_branch, trusted, created_at, untracked_at, rel_path FROM repos WHERE id = ?
+`
+
+func (q *Queries) GetRepoIncludingUntracked(ctx context.Context, id string) (Repo, error) {
+	row := q.db.QueryRowContext(ctx, getRepoIncludingUntracked, id)
+	var i Repo
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Path,
+		&i.DefaultBranch,
+		&i.Trusted,
+		&i.CreatedAt,
+		&i.UntrackedAt,
+		&i.RelPath,
 	)
 	return i, err
 }
 
 const listReposByProject = `-- name: ListReposByProject :many
-SELECT id, project_id, name, path, default_branch, trusted, created_at FROM repos WHERE project_id = ? ORDER BY name
+SELECT id, project_id, name, path, default_branch, trusted, created_at, untracked_at, rel_path FROM repos WHERE project_id = ? AND untracked_at IS NULL ORDER BY name
 `
 
 func (q *Queries) ListReposByProject(ctx context.Context, projectID string) ([]Repo, error) {
@@ -77,6 +106,8 @@ func (q *Queries) ListReposByProject(ctx context.Context, projectID string) ([]R
 			&i.DefaultBranch,
 			&i.Trusted,
 			&i.CreatedAt,
+			&i.UntrackedAt,
+			&i.RelPath,
 		); err != nil {
 			return nil, err
 		}

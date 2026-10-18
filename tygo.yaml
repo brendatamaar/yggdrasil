@@ -22,10 +22,16 @@ packages:
   - path: github.com/brendatamaar/yggdrasil/internal/api
     output_path: web/src/api/gen/api.gen.ts
     # Go-only files: the closed topic type (topics cross the wire as
-    # strings) and the server wiring (Deps, Server).
+    # strings), the server wiring (Deps, Server) and the per-area service
+    # interfaces with their routes (the DTOs are in types_<area>.go).
     exclude_files:
       - topic.go
       - server.go
+      - repos.go
+      - repos_actions.go
+      - builds.go
+      - hosts.go
+      - search.go
     frontmatter: |
       import type * as agents from "./agents.gen";
       import type * as core from "./core.gen";
@@ -36,6 +42,11 @@ packages:
       core.RepoID: core.RepoID
       core.TaskMode: core.TaskMode
       core.TaskID: core.TaskID
+      core.BuildID: core.BuildID
+      core.WorktreeID: core.WorktreeID
+      core.BuildStatus: core.BuildStatus
+      core.StepStatus: core.StepStatus
+      core.StepOutcome: core.StepOutcome
       core.TaskStatus: core.TaskStatus
       core.Task: core.Task
       agents.Event: agents.Event

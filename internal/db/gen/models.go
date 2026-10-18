@@ -76,10 +76,12 @@ type ChangeSet struct {
 }
 
 type Project struct {
-	ID        string
-	Name      string
-	Path      string
-	CreatedAt string
+	ID          string
+	Name        string
+	Path        string
+	CreatedAt   string
+	UntrackedAt sql.NullString
+	Version     int64
 }
 
 type Proposal struct {
@@ -104,6 +106,14 @@ type Repo struct {
 	DefaultBranch string
 	Trusted       int64
 	CreatedAt     string
+	UntrackedAt   sql.NullString
+	RelPath       string
+}
+
+type Setting struct {
+	Key     string
+	Value   string
+	Version int64
 }
 
 type Task struct {
