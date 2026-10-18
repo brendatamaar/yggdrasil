@@ -27,7 +27,7 @@ type Tx struct {
 // back as ErrConflict and a FOREIGN KEY violation as ErrNotFound. fn must use only the Tx it gets: calling
 // the Store from inside fn would wait forever for the one write connection.
 func (s *Store) Commit(ctx context.Context, fn func(*Tx) error) error {
-	tx, err := s.db.Write.BeginTx(ctx, nil)
+	tx, err := s.db.write.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}

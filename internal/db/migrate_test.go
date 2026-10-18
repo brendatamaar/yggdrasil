@@ -11,7 +11,7 @@ import (
 func count(t *testing.T, d *DB, query string, args ...any) int {
 	t.Helper()
 	var n int
-	if err := d.Write.QueryRowContext(context.Background(), query, args...).Scan(&n); err != nil {
+	if err := d.write.QueryRowContext(context.Background(), query, args...).Scan(&n); err != nil {
 		t.Fatalf("%s: %v", query, err)
 	}
 	return n
@@ -22,7 +22,7 @@ func count(t *testing.T, d *DB, query string, args ...any) int {
 func TestMigration00002KeepsData(t *testing.T) {
 	d := openTest(t)
 	ctx := context.Background()
-	m, err := NewMigrator(d.Write)
+	m, err := NewMigrator(d.write)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestMigration00002KeepsData(t *testing.T) {
 		`INSERT INTO proposals (id, task_id, kind, status, summary, created_at)
 		 VALUES ('pr1', 't1', 'commit', 'pending', 'commit', '2026-01-02T00:00:00.000Z')`,
 	} {
-		if _, err := d.Write.ExecContext(ctx, q); err != nil {
+		if _, err := d.write.ExecContext(ctx, q); err != nil {
 			t.Fatalf("seed 00001 data: %v\n%s", err, q)
 		}
 	}
@@ -92,30 +92,30 @@ func TestMigration00002KeepsData(t *testing.T) {
 		"unknown start_failure":               `INSERT INTO build_steps (build_id, idx, repo_id, name, status, start_failure) VALUES ('b1', 7, 'r1', 'x', 'queued', 'bogus')`,
 		"deleting a worktree that has builds": `DELETE FROM worktrees WHERE id = 'w1'`,
 	} {
-		if _, err := d.Write.ExecContext(ctx, q); err == nil {
+		if _, err := d.write.ExecContext(ctx, q); err == nil {
 			t.Errorf("%s was accepted", name)
 		}
 	}
-	if _, err := d.Write.ExecContext(ctx, `INSERT INTO build_steps (build_id, idx, repo_id, name, status, outcome, start_failure) VALUES ('b1', 8, 'r1', 'x', 'failed', 'start_failed', 'not_found')`); err != nil {
+	if _, err := d.write.ExecContext(ctx, `INSERT INTO build_steps (build_id, idx, repo_id, name, status, outcome, start_failure) VALUES ('b1', 8, 'r1', 'x', 'failed', 'start_failed', 'not_found')`); err != nil {
 		t.Errorf("valid start_failure refused: %v", err)
 	}
-	if _, err := d.Write.ExecContext(ctx, `DELETE FROM build_steps WHERE build_id = 'b1' AND idx = 8`); err != nil {
+	if _, err := d.write.ExecContext(ctx, `DELETE FROM build_steps WHERE build_id = 'b1' AND idx = 8`); err != nil {
 		t.Fatal(err)
 	}
 	// The rebuilt tables keep their foreign keys: deleting the build removes its steps.
-	if _, err := d.Write.ExecContext(ctx, `INSERT INTO builds (id, status, created_at) VALUES ('b2', 'interrupted', '2026-01-03T00:00:00.000Z')`); err != nil {
+	if _, err := d.write.ExecContext(ctx, `INSERT INTO builds (id, status, created_at) VALUES ('b2', 'interrupted', '2026-01-03T00:00:00.000Z')`); err != nil {
 		t.Fatalf("new status 'interrupted' refused: %v", err)
 	}
-	if _, err := d.Write.ExecContext(ctx, `INSERT INTO build_steps (build_id, idx, repo_id, name, status, outcome, argv) VALUES ('b2', 0, 'r1', 'x', 'skipped', 'start_failed', '["go","test"]')`); err != nil {
+	if _, err := d.write.ExecContext(ctx, `INSERT INTO build_steps (build_id, idx, repo_id, name, status, outcome, argv) VALUES ('b2', 0, 'r1', 'x', 'skipped', 'start_failed', '["go","test"]')`); err != nil {
 		t.Fatalf("new step columns refused: %v", err)
 	}
-	if _, err := d.Write.ExecContext(ctx, `INSERT INTO build_steps (build_id, idx, repo_id, name, status) VALUES ('nope', 0, 'r1', 'x', 'queued')`); err == nil {
+	if _, err := d.write.ExecContext(ctx, `INSERT INTO build_steps (build_id, idx, repo_id, name, status) VALUES ('nope', 0, 'r1', 'x', 'queued')`); err == nil {
 		t.Fatal("build step of a missing build accepted: the foreign key was lost in the rebuild")
 	}
-	if _, err := d.Write.ExecContext(ctx, `INSERT INTO build_steps (build_id, idx, repo_id, name, status, outcome) VALUES ('b1', 5, 'r1', 'x', 'queued', 'bogus')`); err == nil {
+	if _, err := d.write.ExecContext(ctx, `INSERT INTO build_steps (build_id, idx, repo_id, name, status, outcome) VALUES ('b1', 5, 'r1', 'x', 'queued', 'bogus')`); err == nil {
 		t.Fatal("unknown outcome accepted")
 	}
-	if _, err := d.Write.ExecContext(ctx, `DELETE FROM builds WHERE id = 'b2'`); err != nil {
+	if _, err := d.write.ExecContext(ctx, `DELETE FROM builds WHERE id = 'b2'`); err != nil {
 		t.Fatal(err)
 	}
 	if n := count(t, d, `SELECT count(*) FROM build_steps WHERE build_id = 'b2'`); n != 0 {
@@ -123,10 +123,10 @@ func TestMigration00002KeepsData(t *testing.T) {
 	}
 
 	// Down with data: the statuses 00001 does not know are mapped, nothing is lost.
-	if _, err := d.Write.ExecContext(ctx, `UPDATE builds SET status = 'interrupted' WHERE id = 'b1'`); err != nil {
+	if _, err := d.write.ExecContext(ctx, `UPDATE builds SET status = 'interrupted' WHERE id = 'b1'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.Write.ExecContext(ctx, `UPDATE build_steps SET status = 'skipped' WHERE build_id = 'b1' AND idx = 1`); err != nil {
+	if _, err := d.write.ExecContext(ctx, `UPDATE build_steps SET status = 'skipped' WHERE build_id = 'b1' AND idx = 1`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.DownTo(ctx, 1); err != nil {

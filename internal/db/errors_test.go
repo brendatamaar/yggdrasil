@@ -85,7 +85,7 @@ func TestOtherTriggerAbortIsNotMapped(t *testing.T) {
 	if err := s.Commit(ctx, func(tx *Tx) error { return tx.AppendAudit(ctx, e) }); err != nil {
 		t.Fatal(err)
 	}
-	_, err := d.Write.ExecContext(ctx, "UPDATE audit_log SET actor = 'y'")
+	_, err := d.write.ExecContext(ctx, "UPDATE audit_log SET actor = 'y'")
 	if err == nil {
 		t.Fatal("audit log was updated")
 	}

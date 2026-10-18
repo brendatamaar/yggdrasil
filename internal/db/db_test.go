@@ -66,17 +66,17 @@ func TestPragmasAndReadOnlyPool(t *testing.T) {
 	ctx := context.Background()
 	var fk int
 	var mode string
-	if err := d.Read.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&fk); err != nil || fk != 1 {
+	if err := d.read.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&fk); err != nil || fk != 1 {
 		t.Fatalf("foreign_keys = %d, %v", fk, err)
 	}
-	if err := d.Read.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode); err != nil || mode != "wal" {
+	if err := d.read.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode); err != nil || mode != "wal" {
 		t.Fatalf("journal_mode = %q, %v", mode, err)
 	}
 	var bt int
-	if err := d.Write.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&bt); err != nil || bt != 5000 {
+	if err := d.write.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&bt); err != nil || bt != 5000 {
 		t.Fatalf("busy_timeout = %d, %v", bt, err)
 	}
-	if _, err := d.Read.ExecContext(ctx, "INSERT INTO projects (id, name, path, created_at) VALUES ('p','p','p','t')"); err == nil {
+	if _, err := d.read.ExecContext(ctx, "INSERT INTO projects (id, name, path, created_at) VALUES ('p','p','p','t')"); err == nil {
 		t.Fatal("read pool accepted a write")
 	}
 }
@@ -84,7 +84,7 @@ func TestPragmasAndReadOnlyPool(t *testing.T) {
 func TestMigrationsUpDownUp(t *testing.T) {
 	d := openTest(t)
 	ctx := context.Background()
-	p, err := NewMigrator(d.Write)
+	p, err := NewMigrator(d.write)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,13 +92,13 @@ func TestMigrationsUpDownUp(t *testing.T) {
 		t.Fatalf("down: %v", err)
 	}
 	var n int
-	if err := d.Write.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE name = 'projects'").Scan(&n); err != nil || n != 0 {
+	if err := d.write.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE name = 'projects'").Scan(&n); err != nil || n != 0 {
 		t.Fatalf("projects table after down: %d, %v", n, err)
 	}
 	if _, err := p.Up(ctx); err != nil {
 		t.Fatalf("up again: %v", err)
 	}
-	if err := d.Write.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE name = 'projects'").Scan(&n); err != nil || n != 1 {
+	if err := d.write.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE name = 'projects'").Scan(&n); err != nil || n != 1 {
 		t.Fatalf("projects table after up: %d, %v", n, err)
 	}
 }
@@ -112,14 +112,14 @@ func TestForeignKeyCascade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.Write.ExecContext(ctx, "DELETE FROM projects WHERE id = ?", string(p.ID)); err != nil {
+	if _, err := d.write.ExecContext(ctx, "DELETE FROM projects WHERE id = ?", string(p.ID)); err != nil {
 		t.Fatal(err)
 	}
 	for _, q := range []string{
 		"SELECT count(*) FROM repos", "SELECT count(*) FROM tasks", "SELECT count(*) FROM task_repos",
 	} {
 		var n int
-		if err := d.Read.QueryRowContext(ctx, q).Scan(&n); err != nil || n != 0 {
+		if err := d.read.QueryRowContext(ctx, q).Scan(&n); err != nil || n != 0 {
 			t.Fatalf("%s = %d after cascade, %v (task %s)", q, n, err, task.ID)
 		}
 	}
@@ -152,7 +152,7 @@ func TestSubTaskOneLevel(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range []struct{ id, parent core.TaskID }{{parent.ID, other.ID}, {other.ID, child.ID}} {
-		_, err := d.Write.ExecContext(ctx, "UPDATE tasks SET parent_task_id = ? WHERE id = ?", string(c.parent), string(c.id))
+		_, err := d.write.ExecContext(ctx, "UPDATE tasks SET parent_task_id = ? WHERE id = ?", string(c.parent), string(c.id))
 		if err == nil || !strings.Contains(err.Error(), "sub-tasks are one level only") {
 			t.Fatalf("update %s -> parent %s: got %v", c.id, c.parent, err)
 		}
@@ -172,7 +172,7 @@ func TestAuditLogAppendOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, q := range []string{"UPDATE audit_log SET actor = 'x'", "DELETE FROM audit_log"} {
-		if _, err := d.Write.ExecContext(ctx, q); err == nil || !strings.Contains(err.Error(), "append-only") {
+		if _, err := d.write.ExecContext(ctx, q); err == nil || !strings.Contains(err.Error(), "append-only") {
 			t.Fatalf("%s: got %v", q, err)
 		}
 	}

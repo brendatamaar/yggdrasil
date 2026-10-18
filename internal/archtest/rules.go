@@ -66,6 +66,23 @@ func banImports(name string, folder string, exceptTests bool, forbidden ...strin
 	}}
 }
 
+// importedOnlyBy lets only the listed folders (and their subfolders) import
+// pkg, a path relative to internal/. With testsOnly, _test.go files anywhere
+// may import it too.
+func importedOnlyBy(name, pkg string, testsOnly bool, allowed ...string) rule {
+	return rule{name: name, check: func(f file) []string {
+		if inDir(f, allowed...) || (testsOnly && f.test) {
+			return nil
+		}
+		for _, imp := range f.imports {
+			if rel, ok := strings.CutPrefix(imp, internalPrefix); ok && (rel == pkg || strings.HasPrefix(rel, pkg+"/")) {
+				return []string{violation(f, "imports internal/%s", rel)}
+			}
+		}
+		return nil
+	}}
+}
+
 // onlyInternalImports allows a folder to import nothing from this module but
 // the listed packages. Test files are left out: what a test imports is not a
 // dependency of the shipped code.
@@ -127,8 +144,9 @@ func storeAllowed(name string) bool {
 }
 
 // storeWrites forbids an exported write method on db.Store other than the
-// allowed set. Since only internal/db can declare methods on its own type,
-// this also means no package outside it can call an un-audited write.
+// allowed set. Together with "db/gen only from db" and the unexported DB
+// pools, no package outside internal/db can write without Store.Commit.
+// (Commit itself doesn't force an AppendAudit; callers must add one.)
 var storeWrites = rule{name: "Store exports no un-audited write", check: func(f file) []string {
 	if f.dir != "internal/db" || f.test {
 		return nil
@@ -173,6 +191,12 @@ var rules = []rule{
 	// transcript is not audited by design). Test helpers live in _test.go
 	// files and in internal/db/dbtest.
 	storeWrites,
+	// Invariant 8: the raw sqlc queries write without an audit entry, so only
+	// the database package uses them; everyone else goes through Store.Commit.
+	importedOnlyBy("db/gen only from db", "db/gen", false, "internal/db"),
+	// Test helpers write without audit entries and invent IDs and times.
+	importedOnlyBy("dbtest only from tests", "db/dbtest", true),
+	importedOnlyBy("platformtest only from tests", "platform/platformtest", true, "internal/platform/platformtest"),
 
 	// 5.1: the data model imports nothing from the rest of Yggdrasil.
 	onlyInternalImports("core is a leaf", "internal/core"),

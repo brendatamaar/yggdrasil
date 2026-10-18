@@ -33,9 +33,11 @@ const busyTimeout = 5 * time.Second
 // so the write pool has exactly one connection and writers queue in
 // database/sql instead of spinning on busy_timeout. WAL lets readers run
 // next to that writer, so the read pool has several query_only connections.
+// Both are unexported: outside this package every write goes through
+// Store.Commit, with its audit entry.
 type DB struct {
-	Write *sql.DB
-	Read  *sql.DB
+	write *sql.DB
+	read  *sql.DB
 }
 
 // DSN returns the modernc.org/sqlite data source name for path. The path is
@@ -85,7 +87,7 @@ func Open(ctx context.Context, path string) (*DB, error) {
 		_ = w.Close()
 		return nil, fmt.Errorf("open database for reading: %w", err)
 	}
-	return &DB{Write: w, Read: r}, nil
+	return &DB{write: w, read: r}, nil
 }
 
 func openPool(ctx context.Context, path string, readOnly bool, conns int) (*sql.DB, error) {
@@ -112,14 +114,11 @@ func openPool(ctx context.Context, path string, readOnly bool, conns int) (*sql.
 
 // Close closes both pools.
 func (d *DB) Close() error {
-	return errors.Join(d.Read.Close(), d.Write.Close())
+	return errors.Join(d.read.Close(), d.write.Close())
 }
 
-// Writer returns queries bound to the single-connection write pool.
-func (d *DB) Writer() *gen.Queries { return gen.New(d.Write) }
-
-// Reader returns queries bound to the read-only pool.
-func (d *DB) Reader() *gen.Queries { return gen.New(d.Read) }
+// reader returns queries bound to the read-only pool.
+func (d *DB) reader() *gen.Queries { return gen.New(d.read) }
 
 // NewMigrator returns a goose provider for the embedded migrations. Do not
 // call its Close method: it closes db, which the caller still owns.

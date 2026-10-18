@@ -143,7 +143,7 @@ func projectFrom(r gen.Project) (core.Project, error) {
 
 // GetProject returns one project.
 func (s *Store) GetProject(ctx context.Context, id core.ProjectID) (core.Project, error) {
-	r, err := s.db.Reader().GetProject(ctx, string(id))
+	r, err := s.db.reader().GetProject(ctx, string(id))
 	if err := found("get project "+string(id), err); err != nil {
 		return core.Project{}, err
 	}
@@ -152,7 +152,7 @@ func (s *Store) GetProject(ctx context.Context, id core.ProjectID) (core.Project
 
 // ListProjects returns all projects by name.
 func (s *Store) ListProjects(ctx context.Context) ([]core.Project, error) {
-	rows, err := s.db.Reader().ListProjects(ctx)
+	rows, err := s.db.reader().ListProjects(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list projects: %w", err)
 	}
@@ -186,7 +186,7 @@ func b2i(b bool) int64 {
 
 // GetRepo returns one repo.
 func (s *Store) GetRepo(ctx context.Context, id core.RepoID) (core.Repo, error) {
-	r, err := s.db.Reader().GetRepo(ctx, string(id))
+	r, err := s.db.reader().GetRepo(ctx, string(id))
 	if err := found("get repo "+string(id), err); err != nil {
 		return core.Repo{}, err
 	}
@@ -195,7 +195,7 @@ func (s *Store) GetRepo(ctx context.Context, id core.RepoID) (core.Repo, error) 
 
 // ListRepos returns the repos of a project by name.
 func (s *Store) ListRepos(ctx context.Context, project core.ProjectID) ([]core.Repo, error) {
-	rows, err := s.db.Reader().ListReposByProject(ctx, string(project))
+	rows, err := s.db.reader().ListReposByProject(ctx, string(project))
 	if err != nil {
 		return nil, fmt.Errorf("list repos: %w", err)
 	}
@@ -243,7 +243,7 @@ func (s *Store) taskFrom(ctx context.Context, q *gen.Queries, r gen.Task) (core.
 
 // GetTask returns one task with its repo scope.
 func (s *Store) GetTask(ctx context.Context, id core.TaskID) (core.Task, error) {
-	q := s.db.Reader()
+	q := s.db.reader()
 	r, err := q.GetTask(ctx, string(id))
 	if err := found("get task "+string(id), err); err != nil {
 		return core.Task{}, err
@@ -265,7 +265,7 @@ func (s *Store) tasksFrom(ctx context.Context, q *gen.Queries, rows []gen.Task) 
 
 // ListTasks returns the tasks of a project, oldest first.
 func (s *Store) ListTasks(ctx context.Context, project core.ProjectID) ([]core.Task, error) {
-	q := s.db.Reader()
+	q := s.db.reader()
 	rows, err := q.ListTasksByProject(ctx, string(project))
 	if err != nil {
 		return nil, fmt.Errorf("list tasks: %w", err)
@@ -275,7 +275,7 @@ func (s *Store) ListTasks(ctx context.Context, project core.ProjectID) ([]core.T
 
 // ListSubTasks returns the sub-tasks of a task, oldest first.
 func (s *Store) ListSubTasks(ctx context.Context, parent core.TaskID) ([]core.Task, error) {
-	q := s.db.Reader()
+	q := s.db.reader()
 	rows, err := q.ListSubTasks(ctx, nullStr(&parent))
 	if err != nil {
 		return nil, fmt.Errorf("list sub-tasks: %w", err)
@@ -285,7 +285,7 @@ func (s *Store) ListSubTasks(ctx context.Context, parent core.TaskID) ([]core.Ta
 
 // TaskDependencies returns the tasks that must finish before task starts.
 func (s *Store) TaskDependencies(ctx context.Context, task core.TaskID) ([]core.TaskID, error) {
-	ids, err := s.db.Reader().ListTaskDependencies(ctx, string(task))
+	ids, err := s.db.reader().ListTaskDependencies(ctx, string(task))
 	if err != nil {
 		return nil, fmt.Errorf("list task dependencies: %w", err)
 	}
@@ -308,7 +308,7 @@ func worktreeFrom(r gen.Worktree) (core.Worktree, error) {
 
 // GetWorktree returns one worktree.
 func (s *Store) GetWorktree(ctx context.Context, id core.WorktreeID) (core.Worktree, error) {
-	r, err := s.db.Reader().GetWorktree(ctx, string(id))
+	r, err := s.db.reader().GetWorktree(ctx, string(id))
 	if err := found("get worktree "+string(id), err); err != nil {
 		return core.Worktree{}, err
 	}
@@ -317,7 +317,7 @@ func (s *Store) GetWorktree(ctx context.Context, id core.WorktreeID) (core.Workt
 
 // ListWorktrees returns the worktrees of a task.
 func (s *Store) ListWorktrees(ctx context.Context, task core.TaskID) ([]core.Worktree, error) {
-	rows, err := s.db.Reader().ListWorktreesByTask(ctx, string(task))
+	rows, err := s.db.reader().ListWorktreesByTask(ctx, string(task))
 	if err != nil {
 		return nil, fmt.Errorf("list worktrees: %w", err)
 	}
@@ -346,7 +346,7 @@ type TaskEvent struct {
 
 // ListTaskEvents returns the events of a task with Seq greater than after.
 func (s *Store) ListTaskEvents(ctx context.Context, task core.TaskID, after int64) ([]TaskEvent, error) {
-	rows, err := s.db.Reader().ListTaskEvents(ctx, gen.ListTaskEventsParams{TaskID: string(task), Seq: after})
+	rows, err := s.db.reader().ListTaskEvents(ctx, gen.ListTaskEventsParams{TaskID: string(task), Seq: after})
 	if err != nil {
 		return nil, fmt.Errorf("list task events: %w", err)
 	}
@@ -380,7 +380,7 @@ func changeSetFrom(r gen.ChangeSet) (core.ChangeSet, error) {
 
 // GetChangeSet returns one change set.
 func (s *Store) GetChangeSet(ctx context.Context, id core.ChangeSetID) (core.ChangeSet, error) {
-	r, err := s.db.Reader().GetChangeSet(ctx, string(id))
+	r, err := s.db.reader().GetChangeSet(ctx, string(id))
 	if err := found("get change set "+string(id), err); err != nil {
 		return core.ChangeSet{}, err
 	}
@@ -389,7 +389,7 @@ func (s *Store) GetChangeSet(ctx context.Context, id core.ChangeSetID) (core.Cha
 
 // ListChangeSets returns the change sets of a task.
 func (s *Store) ListChangeSets(ctx context.Context, task core.TaskID) ([]core.ChangeSet, error) {
-	rows, err := s.db.Reader().ListChangeSetsByTask(ctx, string(task))
+	rows, err := s.db.reader().ListChangeSetsByTask(ctx, string(task))
 	if err != nil {
 		return nil, fmt.Errorf("list change sets: %w", err)
 	}
@@ -424,7 +424,7 @@ func proposalFrom(r gen.Proposal) (core.Proposal, error) {
 
 // GetProposal returns one proposal.
 func (s *Store) GetProposal(ctx context.Context, id core.ProposalID) (core.Proposal, error) {
-	r, err := s.db.Reader().GetProposal(ctx, string(id))
+	r, err := s.db.reader().GetProposal(ctx, string(id))
 	if err := found("get proposal "+string(id), err); err != nil {
 		return core.Proposal{}, err
 	}
@@ -445,7 +445,7 @@ func proposalsFrom(rows []gen.Proposal) ([]core.Proposal, error) {
 
 // ListProposals returns the proposals with the given status, oldest first.
 func (s *Store) ListProposals(ctx context.Context, status core.ProposalStatus) ([]core.Proposal, error) {
-	rows, err := s.db.Reader().ListProposalsByStatus(ctx, string(status))
+	rows, err := s.db.reader().ListProposalsByStatus(ctx, string(status))
 	if err != nil {
 		return nil, fmt.Errorf("list proposals: %w", err)
 	}
@@ -454,7 +454,7 @@ func (s *Store) ListProposals(ctx context.Context, status core.ProposalStatus) (
 
 // ListChangeSetProposals returns the proposals of a change set, oldest first.
 func (s *Store) ListChangeSetProposals(ctx context.Context, cs core.ChangeSetID) ([]core.Proposal, error) {
-	rows, err := s.db.Reader().ListProposalsByChangeSet(ctx, nullStr(&cs))
+	rows, err := s.db.reader().ListProposalsByChangeSet(ctx, nullStr(&cs))
 	if err != nil {
 		return nil, fmt.Errorf("list proposals: %w", err)
 	}
@@ -552,7 +552,7 @@ func (s *Store) buildFrom(ctx context.Context, q *gen.Queries, r gen.Build) (cor
 
 // GetBuild returns one build with its steps.
 func (s *Store) GetBuild(ctx context.Context, id core.BuildID) (core.Build, error) {
-	q := s.db.Reader()
+	q := s.db.reader()
 	r, err := q.GetBuild(ctx, string(id))
 	if err := found("get build "+string(id), err); err != nil {
 		return core.Build{}, err
@@ -562,7 +562,7 @@ func (s *Store) GetBuild(ctx context.Context, id core.BuildID) (core.Build, erro
 
 // ListBuilds returns the builds of a task with their steps, oldest first.
 func (s *Store) ListBuilds(ctx context.Context, task core.TaskID) ([]core.Build, error) {
-	q := s.db.Reader()
+	q := s.db.reader()
 	rows, err := q.ListBuildsByTask(ctx, nullStr(&task))
 	if err != nil {
 		return nil, fmt.Errorf("list builds: %w", err)
@@ -590,7 +590,7 @@ func auditFrom(r gen.AuditLog) (core.AuditEntry, error) {
 // ListAudit returns the newest audit entries, newest first. A non-empty
 // subject filters by it.
 func (s *Store) ListAudit(ctx context.Context, subject string, limit int) ([]core.AuditEntry, error) {
-	q := s.db.Reader()
+	q := s.db.reader()
 	var rows []gen.AuditLog
 	var err error
 	if subject == "" {
