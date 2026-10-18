@@ -15,6 +15,14 @@ type QueuedRef struct {
 // Next picks the build to admit: none when running >= max, else the oldest
 // (QueuedAt, ID) of queued. At v1, max is 1 (BL-03).
 func Next(queued []QueuedRef, running, max int) (core.BuildID, bool) {
-	// Implemented in batch B1 (docs/phases/phase-2.md).
-	return "", false
+	if running >= max || len(queued) == 0 {
+		return "", false
+	}
+	best := queued[0]
+	for _, q := range queued[1:] {
+		if q.QueuedAt.Before(best.QueuedAt) || (q.QueuedAt.Equal(best.QueuedAt) && q.ID < best.ID) {
+			best = q
+		}
+	}
+	return best.ID, true
 }
