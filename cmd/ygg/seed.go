@@ -2,144 +2,94 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
-	"time"
+	"sort"
 
-	"github.com/brendatamaar/yggdrasil/internal/audit"
-	"github.com/brendatamaar/yggdrasil/internal/core"
-	"github.com/brendatamaar/yggdrasil/internal/db"
-	"github.com/brendatamaar/yggdrasil/internal/platform"
+	"github.com/brendatamaar/yggdrasil/internal/apperr"
+	corerepos "github.com/brendatamaar/yggdrasil/internal/core/repos"
+	"github.com/brendatamaar/yggdrasil/internal/repos"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
 
-// seed tracks a repo so a task can be started from the start page. It stands
-// in for the project pages (WS-01, Phase 2) and prints the two IDs the start
-// page asks for. It never changes the repo's files.
-func seed(ctx context.Context, w io.Writer, cfg config, repoPath, projectName string) error {
-	abs, err := filepath.Abs(repoPath)
+// seed tracks the folder as a project with every git repo found under it, the
+// same way the folder browser does (WS-01): ParseFolder, Scan, then
+// TrackProject through the tracking service, so the decision, the rows and
+// the audit entries are the same. It prints the project and repo IDs the
+// start page asks for. It never changes a file under the folder.
+func seed(ctx context.Context, w io.Writer, cfg config, folder, projectName string) error {
+	abs, err := filepath.Abs(folder)
 	if err != nil {
-		return fmt.Errorf("read the folder %q: %w", repoPath, err)
+		return fmt.Errorf("read the folder %q: %w", folder, err)
 	}
-	if err := platform.CheckPath(abs); err != nil {
+	path, err := repos.ParseFolder(abs)
+	if err != nil {
 		return err
 	}
-	if long, err := platform.LongPath(abs); err == nil {
-		abs = long
+	scan, err := repos.FSScanner{}.Scan(ctx, path, repos.DefaultLimits)
+	if err != nil {
+		return fmt.Errorf("look for git repos in %s: %w", path, err)
 	}
-	// The folder is the one the person typed on their own command line; these
-	// calls only look at it.
-	if st, err := os.Stat(abs); err != nil || !st.IsDir() { //nolint:gosec // path chosen by the user at the CLI
-		return fmt.Errorf("%s isn't a folder. Give the path of a git repo, such as `ygg seed C:\\work\\shop-api`", abs)
-	}
-	if _, err := os.Stat(filepath.Join(abs, ".git")); err != nil { //nolint:gosec // path chosen by the user at the CLI
-		return fmt.Errorf("%s isn't a git repo (no .git inside). Give the path of the repo's top folder", abs)
+	if len(scan.Repos) == 0 {
+		return fmt.Errorf("no git repos found in %s (looked for a .git folder up to %d levels down). Give the path of a repo, or of a folder that holds repos", path, repos.DefaultLimits.MaxDepth)
 	}
 	if projectName == "" {
-		projectName = filepath.Base(filepath.Dir(abs))
-		if projectName == "." || projectName == string(filepath.Separator) || projectName == filepath.VolumeName(abs)+string(filepath.Separator) {
-			projectName = "project"
-		}
+		projectName = corerepos.DefaultRepoName(path, ".")
+	}
+	picks := make([]corerepos.Pick, 0, len(scan.Repos))
+	for _, rel := range scan.Repos {
+		picks = append(picks, corerepos.Pick{RelPath: rel, Name: corerepos.DefaultRepoName(path, rel)})
 	}
 
-	d, store, err := openStore(ctx, cfg, safety.NewRedactor())
+	redactor := safety.NewRedactor()
+	d, store, err := openStore(ctx, cfg, redactor)
 	if err != nil {
 		return err
 	}
 	defer d.Close()
-
-	// Decide what is missing, then create it together with its audit entries
-	// in one commit: tracking is all or nothing (invariant 8).
-	project, projectFound, err := findProject(ctx, store, projectName)
+	svc, err := repos.NewTrackingService(repos.Deps{Store: store, Redactor: redactor})
 	if err != nil {
 		return err
 	}
-	var repo core.Repo
-	repoFound := false
-	if projectFound {
-		if repo, repoFound, err = findRepo(ctx, store, project.ID, filepath.Base(abs), abs); err != nil {
-			return err
-		}
-	}
-	if !projectFound || !repoFound {
-		redactor := safety.NewRedactor()
-		now := time.Now().UTC()
-		err = store.Commit(ctx, func(tx *db.Tx) error {
-			if !projectFound {
-				p, err := tx.CreateProject(ctx, core.Project{ID: core.ProjectID(db.NewID("prj")), Name: projectName, Path: filepath.Dir(abs), CreatedAt: now})
-				if err != nil {
-					return err
-				}
-				project = p
-				if err := appendAudit(ctx, tx, redactor, "project.track", "project:"+string(p.ID), map[string]any{"name": p.Name}); err != nil {
-					return err
-				}
-			}
-			if !repoFound {
-				r, err := tx.CreateRepo(ctx, core.Repo{ID: core.RepoID(db.NewID("rep")), ProjectID: project.ID, Name: filepath.Base(abs), Path: abs, CreatedAt: now})
-				if err != nil {
-					return err
-				}
-				repo = r
-				return appendAudit(ctx, tx, redactor, "repo.track", "repo:"+string(r.ID), map[string]any{"name": r.Name})
-			}
-			return nil
-		})
-		if err != nil {
-			return fmt.Errorf("track the repo: %w", err)
-		}
-	}
-	fmt.Fprintf(w, "Project  %-20s %s\n", project.Name, project.ID)
-	fmt.Fprintf(w, "Repo     %-20s %s\n", repo.Name, repo.ID)
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, `Paste these IDs into the "Project ID" and "Repo ID" fields on the start page.`)
-	return nil
-}
-
-// appendAudit prepares one audit entry of a user action (the ID and time are
-// chosen here, in the shell) and adds it to the transaction.
-func appendAudit(ctx context.Context, tx *db.Tx, r safety.Redactor, action, subject string, detail map[string]any) error {
-	raw, err := json.Marshal(detail)
+	out, err := svc.Track(ctx, string(path), projectName, picks, "user")
 	if err != nil {
-		return fmt.Errorf("encode audit detail: %w", err)
+		if msg, ok := apperr.MessageOf(err); ok {
+			return fmt.Errorf("track the folder: %s", msg)
+		}
+		return fmt.Errorf("track the folder: %w", err)
 	}
-	e, err := audit.Prepare(core.AuditEntry{Actor: "user", Action: action, Subject: subject, Detail: raw},
-		r, core.AuditID(db.NewID("aud")), time.Now())
+	switch o := out.(type) {
+	case corerepos.Tracked, corerepos.AlreadyTracked:
+		// tracked or already tracked: read it back below
+	case corerepos.NameTaken:
+		return fmt.Errorf("a project called %q is already tracked at another folder. Give this one another name: ygg seed %s <name>", o.Name, path)
+	case corerepos.Overlaps:
+		return fmt.Errorf("%s is inside, or around, a folder that is already tracked. Track a folder that doesn't overlap", path)
+	default:
+		return fmt.Errorf("track the folder: unexpected result %T", out)
+	}
+
+	projects, err := svc.Projects(ctx)
 	if err != nil {
 		return err
 	}
-	return tx.AppendAudit(ctx, e)
-}
-
-func findProject(ctx context.Context, store *db.Store, name string) (core.Project, bool, error) {
-	all, err := store.ListProjects(ctx)
-	if err != nil {
-		return core.Project{}, false, err
-	}
-	for _, p := range all {
-		if p.Name == name {
-			return p, true, nil
+	for _, p := range projects {
+		if p.Path != path {
+			continue
 		}
-	}
-	return core.Project{}, false, nil
-}
-
-func findRepo(ctx context.Context, store *db.Store, project core.ProjectID, name, path string) (core.Repo, bool, error) {
-	all, err := store.ListRepos(ctx, project)
-	if err != nil {
-		return core.Repo{}, false, err
-	}
-	for _, r := range all {
-		if r.Name == name {
-			if r.Path != path {
-				return core.Repo{}, false, errors.New("a repo called " + name + " is already tracked at another path: " + r.Path)
-			}
-			return r, true, nil
+		fmt.Fprintf(w, "Project  %-20s %s\n", p.Name, p.ID)
+		rs := make([]corerepos.Repo, 0, len(p.Repos))
+		for _, r := range p.Repos {
+			rs = append(rs, r)
 		}
+		sort.Slice(rs, func(i, j int) bool { return rs[i].RelPath < rs[j].RelPath })
+		for _, r := range rs {
+			fmt.Fprintf(w, "Repo     %-20s %s\n", r.Name, r.ID)
+		}
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `Paste these IDs into the "Project ID" and "Repo ID" fields on the start page.`)
+		return nil
 	}
-	return core.Repo{}, false, nil
+	return fmt.Errorf("the project at %s was tracked but can't be read back", path)
 }
