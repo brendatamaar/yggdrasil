@@ -18,11 +18,12 @@ func TestRealStartMeetsProcessContract(t *testing.T) {
 		return append([]string{"/bin/sh", "-c", script, "sh"}, args...)
 	}
 	platformtest.ProcessContract(t, platform.Start, platformtest.Commands{
-		Env:     []string{"PATH=/usr/bin:/bin"},
-		Exit:    func(code int) []string { return sh("exit " + strconv.Itoa(code)) },
-		Print:   func(text string) []string { return sh(`echo "$1"`, text) },
-		Block:   func() []string { return sh("exec sleep 120") },
-		Missing: []string{"ygg-no-such-program"},
+		Env:      []string{"PATH=/usr/bin:/bin"},
+		Exit:     func(code int) []string { return sh("exit " + strconv.Itoa(code)) },
+		Print:    func(text string) []string { return sh(`echo "$1"`, text) },
+		Block:    func() []string { return sh("exec sleep 120") },
+		Missing:  []string{"ygg-no-such-program"},
+		KillTask: platform.KillTask,
 		Leak: func(code int) []string {
 			return sh("echo before-leak; sleep 5 & exit " + strconv.Itoa(code))
 		},

@@ -28,6 +28,10 @@ type Commands struct {
 	Block func() []string
 	// Missing is the argv of a program that does not exist.
 	Missing []string
+	// KillTask is the implementation's platform.KillTaskFunc (for the fake, the
+	// method of the same Fake that start belongs to). The task clauses are
+	// skipped if nil.
+	KillTask platform.KillTaskFunc
 	// Leak, if set, returns the argv of a program that writes "before-leak" and
 	// a newline to stdout, leaves a grandchild that holds stdout open, and
 	// exits with code. The clause is skipped if nil.
@@ -256,6 +260,76 @@ func ProcessContract(t *testing.T, start platform.StartFunc, c Commands) {
 		cancel()
 		if code, err := wait(t, p); err != nil || code == 0 {
 			t.Errorf("Wait after cancel = %d, %v; want non-zero, nil", code, err)
+		}
+	})
+	// running reports whether p is still running after a short wait.
+	running := func(p platform.Process) bool {
+		ch := make(chan struct{})
+		go func() { _, _ = p.Wait(); close(ch) }()
+		select {
+		case <-ch:
+			return false
+		case <-time.After(400 * time.Millisecond):
+			return true
+		}
+	}
+	startInTask := func(t *testing.T, ctx context.Context, taskID string) platform.Process {
+		t.Helper()
+		s := spec(c.Block())
+		s.TaskID = taskID
+		p, err := start(ctx, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = p.Kill() })
+		return p
+	}
+	t.Run("cancelling one process spares a sibling in the same task", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(bg)
+		defer cancel()
+		id := "contract-sibling-" + t.Name()
+		a, b := startInTask(t, ctx, id), startInTask(t, bg, id)
+		cancel()
+		if code, err := wait(t, a); err != nil || code == 0 {
+			t.Errorf("Wait of the cancelled process = %d, %v; want non-zero, nil", code, err)
+		}
+		if !running(b) {
+			t.Error("cancelling one process stopped its sibling in the same task")
+		}
+	})
+	t.Run("KillTask kills only that task's processes", func(t *testing.T) {
+		if c.KillTask == nil {
+			t.Skip("no KillTask")
+		}
+		id := "contract-kill-" + t.Name()
+		a1, a2 := startInTask(t, bg, id), startInTask(t, bg, id)
+		other := startInTask(t, bg, id+"-other")
+		free := startInTask(t, bg, "")
+		if err := c.KillTask(id); err != nil {
+			t.Fatalf("KillTask: %v", err)
+		}
+		for _, p := range []platform.Process{a1, a2} {
+			if code, err := wait(t, p); err != nil || code == 0 {
+				t.Errorf("Wait after KillTask = %d, %v; want non-zero, nil", code, err)
+			}
+		}
+		if !running(other) {
+			t.Error("KillTask stopped a process of another task")
+		}
+		if !running(free) {
+			t.Error("KillTask stopped a process that has no task")
+		}
+	})
+	t.Run("KillTask of an unknown task is a no-op", func(t *testing.T) {
+		if c.KillTask == nil {
+			t.Skip("no KillTask")
+		}
+		p := startInTask(t, bg, "contract-known-"+t.Name())
+		if err := c.KillTask("contract-unknown-" + t.Name()); err != nil {
+			t.Errorf("KillTask of an unknown ID: %v", err)
+		}
+		if !running(p) {
+			t.Error("KillTask of an unknown ID stopped a process")
 		}
 	})
 	t.Run("pid is positive", func(t *testing.T) {

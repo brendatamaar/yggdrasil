@@ -52,6 +52,8 @@ type Fake struct {
 	queue   []Script
 	started []platform.Spec
 	pid     int
+	tasks   map[string][]*fakeProcess
+	killed  []string
 
 	// DirExists, if set, says whether Spec.Dir exists; Start fails with
 	// platform.ErrDirMissing when it returns false. Nil means every folder
@@ -74,7 +76,31 @@ func (f *Fake) Started() []platform.Spec {
 	return append([]platform.Spec(nil), f.started...)
 }
 
-var _ platform.StartFunc = (*Fake)(nil).Start
+var (
+	_ platform.StartFunc    = (*Fake)(nil).Start
+	_ platform.KillTaskFunc = (*Fake)(nil).KillTask
+)
+
+// KillTask kills every fake process started with Spec.TaskID == taskID, like
+// platform.KillTask, and records the call (also for an unknown ID, which does
+// nothing else).
+func (f *Fake) KillTask(taskID string) error {
+	f.mu.Lock()
+	f.killed = append(f.killed, taskID)
+	procs := append([]*fakeProcess(nil), f.tasks[taskID]...)
+	f.mu.Unlock()
+	for _, p := range procs {
+		_ = p.Kill()
+	}
+	return nil
+}
+
+// KilledTasks returns the task IDs passed to KillTask, in order.
+func (f *Fake) KilledTasks() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.killed...)
+}
 
 // Start applies the same checks as platform.Start (environment, argv, context)
 // and then runs the next script.
@@ -117,6 +143,14 @@ func (f *Fake) Start(ctx context.Context, spec platform.Spec) (platform.Process,
 	if !s.Block {
 		p.finish(s.Exit)
 		return p, nil
+	}
+	if spec.TaskID != "" {
+		f.mu.Lock()
+		if f.tasks == nil {
+			f.tasks = map[string][]*fakeProcess{}
+		}
+		f.tasks[spec.TaskID] = append(f.tasks[spec.TaskID], p)
+		f.mu.Unlock()
 	}
 	stop := context.AfterFunc(ctx, func() { _ = p.Kill() })
 	go func() { <-p.done; stop() }()
