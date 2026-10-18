@@ -28,6 +28,10 @@ type Commands struct {
 	Block func() []string
 	// Missing is the argv of a program that does not exist.
 	Missing []string
+	// Leak, if set, returns the argv of a program that writes "before-leak" and
+	// a newline to stdout, leaves a grandchild that holds stdout open, and
+	// exits with code. The clause is skipped if nil.
+	Leak func(code int) []string
 	// MissingDir is a folder that does not exist, for Spec.Dir.
 	MissingDir string
 	// UnsafeBatch, if set, is the argv of a .cmd or .bat file with an argument
@@ -44,6 +48,7 @@ func FakeCommands() Commands {
 		Print:       func(text string) []string { return []string{ArgvPrefix, "print", text} },
 		Block:       func() []string { return []string{ArgvPrefix, "block"} },
 		Missing:     []string{"ygg-no-such-program"},
+		Leak:        func(code int) []string { return []string{ArgvPrefix, "leak", strconv.Itoa(code)} },
 		MissingDir:  "fake-missing-dir",
 		UnsafeBatch: []string{ArgvPrefix, "batch-unsafe"},
 	}
@@ -185,6 +190,44 @@ func ProcessContract(t *testing.T, start platform.StartFunc, c Commands) {
 		}
 		if got := strings.TrimRight(out.String(), "\r\n"); got != text {
 			t.Errorf("stdout has %d bytes, want %d", len(got), len(text))
+		}
+	})
+	t.Run("a normal exit is not truncated", func(t *testing.T) {
+		var out lockedBuffer
+		s := spec(c.Print("abc"))
+		s.Stdout = &out
+		p, err := start(bg, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if code, err := wait(t, p); err != nil || code != 0 {
+			t.Fatalf("Wait = %d, %v", code, err)
+		}
+		if p.Truncated() {
+			t.Error("Truncated() = true for a process that left nothing behind")
+		}
+	})
+	t.Run("output cut off by a grandchild is reported, exit code kept", func(t *testing.T) {
+		if c.Leak == nil {
+			t.Skip("no Leak command")
+		}
+		for _, code := range []int{0, 5} {
+			var out lockedBuffer
+			s := spec(c.Leak(code))
+			s.Stdout = &out
+			p, err := start(bg, s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, err := wait(t, p); err != nil || got != code {
+				t.Errorf("exit %d: Wait = %d, %v; want %d, nil", code, got, err, code)
+			}
+			if !p.Truncated() {
+				t.Errorf("exit %d: Truncated() = false, want true", code)
+			}
+			if !strings.Contains(out.String(), "before-leak") {
+				t.Errorf("exit %d: output before the cut is lost: %q", code, out.String())
+			}
 		}
 	})
 	t.Run("Kill is safe to repeat", func(t *testing.T) {

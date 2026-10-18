@@ -37,6 +37,7 @@ func TestRealStartMeetsProcessContract(t *testing.T) {
 		Print:       func(text string) []string { return helper("echo", text) },
 		Block:       func() []string { return helper("sleep", "2m") },
 		Missing:     []string{"ygg-no-such-program"},
+		Leak:        func(code int) []string { return helper("leak", strconv.Itoa(code)) },
 		MissingDir:  filepath.Join(t.TempDir(), "no-such-folder"),
 		UnsafeBatch: []string{unsafeBatch, "a&b"},
 	})

@@ -39,14 +39,20 @@ func Start(ctx context.Context, spec Spec) (Process, error) {
 	}
 	cmd := &exec.Cmd{
 		Path: exe, Args: spec.Argv, Dir: dir, Env: spec.Env,
-		Stdin: spec.Stdin, Stdout: spec.Stdout, Stderr: spec.Stderr,
+		Stdin:       spec.Stdin,
 		SysProcAttr: &syscall.SysProcAttr{Setpgid: true},
 		WaitDelay:   waitDelay,
 	}
+	outs, err := newOutputs(cmd, spec.Stdout, spec.Stderr)
+	if err != nil {
+		return nil, fmt.Errorf("prepare output of %s: %w", exe, err)
+	}
 	if err := cmd.Start(); err != nil {
+		outs.abort()
 		return nil, fmt.Errorf("start %s: %w", exe, err)
 	}
-	p := &process{cmd: cmd, done: make(chan struct{})}
+	outs.started()
+	p := &process{cmd: cmd, outs: outs, done: make(chan struct{})}
 	p.unreg = registerTask(spec.TaskID, func() { _ = p.Kill() })
 	p.stop = context.AfterFunc(ctx, func() { _ = p.Kill() })
 	go p.run()
@@ -55,11 +61,14 @@ func Start(ctx context.Context, spec Spec) (Process, error) {
 
 type process struct {
 	cmd   *exec.Cmd
+	outs  *outputs
 	stop  func() bool
 	unreg func()
 	done  chan struct{}
 	code  int
 	err   error
+
+	truncated bool // set before done is closed
 }
 
 func (p *process) run() {
@@ -71,6 +80,8 @@ func (p *process) run() {
 			err = nil
 		}
 	}
+	// A grandchild that holds the pipe makes the output end late or never.
+	p.truncated = !p.outs.drain(waitDelay)
 	p.err = err
 	p.stop()
 	p.unreg()
@@ -82,6 +93,11 @@ func (p *process) Pid() int { return p.cmd.Process.Pid }
 func (p *process) Wait() (int, error) {
 	<-p.done
 	return p.code, p.err
+}
+
+func (p *process) Truncated() bool {
+	<-p.done
+	return p.truncated
 }
 
 func (p *process) Kill() error {

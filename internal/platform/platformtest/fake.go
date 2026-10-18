@@ -28,6 +28,8 @@ type Script struct {
 	Block bool
 	// StartErr, if set, is returned by Start instead of a process.
 	StartErr error
+	// Truncated makes Process.Truncated report true: the output was cut off.
+	Truncated bool
 }
 
 // KilledExit is the exit code of a fake process that was killed or cancelled.
@@ -111,7 +113,7 @@ func (f *Fake) Start(ctx context.Context, spec platform.Spec) (platform.Process,
 
 	write(spec.Stdout, s.Stdout)
 	write(spec.Stderr, s.Stderr)
-	p := &fakeProcess{pid: pid, done: make(chan struct{})}
+	p := &fakeProcess{pid: pid, truncated: s.Truncated, done: make(chan struct{})}
 	if !s.Block {
 		p.finish(s.Exit)
 		return p, nil
@@ -151,6 +153,15 @@ func scriptFromArgv(argv []string) (Script, error) {
 		return Script{Stdout: argv[2] + "\n"}, nil
 	case "block":
 		return Script{Block: true}, nil
+	case "leak":
+		if len(argv) != 3 {
+			return Script{}, errors.New("fake: leak needs a code")
+		}
+		n, err := strconv.Atoi(argv[2])
+		if err != nil {
+			return Script{}, fmt.Errorf("fake: leak code: %w", err)
+		}
+		return Script{Stdout: "before-leak\n", Exit: n, Truncated: true}, nil
 	case "batch-unsafe":
 		return Script{StartErr: fmt.Errorf("%w: argument 1 holds a double quote", platform.ErrBatchArg)}, nil
 	}
@@ -158,10 +169,16 @@ func scriptFromArgv(argv []string) (Script, error) {
 }
 
 type fakeProcess struct {
-	pid  int
-	once sync.Once
-	done chan struct{}
-	code int
+	pid       int
+	truncated bool
+	once      sync.Once
+	done      chan struct{}
+	code      int
+}
+
+func (p *fakeProcess) Truncated() bool {
+	<-p.done
+	return p.truncated
 }
 
 func (p *fakeProcess) finish(code int) {
