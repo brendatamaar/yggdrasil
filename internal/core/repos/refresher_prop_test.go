@@ -24,16 +24,111 @@ var propReasons = []RefreshReason{ReasonUser, ReasonFocus, ReasonGitAction, Reas
 
 var propEpoch = time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)
 
+type attemptKey struct {
+	ID      core.RepoID
+	Attempt int
+}
+
+// model is the test's own history of a run. It decides which results are
+// fresh from what was emitted and which repos were removed or moved since,
+// never from the Refresher's InFlight or Orphans.
+type model struct {
+	path     map[core.RepoID]CleanPath
+	emitted  map[attemptKey]bool // every ReadStatus of the whole run
+	keys     []attemptKey        // emitted, in order
+	latest   map[core.RepoID]int // latest ReadStatus attempt per id
+	valid    map[core.RepoID]bool
+	answered map[attemptKey]bool
+	dups     []attemptKey // ReadStatus emitted twice in the run
+}
+
+func newModel() *model {
+	return &model{
+		path: map[core.RepoID]CleanPath{}, emitted: map[attemptKey]bool{}, latest: map[core.RepoID]int{},
+		valid: map[core.RepoID]bool{}, answered: map[attemptKey]bool{},
+	}
+}
+
+func resultKey(in RefreshInput) (attemptKey, bool) {
+	switch x := in.(type) {
+	case StatusRead:
+		return attemptKey{x.ID, x.Attempt}, true
+	case StatusFailed:
+		return attemptKey{x.ID, x.Attempt}, true
+	}
+	return attemptKey{}, false
+}
+
+// fresh: the result answers the latest ReadStatus emitted for its id, no
+// ReposChanged removed or moved the id since, and it was not answered yet.
+func (m *model) fresh(k attemptKey) bool {
+	return m.emitted[k] && m.latest[k.ID] == k.Attempt && m.valid[k.ID] && !m.answered[k]
+}
+
+// observe records one step: the input and the commands it produced.
+func (m *model) observe(in RefreshInput, cmds []RefreshCommand) {
+	switch x := in.(type) {
+	case ReposChanged:
+		active := map[core.RepoID]CleanPath{}
+		for _, r := range x.Active {
+			active[r.ID] = r.Path
+		}
+		for id, p := range m.path {
+			if np, ok := active[id]; !ok || np != p {
+				m.valid[id] = false
+			}
+		}
+		m.path = active
+	default:
+		if k, ok := resultKey(in); ok && m.emitted[k] {
+			m.answered[k] = true
+		}
+	}
+	for _, c := range cmds {
+		if rs, ok := c.(ReadStatus); ok {
+			k := attemptKey{rs.ID, rs.Attempt}
+			if m.emitted[k] {
+				m.dups = append(m.dups, k)
+			}
+			m.emitted[k] = true
+			m.keys = append(m.keys, k)
+			m.latest[rs.ID] = rs.Attempt
+			m.valid[rs.ID] = true
+		}
+	}
+}
+
 // driver feeds random inputs and hands each step to a check.
 type driver struct {
 	rng   *rand.Rand
 	state Refresher
 	now   time.Time
+	m     *model
+	// pre is whether the model called the input a fresh result, before the step.
+	pre bool
+	// readd is an id removed while its read was in flight, waiting to come back.
+	readd core.RepoID
+	// readdOrphan: the last input re-added an id that still had an orphan.
+	readdOrphan bool
 }
 
 func newDriver(seed uint64) *driver {
 	rng := rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
-	return &driver{rng: rng, state: NewRefresher(1 + rng.IntN(4)), now: propEpoch}
+	return &driver{rng: rng, state: NewRefresher(1 + rng.IntN(4)), now: propEpoch, m: newModel()}
+}
+
+// current lists the active repos now (from Entries), in ID order.
+func (d *driver) current() []RepoRef {
+	ids := make([]core.RepoID, 0, len(d.state.Entries))
+	for id := range d.state.Entries {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	out := make([]RepoRef, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, RepoRef{ID: id, Path: d.state.Entries[id].Path})
+	}
+	return out
 }
 
 func (d *driver) pick(ids []core.RepoID) []core.RepoID {
@@ -70,7 +165,8 @@ func (d *driver) next() RefreshInput {
 		flight = append(flight, id)
 	}
 	sort.Slice(flight, func(i, j int) bool { return flight[i] < flight[j] })
-	switch k := d.rng.IntN(10); {
+	d.readdOrphan = false
+	switch k := d.rng.IntN(12); {
 	case k < 2:
 		var active []RepoRef
 		for _, id := range d.pick(propIDs) {
@@ -88,12 +184,34 @@ func (d *driver) next() RefreshInput {
 	case k < 8 && len(flight) > 0:
 		id := flight[d.rng.IntN(len(flight))]
 		return d.result(id, d.state.InFlight[id])
+	case k == 8 && len(flight) > 0:
+		// Remove a repo while its read is in flight; it comes back later.
+		id := flight[d.rng.IntN(len(flight))]
+		d.readd = id
+		var active []RepoRef
+		for _, r := range d.current() {
+			if r.ID != id {
+				active = append(active, r)
+			}
+		}
+		return ReposChanged{Active: active}
+	case k == 9 && d.readd != "":
+		id := d.readd
+		d.readd = ""
+		_, orphan := d.state.Orphans[id]
+		d.readdOrphan = orphan
+		active := append(d.current(), RepoRef{ID: id, Path: propPaths[d.rng.IntN(len(propPaths))]})
+		return ReposChanged{Active: active}
+	case k == 10 && len(d.m.keys) > 0:
+		// A late result of any read ever emitted.
+		key := d.m.keys[d.rng.IntN(len(d.m.keys))]
+		return d.result(key.ID, key.Attempt)
 	default:
 		id := propIDs[d.rng.IntN(len(propIDs)+1)%len(propIDs)]
 		if d.rng.IntN(5) == 0 {
 			id = "rep_unknown"
 		}
-		return d.result(id, d.rng.IntN(6)-1)
+		return d.result(id, d.rng.IntN(d.state.Seq+2)-1)
 	}
 }
 
