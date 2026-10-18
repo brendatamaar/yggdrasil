@@ -164,6 +164,36 @@ func TestTransitionTable(t *testing.T) {
 	}
 }
 
+func TestCancelWithInvalidActorIsNoop(t *testing.T) {
+	queued, _ := apply(t, None{}, Enqueue{ID: "b1", Spec: spec(1), Actor: "user", Now: at(0)})
+	for name, s := range map[string]State{"queued": queued, "running": running(t, 2)} {
+		got, cmds := Step(s, Cancel{Actor: "bogus", Now: at(5)})
+		if !reflect.DeepEqual(got, s) || len(cmds) != 0 {
+			t.Errorf("%s: Cancel with an invalid actor changed the state or emitted %v", name, cmds)
+		}
+	}
+}
+
+func TestProcessLostIsAuditedAsSystem(t *testing.T) {
+	r := running(t, 2)
+	cancelling, _ := apply(t, r, Cancel{Actor: "user", Now: at(3)})
+	for name, s := range map[string]State{"running": r, "cancelling": cancelling} {
+		_, cmds := Step(s, ProcessLost{Now: at(9)})
+		found := false
+		for _, c := range cmds {
+			if a, ok := c.(WriteAudit); ok {
+				found = true
+				if a.Actor != "system" {
+					t.Errorf("%s: ProcessLost audit actor %q, want system", name, a.Actor)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("%s: no audit entry", name)
+		}
+	}
+}
+
 func TestSecondArtifactsCollectedIsNoop(t *testing.T) {
 	s, _ := apply(t, running(t, 1), StepExited{Index: 0, Attempt: 1, Now: at(2)}, ArtifactsCollected{Now: at(3)})
 	got, cmds := Step(s, ArtifactsCollected{Artifacts: []Artifact{{RepoID: "r", Path: "x", Size: 1}}, Now: at(4)})

@@ -113,6 +113,7 @@ func TestPropStepsStartInOrderOnce(t *testing.T) {
 
 // I4
 func TestPropStopsAtFirstFailure(t *testing.T) {
+	failedWithLater := 0 // reach: a failure that left later steps to skip
 	drive(t, stateless(func(_ State, _ Input, next State, _ []Command) error {
 		steps := stepsOf(next)
 		for i, ss := range steps {
@@ -123,6 +124,7 @@ func TestPropStopsAtFirstFailure(t *testing.T) {
 				return fmt.Errorf("step %d failed but state is %T", i, next)
 			}
 			for j := i + 1; j < len(steps); j++ {
+				failedWithLater++
 				if _, ok := steps[j].(StepSkipped); !ok {
 					return fmt.Errorf("step %d after failed step %d is %#v", j, i, steps[j])
 				}
@@ -130,6 +132,9 @@ func TestPropStopsAtFirstFailure(t *testing.T) {
 		}
 		return nil
 	}))
+	if failedWithLater == 0 {
+		t.Fatal("the generator never failed a step that had later steps")
+	}
 }
 
 // I5
@@ -157,16 +162,30 @@ func TestPropStaleInputIsNoop(t *testing.T) {
 
 // I6
 func TestPropNoStartAfterCancel(t *testing.T) {
+	cancelledRunning, cancelledEnded, stepsAfterCancel := 0, 0, 0 // reach counters
+	defer func() {
+		if !t.Failed() && (cancelledRunning == 0 || cancelledEnded == 0 || stepsAfterCancel == 0) {
+			t.Errorf("generator reach: cancel of a running build %d, cancelled builds ended %d, inputs after a cancel %d",
+				cancelledRunning, cancelledEnded, stepsAfterCancel)
+		}
+	}()
 	drive(t, func() checker {
 		cancelled := false
 		return func(prev State, in Input, next State, cmds []Command) error {
+			if cancelled {
+				stepsAfterCancel++
+			}
 			if cancelled && count[StartStep](cmds) > 0 {
 				return errors.New("StartStep after Cancel")
 			}
 			if _, ok := in.(Cancel); ok && !reflect.DeepEqual(prev, next) {
 				cancelled = true
+				if _, run := prev.(Running); run {
+					cancelledRunning++
+				}
 			}
 			if f, ok := next.(Finished); ok && cancelled {
+				cancelledEnded++
 				if _, ok := f.Result.(ResultCancelled); !ok {
 					return fmt.Errorf("cancelled build ended %#v", f.Result)
 				}
@@ -312,12 +331,30 @@ func TestPropTimesFromInputs(t *testing.T) {
 
 // I11
 func TestPropCancelledAtMatchesResult(t *testing.T) {
+	fromCancelling, cancelledOther, notCancelled := 0, 0, 0 // reach counters
+	defer func() {
+		if !t.Failed() && (fromCancelling == 0 || notCancelled == 0) {
+			t.Errorf("generator reach: Cancelling to Finished %d, cancelled from Queued %d, not cancelled %d",
+				fromCancelling, cancelledOther, notCancelled)
+		}
+	}()
 	drive(t, stateless(func(prev State, _ Input, next State, _ []Command) error {
 		f, ok := next.(Finished)
 		if !ok {
 			return nil
 		}
+		if _, was := prev.(Finished); was {
+			return nil
+		}
 		_, cancelled := f.Result.(ResultCancelled)
+		switch {
+		case !cancelled:
+			notCancelled++
+		case reflect.TypeOf(prev) == reflect.TypeOf(Cancelling{}):
+			fromCancelling++
+		default:
+			cancelledOther++
+		}
 		if (f.CancelledAt != nil) != cancelled {
 			return fmt.Errorf("CancelledAt set = %v but result %#v", f.CancelledAt != nil, f.Result)
 		}

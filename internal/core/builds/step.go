@@ -90,6 +90,9 @@ func skipped(n int) []StepState {
 }
 
 func cancelQueued(q Queued, x Cancel) (State, []Command) {
+	if x.Actor.Validate() != nil {
+		return q, nil
+	}
 	at := x.Now
 	f := Finished{
 		ID: q.ID, Spec: q.Spec, QueuedAt: q.QueuedAt, Actor: q.Actor,
@@ -169,6 +172,9 @@ func stepRunning(r Running, in Input) (State, []Command) {
 		f := finish(r, nil, StartFailed{Reason: x.Reason}, false, ResultFailed{Step: r.Current}, x.Now)
 		return f, failedCmds(r, r.Current)
 	case Cancel:
+		if x.Actor.Validate() != nil {
+			return r, nil
+		}
 		rs := r.Steps[r.Current].(StepRunning)
 		c := Cancelling{Running: r, CancelledAt: x.Now}
 		return c, []Command{
@@ -194,6 +200,7 @@ func failedCmds(r Running, step int) []Command {
 
 func stepCancelling(c Cancelling, in Input) (State, []Command) {
 	var now time.Time
+	actor := c.Actor
 	trunc := false
 	switch x := in.(type) {
 	case StepExited:
@@ -207,14 +214,14 @@ func stepCancelling(c Cancelling, in Input) (State, []Command) {
 		}
 		now = x.Now
 	case ProcessLost:
-		now = x.Now
+		now, actor = x.Now, "system"
 	default:
 		return c, nil
 	}
 	at := c.CancelledAt
 	f := finish(c.Running, &at, Cancelled{}, trunc, ResultCancelled{}, now)
 	return f, []Command{
-		audit(c.Actor, "build.finish", c.ID, map[string]string{"result": "cancelled"}),
+		audit(actor, "build.finish", c.ID, map[string]string{"result": "cancelled"}),
 		Publish{ID: c.ID}, Wake{},
 	}
 }
