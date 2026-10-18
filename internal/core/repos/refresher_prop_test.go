@@ -231,7 +231,12 @@ func run(t *testing.T, n int, check func(t *testing.T, d *driver, before Refresh
 			in := d.next()
 			before := d.state
 			var cmds []RefreshCommand
+			d.pre = false
+			if k, ok := resultKey(in); ok {
+				d.pre = d.m.fresh(k)
+			}
 			d.state, cmds = Refresh(before, in)
+			d.m.observe(in, cmds)
 			if t.Failed() {
 				return
 			}
@@ -244,29 +249,20 @@ func run(t *testing.T, n int, check func(t *testing.T, d *driver, before Refresh
 	}
 }
 
-func staleResult(r Refresher, in RefreshInput) bool {
-	var id core.RepoID
-	var attempt int
-	switch x := in.(type) {
-	case StatusRead:
-		id, attempt = x.ID, x.Attempt
-	case StatusFailed:
-		id, attempt = x.ID, x.Attempt
-	default:
-		return false
-	}
-	a, busy := r.InFlight[id]
-	_, known := r.Entries[id]
-	return !known || !busy || a != attempt
-}
-
-// R1: the reads in flight never exceed Max.
+// R1: the reads running (in flight and orphaned) never exceed Max.
 func TestPropInFlightBounded(t *testing.T) {
+	orphans := 0
 	run(t, 80, func(t *testing.T, d *driver, _ Refresher, _ RefreshInput, _ []RefreshCommand) {
-		if len(d.state.InFlight) > d.state.Max {
-			t.Fatalf("%d reads in flight, Max %d", len(d.state.InFlight), d.state.Max)
+		if n := len(d.state.InFlight) + len(d.state.Orphans); n > d.state.Max {
+			t.Fatalf("%d reads running, Max %d", n, d.state.Max)
+		}
+		if len(d.state.Orphans) > 0 {
+			orphans++
 		}
 	})
+	if orphans == 0 {
+		t.Fatal("the generator never produced an orphan")
+	}
 }
 
 // R2: Queue is set-like; Queue and InFlight only name repos that have an entry.
@@ -282,81 +278,113 @@ func TestPropQueueSetLike(t *testing.T) {
 				t.Fatalf("queued %s has no entry", id)
 			}
 		}
-		for id := range d.state.InFlight {
+		for id, a := range d.state.InFlight {
 			if _, ok := d.state.Entries[id]; !ok {
 				t.Fatalf("in-flight %s has no entry", id)
+			}
+			if _, both := d.state.Orphans[id]; both {
+				t.Fatalf("%s is in flight and orphaned", id)
+			}
+			if a > d.state.Seq {
+				t.Fatalf("attempt %d beyond Seq %d", a, d.state.Seq)
 			}
 		}
 	})
 }
 
 // R3: work-conserving. A free slot with a repo waiting is only allowed when
-// that repo is itself being read (it is read again once that read ends).
+// that repo is itself being read, wanted or orphaned (it is read again once
+// that read ends).
 func TestPropNoIdleWhileQueued(t *testing.T) {
 	run(t, 80, func(t *testing.T, d *driver, _ Refresher, _ RefreshInput, _ []RefreshCommand) {
-		if len(d.state.InFlight) >= d.state.Max {
+		if len(d.state.InFlight)+len(d.state.Orphans) >= d.state.Max {
 			return
 		}
 		for _, id := range d.state.Queue {
-			if _, busy := d.state.InFlight[id]; !busy {
+			if !d.state.reading(id) {
 				t.Fatalf("slot free (%d of %d) while %s waits", len(d.state.InFlight), d.state.Max, id)
 			}
 		}
 	})
 }
 
-// R4: a stale or unknown result changes nothing and emits nothing.
+// R4: a result is fresh only if it answers the latest ReadStatus emitted for
+// its id and no ReposChanged removed or moved the id since (judged by the
+// test's own history). A fresh result is applied; a stale one never changes a
+// view or publishes, and changes nothing at all unless it is an orphan's, which
+// only frees its slot.
 func TestPropStaleResultIgnored(t *testing.T) {
-	stale := 0
+	stale, fresh, orphanArrivals := 0, 0, 0
 	run(t, 80, func(t *testing.T, d *driver, before Refresher, in RefreshInput, cmds []RefreshCommand) {
-		if !staleResult(before, in) {
+		k, ok := resultKey(in)
+		if !ok {
+			return
+		}
+		if d.pre {
+			fresh++
+			if before.InFlight[k.ID] != k.Attempt {
+				t.Fatalf("model says %v is fresh but the state does not have it in flight", k)
+			}
+			if d.state.InFlight[k.ID] == k.Attempt {
+				t.Fatalf("fresh result %v was not applied", k)
+			}
 			return
 		}
 		stale++
-		if len(cmds) != 0 {
-			t.Fatalf("stale result emitted %v", cmds)
+		for _, c := range cmds {
+			switch c.(type) {
+			case PublishStatus, PublishCounts:
+				t.Fatalf("stale result %v published %v", k, c)
+			}
 		}
-		if !reflect.DeepEqual(before, d.state) {
-			t.Fatalf("stale result changed the state:\n before %#v\n after  %#v", before, d.state)
+		for id, e := range before.Entries {
+			if ne, ok := d.state.Entries[id]; !ok || ne.Path != e.Path || !reflect.DeepEqual(ne.View, e.View) {
+				t.Fatalf("stale result %v changed the view of %s", k, id)
+			}
+		}
+		if before.Orphans[k.ID] == k.Attempt && k.Attempt != 0 {
+			orphanArrivals++
+			if _, still := d.state.Orphans[k.ID]; still {
+				t.Fatalf("orphan %v arrived but still holds its slot", k)
+			}
+			return
+		}
+		if !reflect.DeepEqual(before, d.state) || len(cmds) != 0 {
+			t.Fatalf("stale result %v changed the state or emitted %v", k, cmds)
 		}
 	})
-	if stale == 0 {
-		t.Fatal("the generator never produced a stale result")
+	if stale == 0 || fresh == 0 || orphanArrivals == 0 {
+		t.Fatalf("generator reach: stale %d, fresh %d, orphan arrivals %d", stale, fresh, orphanArrivals)
 	}
 }
 
-// R5: a ReadStatus for (id, a) is emitted at most once per life of the entry,
-// and a grows by one per start of that ID.
+// R5: a ReadStatus (id, attempt) is emitted at most once over the whole run,
+// across IDs and across remove and re-add; attempts only grow.
 func TestPropAttemptsMonotonic(t *testing.T) {
-	starts := 0
+	starts, readds := 0, 0
 	run(t, 80, func(t *testing.T, d *driver, before Refresher, _ RefreshInput, cmds []RefreshCommand) {
+		if len(d.m.dups) > 0 {
+			t.Fatalf("ReadStatus %v emitted twice in the run", d.m.dups)
+		}
+		if d.readdOrphan {
+			readds++
+		}
 		for _, c := range cmds {
 			rs, ok := c.(ReadStatus)
 			if !ok {
 				continue
 			}
 			starts++
-			prev := before.Entries[rs.ID].Attempt
-			if rs.Attempt != prev+1 {
-				t.Fatalf("ReadStatus %s attempt %d, want %d", rs.ID, rs.Attempt, prev+1)
+			if rs.Attempt <= before.Seq || rs.Attempt > d.state.Seq {
+				t.Fatalf("ReadStatus %s attempt %d outside (%d, %d]", rs.ID, rs.Attempt, before.Seq, d.state.Seq)
 			}
 			if d.state.InFlight[rs.ID] != rs.Attempt {
 				t.Fatalf("%s started attempt %d but InFlight holds %d", rs.ID, rs.Attempt, d.state.InFlight[rs.ID])
 			}
 		}
-		seen := map[[2]any]bool{}
-		for _, c := range cmds {
-			if rs, ok := c.(ReadStatus); ok {
-				k := [2]any{rs.ID, rs.Attempt}
-				if seen[k] {
-					t.Fatalf("ReadStatus %v emitted twice in one step", k)
-				}
-				seen[k] = true
-			}
-		}
 	})
-	if starts == 0 {
-		t.Fatal("no read was ever started")
+	if starts == 0 || readds == 0 {
+		t.Fatalf("generator reach: starts %d, re-adds with an orphan %d", starts, readds)
 	}
 }
 
@@ -375,7 +403,7 @@ func TestPropProblemKeepsLast(t *testing.T) {
 				delete(m, id)
 			}
 		}
-		if x, ok := in.(StatusRead); ok && !staleResult(before, in) {
+		if x, ok := in.(StatusRead); ok && d.pre {
 			s := x.Snap
 			m[x.ID] = &s
 		}
