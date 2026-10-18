@@ -11,10 +11,10 @@ import (
 	"testing"
 )
 
-// injectedEnv lists the variables Windows or the Go runtime may add to a child
+// injectedEnv lists the variables Windows, the Go runtime or platform (NoDefaultCurrentDirectoryInExePath) may add to a child
 // whose Spec.Env lacks them. Anything else in a child's environment is a leak
 // from the parent (invariant 3).
-var injectedEnv = []string{"SYSTEMROOT"}
+var injectedEnv = []string{"SYSTEMROOT", "NODEFAULTCURRENTDIRECTORYINEXEPATH"}
 
 // childEnv parses the helper's "ENV:" lines; the terminal may add escape
 // sequences and CRs around them.

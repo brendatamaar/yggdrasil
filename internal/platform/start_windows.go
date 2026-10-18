@@ -33,15 +33,9 @@ func Start(ctx context.Context, spec Spec) (Process, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	dir := spec.Dir
-	if dir != "" {
-		if err := CheckPath(dir); err != nil {
-			return nil, err
-		}
-		var err error
-		if dir, err = LongPath(dir); err != nil {
-			return nil, err
-		}
+	dir, err := prepareDir(spec.Dir)
+	if err != nil {
+		return nil, err
 	}
 	exe, err := lookPath(spec.Argv[0], dir, spec.Env)
 	if err != nil {
@@ -51,10 +45,8 @@ func Start(ctx context.Context, spec Spec) (Process, error) {
 		Path:        exe,
 		Args:        spec.Argv,
 		Dir:         dir,
-		Env:         spec.Env,
+		Env:         withNoCurDir(spec.Env),
 		Stdin:       spec.Stdin,
-		Stdout:      spec.Stdout,
-		Stderr:      spec.Stderr,
 		SysProcAttr: &syscall.SysProcAttr{CreationFlags: windows.CREATE_SUSPENDED},
 		WaitDelay:   waitDelay,
 	}
@@ -72,14 +64,21 @@ func Start(ctx context.Context, spec Spec) (Process, error) {
 		cmd.Path, cmd.Args = comspec, []string{comspec}
 		cmd.SysProcAttr.CmdLine = line
 	}
+	outs, err := newOutputs(cmd, spec.Stdout, spec.Stderr)
+	if err != nil {
+		return nil, fmt.Errorf("prepare output of %s: %w", exe, err)
+	}
 	if err := cmd.Start(); err != nil {
+		outs.abort()
 		return nil, fmt.Errorf("start %s: %w", exe, err)
 	}
-	p := &process{cmd: cmd, done: make(chan struct{})}
+	outs.started()
+	p := &process{cmd: cmd, outs: outs, done: make(chan struct{})}
 	if err := p.begin(spec.TaskID); err != nil {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 		p.release()
+		outs.abort()
 		return nil, err
 	}
 	// Registered after the jobs exist, so a cancelled ctx fires on a process
@@ -92,10 +91,13 @@ func Start(ctx context.Context, spec Spec) (Process, error) {
 // process is a Process in its own job.
 type process struct {
 	cmd  *exec.Cmd
+	outs *outputs
 	stop func() bool
 	done chan struct{}
 	code int
 	err  error
+
+	truncated bool // set before done is closed
 
 	mu   sync.Mutex
 	job  windows.Handle // own job; 0 once released
@@ -130,6 +132,8 @@ func (p *process) run() {
 			err = nil
 		}
 	}
+	// A grandchild that holds the pipe makes the output end late or never.
+	p.truncated = !p.outs.drain(waitDelay)
 	p.err = err
 	p.stop()
 	p.release()
@@ -156,6 +160,11 @@ func (p *process) Pid() int { return p.cmd.Process.Pid }
 func (p *process) Wait() (int, error) {
 	<-p.done
 	return p.code, p.err
+}
+
+func (p *process) Truncated() bool {
+	<-p.done
+	return p.truncated
 }
 
 func (p *process) Kill() error {

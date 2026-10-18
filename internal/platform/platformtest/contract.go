@@ -28,16 +28,33 @@ type Commands struct {
 	Block func() []string
 	// Missing is the argv of a program that does not exist.
 	Missing []string
+	// KillTask is the implementation's platform.KillTaskFunc (for the fake, the
+	// method of the same Fake that start belongs to). The task clauses are
+	// skipped if nil.
+	KillTask platform.KillTaskFunc
+	// Leak, if set, returns the argv of a program that writes "before-leak" and
+	// a newline to stdout, leaves a grandchild that holds stdout open, and
+	// exits with code. The clause is skipped if nil.
+	Leak func(code int) []string
+	// MissingDir is a folder that does not exist, for Spec.Dir.
+	MissingDir string
+	// UnsafeBatch, if set, is the argv of a .cmd or .bat file with an argument
+	// it must refuse (platform.ErrBatchArg). Leave nil where the implementation
+	// has no batch files (the clause is skipped).
+	UnsafeBatch []string
 }
 
 // FakeCommands are the Commands for a Fake.
 func FakeCommands() Commands {
 	return Commands{
-		Env:     []string{"FAKE=1"},
-		Exit:    func(code int) []string { return []string{ArgvPrefix, "exit", strconv.Itoa(code)} },
-		Print:   func(text string) []string { return []string{ArgvPrefix, "print", text} },
-		Block:   func() []string { return []string{ArgvPrefix, "block"} },
-		Missing: []string{"ygg-no-such-program"},
+		Env:         []string{"FAKE=1"},
+		Exit:        func(code int) []string { return []string{ArgvPrefix, "exit", strconv.Itoa(code)} },
+		Print:       func(text string) []string { return []string{ArgvPrefix, "print", text} },
+		Block:       func() []string { return []string{ArgvPrefix, "block"} },
+		Missing:     []string{"ygg-no-such-program"},
+		Leak:        func(code int) []string { return []string{ArgvPrefix, "leak", strconv.Itoa(code)} },
+		MissingDir:  "fake-missing-dir",
+		UnsafeBatch: []string{ArgvPrefix, "batch-unsafe"},
 	}
 }
 
@@ -114,6 +131,37 @@ func ProcessContract(t *testing.T, start platform.StartFunc, c Commands) {
 			t.Errorf("error = %v, want ErrNotFound", err)
 		}
 	})
+	t.Run("missing dir is ErrDirMissing", func(t *testing.T) {
+		if c.MissingDir == "" {
+			t.Skip("no MissingDir")
+		}
+		s := spec(c.Exit(0))
+		s.Dir = c.MissingDir
+		p, err := start(bg, s)
+		if err == nil {
+			_ = p.Kill()
+			t.Fatal("Start in a missing folder should fail")
+		}
+		if !errors.Is(err, platform.ErrDirMissing) {
+			t.Errorf("error = %v, want ErrDirMissing", err)
+		}
+		if errors.Is(err, platform.ErrNotFound) {
+			t.Errorf("a missing folder is not a missing program: %v", err)
+		}
+	})
+	t.Run("batch file with an unsafe argument is ErrBatchArg", func(t *testing.T) {
+		if c.UnsafeBatch == nil {
+			t.Skip("no batch files here")
+		}
+		p, err := start(bg, spec(c.UnsafeBatch))
+		if err == nil {
+			_ = p.Kill()
+			t.Fatal("Start of a batch file with an unsafe argument should fail")
+		}
+		if !errors.Is(err, platform.ErrBatchArg) {
+			t.Errorf("error = %v, want ErrBatchArg", err)
+		}
+	})
 	t.Run("exit code zero", func(t *testing.T) {
 		if code, err := wait(t, mustStart(t, bg, c.Exit(0))); err != nil || code != 0 {
 			t.Errorf("Wait = %d, %v; want 0, nil", code, err)
@@ -148,6 +196,44 @@ func ProcessContract(t *testing.T, start platform.StartFunc, c Commands) {
 			t.Errorf("stdout has %d bytes, want %d", len(got), len(text))
 		}
 	})
+	t.Run("a normal exit is not truncated", func(t *testing.T) {
+		var out lockedBuffer
+		s := spec(c.Print("abc"))
+		s.Stdout = &out
+		p, err := start(bg, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if code, err := wait(t, p); err != nil || code != 0 {
+			t.Fatalf("Wait = %d, %v", code, err)
+		}
+		if p.Truncated() {
+			t.Error("Truncated() = true for a process that left nothing behind")
+		}
+	})
+	t.Run("output cut off by a grandchild is reported, exit code kept", func(t *testing.T) {
+		if c.Leak == nil {
+			t.Skip("no Leak command")
+		}
+		for _, code := range []int{0, 5} {
+			var out lockedBuffer
+			s := spec(c.Leak(code))
+			s.Stdout = &out
+			p, err := start(bg, s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, err := wait(t, p); err != nil || got != code {
+				t.Errorf("exit %d: Wait = %d, %v; want %d, nil", code, got, err, code)
+			}
+			if !p.Truncated() {
+				t.Errorf("exit %d: Truncated() = false, want true", code)
+			}
+			if !strings.Contains(out.String(), "before-leak") {
+				t.Errorf("exit %d: output before the cut is lost: %q", code, out.String())
+			}
+		}
+	})
 	t.Run("Kill is safe to repeat", func(t *testing.T) {
 		p := mustStart(t, bg, c.Block())
 		for i := range 3 {
@@ -174,6 +260,76 @@ func ProcessContract(t *testing.T, start platform.StartFunc, c Commands) {
 		cancel()
 		if code, err := wait(t, p); err != nil || code == 0 {
 			t.Errorf("Wait after cancel = %d, %v; want non-zero, nil", code, err)
+		}
+	})
+	// running reports whether p is still running after a short wait.
+	running := func(p platform.Process) bool {
+		ch := make(chan struct{})
+		go func() { _, _ = p.Wait(); close(ch) }()
+		select {
+		case <-ch:
+			return false
+		case <-time.After(400 * time.Millisecond):
+			return true
+		}
+	}
+	startInTask := func(t *testing.T, ctx context.Context, taskID string) platform.Process {
+		t.Helper()
+		s := spec(c.Block())
+		s.TaskID = taskID
+		p, err := start(ctx, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = p.Kill() })
+		return p
+	}
+	t.Run("cancelling one process spares a sibling in the same task", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(bg)
+		defer cancel()
+		id := "contract-sibling-" + t.Name()
+		a, b := startInTask(t, ctx, id), startInTask(t, bg, id)
+		cancel()
+		if code, err := wait(t, a); err != nil || code == 0 {
+			t.Errorf("Wait of the cancelled process = %d, %v; want non-zero, nil", code, err)
+		}
+		if !running(b) {
+			t.Error("cancelling one process stopped its sibling in the same task")
+		}
+	})
+	t.Run("KillTask kills only that task's processes", func(t *testing.T) {
+		if c.KillTask == nil {
+			t.Skip("no KillTask")
+		}
+		id := "contract-kill-" + t.Name()
+		a1, a2 := startInTask(t, bg, id), startInTask(t, bg, id)
+		other := startInTask(t, bg, id+"-other")
+		free := startInTask(t, bg, "")
+		if err := c.KillTask(id); err != nil {
+			t.Fatalf("KillTask: %v", err)
+		}
+		for _, p := range []platform.Process{a1, a2} {
+			if code, err := wait(t, p); err != nil || code == 0 {
+				t.Errorf("Wait after KillTask = %d, %v; want non-zero, nil", code, err)
+			}
+		}
+		if !running(other) {
+			t.Error("KillTask stopped a process of another task")
+		}
+		if !running(free) {
+			t.Error("KillTask stopped a process that has no task")
+		}
+	})
+	t.Run("KillTask of an unknown task is a no-op", func(t *testing.T) {
+		if c.KillTask == nil {
+			t.Skip("no KillTask")
+		}
+		p := startInTask(t, bg, "contract-known-"+t.Name())
+		if err := c.KillTask("contract-unknown-" + t.Name()); err != nil {
+			t.Errorf("KillTask of an unknown ID: %v", err)
+		}
+		if !running(p) {
+			t.Error("KillTask of an unknown ID stopped a process")
 		}
 	})
 	t.Run("pid is positive", func(t *testing.T) {

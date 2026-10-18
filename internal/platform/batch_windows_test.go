@@ -5,6 +5,7 @@ package platform
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -105,6 +106,24 @@ func TestBatchFileTakesOrdinaryPathsAndFlags(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
+	}
+}
+
+// A refused character in the batch file's own path gets its own message, not
+// "argument 0".
+func TestBatchFilePathWithRefusedCharacterHasItsOwnMessage(t *testing.T) {
+	_, err := batchCommandLine(`C:\Windows\System32\cmd.exe`, `C:\R&D\x.cmd`, []string{"x", "arg"})
+	if !errors.Is(err, ErrBatchArg) {
+		t.Fatalf("error = %v, want ErrBatchArg", err)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "the program's folder") || strings.Contains(msg, "argument 0") || !strings.Contains(msg, "Move the program") {
+		t.Errorf("message = %q", msg)
+	}
+	// An argument keeps its number: argv[1] is argument 1.
+	_, err = batchCommandLine(`C:\Windows\System32\cmd.exe`, `C:\ok\x.cmd`, []string{"x", "a&b"})
+	if err == nil || !strings.Contains(err.Error(), "argument 1 ") {
+		t.Errorf("argument error = %v, want it to name argument 1", err)
 	}
 }
 

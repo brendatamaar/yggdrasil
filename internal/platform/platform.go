@@ -50,6 +50,12 @@ type StartFunc func(context.Context, Spec) (Process, error)
 
 var _ StartFunc = Start
 
+// KillTaskFunc is the signature of KillTask. Packages that stop a task's
+// processes take a KillTaskFunc, so tests can pass the fake's.
+type KillTaskFunc func(taskID string) error
+
+var _ KillTaskFunc = KillTask
+
 // ErrNoEnv is returned by Start and StartPTY when Spec.Env is nil. The
 // environment must come from internal/safety, never from the parent process
 // (SF-04).
@@ -80,6 +86,14 @@ type Process interface {
 	Wait() (int, error)
 	// Kill terminates the process tree.
 	Kill() error
+	// Truncated reports, once the process has ended (it waits for that), that
+	// the output delivered to Spec.Stdout and Spec.Stderr was cut off: a
+	// grandchild still held the output pipe for longer than the grace period
+	// (2 seconds) after the process exited, so later output is lost. It is a
+	// method, not an error from Wait, so a normal exit stays (code, nil) and
+	// the exit code remains the outcome; the caller only marks the log as
+	// incomplete.
+	Truncated() bool
 }
 
 // Size is a terminal size in character cells.

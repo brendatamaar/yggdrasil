@@ -28,6 +28,8 @@ type Script struct {
 	Block bool
 	// StartErr, if set, is returned by Start instead of a process.
 	StartErr error
+	// Truncated makes Process.Truncated report true: the output was cut off.
+	Truncated bool
 }
 
 // KilledExit is the exit code of a fake process that was killed or cancelled.
@@ -50,6 +52,13 @@ type Fake struct {
 	queue   []Script
 	started []platform.Spec
 	pid     int
+	tasks   map[string][]*fakeProcess
+	killed  []string
+
+	// DirExists, if set, says whether Spec.Dir exists; Start fails with
+	// platform.ErrDirMissing when it returns false. Nil means every folder
+	// exists.
+	DirExists func(dir string) bool
 }
 
 // Push queues scripts; each Start takes the next one. When the queue is empty,
@@ -67,7 +76,31 @@ func (f *Fake) Started() []platform.Spec {
 	return append([]platform.Spec(nil), f.started...)
 }
 
-var _ platform.StartFunc = (*Fake)(nil).Start
+var (
+	_ platform.StartFunc    = (*Fake)(nil).Start
+	_ platform.KillTaskFunc = (*Fake)(nil).KillTask
+)
+
+// KillTask kills every fake process started with Spec.TaskID == taskID, like
+// platform.KillTask, and records the call (also for an unknown ID, which does
+// nothing else).
+func (f *Fake) KillTask(taskID string) error {
+	f.mu.Lock()
+	f.killed = append(f.killed, taskID)
+	procs := append([]*fakeProcess(nil), f.tasks[taskID]...)
+	f.mu.Unlock()
+	for _, p := range procs {
+		_ = p.Kill()
+	}
+	return nil
+}
+
+// KilledTasks returns the task IDs passed to KillTask, in order.
+func (f *Fake) KilledTasks() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.killed...)
+}
 
 // Start applies the same checks as platform.Start (environment, argv, context)
 // and then runs the next script.
@@ -80,6 +113,9 @@ func (f *Fake) Start(ctx context.Context, spec platform.Spec) (platform.Process,
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if spec.Dir != "" && f.DirExists != nil && !f.DirExists(spec.Dir) {
+		return nil, fmt.Errorf("%w: %s", platform.ErrDirMissing, spec.Dir)
 	}
 	f.mu.Lock()
 	var s Script
@@ -103,10 +139,18 @@ func (f *Fake) Start(ctx context.Context, spec platform.Spec) (platform.Process,
 
 	write(spec.Stdout, s.Stdout)
 	write(spec.Stderr, s.Stderr)
-	p := &fakeProcess{pid: pid, done: make(chan struct{})}
+	p := &fakeProcess{pid: pid, truncated: s.Truncated, done: make(chan struct{})}
 	if !s.Block {
 		p.finish(s.Exit)
 		return p, nil
+	}
+	if spec.TaskID != "" {
+		f.mu.Lock()
+		if f.tasks == nil {
+			f.tasks = map[string][]*fakeProcess{}
+		}
+		f.tasks[spec.TaskID] = append(f.tasks[spec.TaskID], p)
+		f.mu.Unlock()
 	}
 	stop := context.AfterFunc(ctx, func() { _ = p.Kill() })
 	go func() { <-p.done; stop() }()
@@ -143,15 +187,32 @@ func scriptFromArgv(argv []string) (Script, error) {
 		return Script{Stdout: argv[2] + "\n"}, nil
 	case "block":
 		return Script{Block: true}, nil
+	case "leak":
+		if len(argv) != 3 {
+			return Script{}, errors.New("fake: leak needs a code")
+		}
+		n, err := strconv.Atoi(argv[2])
+		if err != nil {
+			return Script{}, fmt.Errorf("fake: leak code: %w", err)
+		}
+		return Script{Stdout: "before-leak\n", Exit: n, Truncated: true}, nil
+	case "batch-unsafe":
+		return Script{StartErr: fmt.Errorf("%w: argument 1 holds a double quote", platform.ErrBatchArg)}, nil
 	}
 	return Script{}, fmt.Errorf("fake: unknown command %q", argv[1])
 }
 
 type fakeProcess struct {
-	pid  int
-	once sync.Once
-	done chan struct{}
-	code int
+	pid       int
+	truncated bool
+	once      sync.Once
+	done      chan struct{}
+	code      int
+}
+
+func (p *fakeProcess) Truncated() bool {
+	<-p.done
+	return p.truncated
 }
 
 func (p *fakeProcess) finish(code int) {

@@ -4,6 +4,7 @@ package platform_test
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -19,6 +20,10 @@ func TestRealStartMeetsProcessContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	unsafeBatch := filepath.Join(t.TempDir(), "x.cmd")
+	if err := os.WriteFile(unsafeBatch, []byte("@echo off\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	helper := func(args ...string) []string { return append([]string{exe}, args...) }
 	platformtest.ProcessContract(t, platform.Start, platformtest.Commands{
 		Env: []string{
@@ -28,9 +33,13 @@ func TestRealStartMeetsProcessContract(t *testing.T) {
 			"TMP=" + os.TempDir(),
 			"YGG_PLATFORM_HELPER=1", // helperEnvVar
 		},
-		Exit:    func(code int) []string { return helper("exit", strconv.Itoa(code)) },
-		Print:   func(text string) []string { return helper("echo", text) },
-		Block:   func() []string { return helper("sleep", "2m") },
-		Missing: []string{"ygg-no-such-program"},
+		Exit:        func(code int) []string { return helper("exit", strconv.Itoa(code)) },
+		Print:       func(text string) []string { return helper("echo", text) },
+		Block:       func() []string { return helper("sleep", "2m") },
+		Missing:     []string{"ygg-no-such-program"},
+		KillTask:    platform.KillTask,
+		Leak:        func(code int) []string { return helper("leak", strconv.Itoa(code)) },
+		MissingDir:  filepath.Join(t.TempDir(), "no-such-folder"),
+		UnsafeBatch: []string{unsafeBatch, "a&b"},
 	})
 }

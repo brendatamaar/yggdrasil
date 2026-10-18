@@ -45,8 +45,15 @@ func quoteBatchArg(arg string) string {
 // command interpreter at comspec. argv[0] is the name the caller gave and is
 // left out; the batch file is called by its resolved path.
 func batchCommandLine(comspec, batchFile string, argv []string) (string, error) {
-	// The batch file is called by its resolved path, so argv[0] is replaced by it.
-	if err := BatchArgsOK(append([]string{batchFile}, argv[min(1, len(argv)):]...)); err != nil {
+	// The batch file's own path goes through cmd.exe too, so it follows the same rule.
+	if j := strings.IndexAny(batchFile, batchUnsafe); j >= 0 {
+		r := []rune(batchFile[j:])[0]
+		return "", fmt.Errorf("%w: the program's folder or file name holds %s (%s). Move the program to a folder whose path has no such character",
+			ErrBatchArg, describeBatchChar(r), batchFile)
+	}
+	// The empty first entry stands for the batch file, so argument numbers
+	// match the caller's argv.
+	if err := BatchArgsOK(append([]string{""}, argv[min(1, len(argv)):]...)); err != nil {
 		return "", err
 	}
 	var b strings.Builder

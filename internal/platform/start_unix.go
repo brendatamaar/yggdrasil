@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -29,15 +30,9 @@ func Start(ctx context.Context, spec Spec) (Process, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	dir := spec.Dir
-	if dir != "" {
-		if err := CheckPath(dir); err != nil {
-			return nil, err
-		}
-		var err error
-		if dir, err = LongPath(dir); err != nil {
-			return nil, err
-		}
+	dir, err := prepareDir(spec.Dir)
+	if err != nil {
+		return nil, err
 	}
 	exe, err := lookPath(spec.Argv[0], dir, spec.Env)
 	if err != nil {
@@ -45,14 +40,20 @@ func Start(ctx context.Context, spec Spec) (Process, error) {
 	}
 	cmd := &exec.Cmd{
 		Path: exe, Args: spec.Argv, Dir: dir, Env: spec.Env,
-		Stdin: spec.Stdin, Stdout: spec.Stdout, Stderr: spec.Stderr,
+		Stdin:       spec.Stdin,
 		SysProcAttr: &syscall.SysProcAttr{Setpgid: true},
 		WaitDelay:   waitDelay,
 	}
+	outs, err := newOutputs(cmd, spec.Stdout, spec.Stderr)
+	if err != nil {
+		return nil, fmt.Errorf("prepare output of %s: %w", exe, err)
+	}
 	if err := cmd.Start(); err != nil {
+		outs.abort()
 		return nil, fmt.Errorf("start %s: %w", exe, err)
 	}
-	p := &process{cmd: cmd, done: make(chan struct{})}
+	outs.started()
+	p := &process{cmd: cmd, outs: outs, done: make(chan struct{})}
 	p.unreg = registerTask(spec.TaskID, func() { _ = p.Kill() })
 	p.stop = context.AfterFunc(ctx, func() { _ = p.Kill() })
 	go p.run()
@@ -61,15 +62,22 @@ func Start(ctx context.Context, spec Spec) (Process, error) {
 
 type process struct {
 	cmd   *exec.Cmd
+	outs  *outputs
 	stop  func() bool
 	unreg func()
 	done  chan struct{}
 	code  int
 	err   error
+
+	truncated bool // set before done is closed
+	// exited is set as soon as the process is reaped. Its pid (and so its
+	// process group id) may be reused after that, so Kill must not signal it.
+	exited atomic.Bool
 }
 
 func (p *process) run() {
 	err := p.cmd.Wait()
+	p.exited.Store(true)
 	if st := p.cmd.ProcessState; st != nil {
 		p.code = st.ExitCode()
 		var ee *exec.ExitError
@@ -77,6 +85,8 @@ func (p *process) run() {
 			err = nil
 		}
 	}
+	// A grandchild that holds the pipe makes the output end late or never.
+	p.truncated = !p.outs.drain(waitDelay)
 	p.err = err
 	p.stop()
 	p.unreg()
@@ -90,7 +100,15 @@ func (p *process) Wait() (int, error) {
 	return p.code, p.err
 }
 
+func (p *process) Truncated() bool {
+	<-p.done
+	return p.truncated
+}
+
 func (p *process) Kill() error {
+	if p.exited.Load() {
+		return nil
+	}
 	if err := syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return fmt.Errorf("kill process group: %w", err)
 	}

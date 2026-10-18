@@ -167,6 +167,17 @@ func runHelper(mode string, args []string) error {
 			return err
 		}
 		time.Sleep(d)
+	case "leak":
+		// Leave a grandchild that holds our stdout, then exit with the code.
+		gc := exec.Command(exe, "sleep", helperLife.String())
+		gc.Env = helperEnv()
+		gc.Stdout = os.Stdout
+		if err := gc.Start(); err != nil {
+			return fmt.Errorf("start grandchild: %w", err)
+		}
+		fmt.Println("before-leak")
+		n, _ := strconv.Atoi(args[0])
+		os.Exit(n)
 	case "orphan":
 		gc := exec.Command(exe, "sleep", args[1])
 		gc.Env = helperEnv()

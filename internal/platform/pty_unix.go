@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -27,15 +28,9 @@ func StartPTY(ctx context.Context, spec PTYSpec) (PTY, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	dir := spec.Dir
-	if dir != "" {
-		if err := CheckPath(dir); err != nil {
-			return nil, err
-		}
-		var err error
-		if dir, err = LongPath(dir); err != nil {
-			return nil, err
-		}
+	dir, err := prepareDir(spec.Dir)
+	if err != nil {
+		return nil, err
 	}
 	exe, err := lookPath(spec.Argv[0], dir, spec.Env)
 	if err != nil {
@@ -70,10 +65,15 @@ type unixPTY struct {
 
 	closeOnce sync.Once
 	closeErr  error
+
+	// exited is set as soon as the process is reaped; its pid may be reused
+	// after that, so kill must not signal it.
+	exited atomic.Bool
 }
 
 func (p *unixPTY) run() {
 	err := p.cmd.Wait()
+	p.exited.Store(true)
 	if st := p.cmd.ProcessState; st != nil {
 		p.code = st.ExitCode()
 		if _, ok := errors.AsType[*exec.ExitError](err); ok {
@@ -90,6 +90,9 @@ func (p *unixPTY) run() {
 
 // kill signals the session's process group (the child is its leader).
 func (p *unixPTY) kill() error {
+	if p.exited.Load() {
+		return nil
+	}
 	if err := syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return fmt.Errorf("kill process group: %w", err)
 	}
