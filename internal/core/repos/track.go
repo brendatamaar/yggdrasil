@@ -306,7 +306,7 @@ func trackProject(ws Workspace, in TrackProject) (Workspace, []Command, Outcome)
 		map[string]string{"name": proj.Name, "path": string(proj.Path)}))
 	cmds = append(cmds, res.audits...)
 	cmds = finish(cmds, res.changed())
-	return withProject(ws, res.proj), cmds, Tracked{ProjectID: proj.ID, Added: res.added, Restored: res.restored}
+	return withProject(ws, res.proj), cmds, Tracked{ProjectID: proj.ID, Added: res.added, Restored: res.restored, NewProject: true}
 }
 
 // finishPicks assembles the commands for picks applied to an existing

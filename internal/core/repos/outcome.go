@@ -11,6 +11,8 @@ type Tracked struct {
 	ProjectID core.ProjectID
 	Added     []core.RepoID
 	Restored  []core.RepoID
+	// NewProject: the project row was created by this decision.
+	NewProject bool
 }
 
 // AlreadyTracked: nothing needed to change.
