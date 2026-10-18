@@ -30,6 +30,15 @@ type Refresher struct {
 	Queue []core.RepoID
 	// InFlight maps a repo to the attempt being read.
 	InFlight map[core.RepoID]int
+	// Orphans maps a repo to a read whose result is no longer wanted (the repo
+	// was removed or moved, or the state was restarted). An orphan still counts
+	// toward Max, because the shell's worker is still running, until its result
+	// arrives; the result frees the slot and is otherwise ignored. A repo with
+	// an orphan is not started again until the orphan has ended.
+	Orphans map[core.RepoID]int
+	// Seq is the last attempt number handed out. Every start takes the next
+	// one, so an attempt is unique across IDs and across remove and re-add.
+	Seq int
 	// Max is the number of concurrent reads.
 	Max int
 }
@@ -37,7 +46,7 @@ type Refresher struct {
 // Entry is one repo's status.
 type Entry struct {
 	Path CleanPath
-	// Attempt is the last attempt started.
+	// Attempt is the last attempt started (a Seq value).
 	Attempt int
 	View    View
 }
@@ -133,7 +142,33 @@ func NewRefresher(max int) Refresher {
 	if max < 1 {
 		max = DefaultMax
 	}
-	return Refresher{Entries: map[core.RepoID]Entry{}, InFlight: map[core.RepoID]int{}, Max: max}
+	return Refresher{Entries: map[core.RepoID]Entry{}, InFlight: map[core.RepoID]int{}, Orphans: map[core.RepoID]int{}, Max: max}
+}
+
+// Restarted returns an empty Refresher for the same Max that keeps Seq and
+// treats every read of r (in flight or orphaned) as an orphan, so attempts
+// stay unique and the bound on concurrent reads still holds. The shell uses it
+// to rebuild the state after a panic in Refresh.
+func (r Refresher) Restarted() Refresher {
+	n := NewRefresher(r.Max)
+	n.Seq = r.Seq
+	for id, a := range r.Orphans {
+		n.Orphans[id] = a
+	}
+	for id, a := range r.InFlight {
+		n.Orphans[id] = a
+	}
+	return n
+}
+
+// reads is the number of reads the shell may still be running.
+func (r Refresher) reads() int { return len(r.InFlight) + len(r.Orphans) }
+
+// reading reports whether a read of id is running, wanted or not.
+func (r Refresher) reading(id core.RepoID) bool {
+	_, a := r.InFlight[id]
+	_, b := r.Orphans[id]
+	return a || b
 }
 
 func (r Refresher) maxReads() int {
@@ -149,7 +184,12 @@ func (r Refresher) clone() Refresher {
 		Entries:  make(map[core.RepoID]Entry, len(r.Entries)),
 		Queue:    append([]core.RepoID(nil), r.Queue...),
 		InFlight: make(map[core.RepoID]int, len(r.InFlight)),
+		Orphans:  make(map[core.RepoID]int, len(r.Orphans)),
+		Seq:      r.Seq,
 		Max:      r.Max,
+	}
+	for k, v := range r.Orphans {
+		n.Orphans[k] = v
 	}
 	for k, v := range r.Entries {
 		n.Entries[k] = v
@@ -226,9 +266,9 @@ func (n *Refresher) reposChanged(x ReposChanged) []RefreshCommand {
 			n.Entries[ref.ID] = Entry{Path: ref.Path, View: Unknown{}}
 			n.enqueue(ref.ID, false)
 		case e.Path != ref.Path:
-			// The folder moved: the read in flight is stale (the next attempt
-			// number differs), so start over.
-			delete(n.InFlight, ref.ID)
+			// The folder moved: the read in flight is stale, so it becomes an
+			// orphan and the repo starts over.
+			n.orphan(ref.ID)
 			n.Entries[ref.ID] = Entry{Path: ref.Path, Attempt: e.Attempt, View: Unknown{}}
 			n.enqueue(ref.ID, false)
 			cmds = append(cmds, PublishStatus{ID: ref.ID})
@@ -243,11 +283,19 @@ func (n *Refresher) reposChanged(x ReposChanged) []RefreshCommand {
 	sort.Slice(gone, func(i, j int) bool { return gone[i] < gone[j] })
 	for _, id := range gone {
 		delete(n.Entries, id)
-		delete(n.InFlight, id)
+		n.orphan(id)
 		n.dequeue(id)
 		cmds = append(cmds, PublishStatus{ID: id})
 	}
 	return cmds
+}
+
+// orphan turns the read in flight of id, if any, into an orphan.
+func (n *Refresher) orphan(id core.RepoID) {
+	if a, busy := n.InFlight[id]; busy {
+		n.Orphans[id] = a
+		delete(n.InFlight, id)
+	}
 }
 
 func (n *Refresher) enqueue(id core.RepoID, front bool) {
@@ -322,9 +370,14 @@ func (n *Refresher) request(ids []core.RepoID, reason RefreshReason, now time.Ti
 	}
 }
 
-// finish applies a result when its attempt is the one in flight; ok is false
-// for an unknown ID or a stale attempt.
+// finish applies a result when its attempt is the one in flight. The result of
+// an orphan only frees its slot. ok is false for an unknown ID or a stale
+// attempt.
 func (n *Refresher) finish(id core.RepoID, attempt int, next func(View) View) (cmds []RefreshCommand, ok bool) {
+	if a, orphaned := n.Orphans[id]; orphaned && a == attempt {
+		delete(n.Orphans, id)
+		return nil, true
+	}
 	e, known := n.Entries[id]
 	if !known {
 		return nil, false
@@ -343,14 +396,15 @@ func (n *Refresher) finish(id core.RepoID, attempt int, next func(View) View) (c
 	return cmds, true
 }
 
-// startReads moves queued repos into flight while there is room. A queued repo
-// that is already in flight waits for its read to end.
+// startReads moves queued repos into flight while there is room (orphans take
+// room too). A queued repo that is being read, wanted or not, waits for that
+// read to end.
 func (n *Refresher) startReads() []RefreshCommand {
 	var cmds []RefreshCommand
-	for len(n.InFlight) < n.maxReads() {
+	for n.reads() < n.maxReads() {
 		idx := -1
 		for i, id := range n.Queue {
-			if _, busy := n.InFlight[id]; !busy {
+			if !n.reading(id) {
 				idx = i
 				break
 			}
@@ -361,7 +415,8 @@ func (n *Refresher) startReads() []RefreshCommand {
 		id := n.Queue[idx]
 		n.Queue = append(n.Queue[:idx:idx], n.Queue[idx+1:]...)
 		e := n.Entries[id]
-		e.Attempt++
+		n.Seq++
+		e.Attempt = n.Seq
 		n.Entries[id] = e
 		n.InFlight[id] = e.Attempt
 		cmds = append(cmds, ReadStatus{ID: id, Path: e.Path, Attempt: e.Attempt})

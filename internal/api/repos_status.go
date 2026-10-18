@@ -81,8 +81,37 @@ func (s *Server) PublishRepoCounts() {
 	if err != nil {
 		return
 	}
-	counts := corerepos.CountEntries(snap.Entries, s.failedPipelines(ctx))
+	active, err := s.activeEntries(ctx, snap)
+	if err != nil {
+		return
+	}
+	counts := corerepos.CountEntries(active, s.failedPipelines(ctx))
 	s.hub.publishNext(reposTopic{}, ReposChangedMessage{Counts: countsDTO(counts)})
+}
+
+// activeEntries returns the status entries of the repos the store lists as
+// active, so the counts never include a repo that was untracked (SF-02). An
+// active repo without an entry yet counts as unknown.
+func (s *Server) activeEntries(ctx context.Context, snap corerepos.Refresher) (map[core.RepoID]corerepos.Entry, error) {
+	projects, err := s.store.ListProjects(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := map[core.RepoID]corerepos.Entry{}
+	for _, p := range projects {
+		rows, err := s.store.ListRepos(ctx, p.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, repo := range rows {
+			e, known := snap.Entries[repo.ID]
+			if !known {
+				e = corerepos.Entry{View: corerepos.Unknown{}}
+			}
+			out[repo.ID] = e
+		}
+	}
+	return out, nil
 }
 
 // failedPipelines returns the repos whose pipeline failed. Git hosts being

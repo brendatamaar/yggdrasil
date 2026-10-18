@@ -132,8 +132,8 @@ func TestRefreshStartup(t *testing.T) {
 
 func TestRefreshReasons(t *testing.T) {
 	r, _ := Refresh(NewRefresher(8), refs("a", "b"))
-	for _, id := range []core.RepoID{"a", "b"} {
-		r, _ = Refresh(r, StatusRead{ID: id, Attempt: 1, Snap: Snapshot{HasUpstream: true}, Now: t0})
+	for i, id := range []core.RepoID{"a", "b"} {
+		r, _ = Refresh(r, StatusRead{ID: id, Attempt: i + 1, Snap: Snapshot{HasUpstream: true}, Now: t0})
 	}
 	ids := func(c []RefreshCommand) []core.RepoID {
 		var out []core.RepoID
@@ -182,25 +182,49 @@ func TestRefreshRemovedAndMovedRepos(t *testing.T) {
 	r, _ := Refresh(NewRefresher(4), refs("a", "b"))
 	// b is untracked while it is being read: its entry and slot go, and its late result is ignored.
 	r, cmds := Refresh(r, refs("a"))
-	if _, ok := r.Entries["b"]; ok || len(r.InFlight) != 1 {
-		t.Fatalf("b not dropped: %v %v", r.Entries, r.InFlight)
+	if _, ok := r.Entries["b"]; ok || len(r.InFlight) != 1 || r.Orphans["b"] != 2 {
+		t.Fatalf("b not dropped: %v %v %v", r.Entries, r.InFlight, r.Orphans)
 	}
 	if len(cmds) != 2 {
 		t.Errorf("cmds = %#v, want PublishStatus(b) and PublishCounts", cmds)
 	}
-	same, out := Refresh(r, StatusRead{ID: "b", Attempt: 1, Snap: Snapshot{}, Now: t0})
-	if len(out) != 0 || !reflect.DeepEqual(same, r) {
-		t.Errorf("late result for a removed repo changed something: %v", out)
+	// The orphan keeps its slot until its result arrives, which is then ignored.
+	r, out := Refresh(r, StatusRead{ID: "b", Attempt: 2, Snap: Snapshot{}, Now: t0})
+	if len(out) != 0 || len(r.Orphans) != 0 || len(r.Entries) != 1 {
+		t.Errorf("orphan result: %v %v", out, r)
 	}
-	// a moves: the read in flight goes stale and a new attempt starts on the new path.
+	// a moves: the read in flight is orphaned; the new read waits for it, then
+	// starts with a fresh attempt number.
 	moved := ReposChanged{Active: []RepoRef{{ID: "a", Path: "/elsewhere/a"}}}
 	r, cmds = Refresh(r, moved)
+	if got := reads(cmds); len(got) != 0 || r.Orphans["a"] != 1 {
+		t.Fatalf("reads after a move = %+v orphans %v", got, r.Orphans)
+	}
+	r, cmds = Refresh(r, StatusRead{ID: "a", Attempt: 1, Now: t0})
 	got := reads(cmds)
-	if len(got) != 1 || got[0].Attempt != 2 || got[0].Path != "/elsewhere/a" {
-		t.Fatalf("reads after a move = %+v", got)
+	if len(got) != 1 || got[0].Attempt != 3 || got[0].Path != "/elsewhere/a" || len(r.Orphans) != 0 {
+		t.Fatalf("reads after the orphan ended = %+v", got)
 	}
 	if same, out := Refresh(r, StatusRead{ID: "a", Attempt: 1, Now: t0}); len(out) != 0 || !reflect.DeepEqual(same, r) {
 		t.Errorf("the old attempt was accepted")
+	}
+}
+
+func TestRefreshOrphansCountTowardMax(t *testing.T) {
+	r, _ := Refresh(NewRefresher(1), refs("a", "b"))
+	r, cmds := Refresh(r, refs("b")) // a removed mid-read
+	if len(reads(cmds)) != 0 {
+		t.Fatalf("a read started while the orphan holds the only slot: %v", cmds)
+	}
+	r, cmds = Refresh(r, StatusRead{ID: "a", Attempt: 1, Now: t0})
+	if got := reads(cmds); len(got) != 1 || got[0].ID != "b" || got[0].Attempt != 2 {
+		t.Fatalf("reads = %+v", got)
+	}
+	// Remove and re-add a: its attempt differs from the first life's.
+	r, _ = Refresh(r, refs("a", "b"))
+	r, _ = Refresh(r, StatusRead{ID: "b", Attempt: 2, Now: t0})
+	if r.Entries["a"].Attempt != 3 {
+		t.Errorf("re-added a attempt = %d, want 3", r.Entries["a"].Attempt)
 	}
 }
 

@@ -269,6 +269,32 @@ func TestStatusServiceReloadReposAddsAndDrops(t *testing.T) {
 	})
 }
 
+func TestStatusServiceRemovedRepoKeepsItsSlotUntilTheReadEnds(t *testing.T) {
+	h := start(t, nil, nil, repos.WithMaxReads(1))
+	gate := make(chan struct{})
+	h.reader.Script(cpath("a"), repostest.FakeResult{Snap: corerepos.Snapshot{Branch: "main"}, Gate: gate})
+	h.reader.Script(cpath("b"), repostest.FakeResult{Snap: corerepos.Snapshot{Branch: "main"}})
+	h.src.set(repoRow("a"), repoRow("b"))
+	if err := h.svc.ReloadRepos(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "a to be read", func() bool { return h.reader.Calls(cpath("a")) == 1 })
+	// a is untracked while its read is blocked: b must not start beside it.
+	h.src.set(repoRow("b"))
+	if err := h.svc.ReloadRepos(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s := h.snapshot(t)
+	if len(s.Orphans) != 1 || len(s.InFlight) != 0 || h.reader.Calls(cpath("b")) != 0 {
+		t.Fatalf("orphans %v in flight %v b calls %d", s.Orphans, s.InFlight, h.reader.Calls(cpath("b")))
+	}
+	close(gate)
+	eventually(t, "b fresh", h.allView(t, 1, isFresh))
+	if got := h.reader.MaxActive(); got > 1 {
+		t.Errorf("MaxActive = %d, want at most 1", got)
+	}
+}
+
 func TestStatusServiceNotRunning(t *testing.T) {
 	svc := repos.NewStatusService(&memSource{}, repostest.NewFakeReader(), time.Now, nil)
 	_, err := svc.Snapshot(context.Background())

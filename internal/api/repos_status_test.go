@@ -12,6 +12,7 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/apperr"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	corerepos "github.com/brendatamaar/yggdrasil/internal/core/repos"
+	"github.com/brendatamaar/yggdrasil/internal/db"
 )
 
 // fakeStatus is a StatusService with a fixed state.
@@ -223,6 +224,60 @@ func TestStatusRoutesNeedTheService(t *testing.T) {
 	}
 	e.srv.PublishRepoStatus(e.repo.ID) // must not panic without a service
 	e.srv.PublishRepoCounts()
+}
+
+// untrackRepo marks the env's repo untracked, as tracking does.
+func untrackRepo(t *testing.T, e *env) {
+	t.Helper()
+	ctx := context.Background()
+	ws, err := e.store.GetWorkspace(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ver := ws.Projects[e.project.ID].Version
+	err = e.store.Commit(ctx, func(tx *db.Tx) error {
+		return tx.Workspace().MarkRepoUntracked(ctx, corerepos.MarkRepoUntracked{
+			ProjectID: e.project.ID, RepoID: e.repo.ID, At: statusAt, ExpectVersion: ver,
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// An untracked repo is invisible: not listed, not counted, not published (SF-02).
+func TestStatusLeavesOutUntrackedRepo(t *testing.T) {
+	st := &fakeStatus{}
+	e := newStatusEnv(t, st, nil)
+	// The status still holds the repo (it learns of the change a moment later).
+	st.state = stateWith(e, corerepos.Fresh{At: statusAt, Snap: corerepos.Snapshot{Branch: "dev", Ahead: 1}}, false)
+	untrackRepo(t, e)
+
+	code, out, data := e.getRepos(t, "")
+	if code != http.StatusOK || out.Counts.All != 0 || out.Counts.Ahead != 0 {
+		t.Fatalf("GET /api/repos = %d %s", code, data)
+	}
+	for _, p := range out.Projects {
+		if len(p.Repos) != 0 || p.Counts.All != 0 {
+			t.Errorf("project %+v lists the untracked repo", p)
+		}
+	}
+
+	ws := e.dial(t)
+	subscribe(t, ws, repoTopic{ID: e.repo.ID}.String())
+	subscribe(t, ws, reposTopic{}.String())
+	time.Sleep(150 * time.Millisecond)
+	e.srv.PublishRepoStatus(e.repo.ID)
+	e.srv.PublishRepoCounts()
+	// The first message must be the counts: nothing was published for the repo.
+	m, err := readMsg(t, ws, 5*time.Second)
+	if err != nil || m.Topic != TopicRepos {
+		t.Fatalf("first message = %+v, %v", m, err)
+	}
+	var counts ReposChangedMessage
+	if err := json.Unmarshal(m.Data, &counts); err != nil || counts.Counts.All != 0 || counts.Counts.Ahead != 0 {
+		t.Errorf("counts data = %+v, %v", counts, err)
+	}
 }
 
 func TestStatusPublishing(t *testing.T) {
