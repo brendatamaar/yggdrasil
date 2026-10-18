@@ -73,8 +73,9 @@ Goal: the workspace half matches the personal tool.
 - [ ] Git hosts: GitLab (multiple instances), GitHub, Gitea; MR/PR and pipeline status; MR inbox; MR creation via push options; optional tokens (GH-01–GH-04).
 - [ ] Toolchain module interface (BL-10) and `docs/writing-a-toolchain.md` draft.
 - [ ] Toolchain modules: Node, Maven (with dependency ordering), Gradle, and the custom command fallback (BL-01, BL-02, BL-04, BL-11, BL-15).
-  - **Core:** Maven dependency ordering (BL-02) is pure, in `internal/core/builds`; detection and runs in `internal/builds`.
+  - **Core:** Maven dependency ordering (BL-04) is pure, in `internal/core/builds`; detection and runs in `internal/builds`.
 - [ ] Builds: ordered steps, queue, presets, live logs, history, artifacts (BL-03, BL-05–BL-07).
+  - **Design:** `docs/design/builds.md` (approved 2026-10-18). Foundations on `main`: migration 00002, `Store.Commit`, `platform.StartFunc` with fake and contract suite, hub `publishNext` and topic type, `apperr`.
   - **Core:** queue and step state machine in `internal/core/builds`; execution, logs and artifacts in `internal/builds`.
 - [ ] Code search with editor links (XR-01).
 - [ ] Home: hero scene, composer placeholder, suggestion chips (UI-01).

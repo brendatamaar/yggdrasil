@@ -208,3 +208,32 @@ The human approved the recommendations above (2026-10-17). These fixes are Phase
 |---|---|---|
 | P2 | `platform-windows` | `internal/platform/**` |
 | D2 | `go-backend` | `internal/db/**` (amend 00002), `internal/audit/**`, `internal/core/{model,enums,core_test}.go`, `internal/api/{tasks,errors,server}.go` and their tests, `internal/archtest/**`, `cmd/ygg/**` |
+
+### Review gate 2 (2026-10-18) — passed
+
+Both reviewers re-checked `4cb3b09..main`, and both passed with no Blocking or Must-fix findings. Every gate 1 finding is fixed.
+
+The lead also fixed these Should-fix findings from gate 2:
+- `Finished.CancelledAt` added to the design, with invariant I11.
+- `build_steps.repo_id` and `build_artifacts.repo_id` are `ON DELETE RESTRICT`, with a new `db.ErrInUse`. Delete rules are in the design under "Persistence and delivery" → Deletes.
+- The raw `DB` pools are unexported, and `Writer`/`Reader` are no longer exported.
+- New archtest rules: `db/gen` may be imported only from `internal/db`; `dbtest` and `platformtest` only from tests.
+
+**Pre-phase fixes: done.** Items 1–13 of the baseline review are on `main`.
+
+### Open follow-ups (not blocking; fix when touched)
+
+| From | Item | Where |
+|---|---|---|
+| gate 2 safety | Test that an output writer is never written after `Wait`: a grandchild writes again after about 3 s | `internal/platform/outputs.go` |
+| gate 2 safety/fe | On Unix, `Kill` can't reach a grandchild left behind after the leader is reaped; send `kill(-pgid)` right after `Wait` | `start_unix.go`, `pty_unix.go` |
+| gate 2 fe | A `Validate` failure after the request parser passed is a defect (500), not a 400 | `internal/api/tasks.go` |
+| gate 2 fe | The store still derives `finished_at`/`decided_at` from the status (with the caller's time); move this into `step` when `core/tasks`/`core/proposals` exist | `internal/db/tx.go` |
+| gate 2 fe | `Commit` doesn't force an `AppendAudit`; consider a required audit parameter or an archtest rule | `internal/db/tx.go`, archtest |
+| gate 2 fe | `Clock`/`IDs` capabilities in `api.Deps` when builds land; `Deps.KillTask` typed as `platform.KillTaskFunc` | `internal/api/server.go` |
+| gate 2 safety | Redact JSON string values after decoding, not the raw text (`\uXXXX` escapes) | `internal/db/tx.go`, `internal/audit/prepare.go` |
+| gate 2 safety | `startBreakaway` doesn't use `withNoCurDir` (not exploitable; for consistency) | `internal/platform/open_windows.go` |
+| gate 2 safety | The archtest read-method allowlist matches any `Get*`/`List*` name; use an explicit list | `internal/archtest/rules.go` |
+| gate 2 fe | `Fake.tasks` never drops finished processes | `platformtest/fake.go` |
+| baseline | Every remaining "fix when touched" row in the tables above | — |
+| WS-01 | Untracking a repo: keep build history (a status) or delete its builds in one transaction. Plus the shared path parser, and the seed find-or-create moving into a pure `track` step | WS-01 owning package |

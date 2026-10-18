@@ -21,6 +21,14 @@ All notable changes to Yggdrasil are documented here. The format follows [Keep a
 ### Changed
 - Only Ask mode (read-only) can be started in this version; Code mode needs worktrees and the path guard (Phase 3).
 - An agent will not run in a repo that has its own Claude Code configuration (settings, MCP servers, agent definitions) until repo trust exists (SF-09).
+- Every state change and its audit entry are now written in one database transaction, and a change made in parallel is refused instead of overwriting the other (SF-05).
+- Error responses say what to do next and never carry internal text; a stale change answers 409 (SF-01).
+
+### Fixed
+- Terminal sessions now check a `.cmd` or `.bat` program's arguments the same way as other processes do. No child process on Windows looks for commands in its working folder, so a program planted in a worktree can't run instead of the real one (SF-02).
+- WSL paths written with `\\.\UNC\`, `\??\` or `GLOBALROOT` device prefixes are refused like `\\wsl$` paths (PL-04).
+- Live task status messages always arrive in order, so the browser no longer refetches on a gap that wasn't one.
+- Stopping one process of a task no longer stops the task's other processes; ending the task still stops all of them.
 
 ## [0.1.0] - 2026-10-15
 
