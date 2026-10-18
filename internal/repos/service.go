@@ -27,6 +27,12 @@ type StatusRefresher interface {
 	Refresh(ctx context.Context, ids []core.RepoID, reason corerepos.RefreshReason) error
 }
 
+// ReposPublisher tells subscribers that the repo list changed (the repos topic
+// of the API). Nil means nobody listens. *api.Server implements it.
+type ReposPublisher interface {
+	PublishReposChanged()
+}
+
 // Deps are what NewTrackingService needs. Only Store and Redactor are
 // required; the rest default to the live implementations.
 type Deps struct {
@@ -35,7 +41,9 @@ type Deps struct {
 	Scanner  Scanner
 	Dirs     DirLister
 	Status   StatusRefresher
-	Log      *slog.Logger
+	// Publisher is told after every commit that changed the repo list.
+	Publisher ReposPublisher
+	Log       *slog.Logger
 	// Clock and IDs are the shell's sources of time and identifiers; the
 	// core receives them as input fields.
 	Clock  func() time.Time
@@ -373,6 +381,10 @@ func (s *TrackingService) appendAudit(ctx context.Context, tx *db.Tx, c corerepo
 // runAfter performs what follows a commit. It is best effort: the UI
 // refetches on reconnect and repo-status ticks catch up.
 func (s *TrackingService) runAfter(ctx context.Context, cmds []corerepos.Command) {
+	// The commit is done; a client that hung up must not skip the refresh and
+	// the notification, so they get their own short deadline.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), afterTimeout)
+	defer cancel()
 	if s.d.Status != nil && len(cmds) > 0 {
 		if err := s.d.Status.ReloadRepos(ctx); err != nil {
 			s.d.Log.Warn("reload repos after tracking failed", "err", err)
@@ -387,7 +399,17 @@ func (s *TrackingService) runAfter(ctx context.Context, cmds []corerepos.Command
 			s.d.Log.Warn("refresh after tracking failed", "err", err)
 		}
 	}
+	// Last, so a client that refetches on the message sees the new status set.
+	for _, c := range cmds {
+		if _, ok := c.(corerepos.PublishReposChanged); ok && s.d.Publisher != nil {
+			s.d.Publisher.PublishReposChanged()
+			break
+		}
+	}
 }
+
+// afterTimeout bounds what runs after a commit.
+const afterTimeout = 10 * time.Second
 
 // inputTime is the Now of an input, used for audit entries.
 func inputTime(in corerepos.Input) time.Time {

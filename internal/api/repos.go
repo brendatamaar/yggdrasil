@@ -127,9 +127,10 @@ func projectID(w http.ResponseWriter, r *http.Request) (core.ProjectID, bool) {
 	return id, true
 }
 
-// publishRepos tells subscribers that the repo list changed. The client
+// PublishReposChanged tells subscribers that the repo list changed. The
+// tracking service calls it after a commit (repos.ReposPublisher). The client
 // refetches the list; the counts are the status service's to fill.
-func (s *Server) publishRepos() {
+func (s *Server) PublishReposChanged() {
 	s.hub.publishNext(reposTopic{}, ReposChangedMessage{})
 }
 
@@ -169,7 +170,6 @@ func (s *Server) writeTracked(w http.ResponseWriter, out corerepos.Outcome) {
 	}
 	switch o := out.(type) {
 	case corerepos.Tracked:
-		s.publishRepos()
 		status := http.StatusOK
 		if o.NewProject {
 			status = http.StatusCreated
@@ -243,9 +243,6 @@ func (s *Server) writeUntracked(w http.ResponseWriter, out corerepos.Outcome) {
 		writeError(w, http.StatusInternalServerError, ErrInternal, "Something went wrong inside Yggdrasil.", "Try again.")
 		return
 	}
-	if len(done.Repos) > 0 {
-		s.publishRepos()
-	}
 	writeJSON(w, http.StatusOK, UntrackResponse{Repos: nonNil(done.Repos)})
 }
 
@@ -293,6 +290,5 @@ func (s *Server) handleRenameProject(w http.ResponseWriter, r *http.Request) {
 	if s.trackFailure(w, out) {
 		return
 	}
-	s.publishRepos()
 	w.WriteHeader(http.StatusNoContent)
 }

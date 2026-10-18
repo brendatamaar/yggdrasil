@@ -57,6 +57,7 @@ type env struct {
 	svc   *repos.TrackingService
 	store *db.Store
 	rec   *refreshRecorder
+	pub   *countPub
 	root  string
 }
 
@@ -70,16 +71,17 @@ func newEnv(t *testing.T) *env {
 	red := safety.NewRedactor()
 	store := db.NewStore(d, red.Redact)
 	rec := &refreshRecorder{}
+	pub := &countPub{}
 	clock := time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC)
 	svc, err := repos.NewTrackingService(repos.Deps{
-		Store: store, Redactor: red, Status: rec,
+		Store: store, Redactor: red, Status: rec, Publisher: pub,
 		Clock: func() time.Time { clock = clock.Add(time.Minute); return clock },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	return &env{t: t, svc: svc, store: store, rec: rec, root: root}
+	return &env{t: t, svc: svc, store: store, rec: rec, pub: pub, root: root}
 }
 
 // repoDir makes a folder with a .git folder and a file in it.

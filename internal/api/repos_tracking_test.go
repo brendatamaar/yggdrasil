@@ -246,13 +246,17 @@ func TestTrackingPublishesOnTheReposTopic(t *testing.T) {
 	subscribe(t, ws, TopicRepos)
 	time.Sleep(150 * time.Millisecond)
 
-	f.out = corerepos.AlreadyTracked{ProjectID: "prj_1"} // changes nothing: no message
-	e.do(t, http.MethodPost, "/api/projects", TrackProjectRequest{Path: "/w", Name: "n", Picks: []PickDTO{{RelPath: "a"}}})
+	// Handlers publish nothing themselves: the tracking service does, through
+	// Server.PublishReposChanged (covered in internal/repos).
 	f.out = corerepos.Tracked{ProjectID: "prj_1", Added: []core.RepoID{"rep_1"}, NewProject: true}
 	e.do(t, http.MethodPost, "/api/projects", TrackProjectRequest{Path: "/w", Name: "n", Picks: []PickDTO{{RelPath: "a"}}})
+	e.srv.PublishReposChanged()
 	m, err := readMsg(t, ws, 5*time.Second)
 	if err != nil || m.Type != MsgEvent || m.Topic != TopicRepos || m.Seq != 1 {
 		t.Fatalf("message = %+v, %v; want the first event on the repos topic", m, err)
+	}
+	if m, err := readMsg(t, ws, 300*time.Millisecond); err == nil {
+		t.Fatalf("a handler published too: %+v", m)
 	}
 }
 
