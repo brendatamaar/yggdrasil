@@ -18,11 +18,13 @@ type Refresher struct {
     Entries  map[core.RepoID]Entry
     Queue    []core.RepoID   // waiting to be read; each ID at most once
     InFlight map[core.RepoID]int // repo → attempt being read
+    Orphans  map[core.RepoID]int // repo → read still running whose result is no longer wanted
+    Seq      int             // last attempt number handed out (monotonic, never reset)
     Max      int             // concurrent reads (default 8)
 }
 type Entry struct {
     Path    CleanPath
-    Attempt int             // last attempt started
+    Attempt int             // last attempt started (a Seq value)
     View    View            // sealed, below
 }
 ```
@@ -33,7 +35,7 @@ type Entry struct {
 - `Fresh{Snap Snapshot, At time.Time}`: last read succeeded.
 - `Problem{Kind ProblemKind, At time.Time, Last *Snapshot}`: last read failed. `Last` is the previous good snapshot, kept so the row doesn't go blank.
 
-A repo that is being read keeps its current `View`. "Refreshing" is `InFlight[id]`, not a separate view, so the UI shows the last data plus a spinner. A repo can be in `InFlight` and also in `Queue`: a request arrived during the read, so it is read again once.
+A repo that is being read keeps its current `View`. "Refreshing" is `InFlight[id]`, not a separate view, so the UI shows the last data plus a spinner. A repo can be in `InFlight` and also in `Queue`: a request arrived during the read. It waits (it is never started beside its own read) and is read again once that read ends. Attempts come from `Seq`, so they are unique across IDs and across remove and re-add. When a repo is removed or moved while its read runs, the read becomes an `Orphans` entry: it keeps counting toward `Max` (the shell worker still runs) until its result arrives, which frees the slot and is otherwise ignored. A repo with an orphan is not started again until the orphan ends. After a panic the shell rebuilds the state with `Restarted()`, which keeps `Seq` and turns every running read into an orphan.
 
 ```go
 type Snapshot struct {
@@ -70,15 +72,16 @@ Health flags are derived by `Flags(View) []Flag`, which is pure:
 
 ## Transition table
 
-`start(id)` moves `id` from the front of `Queue` into `InFlight` with `Attempt+1` and emits `ReadStatus{id, path, attempt}`. After every input, the core calls `start` while `len(InFlight) < Max` and `Queue` is not empty.
+`start(id)` takes the first queued `id` that is not being read (not in `InFlight` or `Orphans`), moves it into `InFlight` with attempt `Seq+1` (incrementing `Seq`) and emits `ReadStatus{id, path, attempt}`. After every input, the core calls `start` while `len(InFlight)+len(Orphans) < Max` and a startable ID is queued.
 
 | From | Input | Guard | To | Commands |
 |---|---|---|---|---|
-| any | ReposChanged | — | add an `Unknown` entry for each new ID and enqueue it; drop entries for IDs not in `Active` (also from `Queue`; an in-flight result for them is ignored later) | `ReadStatus` for started reads, `Publish(StatusChanged{removed})`, `PublishCounts` |
+| any | ReposChanged | — | add an `Unknown` entry for each new ID and enqueue it; drop entries for IDs not in `Active` (also from `Queue`; their read in flight becomes an orphan; a changed path does the same and starts over) | `ReadStatus` for started reads, `Publish(StatusChanged{removed})`, `PublishCounts` |
 | any | RefreshRequested | per ID: known; not already in `Queue`; age ≥ MinAge(reason) | enqueue the ID at the back (`user` and `git_action` go to the front) | `ReadStatus` for started reads |
 | any | Tick | — | as `RefreshRequested{all, tick}` | as above |
 | entry in flight with attempt `a` | StatusRead | `Attempt == a` | `View = Fresh{Snap, Now}`, removed from `InFlight` | `Publish(StatusChanged{id})` if the view differs; `PublishCounts` if the counts changed; `ReadStatus` for started reads |
 | entry in flight with attempt `a` | StatusFailed | `Attempt == a` | `View = Problem{Kind, Now, Last: previous snapshot}`, removed from `InFlight` | same as StatusRead |
+| any | StatusRead / StatusFailed | the attempt is an orphan's | remove the orphan (frees its slot); views unchanged | `ReadStatus` for started reads |
 | any | StatusRead / StatusFailed | unknown ID, or stale attempt | no change | none |
 
 **Any other (state, input) pair: no change, no commands.**
@@ -89,11 +92,11 @@ Counts are pure: `Counts(entries, failedPipelines set[RepoID]) Counts`, with one
 
 | # | Invariant | Property test |
 |---|---|---|
-| R1 | `len(InFlight) ≤ Max` after every step. | `TestPropInFlightBounded` |
-| R2 | Each ID appears at most once in `Queue`. Every ID in `Queue` or `InFlight` has an entry. | `TestPropQueueSetLike` |
-| R3 | Work-conserving: after every step, if `len(InFlight) < Max` then `Queue` is empty. | `TestPropNoIdleWhileQueued` |
-| R4 | A stale or unknown result (wrong attempt, removed repo) changes nothing and emits nothing. | `TestPropStaleResultIgnored` |
-| R5 | A `ReadStatus` command for `(id, a)` is emitted at most once, and `a` grows by 1 per start of that ID. | `TestPropAttemptsMonotonic` |
+| R1 | `len(InFlight) + len(Orphans) ≤ Max` after every step. | `TestPropInFlightBounded` |
+| R2 | Each ID appears at most once in `Queue`. Every ID in `Queue` or `InFlight` has an entry. An ID is never in `InFlight` and `Orphans` at once; attempts never exceed `Seq`. | `TestPropQueueSetLike` |
+| R3 | Work-conserving: after every step, if `len(InFlight) + len(Orphans) < Max` then every ID in `Queue` is itself being read (in `InFlight` or `Orphans`) and waits for that read to end. | `TestPropNoIdleWhileQueued` |
+| R4 | A result is fresh only if it answers the latest `ReadStatus` emitted for its ID and no `ReposChanged` removed or moved the ID since (judged from the test's own history, not from `InFlight`). A fresh result is applied; a stale one publishes nothing, changes no view, and changes nothing at all unless it is an orphan's. The generator removes and re-adds IDs while their reads are in flight and replays late results of any read ever emitted. | `TestPropStaleResultIgnored` |
+| R5 | A `ReadStatus` for `(id, a)` is emitted at most once over the whole run, across IDs and across remove and re-add; every `a` is greater than the previous `Seq`. | `TestPropAttemptsMonotonic` |
 | R6 | `Problem.Last` is the most recent `Fresh` snapshot of that repo, or nil if it never had one. | `TestPropProblemKeepsLast` |
 | R7 | `Counts` equal a brute-force recount from `Flags` and `Snapshot` for every filter. | `TestPropCountsMatchFlags` |
 | R8 | Liveness: with `Max ≥ 1`, feeding every emitted `ReadStatus` back as a result eventually leaves `Queue` and `InFlight` empty, and every requested ID has a view at or after the request time. | `TestPropEveryRequestServed` |

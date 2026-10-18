@@ -167,7 +167,7 @@ func TestTransitionTable(t *testing.T) {
 func TestCancelWithInvalidActorIsNoop(t *testing.T) {
 	queued, _ := apply(t, None{}, Enqueue{ID: "b1", Spec: spec(1), Actor: "user", Now: at(0)})
 	for name, s := range map[string]State{"queued": queued, "running": running(t, 2)} {
-		got, cmds := Step(s, Cancel{Actor: "bogus", Now: at(5)})
+		got, cmds := Step(s, Cancel{Actor: "", Now: at(5)})
 		if !reflect.DeepEqual(got, s) || len(cmds) != 0 {
 			t.Errorf("%s: Cancel with an invalid actor changed the state or emitted %v", name, cmds)
 		}
