@@ -2,15 +2,28 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 // UI-only state: the user's theme preference. Server data never goes here.
-// Phase 2 adds Daylight, Dracula, Rosé Pine, Nord and Gruvbox (UI-05).
+// UI-05: System plus six palettes; tokens live in src/styles/themes.css.
 
-export type Theme = "system" | "harbour";
+export const THEMES = ["system", "harbour", "daylight", "dracula", "rose-pine", "nord", "gruvbox"] as const;
+export type Theme = (typeof THEMES)[number];
 /** The palette actually painted: System resolves to Harbour (OS dark) or light. */
-export type ResolvedTheme = "harbour" | "light";
+export type ResolvedTheme = Exclude<Theme, "system">;
+
+export const THEME_LABELS: Record<Theme, string> = {
+  system: "System",
+  harbour: "Harbour",
+  daylight: "Daylight",
+  dracula: "Dracula",
+  "rose-pine": "Rosé Pine",
+  nord: "Nord",
+  gruvbox: "Gruvbox",
+};
+
+const LIGHT_THEMES: readonly ResolvedTheme[] = ["daylight"];
 
 export const THEME_STORAGE_KEY = "ygg-theme";
 
-const order: readonly Theme[] = ["system", "harbour"];
+const order: readonly Theme[] = THEMES;
 
 interface ThemeState {
   theme: Theme;
@@ -32,17 +45,22 @@ export const useThemeStore = create<ThemeState>()(
     }),
     {
       name: THEME_STORAGE_KEY,
-      version: 1,
+      version: 2,
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({ theme: state.theme }),
-      // v0 stored "dark" | "light" | "system".
+      // v0 stored "dark" | "light" | "system"; v1 "harbour" | "system".
       migrate: (persisted) => {
         const old = (persisted as { theme?: string } | null)?.theme;
-        return { theme: old === "dark" || old === "harbour" ? "harbour" : "system" };
+        if (old === "dark") return { theme: "harbour" };
+        return { theme: isTheme(old) ? old : "system" };
       },
     },
   ),
 );
+
+export function isTheme(value: unknown): value is Theme {
+  return typeof value === "string" && (THEMES as readonly string[]).includes(value);
+}
 
 const darkQuery = "(prefers-color-scheme: dark)";
 
@@ -54,16 +72,17 @@ function systemPrefersDark(): boolean {
 }
 
 export function resolveTheme(theme: Theme): ResolvedTheme {
-  if (theme === "harbour") return "harbour";
-  return systemPrefersDark() ? "harbour" : "light";
+  if (theme === "system") return systemPrefersDark() ? "harbour" : "daylight";
+  return theme;
 }
 
-/** Sets data-theme and the `dark` class on <html>. Tokens live in index.css. */
+/** Sets data-theme, the `dark` class and color-scheme on <html>. Tokens live in styles/themes.css. */
 export function applyTheme(theme: Theme, root: HTMLElement = document.documentElement): void {
   const resolved = resolveTheme(theme);
+  const dark = !LIGHT_THEMES.includes(resolved);
   root.dataset.theme = resolved;
-  root.classList.toggle("dark", resolved === "harbour");
-  root.style.colorScheme = resolved === "harbour" ? "dark" : "light";
+  root.classList.toggle("dark", dark);
+  root.style.colorScheme = dark ? "dark" : "light";
 }
 
 /**

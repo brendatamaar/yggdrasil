@@ -29,10 +29,22 @@ const field = "w-full rounded border border-line bg-canvas px-2 py-1 text-sm";
  * Starts a task. Only Ask mode (read-only) exists for now, and the repo is a
  * typed ID until the project pages can list repos.
  */
-export function Composer() {
+export function Composer({
+  prompt: controlledPrompt,
+  onPromptChange,
+}: {
+  /** Optional: lets a parent (the Home suggestions) fill the prompt. */
+  prompt?: string;
+  onPromptChange?: (prompt: string) => void;
+} = {}) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [prompt, setPrompt] = useState("");
+  const [ownPrompt, setOwnPrompt] = useState("");
+  const prompt = controlledPrompt ?? ownPrompt;
+  const setPrompt = (value: string) => {
+    setOwnPrompt(value);
+    onPromptChange?.(value);
+  };
   const [title, setTitle] = useState("");
   const [{ projectId, repoId }, setIds] = useState(loadIds);
   const [agent, setAgent] = useState("mock");

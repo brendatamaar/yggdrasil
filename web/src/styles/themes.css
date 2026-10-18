@@ -1,0 +1,78 @@
+/* Theme tokens (UI-05): the single place where palettes are defined.
+   Every theme sets the same variables. The contrast test parses this file. */
+:root,
+[data-theme="daylight"] {
+  --canvas: #ffffff;
+  --surface: #f4f4f5;
+  --line: #d4d4d8;
+  --fg: #18181b;
+  --muted: #52525b;
+  --accent: #0369a1;
+  --ok: #15803d;
+  --warn: #b45309;
+  --danger: #b91c1c;
+}
+
+[data-theme="harbour"] {
+  --canvas: #0b1220;
+  --surface: #131c2e;
+  --line: #243049;
+  --fg: #e6edf7;
+  --muted: #8b9ab5;
+  --accent: #38bdf8;
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --danger: #f87171;
+}
+
+/* Dracula */
+[data-theme="dracula"] {
+  --canvas: #282a36;
+  --surface: #21222c;
+  --line: #44475a;
+  --fg: #f8f8f2;
+  --muted: #a4abd0;
+  --accent: #bd93f9;
+  --ok: #50fa7b;
+  --warn: #f1fa8c;
+  --danger: #ff6e6e;
+}
+
+/* Rosé Pine */
+[data-theme="rose-pine"] {
+  --canvas: #191724;
+  --surface: #1f1d2e;
+  --line: #26233a;
+  --fg: #e0def4;
+  --muted: #908caa;
+  --accent: #c4a7e7;
+  --ok: #9ccfd8;
+  --warn: #f6c177;
+  --danger: #eb6f92;
+}
+
+/* Nord (danger is lighter than nord11 to reach AA on the dark canvas) */
+[data-theme="nord"] {
+  --canvas: #2e3440;
+  --surface: #292e39;
+  --line: #4c566a;
+  --fg: #eceff4;
+  --muted: #b4bdce;
+  --accent: #88c0d0;
+  --ok: #a3be8c;
+  --warn: #ebcb8b;
+  --danger: #e0838c;
+}
+
+/* Gruvbox dark (danger lightened from #fb4934 to reach AA) */
+[data-theme="gruvbox"] {
+  --canvas: #282828;
+  --surface: #1d2021;
+  --line: #504945;
+  --fg: #ebdbb2;
+  --muted: #a89984;
+  --accent: #83a598;
+  --ok: #b8bb26;
+  --warn: #fabd2f;
+  --danger: #ff6b57;
+}
