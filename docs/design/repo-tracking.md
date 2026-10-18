@@ -273,7 +273,7 @@ Each parser row gets:
 
 ## Open questions
 
-Each question has a recommendation; the design above assumes it.
+Approved by the human on 2026-10-18 with every recommendation below.
 
 1. **Scan depth and skips:** the default depth is 3 below the project folder. The scan skips `node_modules` and hidden folders and stops at a repo root. Limits: 5,000 folders visited, 200 repos. *Recommend as stated.*
 2. **A repo folder that disappears:** shown as a "Missing" problem by repo-status and offered as "stop tracking" in rescan, but never untracked automatically. *Recommend as stated.*

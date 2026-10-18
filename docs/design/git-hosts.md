@@ -276,7 +276,7 @@ Each parser gets:
 
 ## Open questions
 
-Each question has a recommendation; the design above assumes it.
+Approved by the human on 2026-10-18 with every recommendation below.
 
 1. **Where `.env` lives:** `YGG_ENV_FILE` if set, otherwise `<data dir>/.env`. A `.env` in the clone folder is not read, because it sits in a git repo and might get committed. *Recommend the data dir*, and `ygg doctor` prints the path it reads.
 2. **Config format:** numbered `YGG_HOST_n=<kind> <base URL>` plus `YGG_HOST_n_TOKEN`. github.com and gitlab.com are known without config. *Recommend as shown.*

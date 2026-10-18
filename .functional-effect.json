@@ -5,6 +5,10 @@
     "internal/api/**",
     "internal/db/**",
     "internal/platform/**",
+    "internal/builds/**",
+    "internal/repos/**",
+    "internal/hosts/**",
+    "internal/search/**",
     "web/src/main.tsx"
   ],
   "exclude": [],

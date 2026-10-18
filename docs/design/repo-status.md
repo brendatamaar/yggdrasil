@@ -201,7 +201,7 @@ Each parser gets round-trip, accepted ⇒ valid, one rejection test per rule, an
 
 ## Open questions
 
-Each question has a recommendation; the design above assumes it.
+Approved by the human on 2026-10-18 with every recommendation below.
 
 1. **Background fetch:** ahead/behind is relative to the last fetch. Should ygg fetch in the background? *Recommend no* in Phase 2: fetching is an explicit WS-06 action ("fetch", "fetch all"), and the UI shows "last fetched" per repo. Add an opt-in auto-fetch later.
 2. **File watching:** use no filesystem watcher. Refresh on focus, on tick, after actions and on request. *Recommend as stated*: watchers on Windows are noisy with antivirus and big repos.
