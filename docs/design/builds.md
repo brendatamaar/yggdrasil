@@ -39,6 +39,7 @@ type Finished struct {
     Spec       Spec
     QueuedAt   time.Time
     StartedAt  *time.Time                // nil when cancelled while queued
+    CancelledAt *time.Time               // set when Result is ResultCancelled (Cancel → Finished, or Cancelling → Finished keeps it)
     FinishedAt time.Time
     Steps      []StepState               // none Pending or Running
     Result     Result
@@ -88,7 +89,7 @@ Notation: `i` = `Current`, `n` = `len(Steps)`, `a` = attempt of `Steps[i]`. Ever
 |---|---|---|---|---|
 | None | Enqueue | `Spec` valid (≥1 step) | Queued | `WriteAudit(build.queue)`, `Publish`, `Wake` |
 | Queued | Admit | — | Running{Current 0, Steps[0]=Running{1, Now}, rest Pending, StartedAt Now} | `WriteAudit(build.start)`, `StartStep(0, 1)`, `Publish` |
-| Queued | Cancel | — | Finished{ResultCancelled, StartedAt nil, all Skipped} | `WriteAudit(build.cancel)`, `Publish`, `Wake` |
+| Queued | Cancel | — | Finished{ResultCancelled, StartedAt nil, CancelledAt Now, all Skipped} | `WriteAudit(build.cancel)`, `Publish`, `Wake` |
 | Running | StepExited | `Index==i ∧ Attempt==a ∧ ExitCode==0 ∧ i+1<n` | Running{Steps[i]=Done(Succeeded), Steps[i+1]=Running{1, Now}, Current i+1} | `WriteAudit(build.step)`, `StartStep(i+1, 1)`, `Publish` |
 | Running | StepExited | `Index==i ∧ Attempt==a ∧ ExitCode==0 ∧ i+1==n` | Finished{ResultSucceeded} | `WriteAudit(build.finish)`, `CollectArtifacts`, `Publish`, `Wake` |
 | Running | StepExited | `Index==i ∧ Attempt==a ∧ ExitCode≠0` | Finished{ResultFailed{i}, Steps[i]=Done(Failed{code}), later Skipped} | `WriteAudit(build.finish)`, `Publish`, `Wake` |
@@ -127,6 +128,7 @@ Each one is checked after every step of a random input sequence (`run(None, inpu
 | I8 | `Status(state)` agrees with the steps: `succeeded` ⇔ every step is `Done(Succeeded)`. | `TestPropStatusDerived` |
 | I9 | Every step that changes the state emits exactly one `WriteAudit`; a step that doesn't change it emits nothing. | `TestPropAuditPerChange` |
 | I10 | Times come only from inputs, and for every `StepDone`, `StartedAt ≤ FinishedAt` when input times are non-decreasing. | `TestPropTimesFromInputs` |
+| I11 | `Finished.CancelledAt != nil` ⇔ `Result` is `ResultCancelled`; `Cancelling` → `Finished` keeps its `CancelledAt`. | `TestPropCancelledAtMatchesResult` |
 | Q1 | `Next` never admits when `running ≥ max`. It picks the oldest `(QueuedAt, ID)`. Its result is a member of `queued`. | `TestPropNextFIFO` |
 | O1 | `OrderModules`: the output is a permutation of the input repos. For every dependency edge `a → b` not inside a cycle, `b` comes before `a`. Every cycle is reported once. The output is deterministic for a given input. | `TestPropOrderTopological` |
 
@@ -238,6 +240,7 @@ Nothing needs more than three fakes per test: the service tests use the store, s
 
 - **State:** the `builds`, `build_steps` and new `build_artifacts` tables. There is no event log, inbox or outbox (decision: `ProcessLost` instead of an outbox). Effects run only after `Commit` returns, never inside the transaction or the HTTP handler. The handler returns 202 once `Enqueue`/`Cancel` has committed.
 - **Expected version:** `builds.version` is incremented on every `SaveBuild`. `build_steps` rows are rewritten with the build in the same transaction, so they need no version of their own. The review's per-step version is not needed, because steps are only ever saved with their build.
+- **Deletes:** a build is never partly deleted. `build_steps.repo_id`, `build_artifacts.repo_id` and `builds.worktree_id` are `ON DELETE RESTRICT`, so deleting a repo or worktree (or a task or project that cascades to one) that still has builds fails, and the delete method maps the FOREIGN KEY violation to `db.ErrInUse` (409). Whether untracking a repo keeps its build history (a status, not a row delete) or deletes its builds first in the same transaction is decided with WS-01; neither is possible by accident.
 - **Migration `00002` (task B):** SQLite can't alter a CHECK constraint, so `builds` and `build_steps` are rebuilt (create new, copy, drop, rename, recreate indexes).
   - `builds`: add `version INTEGER NOT NULL DEFAULT 0`, `actor TEXT NOT NULL DEFAULT 'user'`, `created_at` kept (it is `QueuedAt`), `started_at TEXT`, `result_step INTEGER`, `preset_id TEXT`. `cancelled_at TEXT` (non-null with a live step = `Cancelling`; on `Finished` = when the cancel came), `artifacts_collected_at TEXT` (non-null = `Artifacts` collected, even if empty), `target TEXT NOT NULL DEFAULT 'main' CHECK (target IN ('main','worktree'))` with `worktree_id` required when `target = 'worktree'` (CHECK) and `ON DELETE RESTRICT` (a worktree with builds can't vanish under a queued build). Status adds `interrupted`. Index `builds(status, created_at, id)` for `ListQueued`, `CountRunning`, `ListActive` and `Next`'s order.
   - `build_steps`: add `argv TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(argv))`, `attempt INTEGER NOT NULL DEFAULT 0`, `outcome TEXT` (`succeeded|failed|start_failed|cancelled|interrupted`), `start_failure TEXT CHECK (start_failure IN ('not_found','bad_args','dir_missing','other'))`, `log_truncated INTEGER NOT NULL DEFAULT 0`. Status adds `skipped` and `interrupted`.

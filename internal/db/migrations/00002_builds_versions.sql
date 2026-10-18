@@ -39,7 +39,7 @@ CREATE TABLE builds_new (
 CREATE TABLE build_steps_new (
     build_id        TEXT    NOT NULL REFERENCES builds_new (id) ON DELETE CASCADE,
     idx             INTEGER NOT NULL,
-    repo_id         TEXT    NOT NULL REFERENCES repos (id) ON DELETE CASCADE,
+    repo_id         TEXT    NOT NULL REFERENCES repos (id) ON DELETE RESTRICT,
     name            TEXT    NOT NULL,
     status          TEXT    NOT NULL CHECK (status IN
                         ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'skipped', 'interrupted')),
@@ -78,7 +78,7 @@ CREATE INDEX builds_status_created ON builds (status, created_at, id);
 
 CREATE TABLE build_artifacts (
     build_id TEXT    NOT NULL REFERENCES builds (id) ON DELETE CASCADE,
-    repo_id  TEXT    NOT NULL REFERENCES repos (id) ON DELETE CASCADE,
+    repo_id  TEXT    NOT NULL REFERENCES repos (id) ON DELETE RESTRICT,
     path     TEXT    NOT NULL,
     size     INTEGER NOT NULL,
     PRIMARY KEY (build_id, path)

@@ -22,6 +22,12 @@ var ErrNotFound = errors.New("not found")
 // already taken. The owner reloads and decides again.
 var ErrConflict = errors.New("conflict")
 
+// ErrInUse is returned when a row can't be deleted because other rows still
+// refer to it (builds keep their repos and worktrees: ON DELETE RESTRICT).
+// Delete methods map a FOREIGN KEY violation to it; classify can't, because
+// the same code on an insert means the referenced row is missing.
+var ErrInUse = errors.New("in use")
+
 // ErrSubTaskDepth is returned when a task would become a sub-task of a
 // sub-task, or a sub-task would get sub-tasks (AG-24).
 var ErrSubTaskDepth = errors.New("sub-tasks are one level only: a sub-task cannot have sub-tasks")
