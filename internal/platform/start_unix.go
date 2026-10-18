@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -69,10 +70,14 @@ type process struct {
 	err   error
 
 	truncated bool // set before done is closed
+	// exited is set as soon as the process is reaped. Its pid (and so its
+	// process group id) may be reused after that, so Kill must not signal it.
+	exited atomic.Bool
 }
 
 func (p *process) run() {
 	err := p.cmd.Wait()
+	p.exited.Store(true)
 	if st := p.cmd.ProcessState; st != nil {
 		p.code = st.ExitCode()
 		var ee *exec.ExitError
@@ -101,6 +106,9 @@ func (p *process) Truncated() bool {
 }
 
 func (p *process) Kill() error {
+	if p.exited.Load() {
+		return nil
+	}
 	if err := syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return fmt.Errorf("kill process group: %w", err)
 	}
