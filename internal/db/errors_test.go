@@ -46,10 +46,15 @@ func TestPrimaryKeyViolationIsConflict(t *testing.T) {
 func TestForeignKeyViolationIsNotFound(t *testing.T) {
 	s := NewStore(openTest(t), nil)
 	ctx := context.Background()
-	// A repo of a project that does not exist (SQLITE_CONSTRAINT_FOREIGNKEY, 787).
-	_, err := s.CreateRepo(ctx, core.Repo{ProjectID: "missing", Name: "shop-api", Path: "/work/shop-api"})
-	if !errors.Is(err, ErrNotFound) {
+	// A repo of a project that does not exist: CreateRepo looks the project up
+	// to derive rel_path, so it answers ErrNotFound before SQLite does.
+	if _, err := s.CreateRepo(ctx, core.Repo{ProjectID: "missing", Name: "shop-api", Path: "/work/shop-api"}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("repo of a missing project = %v, want ErrNotFound", err)
+	}
+	// A dependency between tasks that do not exist (SQLITE_CONSTRAINT_FOREIGNKEY, 787).
+	err := s.AddTaskDependency(ctx, "no-task", "no-other")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("dependency of missing tasks = %v, want ErrNotFound", err)
 	}
 	noDriverType(t, err, codeConstraintForeignKey, "the test no longer exercises a FOREIGN KEY violation")
 }

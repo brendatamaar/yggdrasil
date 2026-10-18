@@ -31,9 +31,12 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) er
 }
 
 const getProject = `-- name: GetProject :one
-SELECT id, name, path, created_at FROM projects WHERE id = ?
+
+SELECT id, name, path, created_at, untracked_at, version FROM projects WHERE id = ? AND untracked_at IS NULL
 `
 
+// Untracked projects (untracked_at set) are invisible to every read below
+// except GetProjectAny, which only the store's own writes use (SF-02).
 func (q *Queries) GetProject(ctx context.Context, id string) (Project, error) {
 	row := q.db.QueryRowContext(ctx, getProject, id)
 	var i Project
@@ -42,12 +45,32 @@ func (q *Queries) GetProject(ctx context.Context, id string) (Project, error) {
 		&i.Name,
 		&i.Path,
 		&i.CreatedAt,
+		&i.UntrackedAt,
+		&i.Version,
+	)
+	return i, err
+}
+
+const getProjectAny = `-- name: GetProjectAny :one
+SELECT id, name, path, created_at, untracked_at, version FROM projects WHERE id = ?
+`
+
+func (q *Queries) GetProjectAny(ctx context.Context, id string) (Project, error) {
+	row := q.db.QueryRowContext(ctx, getProjectAny, id)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Path,
+		&i.CreatedAt,
+		&i.UntrackedAt,
+		&i.Version,
 	)
 	return i, err
 }
 
 const listProjects = `-- name: ListProjects :many
-SELECT id, name, path, created_at FROM projects ORDER BY name
+SELECT id, name, path, created_at, untracked_at, version FROM projects WHERE untracked_at IS NULL ORDER BY name
 `
 
 func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
@@ -64,6 +87,8 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 			&i.Name,
 			&i.Path,
 			&i.CreatedAt,
+			&i.UntrackedAt,
+			&i.Version,
 		); err != nil {
 			return nil, err
 		}

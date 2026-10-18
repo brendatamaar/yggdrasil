@@ -141,7 +141,9 @@ func projectFrom(r gen.Project) (core.Project, error) {
 	return core.Project{ID: core.ProjectID(r.ID), Name: r.Name, Path: r.Path, CreatedAt: at}, err
 }
 
-// GetProject returns one project.
+// GetProject returns one tracked project. An untracked project is invisible
+// here (ErrNotFound): reads that serve the API and task creation return
+// active rows only (SF-02).
 func (s *Store) GetProject(ctx context.Context, id core.ProjectID) (core.Project, error) {
 	r, err := s.db.reader().GetProject(ctx, string(id))
 	if err := found("get project "+string(id), err); err != nil {
@@ -150,7 +152,7 @@ func (s *Store) GetProject(ctx context.Context, id core.ProjectID) (core.Project
 	return projectFrom(r)
 }
 
-// ListProjects returns all projects by name.
+// ListProjects returns all tracked projects by name.
 func (s *Store) ListProjects(ctx context.Context) ([]core.Project, error) {
 	rows, err := s.db.reader().ListProjects(ctx)
 	if err != nil {
@@ -184,7 +186,9 @@ func b2i(b bool) int64 {
 	return 0
 }
 
-// GetRepo returns one repo.
+// GetRepo returns one tracked repo. An untracked repo is invisible here
+// (ErrNotFound): this read serves task creation and the API (SF-02). History
+// views use GetRepoIncludingUntracked.
 func (s *Store) GetRepo(ctx context.Context, id core.RepoID) (core.Repo, error) {
 	r, err := s.db.reader().GetRepo(ctx, string(id))
 	if err := found("get repo "+string(id), err); err != nil {
@@ -193,7 +197,18 @@ func (s *Store) GetRepo(ctx context.Context, id core.RepoID) (core.Repo, error) 
 	return repoFrom(r)
 }
 
-// ListRepos returns the repos of a project by name.
+// GetRepoIncludingUntracked returns one repo, tracked or not. It is for views
+// of history, such as the builds of a repo that was untracked later. Nothing
+// that starts work or shows a list may use it.
+func (s *Store) GetRepoIncludingUntracked(ctx context.Context, id core.RepoID) (core.Repo, error) {
+	r, err := s.db.reader().GetRepoIncludingUntracked(ctx, string(id))
+	if err := found("get repo "+string(id), err); err != nil {
+		return core.Repo{}, err
+	}
+	return repoFrom(r)
+}
+
+// ListRepos returns the tracked repos of a project by name.
 func (s *Store) ListRepos(ctx context.Context, project core.ProjectID) ([]core.Repo, error) {
 	rows, err := s.db.reader().ListReposByProject(ctx, string(project))
 	if err != nil {
