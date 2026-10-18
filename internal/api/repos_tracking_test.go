@@ -289,3 +289,29 @@ func TestUntrackRefusedWhileATaskRuns(t *testing.T) {
 		t.Fatalf("untrack after the task ended = %d %s", resp.StatusCode, data)
 	}
 }
+
+// Untracked repos and projects are invisible to tasks (invariant 6).
+func TestTasksRefuseUntrackedRepoAndProject(t *testing.T) {
+	e := newEnv(t, "plain", 0, func(d *Deps) {
+		svc, err := repos.NewTrackingService(repos.Deps{Store: d.Store, Redactor: d.Redactor})
+		if err != nil {
+			t.Fatal(err)
+		}
+		d.Tracking = svc
+	})
+	if resp, data := e.do(t, http.MethodPost, "/api/repos/"+string(e.repo.ID)+"/untrack", nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("untrack repo = %d %s", resp.StatusCode, data)
+	}
+	if resp, data := e.do(t, http.MethodPost, "/api/tasks", e.createReq()); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("task in an untracked repo = %d %s, want 404", resp.StatusCode, data)
+	}
+	if resp, data := e.do(t, http.MethodPost, "/api/projects/"+string(e.project.ID)+"/untrack", nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("untrack project = %d %s", resp.StatusCode, data)
+	}
+	if resp, data := e.do(t, http.MethodPost, "/api/tasks", e.createReq()); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("task in an untracked project = %d %s, want 404", resp.StatusCode, data)
+	}
+	if resp, data := e.do(t, http.MethodGet, "/api/tasks?project="+string(e.project.ID), nil); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("task list of an untracked project = %d %s, want 404", resp.StatusCode, data)
+	}
+}
