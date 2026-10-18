@@ -43,6 +43,8 @@ export default defineConfig({
     // The default "forks" pool timed out starting its workers on Windows
     // ("Timeout waiting for worker to respond"); threads start reliably.
     pool: "threads",
+    // themes.css is read as text by the contrast test; vitest would otherwise stub CSS as empty.
+    css: { include: [/themes\.css/] },
     include: ["src/**/*.test.{ts,tsx}"],
     setupFiles: ["src/test/setup.ts"],
   },

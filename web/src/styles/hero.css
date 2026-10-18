@@ -1,0 +1,10 @@
+@keyframes hero-drift {
+  from { transform: translateX(-3%); }
+  to { transform: translateX(3%); }
+}
+@keyframes hero-twinkle {
+  0%, 100% { opacity: 0.9; }
+  50% { opacity: 0.3; }
+}
+.hero-animated .hero-cloud { animation: hero-drift 40s ease-in-out infinite alternate; }
+.hero-animated .hero-star { animation: hero-twinkle 4s ease-in-out infinite; }
