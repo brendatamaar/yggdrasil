@@ -12,7 +12,9 @@ import (
 
 func TestFakeMeetsProcessContract(t *testing.T) {
 	var f platformtest.Fake
-	platformtest.ProcessContract(t, f.Start, platformtest.FakeCommands())
+	cmds := platformtest.FakeCommands()
+	f.DirExists = func(dir string) bool { return dir != cmds.MissingDir }
+	platformtest.ProcessContract(t, f.Start, cmds)
 }
 
 func TestFakeScriptsAndRecording(t *testing.T) {

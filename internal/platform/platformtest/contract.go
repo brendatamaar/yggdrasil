@@ -28,16 +28,24 @@ type Commands struct {
 	Block func() []string
 	// Missing is the argv of a program that does not exist.
 	Missing []string
+	// MissingDir is a folder that does not exist, for Spec.Dir.
+	MissingDir string
+	// UnsafeBatch, if set, is the argv of a .cmd or .bat file with an argument
+	// it must refuse (platform.ErrBatchArg). Leave nil where the implementation
+	// has no batch files (the clause is skipped).
+	UnsafeBatch []string
 }
 
 // FakeCommands are the Commands for a Fake.
 func FakeCommands() Commands {
 	return Commands{
-		Env:     []string{"FAKE=1"},
-		Exit:    func(code int) []string { return []string{ArgvPrefix, "exit", strconv.Itoa(code)} },
-		Print:   func(text string) []string { return []string{ArgvPrefix, "print", text} },
-		Block:   func() []string { return []string{ArgvPrefix, "block"} },
-		Missing: []string{"ygg-no-such-program"},
+		Env:         []string{"FAKE=1"},
+		Exit:        func(code int) []string { return []string{ArgvPrefix, "exit", strconv.Itoa(code)} },
+		Print:       func(text string) []string { return []string{ArgvPrefix, "print", text} },
+		Block:       func() []string { return []string{ArgvPrefix, "block"} },
+		Missing:     []string{"ygg-no-such-program"},
+		MissingDir:  "fake-missing-dir",
+		UnsafeBatch: []string{ArgvPrefix, "batch-unsafe"},
 	}
 }
 
@@ -112,6 +120,37 @@ func ProcessContract(t *testing.T, start platform.StartFunc, c Commands) {
 		}
 		if !errors.Is(err, platform.ErrNotFound) {
 			t.Errorf("error = %v, want ErrNotFound", err)
+		}
+	})
+	t.Run("missing dir is ErrDirMissing", func(t *testing.T) {
+		if c.MissingDir == "" {
+			t.Skip("no MissingDir")
+		}
+		s := spec(c.Exit(0))
+		s.Dir = c.MissingDir
+		p, err := start(bg, s)
+		if err == nil {
+			_ = p.Kill()
+			t.Fatal("Start in a missing folder should fail")
+		}
+		if !errors.Is(err, platform.ErrDirMissing) {
+			t.Errorf("error = %v, want ErrDirMissing", err)
+		}
+		if errors.Is(err, platform.ErrNotFound) {
+			t.Errorf("a missing folder is not a missing program: %v", err)
+		}
+	})
+	t.Run("batch file with an unsafe argument is ErrBatchArg", func(t *testing.T) {
+		if c.UnsafeBatch == nil {
+			t.Skip("no batch files here")
+		}
+		p, err := start(bg, spec(c.UnsafeBatch))
+		if err == nil {
+			_ = p.Kill()
+			t.Fatal("Start of a batch file with an unsafe argument should fail")
+		}
+		if !errors.Is(err, platform.ErrBatchArg) {
+			t.Errorf("error = %v, want ErrBatchArg", err)
 		}
 	})
 	t.Run("exit code zero", func(t *testing.T) {

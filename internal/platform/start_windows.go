@@ -33,15 +33,9 @@ func Start(ctx context.Context, spec Spec) (Process, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	dir := spec.Dir
-	if dir != "" {
-		if err := CheckPath(dir); err != nil {
-			return nil, err
-		}
-		var err error
-		if dir, err = LongPath(dir); err != nil {
-			return nil, err
-		}
+	dir, err := prepareDir(spec.Dir)
+	if err != nil {
+		return nil, err
 	}
 	exe, err := lookPath(spec.Argv[0], dir, spec.Env)
 	if err != nil {

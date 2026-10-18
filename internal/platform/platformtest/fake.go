@@ -50,6 +50,11 @@ type Fake struct {
 	queue   []Script
 	started []platform.Spec
 	pid     int
+
+	// DirExists, if set, says whether Spec.Dir exists; Start fails with
+	// platform.ErrDirMissing when it returns false. Nil means every folder
+	// exists.
+	DirExists func(dir string) bool
 }
 
 // Push queues scripts; each Start takes the next one. When the queue is empty,
@@ -80,6 +85,9 @@ func (f *Fake) Start(ctx context.Context, spec platform.Spec) (platform.Process,
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if spec.Dir != "" && f.DirExists != nil && !f.DirExists(spec.Dir) {
+		return nil, fmt.Errorf("%w: %s", platform.ErrDirMissing, spec.Dir)
 	}
 	f.mu.Lock()
 	var s Script
@@ -143,6 +151,8 @@ func scriptFromArgv(argv []string) (Script, error) {
 		return Script{Stdout: argv[2] + "\n"}, nil
 	case "block":
 		return Script{Block: true}, nil
+	case "batch-unsafe":
+		return Script{StartErr: fmt.Errorf("%w: argument 1 holds a double quote", platform.ErrBatchArg)}, nil
 	}
 	return Script{}, fmt.Errorf("fake: unknown command %q", argv[1])
 }
