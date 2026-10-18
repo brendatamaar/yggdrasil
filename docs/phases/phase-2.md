@@ -240,11 +240,11 @@ The lead also fixed these Should-fix findings from gate 2:
 
 ---
 
-## Phase 2 work breakdown (draft, 2026-10-18)
+## Phase 2 work breakdown (approved 2026-10-18)
 
 Scope: docs/PLAN.md Phase 2. Already on `main`: `internal/git` (status, branches, log, show, diff, fetch, ff-only pull, checkout, worktrees), `platform.OpenEditor`/`OpenFolder`, the widget interface and registry, the builds design and its foundations.
 
-### Decisions for the human (the plan below assumes the recommendation)
+### Decisions (approved by the human 2026-10-18: every recommendation)
 
 1. **User-initiated git actions on a main checkout** (ff-only pull, checkout, cross-repo branch switch; WS-06, WS-07). *Recommend:* they run directly after the user's click in the UI, with an audit entry. They are not proposals. Proposals (RV-02) cover commit, push, MR, install and publish. Agents only get fetch/pull through MCP (Phase 3). Extra guard: a pull or checkout is refused while a build runs in that repo's main checkout.
 2. **GH-03, MR creation via push options:** this is a push, so it is a proposal (RV-02), and proposals arrive in Phase 3. *Recommend:* move GH-03 to Phase 3. Phase 2 delivers GH-01, GH-02 and GH-04 (read-only host data).

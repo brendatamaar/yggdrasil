@@ -70,7 +70,7 @@ Goal: the workspace half matches the personal tool.
 - [ ] Repo page: changes, diffs, history, commit detail, branches (WS-05).
 - [ ] Git actions: fetch, fetch all, ff-only pull, checkout, cross-repo branch switch (WS-06, WS-07).
 - [ ] Open in editor / show in folder (WS-08).
-- [ ] Git hosts: GitLab (multiple instances), GitHub, Gitea; MR/PR and pipeline status; MR inbox; MR creation via push options; optional tokens (GH-01–GH-04).
+- [ ] Git hosts: GitLab (multiple instances), GitHub, Gitea; MR/PR and pipeline status; MR inbox; optional tokens (GH-01, GH-02, GH-04). MR creation via push options (GH-03) moved to Phase 3: it is a push, so it needs proposals.
 - [ ] Toolchain module interface (BL-10) and `docs/writing-a-toolchain.md` draft.
 - [ ] Toolchain modules: Node, Maven (with dependency ordering), Gradle, and the custom command fallback (BL-01, BL-02, BL-04, BL-11, BL-15).
   - **Core:** Maven dependency ordering (BL-04) is pure, in `internal/core/builds`; detection and runs in `internal/builds`.
@@ -108,6 +108,7 @@ Goal: the agent half matches the personal tool, with stronger enforcement.
 - [ ] Draft buttons for commit messages and MR descriptions (AG-20).
 - [ ] Proposals: lifecycle, confirmation UI, execution, audit (RV-02).
   - **Core:** lifecycle state machine in `internal/core/proposals`; execution and audit in `internal/proposals`.
+- [ ] MR creation via GitLab push options, as a proposal (GH-03; moved from Phase 2).
 - [ ] Path guard and command allowlist enforced by Yggdrasil; "limited enforcement" handling (SF-06).
   - **Core:** path and command decisions in `internal/core/guard`; the shell supplies resolved paths and commands as input.
 - [ ] Ask-mode integrity check (SF-07).
