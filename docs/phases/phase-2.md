@@ -316,3 +316,19 @@ Git actions (B3) land in their own files, `internal/repos/actions.go` and `inter
 - Daily workspace use is possible.
 - Status refresh for 50 repos finishes in under 10 seconds (perf test).
 - Review gates pass after every batch.
+
+### Progress
+
+- **Batch F** merged (`a9ceb56`). Deviations from the designs, accepted:
+  - `Actor` is a local type in `core/builds` and `core/repos`;
+  - the tracking outcome `Untracked` is renamed `UntrackDone`, plus a new `Renamed` outcome;
+  - the counts function is named `CountEntries`;
+  - `BuildPreview(path, scan, ws)` takes the path first;
+  - tracking commands carry `ExpectVersion`;
+  - the builds `Spec` has `PresetID`, and `StartStep` has `RepoID`;
+  - refresher types are named `RefreshInput` and `RefreshCommand`.
+
+  Migration 00003 rebuilds `projects` with `PRAGMA foreign_keys=OFF` outside goose's transaction (NO TRANSACTION + explicit BEGIN/COMMIT). This is to be checked at the next review gate.
+- The status endpoints moved to `internal/api/repos_status.go` (`35945cd`), so tracking and status run in parallel.
+- **B1 running:** builds core; repo tracking; repo status. The batch F review gate is folded into the B1 gate.
+- **Schedule change:** home + themes (frontend) starts when the builds core task finishes, which keeps at most 3 agents running.
