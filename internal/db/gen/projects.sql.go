@@ -7,7 +7,50 @@ package gen
 
 import (
 	"context"
+	"database/sql"
 )
+
+const bumpProjectVersion = `-- name: BumpProjectVersion :execrows
+UPDATE projects SET version = version + 1 WHERE id = ? AND version = ?
+`
+
+type BumpProjectVersionParams struct {
+	ID      string
+	Version int64
+}
+
+func (q *Queries) BumpProjectVersion(ctx context.Context, arg BumpProjectVersionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, bumpProjectVersion, arg.ID, arg.Version)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const clearProjectUntracked = `-- name: ClearProjectUntracked :exec
+UPDATE projects SET untracked_at = NULL, name = ? WHERE id = ?
+`
+
+type ClearProjectUntrackedParams struct {
+	Name string
+	ID   string
+}
+
+func (q *Queries) ClearProjectUntracked(ctx context.Context, arg ClearProjectUntrackedParams) error {
+	_, err := q.db.ExecContext(ctx, clearProjectUntracked, arg.Name, arg.ID)
+	return err
+}
+
+const countProject = `-- name: CountProject :one
+SELECT count(*) FROM projects WHERE id = ?
+`
+
+func (q *Queries) CountProject(ctx context.Context, id string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countProject, id)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
 
 const createProject = `-- name: CreateProject :exec
 INSERT INTO projects (id, name, path, created_at) VALUES (?, ?, ?, ?)
@@ -69,6 +112,45 @@ func (q *Queries) GetProjectAny(ctx context.Context, id string) (Project, error)
 	return i, err
 }
 
+const listAllProjects = `-- name: ListAllProjects :many
+
+SELECT id, name, path, created_at, untracked_at, version FROM projects ORDER BY id
+`
+
+// Workspace loading and decisions of the repo-tracking step
+// (docs/design/repo-tracking.md). The queries below see untracked rows on
+// purpose: only the workspace store in internal/db uses them, never the API
+// reads.
+func (q *Queries) ListAllProjects(ctx context.Context) ([]Project, error) {
+	rows, err := q.db.QueryContext(ctx, listAllProjects)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Project{}
+	for rows.Next() {
+		var i Project
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Path,
+			&i.CreatedAt,
+			&i.UntrackedAt,
+			&i.Version,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProjects = `-- name: ListProjects :many
 SELECT id, name, path, created_at, untracked_at, version FROM projects WHERE untracked_at IS NULL ORDER BY name
 `
@@ -101,4 +183,32 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const setProjectName = `-- name: SetProjectName :exec
+UPDATE projects SET name = ? WHERE id = ?
+`
+
+type SetProjectNameParams struct {
+	Name string
+	ID   string
+}
+
+func (q *Queries) SetProjectName(ctx context.Context, arg SetProjectNameParams) error {
+	_, err := q.db.ExecContext(ctx, setProjectName, arg.Name, arg.ID)
+	return err
+}
+
+const setProjectUntracked = `-- name: SetProjectUntracked :exec
+UPDATE projects SET untracked_at = ? WHERE id = ?
+`
+
+type SetProjectUntrackedParams struct {
+	UntrackedAt sql.NullString
+	ID          string
+}
+
+func (q *Queries) SetProjectUntracked(ctx context.Context, arg SetProjectUntrackedParams) error {
+	_, err := q.db.ExecContext(ctx, setProjectUntracked, arg.UntrackedAt, arg.ID)
+	return err
 }
