@@ -299,7 +299,7 @@ After batch F, no two parallel tasks touch the same file.
 | B2 | builds shell | `go-backend` | `internal/builds` (service, interpreter, queue worker, logs, artifacts, presets, `buildstest`), `internal/db` builds queries/`LoadBuild`/`SaveBuild`, `internal/api/builds.go`, `cmd/ygg` startup reconciliation | BL-03, BL-05–07, BL-09 |
 | B2 | toolchains | `go-backend` | `internal/builds/toolchains/{node,maven,gradle,custom}` + detection fixtures, `docs/writing-a-toolchain.md` | BL-01, BL-02, BL-10, BL-11, BL-15 |
 | B2 | projects + repo pages | `frontend` | `web/src/routes/projects*`, `web/src/routes/repos/*` | WS-02–05, WS-08 UI |
-| B3 | git actions + open | `go-backend` | `internal/repos` actions part (`actions.go`), `internal/api/repos.go` actions part | WS-06–08 |
+| B3 | git actions + open | `go-backend` | `internal/repos` actions part (`actions.go`), `internal/api/repos_actions.go` | WS-06–08 |
 | B3 | git hosts | `go-backend` | `internal/core/hosts`, `internal/hosts/**`, `internal/api/hosts.go`, `.env.example` | GH-01, GH-02, GH-04 |
 | B3 | builds UI + MR inbox | `frontend` | `web/src/routes/builds*`, `web/src/routes/mrs*` | BL-05–07 UI, GH-02 UI |
 | B4 | code search | `go-backend` | `internal/search`, `internal/api/search.go` | XR-01 |
@@ -308,7 +308,7 @@ After batch F, no two parallel tasks touch the same file.
 
 `test-engineer` also gets each designed feature's test map right after that feature merges, in the same batch slot as the feature or the next one.
 
-B3 runs both `go-backend` agents in `internal/repos` and `internal/api/repos.go`, so each file is split by purpose (`actions.go`, and the actions handlers in their own `repos_actions.go`). The B1 repos task creates those files empty.
+Git actions (B3) land in their own files, `internal/repos/actions.go` and `internal/api/repos_actions.go`, so they never edit what the B1 repos task wrote.
 
 ### Exit criteria (from docs/PLAN.md)
 
