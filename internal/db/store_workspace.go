@@ -24,7 +24,7 @@ import (
 // rejects what the schema cannot rule out: a path or relative path of the
 // wrong shape, a repo of an unknown project, two repos with one relative
 // path or name, and an Active repo in an Untracked project.
-func workspaceFromRows(projects []gen.Project, repos []gen.Repo, busy []string) (corerepos.Workspace, error) {
+func workspaceFromRows(projects []gen.Project, repos []gen.Repo, buildBusy, taskBusy []string) (corerepos.Workspace, error) {
 	ws := corerepos.Workspace{Projects: make(map[core.ProjectID]corerepos.Project, len(projects))}
 	for _, r := range projects {
 		p, err := projectRow(r)
@@ -64,10 +64,13 @@ func workspaceFromRows(projects []gen.Project, repos []gen.Repo, busy []string) 
 		}
 		p.Repos[repo.ID] = repo
 	}
-	if len(busy) > 0 {
-		ws.Busy = make(map[core.RepoID]corerepos.BusyReason, len(busy))
-		for _, id := range busy {
+	if len(buildBusy)+len(taskBusy) > 0 {
+		ws.Busy = make(map[core.RepoID]corerepos.BusyReason, len(buildBusy)+len(taskBusy))
+		for _, id := range buildBusy {
 			ws.Busy[core.RepoID(id)] = corerepos.BusyBuildRunning
+		}
+		for _, id := range taskBusy {
+			ws.Busy[core.RepoID(id)] = corerepos.BusyTaskRunning
 		}
 	}
 	return ws, nil
@@ -130,11 +133,15 @@ func loadWorkspace(ctx context.Context, q *gen.Queries) (corerepos.Workspace, er
 	if err != nil {
 		return corerepos.Workspace{}, fmt.Errorf("list repos: %w", err)
 	}
-	busy, err := q.ListBusyBuildRepos(ctx)
+	buildBusy, err := q.ListBusyBuildRepos(ctx)
 	if err != nil {
 		return corerepos.Workspace{}, fmt.Errorf("list repos with builds: %w", err)
 	}
-	ws, err := workspaceFromRows(projects, repos, busy)
+	taskBusy, err := q.ListBusyTaskRepos(ctx)
+	if err != nil {
+		return corerepos.Workspace{}, fmt.Errorf("list repos with tasks: %w", err)
+	}
+	ws, err := workspaceFromRows(projects, repos, buildBusy, taskBusy)
 	if err != nil {
 		return corerepos.Workspace{}, fmt.Errorf("read the tracked projects (the database looks inconsistent): %w", err)
 	}
@@ -142,7 +149,8 @@ func loadWorkspace(ctx context.Context, q *gen.Queries) (corerepos.Workspace, er
 }
 
 // GetWorkspace reads every project and repo row, tracked or not, and the
-// repos with a queued or running build of their main checkout (Busy). It is
+// repos with a queued or running build of their main checkout or a queued,
+// running or waiting task (Busy). It is
 // for previews; a decision loads through Tx.Workspace in its own transaction.
 func (s *Store) GetWorkspace(ctx context.Context) (corerepos.Workspace, error) {
 	return loadWorkspace(ctx, s.db.reader())

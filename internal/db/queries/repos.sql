@@ -36,5 +36,12 @@ JOIN builds b ON b.id = bs.build_id
 WHERE b.target = 'main' AND b.status IN ('queued', 'running')
 ORDER BY bs.repo_id;
 
+-- Repos in scope of a task that is queued, running or waiting for the user.
+-- name: ListBusyTaskRepos :many
+SELECT DISTINCT tr.repo_id FROM task_repos tr
+JOIN tasks t ON t.id = tr.task_id
+WHERE t.status IN ('queued', 'running', 'needs_you')
+ORDER BY tr.repo_id;
+
 -- name: SetRepoTrusted :execrows
-UPDATE repos SET trusted = ? WHERE id = ?;
+UPDATE repos SET trusted = ? WHERE id = ? AND untracked_at IS NULL;
