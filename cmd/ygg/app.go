@@ -20,9 +20,10 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/api"
 	"github.com/brendatamaar/yggdrasil/internal/builds"
 	"github.com/brendatamaar/yggdrasil/internal/builds/toolchains"
-	"github.com/brendatamaar/yggdrasil/internal/core"
 	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/git"
+	"github.com/brendatamaar/yggdrasil/internal/hosts"
+	"github.com/brendatamaar/yggdrasil/internal/hosts/hostclients"
 	"github.com/brendatamaar/yggdrasil/internal/platform"
 	"github.com/brendatamaar/yggdrasil/internal/repos"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
@@ -42,6 +43,8 @@ type app struct {
 	// builds runs the build queue (BL-03). Like status, it runs next to the
 	// server; it must be running before builds are served.
 	builds *builds.Service
+	// hosts polls the git hosts for MR and pipeline status (GH-02).
+	hosts *hosts.Service
 }
 
 // newLogger writes redacted text logs: no token reaches a log (invariant 4).
@@ -65,7 +68,14 @@ func openStore(ctx context.Context, cfg config, r safety.Redactor) (*db.DB, *db.
 
 // newApp wires the application. assets is the embedded frontend.
 func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*app, error) {
-	redactor := safety.NewRedactor()
+	// Host tokens (GH-04) are loaded first, so the redactor knows them before
+	// anything is logged (invariant 4). A missing .env file is fine.
+	envPath := hosts.EnvPath(cfg.dataDir, nil)
+	hostsCfg, err := hosts.LoadConfig(envPath, nil)
+	if err != nil {
+		return nil, fmt.Errorf("read the git host settings in %s: %w", envPath, err)
+	}
+	redactor := safety.NewRedactor(hostsCfg.Secrets()...)
 	log := newLogger(logOut, cfg.level, redactor)
 
 	d, store, err := openStore(ctx, cfg, redactor)
@@ -122,28 +132,30 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		return nil, fmt.Errorf("start builds: %w", err)
 	}
 
+	hostsPub := &lateHostsPublisher{}
+	hostSvc := hosts.New(hosts.Deps{
+		Config: hostsCfg, EnvPath: envPath,
+		Reload:  func() (hosts.Config, error) { return hosts.LoadConfig(envPath, nil) },
+		Clients: hostclients.New(nil, nil), Remotes: g, Publish: hostsPub, Log: log,
+	})
+
 	srv, err := api.New(api.Deps{
 		Store: store, Adapters: adapters, Env: safety.NewEnvBuilder(), Log: log,
 		Redactor: redactor, Version: version, Assets: assets,
 		Tracking: tracking, Status: status, RepoDetail: repos.NewDetailService(store, g),
-		Builds: buildSvc,
+		Builds: buildSvc, Hosts: hostSvc,
 	})
 	if err != nil {
 		_ = d.Close()
 		return nil, fmt.Errorf("start the server: %w", err)
 	}
 	// Set before run starts any goroutine that could publish.
-	status.SetPublisher(statusPublisher{srv})
+	status.SetPublisher(statusPublisher{srv: srv, status: status, hosts: hostSvc, log: log})
 	reposPub.srv = srv
 	buildsPub.srv = srv
-	return &app{cfg: cfg, log: log, db: d, store: store, srv: srv, status: status, builds: buildSvc}, nil
+	hostsPub.srv = srv
+	return &app{cfg: cfg, log: log, db: d, store: store, srv: srv, status: status, builds: buildSvc, hosts: hostSvc}, nil
 }
-
-// statusPublisher sends repo-status changes to the browser.
-type statusPublisher struct{ srv *api.Server }
-
-func (p statusPublisher) RepoChanged(id core.RepoID) { p.srv.PublishRepoStatus(id) }
-func (p statusPublisher) CountsChanged()             { p.srv.PublishRepoCounts() }
 
 // run serves on ln until ctx is cancelled. On the way out the server stops
 // every task, then the database is closed. Closing the process-wide job (so no
@@ -153,8 +165,12 @@ func (a *app) run(ctx context.Context, ln net.Listener) error {
 	group, gctx := errgroup.WithContext(ctx)
 	group.Go(func() error { return a.status.Start(gctx) })
 	group.Go(func() error { return a.builds.Start(gctx) })
+	// The hosts service starts its own goroutines and returns at once; Close
+	// stops them after the server is done.
+	group.Go(func() error { return a.hosts.Start(gctx) })
 	group.Go(func() error { return a.srv.Run(gctx, ln) })
 	serveErr := group.Wait()
+	a.hosts.Close()
 	closeErr := a.db.Close()
 	return errors.Join(serveErr, closeErr)
 }
