@@ -586,7 +586,7 @@ func (w *walker) statusChecked(in StatusChecked) {
 		w.release(in.Repo, in.Batch)
 		w.setItem(in.Batch, i, Skipped{Reason: SkipNoSuchBranch, At: in.Now}, 0)
 	default:
-		w.setItem(in.Batch, i, Running{Attempt: c.Attempt}, 0)
+		w.setItem(in.Batch, i, Running(c), 0)
 		w.cmds = append(w.cmds, RunGit{Batch: in.Batch, Repo: in.Repo, Attempt: c.Attempt, Op: OpCheckout, Branch: b.Branch})
 	}
 }

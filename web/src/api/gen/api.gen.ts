@@ -190,6 +190,99 @@ export interface TaskEventsResponse {
 }
 
 //////////
+// source: types_actions.go
+
+/**
+ * StartGitBatchRequest is the body of POST /api/git/batches. Kind is "fetch",
+ * "pull", "checkout" or "switch". Branch is needed for checkout and switch
+ * only. Repos are the repos to act on: "fetch all" sends every active repo of
+ * the project (or all of them from the home page).
+ */
+export interface StartGitBatchRequest {
+  kind: string;
+  repos: string[];
+  branch?: string;
+}
+/**
+ * StartGitBatchResponse is the 202 body of POST /api/git/batches.
+ */
+export interface StartGitBatchResponse {
+  batchId: string;
+}
+/**
+ * GitBatchItemDTO is one repo of a batch. State is "pending", "checking",
+ * "running", "done" or "skipped". Outcome (done) is "fetched", "pulled",
+ * "up_to_date", "pull_refused", "checked_out", "checkout_refused" or
+ * "failed". Reason is the skip reason ("dirty", "no_such_branch",
+ * "build_running", "untracked", "cancelled") or the refusal or failure kind.
+ * Message says what to do next.
+ */
+export interface GitBatchItemDTO {
+  repoId: string;
+  state: string;
+  outcome?: string;
+  reason?: string;
+  message?: string;
+  from?: string;
+  to?: string;
+  branch?: string;
+  created?: boolean;
+  at?: string;
+}
+/**
+ * GitBatchDTO is the body of GET /api/git/batches/{id} and of the cancel
+ * response. A finished batch stays available for about 10 minutes.
+ */
+export interface GitBatchDTO {
+  id: string;
+  kind: string;
+  branch?: string;
+  startedAt: string;
+  finished: boolean;
+  items: GitBatchItemDTO[];
+}
+/**
+ * GitBatchChangedMessage is the data of a git batch message on the "repos" and
+ * "repo:<id>" topics (told apart from the other messages by batchId). The
+ * client refetches GET /api/git/batches/{batchId}.
+ */
+export interface GitBatchChangedMessage {
+  batchId: string;
+  finished: boolean;
+}
+/**
+ * OpenRequestBody is the body of POST /api/repos/{id}/open. Editor is
+ * "vscode", "cursor" or "idea"; empty means the saved or detected editor.
+ * File is a path inside the repo; empty opens the repo folder.
+ */
+export interface OpenRequestBody {
+  editor?: string;
+  file?: string;
+}
+/**
+ * RevealRequestBody is the body of POST /api/repos/{id}/reveal.
+ */
+export interface RevealRequestBody {
+  file?: string;
+}
+/**
+ * EditorSettingDTO is the body of GET /api/settings/editor. Editor is the
+ * saved choice ("" when none); Detected lists the supported editors found on
+ * this computer.
+ */
+export interface EditorSettingDTO {
+  editor: string;
+  detected: string[];
+}
+/**
+ * SetEditorRequest is the body of PUT /api/settings/editor. An empty editor
+ * clears the choice.
+ */
+export interface SetEditorRequest {
+  editor: string;
+}
+
+//////////
 // source: types_builds.go
 
 /**

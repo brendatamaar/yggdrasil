@@ -54,6 +54,9 @@ type Deps struct {
 	Search   SearchService
 	// RepoDetail serves the read-only repo page endpoints (WS-05).
 	RepoDetail RepoDetailService
+	// GitActions serves fetch, pull, checkout, branch switch, open in editor
+	// and the editor setting (WS-06 to WS-08).
+	GitActions GitActionsService
 
 	// Clock and IDs are the shell's time and randomness for handlers that
 	// make core inputs (docs/AGENTS.md 5.11). Defaults: time.Now().UTC() and
@@ -88,6 +91,7 @@ type Server struct {
 	hosts      HostsService
 	search     SearchService
 	repoDetail RepoDetailService
+	gitActions GitActionsService
 	clock      func() time.Time
 	ids        func(prefix string) string
 
@@ -132,6 +136,7 @@ func New(d Deps) (*Server, error) {
 	}
 	s.tracking, s.status, s.builds, s.hosts, s.search = d.Tracking, d.Status, d.Builds, d.Hosts, d.Search
 	s.repoDetail = d.RepoDetail
+	s.gitActions = d.GitActions
 	s.clock, s.ids = d.Clock, d.IDs
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }
