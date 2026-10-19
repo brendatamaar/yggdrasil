@@ -77,8 +77,7 @@ type rig struct {
 
 func newRig(t *testing.T, env string, rem remotes) *rig {
 	t.Helper()
-	vars := map[string]hosts.Var{}
-	vars, _ = hosts.ParseEnvText(env)
+	vars, _ := hosts.ParseEnvText(env)
 	cfg := hosts.ParseConfig(vars)
 	fake := &hoststest.Fake{}
 	clk := &clock{t: time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)}

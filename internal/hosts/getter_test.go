@@ -26,7 +26,8 @@ func TestGetOnlyTransportRefusesWrites(t *testing.T) {
 	g := newGetter()
 	for _, m := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodHead} {
 		req, _ := http.NewRequest(m, srv.URL, strings.NewReader("x"))
-		if _, err := g.client.Do(req); err == nil {
+		if res, err := g.client.Do(req); err == nil {
+			_ = res.Body.Close()
 			t.Errorf("%s was sent", m)
 		}
 	}

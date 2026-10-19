@@ -37,14 +37,14 @@ func HostClientContract(t *testing.T, newHarness func(t *testing.T) Harness) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	repo := func(t *testing.T, s Scenario, etag string) (corehosts.RepoState, string, error, Harness) {
+	repo := func(t *testing.T, s Scenario, etag string) (corehosts.RepoState, string, Harness, error) {
 		h := newHarness(t)
 		h.Use(t, s)
 		rs, next, err := h.Client.RepoState(ctx, h.Instance, h.Token, project, branch, etag)
 		if h.Requests != nil {
 			checkRequests(t, h)
 		}
-		return rs, next, err, h
+		return rs, next, h, err
 	}
 	wantMR := func(t *testing.T, got *corehosts.MergeRequest, state corehosts.MRState) {
 		t.Helper()
@@ -77,7 +77,7 @@ func HostClientContract(t *testing.T, newHarness func(t *testing.T) Harness) {
 	}
 
 	t.Run("open MR with a successful pipeline", func(t *testing.T) {
-		rs, etag, err, _ := repo(t, OpenSuccess, "")
+		rs, etag, _, err := repo(t, OpenSuccess, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -88,28 +88,28 @@ func HostClientContract(t *testing.T, newHarness func(t *testing.T) Harness) {
 		}
 	})
 	t.Run("no MR", func(t *testing.T) {
-		rs, _, err, _ := repo(t, NoMR, "")
+		rs, _, _, err := repo(t, NoMR, "")
 		if err != nil || rs.MR != nil {
 			t.Fatalf("got %+v, %v", rs, err)
 		}
 		wantPipeline(t, rs.Pipeline, corehosts.PipelineSuccess)
 	})
 	t.Run("draft MR", func(t *testing.T) {
-		rs, _, err, _ := repo(t, Draft, "")
+		rs, _, _, err := repo(t, Draft, "")
 		if err != nil {
 			t.Fatal(err)
 		}
 		wantMR(t, rs.MR, corehosts.MRDraft)
 	})
 	t.Run("merged MR", func(t *testing.T) {
-		rs, _, err, _ := repo(t, Merged, "")
+		rs, _, _, err := repo(t, Merged, "")
 		if err != nil {
 			t.Fatal(err)
 		}
 		wantMR(t, rs.MR, corehosts.MRMerged)
 	})
 	t.Run("failed pipeline", func(t *testing.T) {
-		rs, _, err, _ := repo(t, PipelineFailed, "")
+		rs, _, _, err := repo(t, PipelineFailed, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -117,43 +117,43 @@ func HostClientContract(t *testing.T, newHarness func(t *testing.T) Harness) {
 		wantPipeline(t, rs.Pipeline, corehosts.PipelineFailed)
 	})
 	t.Run("no pipeline", func(t *testing.T) {
-		rs, _, err, _ := repo(t, NoPipeline, "")
+		rs, _, _, err := repo(t, NoPipeline, "")
 		if err != nil || rs.Pipeline != nil {
 			t.Fatalf("got %+v, %v", rs, err)
 		}
 		wantMR(t, rs.MR, corehosts.MROpen)
 	})
 	t.Run("304 with an ETag", func(t *testing.T) {
-		_, _, err, _ := repo(t, NotModified, `"v1"`)
+		_, _, _, err := repo(t, NotModified, `"v1"`)
 		if !errors.Is(err, hosts.ErrNotModified) {
 			t.Fatalf("error = %v, want ErrNotModified", err)
 		}
 	})
 	t.Run("401 is unauthorized", func(t *testing.T) {
-		_, _, err, _ := repo(t, Unauthorized, "")
-		wantFail(t, err, corehosts.FailUnauthorized)
+		_, _, _, err := repo(t, Unauthorized, "")
+		_ = wantFail(t, err, corehosts.FailUnauthorized)
 	})
 	t.Run("404 is not found", func(t *testing.T) {
-		_, _, err, _ := repo(t, NotFound, "")
-		wantFail(t, err, corehosts.FailNotFound)
+		_, _, _, err := repo(t, NotFound, "")
+		_ = wantFail(t, err, corehosts.FailNotFound)
 	})
 	t.Run("429 with Retry-After is rate limited with RetryAt", func(t *testing.T) {
-		_, _, err, _ := repo(t, RateLimited429, "")
+		_, _, _, err := repo(t, RateLimited429, "")
 		fe := wantFail(t, err, corehosts.FailRateLimited)
 		if fe.RetryAt == nil || !fe.RetryAt.Equal(ContractNow.Add(120*time.Second)) {
 			t.Errorf("RetryAt = %v, want %v", fe.RetryAt, ContractNow.Add(120*time.Second))
 		}
 	})
 	t.Run("403 with rate-limit headers is rate limited", func(t *testing.T) {
-		_, _, err, _ := repo(t, RateLimited403, "")
+		_, _, _, err := repo(t, RateLimited403, "")
 		fe := wantFail(t, err, corehosts.FailRateLimited)
 		if fe.RetryAt == nil || !fe.RetryAt.Equal(ContractNow.Add(5*time.Minute)) {
 			t.Errorf("RetryAt = %v, want %v", fe.RetryAt, ContractNow.Add(5*time.Minute))
 		}
 	})
 	t.Run("500 is transient", func(t *testing.T) {
-		_, _, err, _ := repo(t, ServerError, "")
-		wantFail(t, err, corehosts.FailTransient)
+		_, _, _, err := repo(t, ServerError, "")
+		_ = wantFail(t, err, corehosts.FailTransient)
 	})
 	t.Run("inbox roles", func(t *testing.T) {
 		h := newHarness(t)
@@ -191,7 +191,7 @@ func HostClientContract(t *testing.T, newHarness func(t *testing.T) Harness) {
 		h := newHarness(t)
 		h.Use(t, Unauthorized)
 		_, err := h.Client.Inbox(ctx, h.Instance, h.Token)
-		wantFail(t, err, corehosts.FailUnauthorized)
+		_ = wantFail(t, err, corehosts.FailUnauthorized)
 	})
 }
 

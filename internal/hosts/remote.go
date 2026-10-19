@@ -31,7 +31,8 @@ type RemoteRef struct {
 // InstanceID is the ID of the instance this remote points at. For web URLs the
 // port is part of it; an ssh port is not the API's port, so it is left out.
 func (r RemoteRef) InstanceID() corehosts.InstanceID {
-	if (r.Scheme == "https" || r.Scheme == "http") && r.Port != 0 && !(r.Scheme == "https" && r.Port == 443) && !(r.Scheme == "http" && r.Port == 80) {
+	web := r.Scheme == "https" || r.Scheme == "http"
+	if web && r.Port != 0 && (r.Scheme != "https" || r.Port != 443) && (r.Scheme != "http" || r.Port != 80) {
 		return corehosts.InstanceID(fmt.Sprintf("%s:%d", r.Host, r.Port))
 	}
 	return corehosts.InstanceID(r.Host)
@@ -206,7 +207,7 @@ func validHost(h string) bool {
 		return false
 	}
 	for _, c := range h {
-		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '.' || c == '_') {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' && c != '.' && c != '_' {
 			return false
 		}
 	}

@@ -118,7 +118,7 @@ func validVarName(s string) bool {
 		return false
 	}
 	for _, c := range s {
-		if !(c == '_' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9') {
+		if c != '_' && (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') && (c < '0' || c > '9') {
 			return false
 		}
 	}
@@ -300,7 +300,7 @@ func LoadConfig(path string, lookup func(string) (string, bool)) (Config, error)
 	}
 	var vars map[string]Var
 	var probs []Problem
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // the path is the .env file in Yggdrasil's data dir, or YGG_ENV_FILE set by the user
 	switch {
 	case err == nil:
 		vars, probs = ParseEnvText(string(data))
