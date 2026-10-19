@@ -63,15 +63,3 @@ func TestInstanceID(t *testing.T) {
 		}
 	}
 }
-
-// The placeholders change nothing until batch B3 lands the logic.
-func TestPlaceholdersAreInert(t *testing.T) {
-	p := Poller{}
-	got, cmds := Run(p, []Input{Tick{}, RefreshRequested{}})
-	if len(cmds) != 0 || len(got.Entries) != 0 {
-		t.Fatalf("Run = %#v, %v", got, cmds)
-	}
-	if len(FailedPipelines(p)) != 0 || (Links(Instance{}, "a/b", "main") != LinkSet{}) {
-		t.Fatal("placeholder returned data")
-	}
-}

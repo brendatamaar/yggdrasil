@@ -1,0 +1,20 @@
+[
+  {
+    "number": 42,
+    "title": "Add cart badge",
+    "state": "open",
+    "draft": true,
+    "merged_at": null,
+    "updated_at": "2026-10-12T09:30:00Z",
+    "html_url": "https://github.com/acme-shop/shop-api/pull/42",
+    "user": {
+      "login": "mara"
+    },
+    "head": {
+      "ref": "feature/cart"
+    },
+    "base": {
+      "ref": "main"
+    }
+  }
+]

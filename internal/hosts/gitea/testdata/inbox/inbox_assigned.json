@@ -1,0 +1,21 @@
+[
+  {
+    "number": 8,
+    "title": "Update admin theme",
+    "state": "open",
+    "merged": false,
+    "draft": false,
+    "updated_at": "2026-10-10T08:00:00Z",
+    "html_url": "https://code.example.org/acme-shop/shop-admin/pulls/8",
+    "user": {
+      "login": "priya"
+    },
+    "repository": {
+      "full_name": "acme-shop/shop-admin"
+    },
+    "pull_request": {
+      "merged": false,
+      "draft": false
+    }
+  }
+]

@@ -1,0 +1,21 @@
+[
+  {
+    "id": 9008,
+    "iid": 8,
+    "project_id": 12,
+    "title": "Update admin theme",
+    "state": "opened",
+    "draft": false,
+    "updated_at": "2026-10-10T08:00:00.000Z",
+    "source_branch": "chore/theme",
+    "target_branch": "main",
+    "author": {
+      "id": 3,
+      "username": "priya"
+    },
+    "web_url": "https://git.acme.dev/acme-shop/shop-admin/-/merge_requests/8",
+    "references": {
+      "full": "acme-shop/shop-admin!8"
+    }
+  }
+]

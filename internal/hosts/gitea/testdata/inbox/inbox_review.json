@@ -1,0 +1,21 @@
+[
+  {
+    "number": 7,
+    "title": "Fix totals rounding",
+    "state": "open",
+    "merged": false,
+    "draft": false,
+    "updated_at": "2026-10-11T08:00:00Z",
+    "html_url": "https://code.example.org/acme-shop/shop-web/pulls/7",
+    "user": {
+      "login": "jonas"
+    },
+    "repository": {
+      "full_name": "acme-shop/shop-web"
+    },
+    "pull_request": {
+      "merged": false,
+      "draft": false
+    }
+  }
+]

@@ -1,0 +1,21 @@
+[
+  {
+    "id": 9007,
+    "iid": 7,
+    "project_id": 12,
+    "title": "Fix totals rounding",
+    "state": "opened",
+    "draft": false,
+    "updated_at": "2026-10-11T08:00:00.000Z",
+    "source_branch": "fix/totals",
+    "target_branch": "main",
+    "author": {
+      "id": 3,
+      "username": "jonas"
+    },
+    "web_url": "https://git.acme.dev/acme-shop/shop-web/-/merge_requests/7",
+    "references": {
+      "full": "acme-shop/shop-web!7"
+    }
+  }
+]

@@ -1,0 +1,13 @@
+{
+  "state": "failure",
+  "sha": "0123abc",
+  "total_count": 1,
+  "statuses": [
+    {
+      "status": "failure",
+      "context": "ci",
+      "target_url": "https://code.example.org/acme-shop/shop-api/actions/runs/5",
+      "updated_at": "2026-10-12T09:45:00Z"
+    }
+  ]
+}
