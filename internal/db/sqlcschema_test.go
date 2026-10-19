@@ -54,4 +54,25 @@ func TestSqlcSchemaMatchesMigration(t *testing.T) {
 			t.Errorf("%s: sqlc schema %v, migration %v", table, got, want)
 		}
 	}
+	// The two unique indexes carry the "one active name / path" rules.
+	indexes := func(db *sql.DB) map[string]string {
+		rows, err := db.QueryContext(ctx, `SELECT name, coalesce(sql,'') FROM sqlite_master WHERE type = 'index' AND name IN ('projects_active_name', 'repos_project_rel_path')`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		out := map[string]string{}
+		for rows.Next() {
+			var n, s string
+			if err := rows.Scan(&n, &s); err != nil {
+				t.Fatal(err)
+			}
+			out[n] = s
+		}
+		return out
+	}
+	got, want := indexes(ref), indexes(d.write)
+	if len(want) != 2 || !reflect.DeepEqual(got, want) {
+		t.Errorf("unique indexes: sqlc schema %v, migration %v", got, want)
+	}
 }
