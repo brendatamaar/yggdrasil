@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	corehosts "github.com/brendatamaar/yggdrasil/internal/core/hosts"
 )
@@ -100,7 +102,7 @@ func parseURLRemote(raw string) (RemoteRef, error) {
 	default:
 		return RemoteRef{}, remoteErr("the scheme is not https or ssh")
 	}
-	if ref.Host == "" || strings.Contains(ref.Host, ":") {
+	if !validHost(ref.Host) {
 		return RemoteRef{}, remoteErr("it has no usable host")
 	}
 	if u.Port() != "" {
@@ -161,7 +163,7 @@ func parseSCPRemote(raw string) (RemoteRef, error) {
 		host = host[at+1:]
 	}
 	host = strings.ToLower(host)
-	if host == "" || strings.ContainsAny(host, "@[]") {
+	if !validHost(host) {
 		return RemoteRef{}, remoteErr("it has no valid host")
 	}
 	proj, err := cleanProject(path)
@@ -173,6 +175,9 @@ func parseSCPRemote(raw string) (RemoteRef, error) {
 
 // cleanProject normalizes a URL path to a project path: "/a/b.git/" -> "a/b".
 func cleanProject(p string) (corehosts.ProjectPath, error) {
+	if !utf8.ValidString(p) || strings.ContainsFunc(p, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) || r == utf8.RuneError }) {
+		return "", remoteErr("the project path is not valid")
+	}
 	p = strings.Trim(p, "/")
 	p = strings.TrimSuffix(p, ".git")
 	p = strings.Trim(p, "/")
@@ -192,4 +197,18 @@ func cleanProject(p string) (corehosts.ProjectPath, error) {
 		return "", remoteErr("the project path needs an owner and a repo name")
 	}
 	return corehosts.ProjectPath(p), nil
+}
+
+// validHost accepts letters, digits, '-', '.' and '_' only: no port, userinfo,
+// brackets or URL syntax can hide in a host.
+func validHost(h string) bool {
+	if h == "" || strings.HasPrefix(h, ".") || strings.HasSuffix(h, ".") {
+		return false
+	}
+	for _, c := range h {
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '.' || c == '_') {
+			return false
+		}
+	}
+	return true
 }

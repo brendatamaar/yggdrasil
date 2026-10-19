@@ -1,0 +1,2 @@
+go test fuzz v1
+string("https://0/0\xfa\xfa\xfa\xfa\xfa\xfa0/\xff%00")

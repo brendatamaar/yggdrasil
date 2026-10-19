@@ -147,15 +147,19 @@ func writeHeaders(w http.ResponseWriter, b []byte) {
 	}
 }
 
-// Fake is a scripted HostClient. Set RepoFn and InboxFn, or call Script.
-type Fake struct {
-	// RepoFn and InboxFn answer calls; nil answers with an empty result.
-	RepoFn  func(ctx context.Context, inst corehosts.Instance, token string, project corehosts.ProjectPath, branch, etag string) (corehosts.RepoState, string, error)
-	InboxFn func(ctx context.Context, inst corehosts.Instance, token string) ([]corehosts.InboxItem, error)
-	// Delay holds every call (until the context ends).
-	Delay time.Duration
+// RepoFunc answers RepoState calls.
+type RepoFunc func(ctx context.Context, inst corehosts.Instance, token string, project corehosts.ProjectPath, branch, etag string) (corehosts.RepoState, string, error)
 
+// InboxFunc answers Inbox calls.
+type InboxFunc func(ctx context.Context, inst corehosts.Instance, token string) ([]corehosts.InboxItem, error)
+
+// Fake is a scripted HostClient. Set the answers with SetRepoFn, SetInboxFn or
+// Script; they can change while calls are running.
+type Fake struct {
 	mu       sync.Mutex
+	repoFn   RepoFunc
+	inboxFn  InboxFunc
+	delay    time.Duration
 	calls    []Call
 	inFlight int
 	max      int
@@ -187,10 +191,22 @@ func (f *Fake) leave() {
 	f.mu.Unlock()
 }
 
+// SetRepoFn sets how RepoState calls are answered (nil: an empty result).
+func (f *Fake) SetRepoFn(fn RepoFunc) { f.mu.Lock(); f.repoFn = fn; f.mu.Unlock() }
+
+// SetInboxFn sets how Inbox calls are answered (nil: an empty result).
+func (f *Fake) SetInboxFn(fn InboxFunc) { f.mu.Lock(); f.inboxFn = fn; f.mu.Unlock() }
+
+// SetDelay holds every call for d (or until its context ends).
+func (f *Fake) SetDelay(d time.Duration) { f.mu.Lock(); f.delay = d; f.mu.Unlock() }
+
 func (f *Fake) wait(ctx context.Context) {
-	if f.Delay > 0 {
+	f.mu.Lock()
+	d := f.delay
+	f.mu.Unlock()
+	if d > 0 {
 		select {
-		case <-time.After(f.Delay):
+		case <-time.After(d):
 		case <-ctx.Done():
 		}
 	}
@@ -215,10 +231,13 @@ func (f *Fake) RepoState(ctx context.Context, inst corehosts.Instance, token str
 	f.enter(Call{Inst: inst.ID, Token: token, Project: project, Branch: branch, ETag: etag})
 	defer f.leave()
 	f.wait(ctx)
-	if f.RepoFn == nil {
+	f.mu.Lock()
+	fn := f.repoFn
+	f.mu.Unlock()
+	if fn == nil {
 		return corehosts.RepoState{}, "", nil
 	}
-	return f.RepoFn(ctx, inst, token, project, branch, etag)
+	return fn(ctx, inst, token, project, branch, etag)
 }
 
 // Inbox implements hosts.HostClient.
@@ -226,10 +245,13 @@ func (f *Fake) Inbox(ctx context.Context, inst corehosts.Instance, token string)
 	f.enter(Call{Inbox: true, Inst: inst.ID, Token: token})
 	defer f.leave()
 	f.wait(ctx)
-	if f.InboxFn == nil {
+	f.mu.Lock()
+	fn := f.inboxFn
+	f.mu.Unlock()
+	if fn == nil {
 		return nil, nil
 	}
-	return f.InboxFn(ctx, inst, token)
+	return fn(ctx, inst, token)
 }
 
 // ExpectedMR is the MR every contract scenario expects (URL aside).
@@ -270,15 +292,15 @@ func (f *Fake) Script(s Scenario) {
 	}
 	fail := func(kind corehosts.FailKind, retry *time.Time) {
 		err := &hosts.FetchError{Kind: kind, RetryAt: retry}
-		f.RepoFn = func(context.Context, corehosts.Instance, string, corehosts.ProjectPath, string, string) (corehosts.RepoState, string, error) {
+		f.SetRepoFn(func(context.Context, corehosts.Instance, string, corehosts.ProjectPath, string, string) (corehosts.RepoState, string, error) {
 			return corehosts.RepoState{}, "", err
-		}
-		f.InboxFn = func(context.Context, corehosts.Instance, string) ([]corehosts.InboxItem, error) { return nil, err }
+		})
+		f.SetInboxFn(func(context.Context, corehosts.Instance, string) ([]corehosts.InboxItem, error) { return nil, err })
 	}
 	state := func(m *corehosts.MergeRequest, p *corehosts.Pipeline) {
-		f.RepoFn = func(context.Context, corehosts.Instance, string, corehosts.ProjectPath, string, string) (corehosts.RepoState, string, error) {
+		f.SetRepoFn(func(context.Context, corehosts.Instance, string, corehosts.ProjectPath, string, string) (corehosts.RepoState, string, error) {
 			return corehosts.RepoState{MR: m, Pipeline: p}, `"v1"`, nil
-		}
+		})
 	}
 	switch s {
 	case OpenSuccess:
@@ -294,9 +316,9 @@ func (f *Fake) Script(s Scenario) {
 	case NoPipeline:
 		state(mr(corehosts.MROpen), nil)
 	case NotModified:
-		f.RepoFn = func(context.Context, corehosts.Instance, string, corehosts.ProjectPath, string, string) (corehosts.RepoState, string, error) {
+		f.SetRepoFn(func(context.Context, corehosts.Instance, string, corehosts.ProjectPath, string, string) (corehosts.RepoState, string, error) {
 			return corehosts.RepoState{}, "", hosts.ErrNotModified
-		}
+		})
 	case Unauthorized:
 		fail(corehosts.FailUnauthorized, nil)
 	case NotFound:
@@ -310,12 +332,12 @@ func (f *Fake) Script(s Scenario) {
 	case ServerError:
 		fail(corehosts.FailTransient, nil)
 	case InboxRoles:
-		f.InboxFn = func(context.Context, corehosts.Instance, string) ([]corehosts.InboxItem, error) {
+		f.SetInboxFn(func(context.Context, corehosts.Instance, string) ([]corehosts.InboxItem, error) {
 			items := ExpectedInbox()
 			for i := range items {
 				items[i].MR.URL = url + "mr/" + strconv.Itoa(items[i].MR.Number)
 			}
 			return items, nil
-		}
+		})
 	}
 }
