@@ -86,3 +86,27 @@ func commit(t testing.TB, s *db.Store, fn func(context.Context, *db.Tx) error) {
 		t.Fatal(err)
 	}
 }
+
+// Worktree inserts a task in repo's project and a worktree of that task in
+// repo, and fails the test on error.
+func Worktree(t testing.TB, s *db.Store, repo core.Repo) core.Worktree {
+	t.Helper()
+	now := time.Now().UTC()
+	task := core.Task{
+		ID: core.TaskID(db.NewID("tsk")), ProjectID: repo.ProjectID, Title: "t", Scope: core.ScopeRepo,
+		RepoIDs: []core.RepoID{repo.ID}, Mode: core.ModeCode, Agent: "mock", CreatedAt: now, UpdatedAt: now,
+	}
+	var w core.Worktree
+	commit(t, s, func(ctx context.Context, tx *db.Tx) error {
+		if _, err := tx.CreateTask(ctx, task); err != nil {
+			return err
+		}
+		var err error
+		w, err = tx.CreateWorktree(ctx, core.Worktree{
+			ID: core.WorktreeID(db.NewID("wt")), RepoID: repo.ID, TaskID: task.ID, Name: "wt", Path: filepath.Join(repo.Path, "wt"),
+			Branch: "ygg/wt", CreatedAt: now,
+		})
+		return err
+	})
+	return w
+}
