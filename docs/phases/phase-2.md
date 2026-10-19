@@ -415,3 +415,9 @@ The repo page UI (WS-05) moves to B3, next to the builds UI and the MR inbox.
   - **Node per-environment builds:** they come from `node.EnvBuilds(d)` as named alternatives.
   - **Detection:** looks in the repo root, then the first immediate subfolder. A repo with two `package.json` folders shows only one (backlog).
   - **Fixtures:** `fstest.MapFS` in tests, not `testdata/` folders.
+
+- **B2a, B2c, B2e merged:** builds persistence, the projects page, and the repo page read endpoints (wired in `cmd/ygg/app.go`). Accepted decisions:
+  - presets are batch-checked in `internal/builds`, not `db`;
+  - the step log path is derived from the build ID and step index;
+  - the legacy `Store.GetBuild`/`ListBuilds` are retired by the builds service if nothing else uses them.
+- **WS-05 gaps for the B3 git-actions task (it owns `internal/git`):** `git.Log` takes a ref (the service refuses anything but HEAD today), and per-branch ahead/behind in `git.Branches`.
