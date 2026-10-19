@@ -18,9 +18,12 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/agents/claudecode"
 	"github.com/brendatamaar/yggdrasil/internal/agents/mock"
 	"github.com/brendatamaar/yggdrasil/internal/api"
+	"github.com/brendatamaar/yggdrasil/internal/builds"
+	"github.com/brendatamaar/yggdrasil/internal/builds/toolchains"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/git"
+	"github.com/brendatamaar/yggdrasil/internal/platform"
 	"github.com/brendatamaar/yggdrasil/internal/repos"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
@@ -36,6 +39,9 @@ type app struct {
 	// status is the repo-status read model (WS-02). Its owner goroutine runs
 	// next to the server in run.
 	status *repos.StatusService
+	// builds runs the build queue (BL-03). Like status, it runs next to the
+	// server; it must be running before builds are served.
+	builds *builds.Service
 }
 
 // newLogger writes redacted text logs: no token reaches a log (invariant 4).
@@ -104,18 +110,33 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		return nil, fmt.Errorf("start repo tracking: %w", err)
 	}
 
+	buildsPub := &lateBuildsPublisher{}
+	buildSvc, err := builds.NewService(builds.Deps{
+		Store: builds.NewSQLiteStore(store), Start: platform.Start,
+		Locator: buildLocator{store}, Env: safety.NewEnvBuilder(),
+		Toolchains: toolchains.All(), DataDir: cfg.dataDir,
+		Redactor: redactor, Publisher: buildsPub, Status: status, Log: log,
+	})
+	if err != nil {
+		_ = d.Close()
+		return nil, fmt.Errorf("start builds: %w", err)
+	}
+
 	srv, err := api.New(api.Deps{
 		Store: store, Adapters: adapters, Env: safety.NewEnvBuilder(), Log: log,
 		Redactor: redactor, Version: version, Assets: assets,
 		Tracking: tracking, Status: status, RepoDetail: repos.NewDetailService(store, g),
+		Builds: buildSvc,
 	})
 	if err != nil {
 		_ = d.Close()
 		return nil, fmt.Errorf("start the server: %w", err)
 	}
+	// Set before run starts any goroutine that could publish.
 	status.SetPublisher(statusPublisher{srv})
-	reposPub.srv = srv // set before Run starts any goroutine that could publish
-	return &app{cfg: cfg, log: log, db: d, store: store, srv: srv, status: status}, nil
+	reposPub.srv = srv
+	buildsPub.srv = srv
+	return &app{cfg: cfg, log: log, db: d, store: store, srv: srv, status: status, builds: buildSvc}, nil
 }
 
 // statusPublisher sends repo-status changes to the browser.
@@ -131,6 +152,7 @@ func (a *app) run(ctx context.Context, ln net.Listener) error {
 	a.log.Info("Yggdrasil is running", "url", "http://"+ln.Addr().String(), "version", version, "data", a.cfg.dataDir)
 	group, gctx := errgroup.WithContext(ctx)
 	group.Go(func() error { return a.status.Start(gctx) })
+	group.Go(func() error { return a.builds.Start(gctx) })
 	group.Go(func() error { return a.srv.Run(gctx, ln) })
 	serveErr := group.Wait()
 	closeErr := a.db.Close()
