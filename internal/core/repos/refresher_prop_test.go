@@ -65,6 +65,18 @@ func (m *model) fresh(k attemptKey) bool {
 	return m.emitted[k] && m.latest[k.ID] == k.Attempt && m.valid[k.ID] && !m.answered[k]
 }
 
+// running is the number of reads the shell still has: ReadStatus emitted and
+// not yet answered. It is counted from the test's history, not the state.
+func (m *model) running() int { return len(m.emitted) - len(m.answered) }
+
+// restarted records a Restarted(): every read of before is an orphan now, so
+// no result of it is fresh.
+func (m *model) restarted() {
+	for id := range m.valid {
+		m.valid[id] = false
+	}
+}
+
 // observe records one step: the input and the commands it produced.
 func (m *model) observe(in RefreshInput, cmds []RefreshCommand) {
 	switch x := in.(type) {
@@ -110,6 +122,8 @@ type driver struct {
 	readd core.RepoID
 	// readdOrphan: the last input re-added an id that still had an orphan.
 	readdOrphan bool
+	// restarts counts the Restarted() rebuilds of the run.
+	restarts int
 }
 
 func newDriver(seed uint64) *driver {
@@ -225,10 +239,33 @@ func (d *driver) result(id core.RepoID, attempt int) RefreshInput {
 // run drives n steps and calls check(before, input, after, cmds) after each.
 func run(t *testing.T, n int, check func(t *testing.T, d *driver, before Refresher, in RefreshInput, cmds []RefreshCommand)) {
 	t.Helper()
+	runWith(t, n, false, check)
+}
+
+// runRestart is run with restarts: now and then the driver rebuilds the state
+// with Restarted() and feeds the active repos back, as the shell does after a
+// panic.
+func runRestart(t *testing.T, n int, check func(t *testing.T, d *driver, before Refresher, in RefreshInput, cmds []RefreshCommand)) {
+	t.Helper()
+	runWith(t, n, true, check)
+}
+
+func runWith(t *testing.T, n int, restarts bool, check func(t *testing.T, d *driver, before Refresher, in RefreshInput, cmds []RefreshCommand)) {
+	t.Helper()
 	for seed := uint64(1); seed <= propRuns; seed++ {
 		d := newDriver(seed)
 		for i := 0; i < n; i++ {
-			in := d.next()
+			var in RefreshInput
+			if restarts && d.state.reads() > 0 && d.rng.IntN(12) == 0 {
+				active := d.current()
+				d.state = d.state.Restarted()
+				d.m.restarted()
+				d.restarts++
+				d.readdOrphan = false
+				in = ReposChanged{Active: active}
+			} else {
+				in = d.next()
+			}
 			before := d.state
 			var cmds []RefreshCommand
 			d.pre = false
@@ -252,16 +289,20 @@ func run(t *testing.T, n int, check func(t *testing.T, d *driver, before Refresh
 // R1: the reads running (in flight and orphaned) never exceed Max.
 func TestPropInFlightBounded(t *testing.T) {
 	orphans := 0
-	run(t, 80, func(t *testing.T, d *driver, _ Refresher, _ RefreshInput, _ []RefreshCommand) {
-		if n := len(d.state.InFlight) + len(d.state.Orphans); n > d.state.Max {
+	restarts := 0
+	runRestart(t, 80, func(t *testing.T, d *driver, _ Refresher, _ RefreshInput, _ []RefreshCommand) {
+		// Counted from the model (ReadStatus emitted and not yet answered),
+		// so a state that forgets a running read cannot hide the excess.
+		if n := d.m.running(); n > d.state.Max {
 			t.Fatalf("%d reads running, Max %d", n, d.state.Max)
 		}
 		if len(d.state.Orphans) > 0 {
 			orphans++
 		}
+		restarts = max(restarts, d.restarts)
 	})
-	if orphans == 0 {
-		t.Fatal("the generator never produced an orphan")
+	if orphans == 0 || restarts == 0 {
+		t.Fatalf("generator reach: orphans %d, restarts %d", orphans, restarts)
 	}
 }
 
@@ -315,7 +356,7 @@ func TestPropNoIdleWhileQueued(t *testing.T) {
 // only frees its slot.
 func TestPropStaleResultIgnored(t *testing.T) {
 	stale, fresh, orphanArrivals := 0, 0, 0
-	run(t, 80, func(t *testing.T, d *driver, before Refresher, in RefreshInput, cmds []RefreshCommand) {
+	runRestart(t, 80, func(t *testing.T, d *driver, before Refresher, in RefreshInput, cmds []RefreshCommand) {
 		k, ok := resultKey(in)
 		if !ok {
 			return
@@ -362,7 +403,7 @@ func TestPropStaleResultIgnored(t *testing.T) {
 // across IDs and across remove and re-add; attempts only grow.
 func TestPropAttemptsMonotonic(t *testing.T) {
 	starts, readds := 0, 0
-	run(t, 80, func(t *testing.T, d *driver, before Refresher, _ RefreshInput, cmds []RefreshCommand) {
+	runRestart(t, 80, func(t *testing.T, d *driver, before Refresher, _ RefreshInput, cmds []RefreshCommand) {
 		if len(d.m.dups) > 0 {
 			t.Fatalf("ReadStatus %v emitted twice in the run", d.m.dups)
 		}
