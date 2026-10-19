@@ -4,19 +4,19 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	corerepos "github.com/brendatamaar/yggdrasil/internal/core/repos"
 	"github.com/brendatamaar/yggdrasil/internal/db/dbtest"
+	"github.com/brendatamaar/yggdrasil/internal/platform"
 )
 
 // Rows seeded by v0.2.0 keep the case the user typed. The core compares paths
 // with ==, so the shell must canonicalise them when it loads the workspace.
 func TestLegacyLowercasePathIsCanonicalised(t *testing.T) {
-	if runtime.GOOS != "windows" {
+	if !platform.PathsCaseInsensitive {
 		t.Skip("on-disk case only differs from the typed case on Windows")
 	}
 	e := newEnv(t)
