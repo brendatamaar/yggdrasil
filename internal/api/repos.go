@@ -46,6 +46,7 @@ type TrackingService interface {
 // when its service is not wired.
 func (s *Server) routesRepos(mux *http.ServeMux) {
 	s.routesReposStatus(mux)
+	s.routesReposDetail(mux)
 	if s.tracking == nil {
 		return
 	}

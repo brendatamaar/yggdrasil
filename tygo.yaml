@@ -30,6 +30,7 @@ packages:
       - repos.go
       - repos_actions.go
       - repos_status.go
+      - repos_detail.go
       - builds.go
       - hosts.go
       - search.go
