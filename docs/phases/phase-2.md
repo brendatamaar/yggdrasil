@@ -425,3 +425,12 @@ The repo page UI (WS-05) moves to B3, next to the builds UI and the MR inbox.
 - **B2d builds service merged and wired** (`cmd/ygg/builds.go`: a locator over the active store reads; `Known` has no worktrees until Phase 3). On shutdown, step results aren't recorded; the build is marked Interrupted on the next start. The legacy `db` build reads are still used by db tests and archtest (backlog: retire them).
 - **Recurring flake:** vitest "Timeout waiting for worker to respond" when several agents run tests at once. Reruns pass. Backlog: raise the vitest worker start timeout or cap threads in `web/vite.config.ts`.
 - **B3 started early:** git hosts, and git actions + WS-08 (which own `internal/git` for the WS-05 gaps).
+
+- **B2 and B3 code complete** (2026-10-19): builds service, git hosts, git actions + WS-08, repo page, builds UI, MR inbox. All wired in `cmd/ygg`; all checks green (Go tests; web 23 files / 158 tests).
+  - vitest now uses `maxWorkers: 2`; the worker start timeout is gone.
+  - Items for the next review gate:
+    - git-batch messages share the `repo:<id>` topic with status messages;
+    - the repo page renders host link URLs as given (must be http(s) only);
+    - there is no "fetch all" scope parameter;
+    - a token added by `.env` reload isn't in the process log redactor until restart.
+  - Remaining from the Phase 2 plan: the review gate for `ca60153..main` (held at the human's request), then B4: code search (XR-01), widgets (UI-03), the perf check.
