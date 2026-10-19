@@ -394,3 +394,18 @@ Both reviewers passed `15c3c15..main` with no Blocking, Must-fix or Should-fix f
 Carried into the test-engineer brief:
 - add a `Preview` assertion to the legacy-path test, since `load`'s canonicalisation is otherwise unguarded;
 - swap the error-check order in `canonicalizeProjects`.
+
+### B2 plan adjustment (2026-10-19)
+
+The builds shell is too large for one agent's turn budget, and WS-05 (repo page read endpoints) had no backend owner in the breakdown. B2 now runs as a rolling batch, never more than 3 agents at once:
+
+| Task | Owner | Owns | Starts |
+|---|---|---|---|
+| B2a builds persistence + presets | `go-backend` | `internal/db` builds/presets store (`LoadBuild`, `SaveBuild`, `buildFromRows`, preset queries), `internal/builds/request.go` (`ParseRequest`, `ParsePreset`), `internal/builds/buildstest/` (fake + `StoreContract`) | now |
+| B2b toolchains | `go-backend` | `internal/builds/toolchains/**` (node, maven + `ParsePOM` + `Orderer`, gradle, custom, `all.go`), detection fixtures, `docs/writing-a-toolchain.md` | now |
+| B2c projects page | `frontend` | `web/src/routes/projects*`, new `web/src/features/repos/**`, non-generated `web/src/api/*` additions | now |
+| B2d builds service | `go-backend` | `internal/builds` service, interpreter, queue worker, logs, artifacts; `internal/api/builds.go` + DTOs; startup `ProcessLost` (lead wires `cmd/ygg`) | after B2a |
+| B2e repo page reads (WS-05) | `go-backend` | `internal/repos/detail.go`, new `internal/api/repos_detail.go` (changes, diffs, history, commit detail, branches) | when a slot frees |
+| test maps | `test-engineer` | tests for builds core, tracking and status from their designs | when a slot frees |
+
+The repo page UI (WS-05) moves to B3, next to the builds UI and the MR inbox.
