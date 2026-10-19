@@ -409,3 +409,9 @@ The builds shell is too large for one agent's turn budget, and WS-05 (repo page 
 | test maps | `test-engineer` | tests for builds core, tracking and status from their designs | when a slot frees |
 
 The repo page UI (WS-05) moves to B3, next to the builds UI and the MR inbox.
+
+- **B2b toolchains merged.**
+  - **`CI=true` on every build step.** The builds interpreter sets it for every step, in the clean environment. It's harmless for Maven and Gradle, makes tools non-interactive, and covers the Node verify chain. `builds.Step` gets no env field, and `node.Env()` stays unused (to remove when touched).
+  - **Node per-environment builds:** they come from `node.EnvBuilds(d)` as named alternatives.
+  - **Detection:** looks in the repo root, then the first immediate subfolder. A repo with two `package.json` folders shows only one (backlog).
+  - **Fixtures:** `fstest.MapFS` in tests, not `testdata/` folders.

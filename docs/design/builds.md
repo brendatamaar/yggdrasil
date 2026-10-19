@@ -163,7 +163,7 @@ handle(buildID, input)                              // internal/builds; all inpu
   → interpret effect commands (after commit, outside the tx):
       StartStep → resolve argv[0] (platform.Resolve, repo dir: mvnw.cmd, npm.cmd, …)
                 → open log file <dataDir>/logs/builds/<buildID>/<index>-<attempt>.log
-                → start(ctx_step, platform.Spec{Argv, Dir, Env: safety.Clean(), no TaskID, Stdout/Stderr: redacting line writer → file + hub})
+                → start(ctx_step, platform.Spec{Argv, Dir, Env: safety.Clean() + CI=true (every step: non-interactive tools, Node verify chain), no TaskID, Stdout/Stderr: redacting line writer → file + hub})
                 → goroutine (owned by the service errgroup): Wait → enqueue StepExited
                   (start error → StepStartFailed with the reason classified)
       KillStep  → cancel ctx_step                   // platform kills that process's own job only
