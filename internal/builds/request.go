@@ -213,6 +213,20 @@ func withStep(err error, n int) error {
 	return err
 }
 
+// CheckPreset applies the rule ParsePreset applies to every step (no argument
+// a batch file could misread) to a preset that did not come through
+// ParsePreset, such as one read from the database. The db package cannot
+// import platform, so the SQLite adapter calls this on every preset it stores
+// or returns.
+func CheckPreset(p corebuilds.Preset) error {
+	for i, s := range p.Steps {
+		if err := platform.BatchArgsOK(s.Argv); err != nil {
+			return fmt.Errorf("preset %s step %d: %w", p.ID, i+1, err)
+		}
+	}
+	return nil
+}
+
 // FormatRequest is the inverse of ParseRequest: it writes spec as a request
 // body.
 func FormatRequest(spec corebuilds.Spec) ([]byte, error) {

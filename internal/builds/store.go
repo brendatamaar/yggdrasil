@@ -53,13 +53,13 @@ func NewSQLiteStore(s *db.Store) *SQLiteStore { return &SQLiteStore{s: s} }
 
 // Commit runs fn in one write transaction.
 func (a *SQLiteStore) Commit(ctx context.Context, fn func(BuildTx) error) error {
-	return a.s.Commit(ctx, func(tx *db.Tx) error { return fn(tx) })
+	return a.s.Commit(ctx, func(tx *db.Tx) error { return fn(presetTx{tx}) })
 }
 
 func (a *SQLiteStore) ListQueued(ctx context.Context) ([]corebuilds.QueuedRef, error) {
 	return a.s.ListQueued(ctx)
 }
-func (a *SQLiteStore) CountRunning(ctx context.Context) (int, error) { return a.s.CountRunning(ctx) }
+func (a *SQLiteStore) CountRunning(ctx context.Context) (int, error) { return a.s.GetRunningCount(ctx) }
 func (a *SQLiteStore) ListActive(ctx context.Context) ([]corebuilds.State, error) {
 	return a.s.ListActive(ctx)
 }
@@ -70,10 +70,40 @@ func (a *SQLiteStore) List(ctx context.Context, f db.BuildFilter) ([]corebuilds.
 	return a.s.ListBuildStates(ctx, f)
 }
 func (a *SQLiteStore) GetPreset(ctx context.Context, id corebuilds.PresetID) (corebuilds.Preset, int64, error) {
-	return a.s.GetPreset(ctx, id)
+	p, v, err := a.s.GetPreset(ctx, id)
+	if err != nil {
+		return p, v, err
+	}
+	return p, v, CheckPreset(p)
 }
-func (a *SQLiteStore) ListPresets(ctx context.Context, p core.ProjectID) ([]corebuilds.Preset, error) {
-	return a.s.ListPresets(ctx, p)
+func (a *SQLiteStore) ListPresets(ctx context.Context, project core.ProjectID) ([]corebuilds.Preset, error) {
+	ps, err := a.s.ListPresets(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range ps {
+		if err := CheckPreset(p); err != nil {
+			return nil, err
+		}
+	}
+	return ps, nil
+}
+
+// presetTx adds CheckPreset to the preset writes of a db.Tx.
+type presetTx struct{ *db.Tx }
+
+func (t presetTx) InsertPreset(ctx context.Context, p corebuilds.Preset, now time.Time) error {
+	if err := CheckPreset(p); err != nil {
+		return err
+	}
+	return t.Tx.InsertPreset(ctx, p, now)
+}
+
+func (t presetTx) UpdatePreset(ctx context.Context, p corebuilds.Preset, expected int64) (int64, error) {
+	if err := CheckPreset(p); err != nil {
+		return 0, err
+	}
+	return t.Tx.UpdatePreset(ctx, p, expected)
 }
 
 var _ BuildStore = (*SQLiteStore)(nil)

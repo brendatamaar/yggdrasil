@@ -213,3 +213,14 @@ func FuzzParsePreset(f *testing.F) {
 		}
 	})
 }
+
+func TestCheckPreset(t *testing.T) {
+	p := goodPreset()
+	if err := CheckPreset(p); err != nil {
+		t.Fatal(err)
+	}
+	p.Steps[0].Argv = []string{"x", "a|b"}
+	if err := CheckPreset(p); err == nil {
+		t.Fatal("unsafe argument accepted")
+	}
+}

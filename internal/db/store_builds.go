@@ -12,7 +12,6 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	corebuilds "github.com/brendatamaar/yggdrasil/internal/core/builds"
 	"github.com/brendatamaar/yggdrasil/internal/db/gen"
-	"github.com/brendatamaar/yggdrasil/internal/platform"
 )
 
 // NewBuild is the expected version SaveBuild takes to insert a build that
@@ -182,8 +181,8 @@ func (s *Store) ListQueued(ctx context.Context) ([]corebuilds.QueuedRef, error) 
 	return out, nil
 }
 
-// CountRunning returns how many builds are Running or Cancelling.
-func (s *Store) CountRunning(ctx context.Context) (int, error) {
+// GetRunningCount returns how many builds are Running or Cancelling.
+func (s *Store) GetRunningCount(ctx context.Context) (int, error) {
 	n, err := s.db.reader().CountRunningBuilds(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("count running builds: %w", err)
@@ -787,16 +786,12 @@ func presetStepsJSON(p corebuilds.Preset) (string, error) {
 	return string(b), nil
 }
 
-// validPreset adds to Preset.Validate the rule the shell parser applies to a
-// saved command (no argument a batch file could misread).
+// validPreset is Preset.Validate. The rule against arguments a batch file could
+// misread (platform.BatchArgsOK) is applied by builds.CheckPreset, because the
+// db package may not import platform.
 func validPreset(p corebuilds.Preset) error {
 	if err := p.Validate(); err != nil {
 		return err
-	}
-	for i, s := range p.Steps {
-		if err := platform.BatchArgsOK(s.Argv); err != nil {
-			return fmt.Errorf("step %d: %w", i+1, err)
-		}
 	}
 	return nil
 }

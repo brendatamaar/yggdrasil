@@ -8,10 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/brendatamaar/yggdrasil/internal/audit"
 	"github.com/brendatamaar/yggdrasil/internal/builds"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	corebuilds "github.com/brendatamaar/yggdrasil/internal/core/builds"
 	"github.com/brendatamaar/yggdrasil/internal/db"
+	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
 
 // Harness is one store under test with the rows it needs to exist.
@@ -174,7 +176,11 @@ func StoreContract(t *testing.T, newStore func(t *testing.T) Harness) {
 
 	run("audit rows commit and roll back with the state", func(t *testing.T, h Harness) {
 		entry := func(aid string) core.AuditEntry {
-			return core.AuditEntry{ID: core.AuditID(aid), At: at(1), Actor: "user", Action: "build.queue", Subject: "build:a1", Detail: []byte(`{"steps":"1"}`)}
+			e, err := audit.Prepare(core.AuditEntry{Actor: "user", Action: "build.queue", Subject: "build:a1", Detail: []byte(`{"steps":"1"}`)}, safety.NewRedactor(), core.AuditID(aid), at(1))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return e
 		}
 		boom := errors.New("boom")
 		err := h.Store.Commit(ctx, func(tx builds.BuildTx) error {

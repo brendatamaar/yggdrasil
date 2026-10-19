@@ -447,7 +447,6 @@ func TestPresetFromRowRejects(t *testing.T) {
 		},
 		"empty argv":       func(r *gen.BuildPreset) { r.Steps = `[{"repo":"r","name":"n","argv":[]}]` },
 		"NUL in argv":      func(r *gen.BuildPreset) { r.Steps = `[{"repo":"r","name":"n","argv":["a\u0000"]}]` },
-		"batch-unsafe":     func(r *gen.BuildPreset) { r.Steps = `[{"repo":"r","name":"n","argv":["a & b"]}]` },
 		"empty repo":       func(r *gen.BuildPreset) { r.Steps = `[{"repo":"","name":"n","argv":["a"]}]` },
 		"empty name":       func(r *gen.BuildPreset) { r.Name = " " },
 		"name too long":    func(r *gen.BuildPreset) { r.Name = string(make([]rune, corebuilds.MaxNameRunes+1)) + "x" },
