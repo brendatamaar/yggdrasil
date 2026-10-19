@@ -798,3 +798,93 @@ export interface RefreshReposRequest {
 export interface ReposChangedMessage {
   counts: RepoCountsDTO;
 }
+
+//////////
+// source: types_repos_detail.go
+
+/**
+ * FileChangeDTO is one changed path. Index and Worktree are git's one-letter
+ * codes (M, A, D, R, C, T, U), "?" for untracked, "" for unchanged.
+ */
+export interface FileChangeDTO {
+  path: string;
+  origPath?: string;
+  index: string;
+  worktree: string;
+}
+/**
+ * ChangesResponse is the body of GET /api/repos/{id}/changes.
+ */
+export interface ChangesResponse {
+  files: FileChangeDTO[];
+  /**
+   * Truncated: the list was cut; the counts of the repo status stay exact.
+   */
+  truncated: boolean;
+}
+/**
+ * DiffResponse is the body of GET /api/repos/{id}/diff.
+ */
+export interface DiffResponse {
+  text: string;
+  /**
+   * Truncated: Text was cut at 2 MiB.
+   */
+  truncated: boolean;
+  /**
+   * Binary: at least one file is binary and has no text.
+   */
+  binary: boolean;
+}
+/**
+ * CommitSummaryDTO is one commit of the history.
+ */
+export interface CommitSummaryDTO {
+  oid: string;
+  short: string;
+  subject: string;
+  author: string;
+  email: string;
+  at: string;
+  parents: string[];
+}
+/**
+ * LogResponse is the body of GET /api/repos/{id}/log.
+ */
+export interface LogResponse {
+  commits: CommitSummaryDTO[];
+}
+/**
+ * CommitFileDTO is one file touched by a commit. Status is git's letter
+ * (A, M, D, R, C, T).
+ */
+export interface CommitFileDTO {
+  path: string;
+  origPath?: string;
+  status: string;
+}
+/**
+ * CommitDetailResponse is the body of GET /api/repos/{id}/commits/{oid}.
+ */
+export interface CommitDetailResponse {
+  commit: CommitSummaryDTO;
+  body: string;
+  files: CommitFileDTO[];
+  diff: DiffResponse;
+}
+/**
+ * BranchDTO is a local or remote-tracking branch.
+ */
+export interface BranchDTO {
+  name: string; // "main" or "origin/main"
+  remote: boolean;
+  current: boolean;
+  upstream?: string;
+  oid: string;
+}
+/**
+ * BranchesResponse is the body of GET /api/repos/{id}/branches.
+ */
+export interface BranchesResponse {
+  branches: BranchDTO[];
+}

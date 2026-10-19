@@ -52,6 +52,8 @@ type Deps struct {
 	Builds   BuildService
 	Hosts    HostsService
 	Search   SearchService
+	// RepoDetail serves the read-only repo page endpoints (WS-05).
+	RepoDetail RepoDetailService
 
 	// Clock and IDs are the shell's time and randomness for handlers that
 	// make core inputs (docs/AGENTS.md 5.11). Defaults: time.Now().UTC() and
@@ -80,13 +82,14 @@ type Server struct {
 	// status is stored, so no client sees done or cancelled while they live.
 	killTask func(taskID string) error
 
-	tracking TrackingService
-	status   StatusService
-	builds   BuildService
-	hosts    HostsService
-	search   SearchService
-	clock    func() time.Time
-	ids      func(prefix string) string
+	tracking   TrackingService
+	status     StatusService
+	builds     BuildService
+	hosts      HostsService
+	search     SearchService
+	repoDetail RepoDetailService
+	clock      func() time.Time
+	ids        func(prefix string) string
 
 	// newTaskID makes the ID of a new task: randomness stays in the shell.
 	newTaskID func() core.TaskID
@@ -128,6 +131,7 @@ func New(d Deps) (*Server, error) {
 		hub: newHub(log), ctx: ctx, stop: stop, cancel: map[core.TaskID]context.CancelFunc{},
 	}
 	s.tracking, s.status, s.builds, s.hosts, s.search = d.Tracking, d.Status, d.Builds, d.Hosts, d.Search
+	s.repoDetail = d.RepoDetail
 	s.clock, s.ids = d.Clock, d.IDs
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }
