@@ -107,7 +107,7 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	srv, err := api.New(api.Deps{
 		Store: store, Adapters: adapters, Env: safety.NewEnvBuilder(), Log: log,
 		Redactor: redactor, Version: version, Assets: assets,
-		Tracking: tracking, Status: status,
+		Tracking: tracking, Status: status, RepoDetail: repos.NewDetailService(store, g),
 	})
 	if err != nil {
 		_ = d.Close()
