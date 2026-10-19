@@ -1,10 +1,9 @@
 import { createRoute } from "@tanstack/react-router";
-import { Placeholder } from "../../components/Placeholder";
+import { MrInboxPage } from "../../features/mrs/MrInboxPage";
 import { rootRoute } from "../root";
 
-// Owned by the MR inbox task (GH-02).
 export const mrsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/mrs",
-  component: () => <Placeholder title="Merge requests" />,
+  component: MrInboxPage,
 });
