@@ -384,3 +384,13 @@ Both go to a round-3 fix agent, with migration 00003 made safe to rerun, `CheckP
 - `Active{Since}` isn't updated on restore; there's no DirLister fake/contract; there's no `RelPath` on `core.Repo`.
 
 **Local refs that still contain `ygg.exe`:** `refs/original/refs/heads/main` (the filter-branch backup) and the branches `worktree-agent-afc97b508ce9b4e75` and `worktree-agent-a3f343cfca2a5e30d`. None are pushed. Never `git push --all` before they are deleted; deleting them needs the human's approval.
+
+### Review gate B1, round 3 (2026-10-19): passed
+
+Both reviewers passed `15c3c15..main` with no Blocking, Must-fix or Should-fix findings. Both mutation-checked the round-3 tests, and the race test, the legacy-path test, R1 and the restart coverage all fail when their fix is removed.
+
+**B1 closed.** Done: builds core (BL-03, BL-04 pure part), repo tracking API (WS-01 backend), repo status (WS-02 to WS-04 backend), home (UI-01) and themes (UI-05).
+
+Carried into the test-engineer brief:
+- add a `Preview` assertion to the legacy-path test, since `load`'s canonicalisation is otherwise unguarded;
+- swap the error-check order in `canonicalizeProjects`.

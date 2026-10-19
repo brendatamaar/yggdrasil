@@ -78,9 +78,9 @@ Goal: the workspace half matches the personal tool.
   - **Design:** `docs/design/builds.md` (approved 2026-10-18). Foundations on `main`: migration 00002, `Store.Commit`, `platform.StartFunc` with fake and contract suite, hub `publishNext` and topic type, `apperr`.
   - **Core:** queue and step state machine in `internal/core/builds`; execution, logs and artifacts in `internal/builds`.
 - [ ] Code search with editor links (XR-01).
-- [ ] Home: hero scene, composer placeholder, suggestion chips (UI-01).
+- [x] Home: hero scene, composer placeholder, suggestion chips (UI-01).
 - [ ] Widgets: Git activity, Merge requests, Needs attention, CI failures, Builds, Recent areas, This machine (UI-03).
-- [ ] Remaining themes (UI-05).
+- [x] Remaining themes (UI-05).
 - [ ] Performance check: status refresh for 50 repos under 10 seconds.
 
 **Exit:** the demo project shows correct status, MRs, pipelines and builds; daily workspace use is possible.

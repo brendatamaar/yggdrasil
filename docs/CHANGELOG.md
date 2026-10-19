@@ -16,6 +16,10 @@ All notable changes to Yggdrasil are documented here. The format follows [Keep a
 - `YGG_DATA_DIR`, `YGG_LOG` and `YGG_MOCK_DELAY_MS` settings (IN-06).
 - Types are generated from Go into `web/src/api/gen` with `task generate` (`sqlc` and `tygo`).
 - Architecture tests that fail when a process is started outside `internal/platform`, the environment is read outside `internal/safety`, or a package imports one it must not (docs/AGENTS.md section 5).
+- Repo tracking API: browse folders, preview the git repos under a folder, track a project with the repos you pick, rescan, stop tracking a repo or project, rename a project. Stopping tracking hides the repo everywhere (agents included) but never touches files on disk, and tracking the same folder again restores it (WS-01). `ygg seed <folder>` now tracks the folder as a project with every repo found under it.
+- Repo status API with live updates: branch, uncommitted changes, ahead/behind, last commit and health flags (missing folder, not a repo, detached, no upstream, conflicts, diverged), filters and counts per project (WS-02 to WS-04). Status reads never take git's index lock.
+- Home page: a procedural scene that follows the time of day (or a fixed dawn, day, dusk, night, or off), with the composer on top and suggestion chips that fill it (UI-01).
+- Themes: System, Harbour, Daylight, Dracula, Rosé Pine, Nord and Gruvbox, all checked for readable contrast (UI-05).
 - `task smoke` (also in CI) checks the built `ygg.exe` on Windows: doctor, seed, a demo task, loopback and Host/Origin refusal, static files, the refusal of a repo with its own Claude Code configuration, and that killing `ygg` ends an agent's whole process tree; `task smoke:real` runs a short real Claude Code session (a sub-agent, the Ask-mode and repo-folder refusals, cancel).
 
 ### Changed
@@ -23,6 +27,8 @@ All notable changes to Yggdrasil are documented here. The format follows [Keep a
 - An agent will not run in a repo that has its own Claude Code configuration (settings, MCP servers, agent definitions) until repo trust exists (SF-09).
 - Every state change and its audit entry are now written in one database transaction, and a change made in parallel is refused instead of overwriting the other (SF-05).
 - Error responses say what to do next and never carry internal text; a stale change answers 409 (SF-01).
+- A repo can't be untracked while a build or an agent task is running in it.
+- The "light" theme is now called Daylight.
 
 ### Fixed
 - Terminal sessions now check a `.cmd` or `.bat` program's arguments the same way as other processes do. No child process on Windows looks for commands in its working folder, so a program planted in a worktree can't run instead of the real one (SF-02).
