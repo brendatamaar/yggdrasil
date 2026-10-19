@@ -24,6 +24,9 @@ func TestLegacyLowercasePathIsCanonicalised(t *testing.T) {
 	ctx := context.Background()
 	legacy := strings.ToLower(e.root)
 	p := dbtest.Project(t, e.store, core.Project{Name: "legacy", Path: legacy})
+	if pv, err := e.svc.Preview(ctx, e.root); err != nil || pv.Existing == nil || *pv.Existing != p.ID {
+		t.Fatalf("Preview of the canonical spelling = %+v, %v; want Existing %s", pv, err, p.ID)
+	}
 	out, err := e.svc.Track(ctx, e.root, "again", []corerepos.Pick{pick("shop-api")}, "user")
 	if err != nil {
 		t.Fatal(err)

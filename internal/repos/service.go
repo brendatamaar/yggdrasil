@@ -342,12 +342,10 @@ func (s *TrackingService) once(ctx context.Context, in corerepos.Input) (corerep
 		after = nil
 		w := tx.Workspace()
 		ws, err := w.Load(ctx)
-		if err == nil {
-			ws = canonicalizeProjects(ws)
-		}
 		if err != nil {
 			return err
 		}
+		ws = canonicalizeProjects(ws)
 		_, cmds, outcome := corerepos.Decide(ws, in)
 		out = outcome
 		now := inputTime(in)

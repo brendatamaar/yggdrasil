@@ -59,11 +59,14 @@ type env struct {
 	rec   *refreshRecorder
 	pub   *countPub
 	root  string
+	// dbPath is the SQLite file, for tests that need a second connection.
+	dbPath string
 }
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	d, err := db.Open(context.Background(), filepath.Join(t.TempDir(), "y.db"))
+	dbPath := filepath.Join(t.TempDir(), "y.db")
+	d, err := db.Open(context.Background(), dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +84,7 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	return &env{t: t, svc: svc, store: store, rec: rec, pub: pub, root: root}
+	return &env{t: t, svc: svc, store: store, rec: rec, pub: pub, root: root, dbPath: dbPath}
 }
 
 // repoDir makes a folder with a .git folder and a file in it.
