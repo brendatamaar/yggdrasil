@@ -1,0 +1,32 @@
+{
+  "total_count": 2,
+  "incomplete_results": false,
+  "items": [
+    {
+      "number": 42,
+      "title": "Add cart badge",
+      "state": "open",
+      "draft": false,
+      "merged_at": null,
+      "updated_at": "2026-10-12T09:30:00Z",
+      "html_url": "https://github.com/acme-shop/shop-api/pull/42",
+      "user": {
+        "login": "mara"
+      },
+      "repository_url": "https://api.github.com/repos/acme-shop/shop-api"
+    },
+    {
+      "number": 8,
+      "title": "Update admin theme",
+      "state": "open",
+      "draft": false,
+      "merged_at": null,
+      "updated_at": "2026-10-10T08:00:00Z",
+      "html_url": "https://github.com/acme-shop/shop-admin/pull/8",
+      "user": {
+        "login": "priya"
+      },
+      "repository_url": "https://api.github.com/repos/acme-shop/shop-admin"
+    }
+  ]
+}

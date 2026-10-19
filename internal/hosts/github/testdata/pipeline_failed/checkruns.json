@@ -1,0 +1,23 @@
+{
+  "total_count": 2,
+  "check_runs": [
+    {
+      "id": 1,
+      "name": "ci",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/acme-shop/shop-api/actions/runs/31",
+      "started_at": "2026-10-12T09:40:00Z",
+      "completed_at": "2026-10-12T09:45:00Z"
+    },
+    {
+      "id": 1,
+      "name": "ci",
+      "status": "completed",
+      "conclusion": "failure",
+      "html_url": "https://github.com/acme-shop/shop-api/actions/runs/31",
+      "started_at": "2026-10-12T09:40:00Z",
+      "completed_at": "2026-10-12T09:45:00Z"
+    }
+  ]
+}

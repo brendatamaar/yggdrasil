@@ -1,0 +1,19 @@
+{
+  "total_count": 1,
+  "incomplete_results": false,
+  "items": [
+    {
+      "number": 7,
+      "title": "Fix totals rounding",
+      "state": "open",
+      "draft": false,
+      "merged_at": null,
+      "updated_at": "2026-10-11T08:00:00Z",
+      "html_url": "https://github.com/acme-shop/shop-web/pull/7",
+      "user": {
+        "login": "jonas"
+      },
+      "repository_url": "https://api.github.com/repos/acme-shop/shop-web"
+    }
+  ]
+}

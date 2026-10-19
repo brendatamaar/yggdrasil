@@ -1,0 +1,20 @@
+[
+  {
+    "number": 50,
+    "title": "Other branch",
+    "state": "open",
+    "merged": false,
+    "draft": false,
+    "updated_at": "2026-10-12T09:30:00Z",
+    "html_url": "https://code.example.org/acme-shop/shop-api/pulls/50",
+    "user": {
+      "login": "mara"
+    },
+    "head": {
+      "ref": "other"
+    },
+    "base": {
+      "ref": "main"
+    }
+  }
+]
