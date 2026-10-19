@@ -18,6 +18,12 @@ export function TopBar() {
         <Link to="/projects" className={navClass}>
           Projects
         </Link>
+        <Link to="/builds" className={navClass}>
+          Builds
+        </Link>
+        <Link to="/mrs" className={navClass}>
+          Merge requests
+        </Link>
         <Link to="/settings" className={navClass}>
           Settings
         </Link>
