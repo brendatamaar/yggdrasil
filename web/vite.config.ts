@@ -43,6 +43,10 @@ export default defineConfig({
     // The default "forks" pool timed out starting its workers on Windows
     // ("Timeout waiting for worker to respond"); threads start reliably.
     pool: "threads",
+    // Each file takes ~40 s to start a worker on slow Windows machines; with
+    // one worker per file, parallel agent runs or a busy machine hit the
+    // worker start timeout. Two workers keep start-up under it.
+    maxWorkers: 2,
     // themes.css is read as text by the contrast test; vitest would otherwise stub CSS as empty.
     css: { include: [/themes\.css/] },
     include: ["src/**/*.test.{ts,tsx}"],
