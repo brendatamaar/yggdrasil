@@ -97,7 +97,8 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	// The status service publishes through the server, and the server serves
 	// the status: build the service first, give it the publisher after New.
 	status := repos.NewStatusService(store, repos.NewGitReader(g), func() time.Time { return time.Now().UTC() }, nil, repos.WithLogger(log))
-	tracking, err := repos.NewTrackingService(repos.Deps{Store: store, Redactor: redactor, Status: status, Log: log})
+	reposPub := &lateReposPublisher{}
+	tracking, err := repos.NewTrackingService(repos.Deps{Store: store, Redactor: redactor, Status: status, Log: log, Publisher: reposPub})
 	if err != nil {
 		_ = d.Close()
 		return nil, fmt.Errorf("start repo tracking: %w", err)
@@ -113,6 +114,7 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		return nil, fmt.Errorf("start the server: %w", err)
 	}
 	status.SetPublisher(statusPublisher{srv})
+	reposPub.srv = srv // set before Run starts any goroutine that could publish
 	return &app{cfg: cfg, log: log, db: d, store: store, srv: srv, status: status}, nil
 }
 
@@ -133,4 +135,14 @@ func (a *app) run(ctx context.Context, ln net.Listener) error {
 	serveErr := group.Wait()
 	closeErr := a.db.Close()
 	return errors.Join(serveErr, closeErr)
+}
+
+// lateReposPublisher forwards tracking's "repos changed" to the server, which
+// is built after the tracking service. srv is set once, before run starts.
+type lateReposPublisher struct{ srv *api.Server }
+
+func (p *lateReposPublisher) PublishReposChanged() {
+	if p.srv != nil {
+		p.srv.PublishReposChanged()
+	}
 }
