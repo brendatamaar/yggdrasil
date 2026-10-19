@@ -421,3 +421,7 @@ The repo page UI (WS-05) moves to B3, next to the builds UI and the MR inbox.
   - the step log path is derived from the build ID and step index;
   - the legacy `Store.GetBuild`/`ListBuilds` are retired by the builds service if nothing else uses them.
 - **WS-05 gaps for the B3 git-actions task (it owns `internal/git`):** `git.Log` takes a ref (the service refuses anything but HEAD today), and per-branch ahead/behind in `git.Branches`.
+
+- **B2d builds service merged and wired** (`cmd/ygg/builds.go`: a locator over the active store reads; `Known` has no worktrees until Phase 3). On shutdown, step results aren't recorded; the build is marked Interrupted on the next start. The legacy `db` build reads are still used by db tests and archtest (backlog: retire them).
+- **Recurring flake:** vitest "Timeout waiting for worker to respond" when several agents run tests at once. Reruns pass. Backlog: raise the vitest worker start timeout or cap threads in `web/vite.config.ts`.
+- **B3 started early:** git hosts, and git actions + WS-08 (which own `internal/git` for the WS-05 gaps).
