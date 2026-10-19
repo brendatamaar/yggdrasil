@@ -434,3 +434,49 @@ The repo page UI (WS-05) moves to B3, next to the builds UI and the MR inbox.
     - there is no "fetch all" scope parameter;
     - a token added by `.env` reload isn't in the process log redactor until restart.
   - Remaining from the Phase 2 plan: the review gate for `ca60153..main` (held at the human's request), then B4: code search (XR-01), widgets (UI-03), the perf check.
+
+## Review gate `ca60153..main`: round 1 and fix batch F1 (proposed, awaiting approval)
+
+Round 1 verdicts: safety **FAIL** (1 Blocking), FE part A no Must-fix, FE part B no Must-fix.
+
+### Tasks (no two parallel tasks share a file or package)
+
+| Task | Agent | Owns | Items |
+|---|---|---|---|
+| F1-G1 hosts | go-backend | `internal/hosts/**` (incl. gitlab/github/gitea, hoststest), `internal/core/hosts`, `internal/safety` (redactor), `cmd/ygg/hosts.go`, `cmd/ygg/app.go`, `internal/builds/toolchains/maven` | see below |
+| F1-G2 repos/builds | go-backend | `internal/repos`, `internal/builds` (not toolchains), `internal/git`, `internal/core/builds`, `internal/core/repos` non-test | see below |
+| F1-FE web | frontend | `web/src/**` | S-B1 frontend half |
+| F1-T tests (after G1, G2 merged) | test-engineer | test files only, in the packages above | test gaps |
+
+**F1-G1**
+- **Blocking** SAFETY-B1: one `internal/hosts` helper (`url.Parse`, scheme http/https, non-empty host); use in all three parsers for `MergeRequest.URL` and `Pipeline.URL`; blank or fall back when invalid. Parser test per host with `javascript:` and `data:`.
+- SF1 `getter.go` CheckRedirect: also require same scheme; test beside `TestGetRefusesRedirectToAnotherHost`.
+- SF2 `safety.Redactor.Add` (concurrency-safe); `Reload` calls it; test.
+- B8 `resolve`: per-call timeout (about 10 s) on `git.RemoteURL`.
+- B9 `feedHosts`: coalesce snapshots (dirty flag, one feeder in the errgroup).
+- Consider: `Start` reads `cfg` under `mu`; core `config` clears `FetchedAt` on token change; unreadable `.env` becomes a `Problem`; log client panic at Error.
+- Maven: reject symlinked module dirs; report the 200-module truncation; plain-language error for non-UTF-8 pom.
+
+**F1-G2**
+- A-SF1 `actions.go`: while draining on cancel, still accept `ActionDone`, `StatusChecked`, `RepoGone` (so `AuditRepoDone` is written); reject only `StartBatch`. Test: cancel mid-command, audit exists.
+- A-SF2 `service.go` reconcile: retry with bounded backoff, and process parseable rows when one is corrupt.
+- Consider: run `Status.Refresh` off the owner goroutine; prune `started` when Finished; log lost commands after an `interpret` panic.
+- SAFETY-SF3 `detail.go`/`git.go`: bounded stdout (stop at the cap) for diff; `LC_ALL=C` for git calls whose stderr is classified; test with a diff above the cap.
+- SAFETY nit: `--literal-pathspecs` for `git diff <path>`.
+
+**F1-FE**
+- `safeHref()` helper; use in `MrInboxPage.tsx` and `HostBlock.tsx` (render a plain span for non-http(s)); test with `javascript:` and `data:`.
+
+**F1-T (second batch, after G1/G2 merge; each test shown to fail)**
+- Core actions: split A1..A8 so each test checks only its invariant.
+- Core hosts: fix `TestStepDoesNotMutateItsInput` (compare before/after); property that an unauthorized failure blocks all of the token's other keys; tighten H3 to the instance change.
+- Builds shell: S4 (no process after Finished), duplicate `StartStep`, seeded chaos over Enqueue/Cancel/exit.
+- Actions shell: S3 (no git process outlives the service), duplicate delivery.
+- Parsers: JSON round-trip legs; `ParseRefresh` fuzz and round-trip; stronger `FuzzParsePOM`; hoststest contract clauses (inbox 429/403/500, bad JSON, ctx cancel, partial 304); cyclic `<modules>` reactor test; `TestServiceSentinelTokenNeverLeaks` without sleeps.
+
+### Decisions needed from the human
+1. Open/Reveal audit entries: recommend **no audit** (no state change), record the decision here.
+2. "Fetch all" scope: record as accepted deviation (bulk works via `Repos[]`, limit 500).
+3. Live-host test hook `YGG_LIVE_HOST_TESTS=1`: recommend defer to Phase 6 manual verification.
+4. Per-line log redaction (split token at 64 KiB cut): document in `docs/threat-model.md`, no code change.
+5. Deferred to Phase 3: shared main-checkout lock closing the Busy-snapshot race.
