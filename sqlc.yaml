@@ -2,7 +2,9 @@ version: "2"
 sql:
   - engine: sqlite
     # sqlc reads goose files and skips the "-- +goose Down" sections.
-    schema: internal/db/migrations
+    schema:
+      - internal/db/migrations
+      - internal/db/sqlcschema
     queries: internal/db/queries
     gen:
       go:

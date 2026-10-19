@@ -299,6 +299,11 @@ func (s *TrackingService) decide(ctx context.Context, mk func(now time.Time) cor
 	for attempt := 0; attempt < 2; attempt++ {
 		out, after, err := s.once(ctx, mk(s.d.Clock().UTC()))
 		if err == nil {
+			if c, ok := out.(corerepos.IDCollision); ok {
+				// Generated IDs are random: a clash is a defect, not user input.
+				s.d.Log.Error("tracking: a generated ID was empty or already used", "id", c.ID)
+				return nil, fmt.Errorf("track: generated ID %q is empty or already in use", c.ID)
+			}
 			s.runAfter(ctx, after)
 			return out, nil
 		}

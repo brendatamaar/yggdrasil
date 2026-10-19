@@ -27,7 +27,7 @@ func CanonicalPath(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("open %s (does the folder exist?): %w", path, err)
 	}
-	defer windows.CloseHandle(h)
+	defer func() { _ = windows.CloseHandle(h) }()
 	buf := make([]uint16, 512)
 	for {
 		n, err := windows.GetFinalPathNameByHandle(h, &buf[0], uint32(len(buf)), 0) //nolint:gosec // len(buf) is small

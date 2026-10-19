@@ -168,6 +168,9 @@ type picked struct {
 	rows, audits    []Command
 	added, restored []core.RepoID
 	invalid         string
+	// idClash is a caller-supplied ID that is empty or already used: a defect.
+	idClash core.RepoID
+	idBad   bool
 }
 
 func (r picked) changed() []core.RepoID {
@@ -208,7 +211,7 @@ func applyPicks(ws Workspace, proj Project, picks []Pick, actor Actor, now time.
 		switch {
 		case !exists:
 			if pk.NewRepoID == "" || used[pk.NewRepoID] {
-				res.invalid = fmt.Sprintf("the repo ID %q is empty or already in use", pk.NewRepoID)
+				res.idClash, res.idBad = pk.NewRepoID, true
 				return res
 			}
 			used[pk.NewRepoID] = true
@@ -257,6 +260,9 @@ func trackProject(ws Workspace, in TrackProject) (Workspace, []Command, Outcome)
 	existing, exists := projectAt(ws, in.Path)
 	if exists && isActive(existing.Life) {
 		res := applyPicks(ws, existing, in.Repos, in.Actor, in.Now)
+		if res.idBad {
+			return ws, nil, IDCollision{ID: string(res.idClash)}
+		}
 		if res.invalid != "" {
 			return ws, nil, InvalidInput{Reason: res.invalid}
 		}
@@ -277,6 +283,9 @@ func trackProject(ws Workspace, in TrackProject) (Workspace, []Command, Outcome)
 	if exists {
 		// An Untracked project at this path comes back with its history.
 		res := applyPicks(ws, existing, in.Repos, in.Actor, in.Now)
+		if res.idBad {
+			return ws, nil, IDCollision{ID: string(res.idClash)}
+		}
 		if res.invalid != "" {
 			return ws, nil, InvalidInput{Reason: res.invalid}
 		}
@@ -287,13 +296,16 @@ func trackProject(ws Workspace, in TrackProject) (Workspace, []Command, Outcome)
 		return finishPicks(ws, existing, res, rows, audits)
 	}
 	if in.NewProjectID == "" {
-		return ws, nil, InvalidInput{Reason: "the project ID is empty"}
+		return ws, nil, IDCollision{}
 	}
 	if _, taken := ws.Projects[in.NewProjectID]; taken {
-		return ws, nil, InvalidInput{Reason: fmt.Sprintf("the project ID %q is already in use", in.NewProjectID)}
+		return ws, nil, IDCollision{ID: string(in.NewProjectID)}
 	}
 	proj := Project{ID: in.NewProjectID, Name: in.Name, Path: in.Path, Life: Active{Since: in.Now}, Repos: map[core.RepoID]Repo{}}
 	res := applyPicks(ws, proj, in.Repos, in.Actor, in.Now)
+	if res.idBad {
+		return ws, nil, IDCollision{ID: string(res.idClash)}
+	}
 	if res.invalid != "" {
 		return ws, nil, InvalidInput{Reason: res.invalid}
 	}
@@ -329,6 +341,9 @@ func trackRepos(ws Workspace, in TrackRepos) (Workspace, []Command, Outcome) {
 		return ws, nil, NothingPicked{}
 	}
 	res := applyPicks(ws, proj, in.Repos, in.Actor, in.Now)
+	if res.idBad {
+		return ws, nil, IDCollision{ID: string(res.idClash)}
+	}
 	if res.invalid != "" {
 		return ws, nil, InvalidInput{Reason: res.invalid}
 	}

@@ -48,6 +48,11 @@ type UntrackDone struct {
 // refuses it instead of trusting the caller.
 type InvalidInput struct{ Reason string }
 
+// IDCollision: an ID the shell generated is empty or already in use. That is
+// a defect of the shell (IDs are random), not bad user input; the shell logs it
+// and answers with an internal error.
+type IDCollision struct{ ID string }
+
 // Renamed: the project has its new name.
 type Renamed struct{ ProjectID core.ProjectID }
 
@@ -61,3 +66,4 @@ func (NothingPicked) isOutcome()  {}
 func (UntrackDone) isOutcome()    {}
 func (Renamed) isOutcome()        {}
 func (InvalidInput) isOutcome()   {}
+func (IDCollision) isOutcome()    {}

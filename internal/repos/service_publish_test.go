@@ -2,11 +2,59 @@ package repos_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 
 	corerepos "github.com/brendatamaar/yggdrasil/internal/core/repos"
+	"github.com/brendatamaar/yggdrasil/internal/db"
+	"github.com/brendatamaar/yggdrasil/internal/repos"
+	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
+
+// A generated ID that clashes is a defect: an error (HTTP 500), not
+// InvalidInput, and nothing is published.
+func TestIDCollisionIsADefectNotInvalidInput(t *testing.T) {
+	ctx := context.Background()
+	d, err := db.Open(ctx, filepath.Join(t.TempDir(), "y.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	red := safety.NewRedactor()
+	pub := &countPub{}
+	svc, err := repos.NewTrackingService(repos.Deps{
+		Store: db.NewStore(d, red.Redact), Redactor: red, Publisher: pub,
+		IDs: func(prefix string) string {
+			if prefix == "aud" {
+				return db.NewID(prefix)
+			}
+			return "fixed_" + prefix
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mk := func() string {
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, "api", ".git"), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	picks := []corerepos.Pick{{RelPath: "api"}}
+	if _, err := svc.Track(ctx, mk(), "one", picks, "user"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := svc.Track(ctx, mk(), "two", picks, "user")
+	if err == nil {
+		t.Fatalf("a clashing ID gave the outcome %#v", out)
+	}
+	if got := pub.n.Load(); got != 1 {
+		t.Errorf("publishes = %d, want 1 (the clash published nothing)", got)
+	}
+}
 
 type countPub struct{ n atomic.Int32 }
 
