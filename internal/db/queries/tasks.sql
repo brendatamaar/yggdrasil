@@ -18,8 +18,17 @@ UPDATE tasks SET status = ?, updated_at = ?, finished_at = ?, version = version 
 -- name: UpdateTaskSession :execrows
 UPDATE tasks SET session_id = ?, updated_at = ?, version = version + 1 WHERE id = ? AND version = ?;
 
--- name: AddTaskRepo :exec
-INSERT INTO task_repos (task_id, repo_id) VALUES (?, ?);
+-- A task only gets a repo that is still tracked and belongs to the task's
+-- project; checked inside the write transaction (invariant 6). Zero rows
+-- means the repo was untracked (or isn't the project's) meanwhile.
+-- name: AddTaskRepo :execrows
+INSERT INTO task_repos (task_id, repo_id)
+SELECT sqlc.arg(task_id), r.id FROM repos r
+WHERE r.id = sqlc.arg(repo_id) AND r.untracked_at IS NULL
+  AND r.project_id = (SELECT t.project_id FROM tasks t WHERE t.id = sqlc.arg(task_id));
+
+-- name: CountTrackedProject :one
+SELECT count(*) FROM projects WHERE id = ? AND untracked_at IS NULL;
 
 -- name: ListTaskRepos :many
 SELECT repo_id FROM task_repos WHERE task_id = ? ORDER BY repo_id;
