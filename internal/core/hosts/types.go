@@ -103,6 +103,9 @@ type Target struct {
 
 // Poller is the state of the host poller.
 type Poller struct {
+	// Seq numbers fetch attempts across all keys, so a late result of a dropped
+	// key can never match the attempt of a re-added one.
+	Seq       int
 	Instances map[InstanceID]Instance
 	// Targets is what should be polled now.
 	Targets map[Key]Target
@@ -116,7 +119,9 @@ type Poller struct {
 // Entry is the polling state of one key.
 type Entry struct {
 	Attempt int
-	Phase   Phase
+	// Failures counts consecutive transient failures; a success resets it.
+	Failures int
+	Phase    Phase
 }
 
 // Phase is where a key is in its polling cycle. It is a closed set: Idle,
