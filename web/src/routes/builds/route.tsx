@@ -1,16 +1,19 @@
 import { createRoute } from "@tanstack/react-router";
-import { Placeholder } from "../../components/Placeholder";
+import { BuildPage } from "../../features/builds/BuildPage";
+import { BuildsPage } from "../../features/builds/BuildsPage";
 import { rootRoute } from "../root";
 
-// Owned by the builds UI task (BL-03, BL-05–07).
 export const buildsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/builds",
-  component: () => <Placeholder title="Builds" />,
+  component: BuildsPage,
 });
 
 export const buildRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/builds/$buildId",
-  component: () => <Placeholder title="Build" />,
+  component: function BuildRouteComponent() {
+    const { buildId } = buildRoute.useParams();
+    return <BuildPage buildId={buildId} />;
+  },
 });
