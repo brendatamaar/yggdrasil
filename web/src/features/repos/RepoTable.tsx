@@ -1,5 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Menu from "@radix-ui/react-dropdown-menu";
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { describeError } from "../../api/client";
 import type { RepoStatusDTO } from "../../api/gen/api.gen";
@@ -116,7 +117,9 @@ export function RepoTable({ repos }: { repos: RepoStatusDTO[] }) {
         {repos.map((r) => (
           <tr key={r.id} className="border-t border-line">
             <td className="px-3 py-1 font-medium">
-              {r.name}
+              <Link to="/repos/$repoId" params={{ repoId: r.id }} className="underline-offset-2 hover:underline">
+                {r.name}
+              </Link>
               {r.refreshing && (
                 <span role="status" aria-label={`Refreshing ${r.name}`} className="ml-2 inline-block h-3 w-3 animate-spin rounded-full border-2 border-line border-t-accent" />
               )}
