@@ -10,6 +10,17 @@ import (
 	"database/sql"
 )
 
+const countRunningBuilds = `-- name: CountRunningBuilds :one
+SELECT COUNT(*) FROM builds WHERE status = 'running'
+`
+
+func (q *Queries) CountRunningBuilds(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countRunningBuilds)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createBuild = `-- name: CreateBuild :exec
 INSERT INTO builds (id, worktree_id, task_id, target, status, created_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?)
 `
@@ -75,6 +86,24 @@ func (q *Queries) CreateBuildStep(ctx context.Context, arg CreateBuildStepParams
 	return err
 }
 
+const deleteBuildArtifactRows = `-- name: DeleteBuildArtifactRows :exec
+DELETE FROM build_artifacts WHERE build_id = ?
+`
+
+func (q *Queries) DeleteBuildArtifactRows(ctx context.Context, buildID string) error {
+	_, err := q.db.ExecContext(ctx, deleteBuildArtifactRows, buildID)
+	return err
+}
+
+const deleteBuildStepRows = `-- name: DeleteBuildStepRows :exec
+DELETE FROM build_steps WHERE build_id = ?
+`
+
+func (q *Queries) DeleteBuildStepRows(ctx context.Context, buildID string) error {
+	_, err := q.db.ExecContext(ctx, deleteBuildStepRows, buildID)
+	return err
+}
+
 const getBuild = `-- name: GetBuild :one
 SELECT id, worktree_id, task_id, target, status, created_at, finished_at, version, actor, started_at, result_step, preset_id, cancelled_at, artifacts_collected_at FROM builds WHERE id = ?
 `
@@ -99,6 +128,211 @@ func (q *Queries) GetBuild(ctx context.Context, id string) (Build, error) {
 		&i.ArtifactsCollectedAt,
 	)
 	return i, err
+}
+
+const insertBuildArtifactRow = `-- name: InsertBuildArtifactRow :exec
+INSERT INTO build_artifacts (build_id, repo_id, path, size) VALUES (?, ?, ?, ?)
+`
+
+type InsertBuildArtifactRowParams struct {
+	BuildID string
+	RepoID  string
+	Path    string
+	Size    int64
+}
+
+func (q *Queries) InsertBuildArtifactRow(ctx context.Context, arg InsertBuildArtifactRowParams) error {
+	_, err := q.db.ExecContext(ctx, insertBuildArtifactRow,
+		arg.BuildID,
+		arg.RepoID,
+		arg.Path,
+		arg.Size,
+	)
+	return err
+}
+
+const insertBuildRow = `-- name: InsertBuildRow :exec
+INSERT INTO builds (id, worktree_id, task_id, target, status, created_at, finished_at, version, actor,
+                    started_at, result_step, preset_id, cancelled_at, artifacts_collected_at)
+VALUES (?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+`
+
+type InsertBuildRowParams struct {
+	ID                   string
+	WorktreeID           sql.NullString
+	Target               string
+	Status               string
+	CreatedAt            string
+	FinishedAt           sql.NullString
+	Actor                string
+	StartedAt            sql.NullString
+	ResultStep           sql.NullInt64
+	PresetID             sql.NullString
+	CancelledAt          sql.NullString
+	ArtifactsCollectedAt sql.NullString
+}
+
+func (q *Queries) InsertBuildRow(ctx context.Context, arg InsertBuildRowParams) error {
+	_, err := q.db.ExecContext(ctx, insertBuildRow,
+		arg.ID,
+		arg.WorktreeID,
+		arg.Target,
+		arg.Status,
+		arg.CreatedAt,
+		arg.FinishedAt,
+		arg.Actor,
+		arg.StartedAt,
+		arg.ResultStep,
+		arg.PresetID,
+		arg.CancelledAt,
+		arg.ArtifactsCollectedAt,
+	)
+	return err
+}
+
+const insertBuildStepRow = `-- name: InsertBuildStepRow :exec
+INSERT INTO build_steps (build_id, idx, repo_id, name, status, exit_code, log_path, started_at, finished_at,
+                         argv, attempt, outcome, start_failure, log_truncated)
+VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?)
+`
+
+type InsertBuildStepRowParams struct {
+	BuildID      string
+	Idx          int64
+	RepoID       string
+	Name         string
+	Status       string
+	ExitCode     sql.NullInt64
+	StartedAt    sql.NullString
+	FinishedAt   sql.NullString
+	Argv         string
+	Attempt      int64
+	Outcome      sql.NullString
+	StartFailure sql.NullString
+	LogTruncated int64
+}
+
+func (q *Queries) InsertBuildStepRow(ctx context.Context, arg InsertBuildStepRowParams) error {
+	_, err := q.db.ExecContext(ctx, insertBuildStepRow,
+		arg.BuildID,
+		arg.Idx,
+		arg.RepoID,
+		arg.Name,
+		arg.Status,
+		arg.ExitCode,
+		arg.StartedAt,
+		arg.FinishedAt,
+		arg.Argv,
+		arg.Attempt,
+		arg.Outcome,
+		arg.StartFailure,
+		arg.LogTruncated,
+	)
+	return err
+}
+
+const listActiveBuildIDs = `-- name: ListActiveBuildIDs :many
+SELECT id FROM builds WHERE status = 'running' ORDER BY created_at, id
+`
+
+func (q *Queries) ListActiveBuildIDs(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listActiveBuildIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBuildArtifactRows = `-- name: ListBuildArtifactRows :many
+SELECT build_id, repo_id, path, size FROM build_artifacts WHERE build_id = ? ORDER BY path
+`
+
+func (q *Queries) ListBuildArtifactRows(ctx context.Context, buildID string) ([]BuildArtifact, error) {
+	rows, err := q.db.QueryContext(ctx, listBuildArtifactRows, buildID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []BuildArtifact{}
+	for rows.Next() {
+		var i BuildArtifact
+		if err := rows.Scan(
+			&i.BuildID,
+			&i.RepoID,
+			&i.Path,
+			&i.Size,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBuildIDsFiltered = `-- name: ListBuildIDsFiltered :many
+SELECT id FROM builds
+WHERE (?1 IS NULL OR status = ?1)
+  AND (?2 IS NULL OR id IN (SELECT build_id FROM build_steps WHERE repo_id = ?2))
+  AND (?3 IS NULL OR id IN (
+        SELECT bs.build_id FROM build_steps bs JOIN repos r ON r.id = bs.repo_id WHERE r.project_id = ?3))
+ORDER BY created_at DESC, id DESC
+LIMIT ?4
+`
+
+type ListBuildIDsFilteredParams struct {
+	Status    interface{}
+	RepoID    interface{}
+	ProjectID interface{}
+	MaxRows   int64
+}
+
+func (q *Queries) ListBuildIDsFiltered(ctx context.Context, arg ListBuildIDsFilteredParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listBuildIDsFiltered,
+		arg.Status,
+		arg.RepoID,
+		arg.ProjectID,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listBuildSteps = `-- name: ListBuildSteps :many
@@ -183,4 +417,70 @@ func (q *Queries) ListBuildsByTask(ctx context.Context, taskID sql.NullString) (
 		return nil, err
 	}
 	return items, nil
+}
+
+const listQueuedBuildRefs = `-- name: ListQueuedBuildRefs :many
+SELECT id, created_at FROM builds WHERE status = 'queued' ORDER BY created_at, id
+`
+
+type ListQueuedBuildRefsRow struct {
+	ID        string
+	CreatedAt string
+}
+
+func (q *Queries) ListQueuedBuildRefs(ctx context.Context) ([]ListQueuedBuildRefsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listQueuedBuildRefs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListQueuedBuildRefsRow{}
+	for rows.Next() {
+		var i ListQueuedBuildRefsRow
+		if err := rows.Scan(&i.ID, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updateBuildRow = `-- name: UpdateBuildRow :execrows
+UPDATE builds SET status = ?, finished_at = ?, started_at = ?, result_step = ?, cancelled_at = ?,
+                  artifacts_collected_at = ?, version = version + 1
+WHERE id = ? AND version = ?
+`
+
+type UpdateBuildRowParams struct {
+	Status               string
+	FinishedAt           sql.NullString
+	StartedAt            sql.NullString
+	ResultStep           sql.NullInt64
+	CancelledAt          sql.NullString
+	ArtifactsCollectedAt sql.NullString
+	ID                   string
+	Version              int64
+}
+
+func (q *Queries) UpdateBuildRow(ctx context.Context, arg UpdateBuildRowParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateBuildRow,
+		arg.Status,
+		arg.FinishedAt,
+		arg.StartedAt,
+		arg.ResultStep,
+		arg.CancelledAt,
+		arg.ArtifactsCollectedAt,
+		arg.ID,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
