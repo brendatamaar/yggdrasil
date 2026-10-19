@@ -167,6 +167,13 @@ func (f *FakeReader) Calls(path corerepos.CleanPath) int {
 	return f.calls[path]
 }
 
+// Active returns how many reads are running now.
+func (f *FakeReader) Active() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.active
+}
+
 // MaxActive returns the most reads that ran at the same time.
 func (f *FakeReader) MaxActive() int {
 	f.mu.Lock()

@@ -31,6 +31,8 @@ const (
 	Link
 	// Locked is a folder that can't be read.
 	Locked
+	// File is a plain file. Only the DirLister contract uses it.
+	File
 )
 
 // Tree describes a folder tree with slash paths relative to its root. Parent
