@@ -360,3 +360,27 @@ The gate covered batch F and the B1 backend (`79a8f67..main`).
 |---|---|---|
 | R-status | `go-backend` | `internal/core/repos/refresher*.go`, `status*.go`; `internal/repos/status_*.go` + `repostest/status_contract.go`; `internal/api/repos_status.go` + its tests; `internal/core/builds` (small fixes) |
 | R-tracking | `go-backend` | the remaining `internal/core/repos` files; tracking files in `internal/repos`; `internal/db/**`; `internal/platform` (path canonical form); `internal/api/{repos,tasks}.go` + their tests; `cmd/ygg/seed.go` |
+
+### Review gate B1, round 2 (2026-10-19)
+
+Both reviewers re-checked `a243708..main`. Every round-1 finding is fixed; fe-reviewer mutation-tested the fixes.
+
+Remaining Must-fix:
+- safety: a race in task creation (the tracked check runs outside the write transaction);
+- fe: paths stored by v0.2.0 aren't canonical, so the case-sensitive core could track one folder twice.
+
+Both go to a round-3 fix agent, with migration 00003 made safe to rerun, `CheckPath` run again on the canonical path, an R1 bound measured from the test model, `Restarted()` coverage, and design doc updates.
+
+**Decisions:**
+- **Tasks in `review` don't block untracking** (no agent runs then). The proposal executor (Phase 3) must refuse untracked repos. Project-scope tasks (Phase 3) must write one `task_repos` row per repo, or the busy check misses them.
+- **Old paths are canonicalised when the workspace loads,** in the tracking shell, with no write. `db` can't import `platform`.
+
+**Backlog (not blocking):**
+- `Tx.SetSetting` must be audited by its first caller (WS-08 settings service).
+- OneDrive Files-On-Demand folders are reparse points; refuse only symlink and mount-point tags (`internal/platform`).
+- On Unix, `CanonicalPath` doesn't resolve symlinked ancestors.
+- Status restart with a failing `loadActive` stays empty until the next reload; retry on Tick.
+- `PublishRepoCounts` runs 1 + N store queries per publish; batch them.
+- `Active{Since}` isn't updated on restore; there's no DirLister fake/contract; there's no `RelPath` on `core.Repo`.
+
+**Local refs that still contain `ygg.exe`:** `refs/original/refs/heads/main` (the filter-branch backup) and the branches `worktree-agent-afc97b508ce9b4e75` and `worktree-agent-a3f343cfca2a5e30d`. None are pushed. Never `git push --all` before they are deleted; deleting them needs the human's approval.
