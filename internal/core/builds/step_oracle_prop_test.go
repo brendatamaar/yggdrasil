@@ -77,7 +77,7 @@ func TestPropExitCodeDecidesOutcome(t *testing.T) {
 				}
 			}
 		case StepStartFailed:
-			if !live || x.Index != idx || x.Attempt != att || x.Reason.Validate() != nil {
+			if !live || x.Index != idx || x.Attempt != att || !reasonOK(x.Reason) {
 				return nil
 			}
 			if _, isRunning := prev.(Running); !isRunning {
@@ -108,3 +108,5 @@ func stepAt(s State, i int) StepState {
 	}
 	return nil
 }
+
+func reasonOK(r StartFailure) bool { return r.Validate() == nil }
