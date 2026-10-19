@@ -82,11 +82,21 @@ type StepSpecDTO struct {
 	Argv   []string    `json:"argv"`
 }
 
-// EnqueueBuildRequest is the body of POST /api/builds. A WorktreeID builds in
-// that task worktree instead of the main checkout.
+// EnqueueBuildRequest is the body of POST /api/builds. Target "worktree"
+// builds in the task worktree WorktreeID; "main" builds in the main checkouts.
 type EnqueueBuildRequest struct {
-	Steps      []StepSpecDTO    `json:"steps"`
+	// Target is "main" or "worktree".
+	Target     string           `json:"target"`
 	WorktreeID *core.WorktreeID `json:"worktreeId,omitempty"`
+	PresetID   string           `json:"presetId,omitempty"`
+	Steps      []StepSpecDTO    `json:"steps"`
+}
+
+// UpdateBuildPresetRequest is the body of PATCH /api/build-presets/{id}.
+// Send only the fields to change; the project cannot change.
+type UpdateBuildPresetRequest struct {
+	Name  *string       `json:"name,omitempty"`
+	Steps []StepSpecDTO `json:"steps,omitempty"`
 }
 
 // EnqueueBuildResponse is the body of 202 Accepted for a new build.

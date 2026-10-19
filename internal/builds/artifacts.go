@@ -59,7 +59,7 @@ func FindArtifacts(fsys fs.FS, repo core.RepoID, patterns []string) ([]corebuild
 		}
 		_ = fs.WalkDir(fsys, root, func(name string, d fs.DirEntry, err error) error {
 			if err != nil {
-				return nil // unreadable entries are skipped, not fatal
+				return nil //nolint:nilerr // unreadable entries are skipped, not fatal
 			}
 			if d.IsDir() || !d.Type().IsRegular() || !matchSegments(segs, strings.Split(name, "/")) {
 				return nil

@@ -284,12 +284,25 @@ export interface StepSpecDTO {
   argv: string[];
 }
 /**
- * EnqueueBuildRequest is the body of POST /api/builds. A WorktreeID builds in
- * that task worktree instead of the main checkout.
+ * EnqueueBuildRequest is the body of POST /api/builds. Target "worktree"
+ * builds in the task worktree WorktreeID; "main" builds in the main checkouts.
  */
 export interface EnqueueBuildRequest {
-  steps: StepSpecDTO[];
+  /**
+   * Target is "main" or "worktree".
+   */
+  target: string;
   worktreeId?: core.WorktreeID;
+  presetId?: string;
+  steps: StepSpecDTO[];
+}
+/**
+ * UpdateBuildPresetRequest is the body of PATCH /api/build-presets/{id}.
+ * Send only the fields to change; the project cannot change.
+ */
+export interface UpdateBuildPresetRequest {
+  name?: string;
+  steps?: StepSpecDTO[];
 }
 /**
  * EnqueueBuildResponse is the body of 202 Accepted for a new build.

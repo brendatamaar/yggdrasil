@@ -145,7 +145,7 @@ func (s *Service) startStep(ctx context.Context, c corebuilds.StartStep) []msg {
 		if runCtx.Err() != nil {
 			// ygg is shutting down: leave the build Running, so the next start
 			// records it as interrupted rather than as a failed step.
-			return nil
+			return nil //nolint:nilerr // shutting down: the build is left Running on purpose
 		}
 		if werr != nil && code == 0 {
 			code = -1
