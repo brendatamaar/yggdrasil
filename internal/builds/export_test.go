@@ -1,0 +1,13 @@
+package builds
+
+import (
+	"github.com/brendatamaar/yggdrasil/internal/core"
+	corebuilds "github.com/brendatamaar/yggdrasil/internal/core/builds"
+)
+
+// Post feeds an interpreter-style input without waiting, like a step process
+// reporting its exit.
+func (s *Service) Post(id core.BuildID, in corebuilds.Input) { s.post(id, in) }
+
+// MatchSegments exposes the glob matcher to the tests.
+var MatchSegments = matchSegments
