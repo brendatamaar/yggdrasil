@@ -32,7 +32,7 @@ type DetailRepos interface {
 type DetailGit interface {
 	Status(ctx context.Context, dir string) (git.Status, error)
 	Diff(ctx context.Context, dir string, o git.DiffOptions) (string, error)
-	Log(ctx context.Context, dir string, n int) ([]git.Commit, error)
+	LogRef(ctx context.Context, dir, ref string, n int) ([]git.Commit, error)
 	Show(ctx context.Context, dir, rev string) (git.CommitDetail, error)
 	Branches(ctx context.Context, dir string) ([]git.Branch, error)
 }
@@ -134,19 +134,15 @@ func (s *DetailService) Diff(ctx context.Context, id core.RepoID, path RelPath, 
 	return capDiff(out), nil
 }
 
-// Log returns up to limit commits from HEAD. Only HEAD (the empty ref or
-// "HEAD") is supported: internal/git.Log reads HEAD only.
+// Log returns up to limit commits from ref (HEAD when empty).
 func (s *DetailService) Log(ctx context.Context, id core.RepoID, limit Limit, ref Ref) ([]git.Commit, error) {
-	if ref != "" && ref != "HEAD" {
-		return nil, apperr.New(apperr.Invalid, "History of another branch isn't available yet. Check out the branch first.", fmt.Errorf("ref %q", ref))
-	}
 	dir, err := s.dir(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
-	cs, err := s.git.Log(ctx, dir, int(limit))
+	cs, err := s.git.LogRef(ctx, dir, ref.String(), int(limit))
 	if err != nil {
 		return nil, gitErr(err)
 	}
