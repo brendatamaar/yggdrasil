@@ -3,9 +3,21 @@ import { indexRoute } from "./routes/index";
 import { projectsRoute } from "./routes/projects";
 import { rootRoute } from "./routes/root";
 import { settingsRoute } from "./routes/settings";
+import { buildRoute, buildsRoute } from "./routes/builds/route";
+import { mrsRoute } from "./routes/mrs/route";
+import { repoRoute } from "./routes/repos/route";
 import { taskRoute } from "./routes/tasks/route";
 
-const routeTree = rootRoute.addChildren([indexRoute, taskRoute, projectsRoute, settingsRoute]);
+const routeTree = rootRoute.addChildren([
+  indexRoute,
+  taskRoute,
+  projectsRoute,
+  repoRoute,
+  buildsRoute,
+  buildRoute,
+  mrsRoute,
+  settingsRoute,
+]);
 
 /** Creates the app router. Tests pass a memory history. */
 export function createAppRouter(history?: RouterHistory) {
