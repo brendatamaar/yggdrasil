@@ -16,12 +16,62 @@ type Branch struct {
 	Current  bool   `json:"current"`
 	Upstream string `json:"upstream,omitempty"`
 	OID      string `json:"oid"`
+	// Ahead and Behind count commits against Upstream (0 when there is none
+	// or the upstream is gone).
+	Ahead  int `json:"ahead"`
+	Behind int `json:"behind"`
+}
+
+// parseTrack reads git's %(upstream:track) text, such as "[ahead 1, behind 2]".
+func parseTrack(s string) (ahead, behind int) {
+	s = strings.Trim(strings.TrimSpace(s), "[]")
+	for part := range strings.SplitSeq(s, ",") {
+		f := strings.Fields(part)
+		if len(f) != 2 {
+			continue
+		}
+		n, err := strconv.Atoi(f[1])
+		if err != nil || n < 0 {
+			continue
+		}
+		switch f[0] {
+		case "ahead":
+			ahead = n
+		case "behind":
+			behind = n
+		}
+	}
+	return ahead, behind
+}
+
+// BranchExists says whether a local branch called name exists, and whether a
+// remote-tracking branch <remote>/name exists on any remote. It is read-only.
+func (g *Git) BranchExists(ctx context.Context, dir, name string) (local, remote bool, err error) {
+	if err := checkName("branch", name); err != nil {
+		return false, false, err
+	}
+	out, err := g.run(ctx, dir, "branch exists", true, "for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes")
+	if err != nil {
+		return false, false, err
+	}
+	for line := range strings.SplitSeq(out, "\n") {
+		ref := strings.TrimSuffix(line, "\r")
+		if ref == "refs/heads/"+name {
+			local = true
+		}
+		if rest, ok := strings.CutPrefix(ref, "refs/remotes/"); ok {
+			if _, after, found := strings.Cut(rest, "/"); found && after == name {
+				remote = true
+			}
+		}
+	}
+	return local, remote, nil
 }
 
 // Branches lists local and remote-tracking branches. When HEAD is detached no
 // branch is Current.
 func (g *Git) Branches(ctx context.Context, dir string) ([]Branch, error) {
-	const format = "%(refname)%00%(objectname)%00%(upstream:short)%00%(HEAD)"
+	const format = "%(refname)%00%(objectname)%00%(upstream:short)%00%(HEAD)%00%(upstream:track)"
 	out, err := g.run(ctx, dir, "branch list", true, "for-each-ref", "--format="+format, "refs/heads", "refs/remotes")
 	if err != nil {
 		return nil, err
@@ -29,10 +79,11 @@ func (g *Git) Branches(ctx context.Context, dir string) ([]Branch, error) {
 	var res []Branch
 	for line := range strings.SplitSeq(out, "\n") {
 		f := strings.Split(strings.TrimSuffix(line, "\r"), "\x00")
-		if len(f) != 4 {
+		if len(f) != 5 {
 			continue
 		}
 		b := Branch{OID: f[1], Upstream: f[2], Current: f[3] == "*"}
+		b.Ahead, b.Behind = parseTrack(f[4])
 		if n, ok := strings.CutPrefix(f[0], "refs/heads/"); ok {
 			b.Name = n
 		} else if n, ok := strings.CutPrefix(f[0], "refs/remotes/"); ok {
@@ -82,10 +133,22 @@ func parseCommit(rec string) (c Commit, body string, err error) {
 // Log returns up to n commits from HEAD, newest first. A repo without commits
 // gives an empty list.
 func (g *Git) Log(ctx context.Context, dir string, n int) ([]Commit, error) {
+	return g.LogRef(ctx, dir, "", n)
+}
+
+// LogRef is Log for a branch, tag or other revision. The empty ref means HEAD.
+func (g *Git) LogRef(ctx context.Context, dir, ref string, n int) ([]Commit, error) {
 	if n < 1 {
 		return nil, nil
 	}
-	out, err := g.run(ctx, dir, "log", true, "log", "-z", "-n", strconv.Itoa(n), "--format="+commitFormat)
+	args := []string{"log", "-z", "-n", strconv.Itoa(n), "--format=" + commitFormat}
+	if ref != "" {
+		if err := checkName("revision", ref); err != nil {
+			return nil, err
+		}
+		args = append(args, "--end-of-options", ref, "--")
+	}
+	out, err := g.run(ctx, dir, "log", true, args...)
 	if err != nil {
 		var ge *Error
 		if errors.As(err, &ge) && strings.Contains(ge.Stderr, "does not have any commits") {

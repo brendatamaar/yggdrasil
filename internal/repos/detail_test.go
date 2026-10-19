@@ -105,8 +105,12 @@ func TestDetailLogCommitBranches(t *testing.T) {
 	if err != nil || len(cs) != 1 || cs[0].Subject != "second" {
 		t.Fatalf("log = %+v, %v", cs, err)
 	}
-	_, err = s.Log(ctx, "r1", 1, "topic")
-	wantClass(t, err, apperr.Invalid)
+	cs, err = s.Log(ctx, "r1", 1, "topic")
+	if err != nil || len(cs) != 1 || cs[0].Subject != "second" {
+		t.Fatalf("log of topic = %+v, %v", cs, err)
+	}
+	_, err = s.Log(ctx, "r1", 1, "no-such-branch")
+	wantClass(t, err, apperr.NotFound)
 
 	root, err := s.Commit(ctx, "r1", repos.OID(cs[0].Parents[0]))
 	if err != nil || root.Detail.Subject != "first" || len(root.Detail.Files) != 1 || !strings.Contains(root.Diff.Text, "+one") {
