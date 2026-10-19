@@ -37,6 +37,11 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	var projects []core.ProjectID
 	if p := q.Get("project"); p != "" {
+		// An untracked project is invisible: its tasks are history, not a list.
+		if _, err := s.store.GetProject(r.Context(), core.ProjectID(p)); err != nil {
+			s.fail(w, r, taskErr(err))
+			return
+		}
 		projects = []core.ProjectID{core.ProjectID(p)}
 	} else {
 		all, err := s.store.ListProjects(r.Context())

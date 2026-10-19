@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	corerepos "github.com/brendatamaar/yggdrasil/internal/core/repos"
+	"github.com/brendatamaar/yggdrasil/internal/platform"
 	"github.com/brendatamaar/yggdrasil/internal/repos"
 	"github.com/brendatamaar/yggdrasil/internal/repos/repostest"
 )
@@ -87,7 +88,7 @@ func liveFactory(t *testing.T, tree repostest.Tree) (repos.Scanner, corerepos.Cl
 }
 
 func TestScannerContractLive(t *testing.T) {
-	repostest.ScannerContract(t, repostest.Caps{Links: true}, liveFactory)
+	repostest.ScannerContract(t, repostest.Caps{Links: true, CaseInsensitive: platform.PathsCaseInsensitive}, liveFactory)
 }
 
 func TestFSScannerDoesNotChangeTheTree(t *testing.T) {
@@ -96,7 +97,7 @@ func TestFSScannerDoesNotChangeTheTree(t *testing.T) {
 	if _, err := s.Scan(t.Context(), root, repos.DefaultLimits); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CheckRepo(t.Context(), root, "a"); err != nil {
+	if _, err := s.CheckRepo(t.Context(), root, "a"); err != nil {
 		t.Fatal(err)
 	}
 	if after := snapshot(t, string(root)); !equalSnapshot(before, after) {

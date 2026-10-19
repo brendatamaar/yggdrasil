@@ -36,8 +36,9 @@ type Scanner interface {
 	Scan(ctx context.Context, path corerepos.CleanPath, lim Limits) (corerepos.ScanResult, error)
 	// CheckRepo reports why rel under path is not a repo that may be
 	// tracked: missing, not a folder, behind a link, or without .git. It
-	// returns nil for a usable repo folder.
-	CheckRepo(ctx context.Context, path corerepos.CleanPath, rel corerepos.RelPath) error
+	// returns the folder spelled as on disk (one form per folder, also on
+	// Windows where case does not matter) for a usable repo folder.
+	CheckRepo(ctx context.Context, path corerepos.CleanPath, rel corerepos.RelPath) (corerepos.RelPath, error)
 }
 
 // Walker is the filesystem view ScanWith needs. Paths are slash-separated and
@@ -156,8 +157,33 @@ func (FSScanner) Scan(ctx context.Context, path corerepos.CleanPath, lim Limits)
 // CheckRepo implements Scanner. Every folder from path down to rel must be a
 // real folder, not a link: a hand-made request can't reach outside the
 // project folder through a junction.
-func (FSScanner) CheckRepo(_ context.Context, path corerepos.CleanPath, rel corerepos.RelPath) error {
-	return CheckRepoWith(osWalker{root: string(path)}, string(rel))
+func (FSScanner) CheckRepo(_ context.Context, path corerepos.CleanPath, rel corerepos.RelPath) (corerepos.RelPath, error) {
+	w := osWalker{root: string(path)}
+	if err := CheckRepoWith(w, string(rel)); err != nil {
+		return "", err
+	}
+	if rel == "." {
+		return rel, nil
+	}
+	// The same folder may be spelled in another case: answer with the
+	// spelling on disk, so a folder has one form.
+	canon, err := platform.CanonicalPath(w.abs(string(rel)))
+	if err != nil {
+		return "", apperr.New(apperr.Invalid, fmt.Sprintf("The folder %q can't be read. Choose it again.", rel), err)
+	}
+	root, err := platform.CanonicalPath(string(path))
+	if err != nil {
+		return "", apperr.New(apperr.Invalid, "The project folder can't be read. Choose it again.", err)
+	}
+	back, err := filepath.Rel(root, canon)
+	if err != nil || back == ".." || strings.HasPrefix(back, ".."+string(filepath.Separator)) {
+		return "", apperr.New(apperr.Invalid, fmt.Sprintf("The folder %q leads outside the project folder. Choose the real folder.", rel), err)
+	}
+	out, err := corerepos.NewRelPath(filepath.ToSlash(back))
+	if err != nil {
+		return "", apperr.New(apperr.Invalid, fmt.Sprintf("The folder %q isn't supported.", rel), err)
+	}
+	return out, nil
 }
 
 // CheckRepoWith is CheckRepo over a Walker.

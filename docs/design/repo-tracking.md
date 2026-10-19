@@ -278,3 +278,11 @@ Approved by the human on 2026-10-18 with every recommendation below.
 1. **Scan depth and skips:** the default depth is 3 below the project folder. The scan skips `node_modules` and hidden folders and stops at a repo root. Limits: 5,000 folders visited, 200 repos. *Recommend as stated.*
 2. **A repo folder that disappears:** shown as a "Missing" problem by repo-status and offered as "stop tracking" in rescan, but never untracked automatically. *Recommend as stated.*
 3. **Renaming repos:** not in Phase 2. Names default to the folder name, or to `RelPath` on a collision. *Recommend deferring.*
+
+## B1 review-gate changes
+
+- **Busy:** a repo with a task in `queued`, `running` or `needs_you` is `BusyTaskRunning`, next to `BusyBuildRunning`. The `RepoBusy` message names the reason.
+- **Canonical paths:** `ParseFolder` resolves the on-disk spelling (`platform.CanonicalPath`) and refuses a project folder that is itself a link. `Scanner.CheckRepo` returns the repo folder as spelled on disk; `ParsePicks` and the service dedupe case-insensitively on Windows. The core compares paths with `==` (only the separator is normalised).
+- **Publishing:** the `PublishReposChanged` command is interpreted by `TrackingService.runAfter` through `ReposPublisher` (with `context.WithoutCancel` and a 10 s timeout). Handlers publish nothing.
+- **IDs:** `IDCollision` outcome. A generated ID that is empty or in use is a defect: the service logs it and returns an error (HTTP 500).
+- **Migration 00003** is a Go migration (`internal/db/migrate00003.go`): one pinned connection, foreign keys off, transaction, `foreign_key_check` before commit, foreign keys back on always. `rel_path` fallback is a slug of the name plus the repo ID on collision. sqlc reads `internal/db/sqlcschema/00003_repo_tracking.sql`, checked against the migration by a test.

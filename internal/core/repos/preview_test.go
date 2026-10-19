@@ -25,7 +25,7 @@ func trackedShop(t *testing.T) Workspace {
 func TestBuildPreview(t *testing.T) {
 	ws := trackedShop(t)
 	scan := ScanResult{Repos: []RelPath{"web", "docs/site", "api", "api"}, Skipped: 2}
-	pv := BuildPreview(`c:/work/SHOP`, scan, ws) // another spelling of the same folder
+	pv := BuildPreview(`C:/Work/shop`, scan, ws) // the same folder with the other separator
 	if pv.Existing == nil || *pv.Existing != "prj_1" || pv.Skipped != 2 || pv.Truncated {
 		t.Fatalf("preview = %+v", pv)
 	}
@@ -98,7 +98,7 @@ func TestDecideRules(t *testing.T) {
 		{"inside", TrackProject{NewProjectID: "p2", Name: "x", Path: `C:\Work\shop\api`, Repos: []Pick{pk(".", "x", "r9")}, Now: now0}, Overlaps{Other: "prj_1"}},
 		{"containing", TrackProject{NewProjectID: "p2", Name: "x", Path: `C:\Work`, Repos: []Pick{pk(".", "x", "r9")}, Now: now0}, Overlaps{Other: "prj_1"}},
 		{"bad name", TrackProject{NewProjectID: "p2", Name: " ", Path: `C:\x`, Repos: []Pick{pk(".", "x", "r9")}, Now: now0}, InvalidInput{Reason: "the name is empty"}},
-		{"repo ID in use", TrackRepos{ProjectID: "prj_1", Repos: []Pick{pk("new", "new", "rep_1")}, Now: now0}, InvalidInput{Reason: `the repo ID "rep_1" is empty or already in use`}},
+		{"repo ID in use", TrackRepos{ProjectID: "prj_1", Repos: []Pick{pk("new", "new", "rep_1")}, Now: now0}, IDCollision{ID: "rep_1"}},
 		{"unknown project", TrackRepos{ProjectID: "nope", Repos: []Pick{pk("a", "a", "r9")}, Now: now0}, NotFound{}},
 		{"no repo picks", TrackRepos{ProjectID: "prj_1", Now: now0}, NothingPicked{}},
 		{"rename taken", RenameProject{ProjectID: "prj_1", Name: "shop", Now: now0}, Renamed{ProjectID: "prj_1"}},

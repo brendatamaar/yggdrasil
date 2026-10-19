@@ -241,6 +241,37 @@ func WorkspaceStoreContract(t *testing.T, newStore func(t *testing.T) *Store) {
 			t.Errorf("Busy = %v, want only rep_api", ws.Busy)
 		}
 	})
+
+	t.Run("busy repos include those of a queued, running or waiting task", func(t *testing.T) {
+		s := setup(t)
+		exec := func(q string, args ...any) {
+			t.Helper()
+			if _, err := s.db.write.ExecContext(ctx, q, args...); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var pid string
+		if err := s.db.write.QueryRowContext(ctx, `SELECT project_id FROM repos WHERE id = 'rep_api'`).Scan(&pid); err != nil {
+			t.Fatal(err)
+		}
+		for i, st := range []string{"queued", "running", "needs_you", "review", "done", "draft"} {
+			id := "t_" + st
+			exec(`INSERT INTO tasks (id, project_id, title, prompt, scope, mode, agent, status, created_at, updated_at)
+			      VALUES (?, ?, 't', 'p', 'repo', 'ask', 'mock', ?, '2026-03-01T00:00:00.000Z', '2026-03-01T00:00:00.000Z')`, id, pid, st)
+			repo := "rep_api"
+			if i >= 3 {
+				repo = "rep_web"
+			}
+			exec(`INSERT INTO task_repos (task_id, repo_id) VALUES (?, ?)`, id, repo)
+		}
+		ws, err := s.GetWorkspace(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(ws.Busy) != 1 || ws.Busy["rep_api"] != corerepos.BusyTaskRunning {
+			t.Errorf("Busy = %v, want only rep_api as task_running (finished and draft tasks don't count)", ws.Busy)
+		}
+	})
 }
 
 func isActiveLife(l corerepos.Life) bool { _, ok := l.(corerepos.Active); return ok }
@@ -280,11 +311,11 @@ func TestWorkspaceFromRowsRejects(t *testing.T) {
 		"blank project name":         {[]gen.Project{{ID: "p", Name: " ", Path: "/w", CreatedAt: "2026-03-01T00:00:00.000Z"}}, nil},
 	}
 	for name, c := range cases {
-		if _, err := workspaceFromRows(c.ps, c.rs, nil); err == nil {
+		if _, err := workspaceFromRows(c.ps, c.rs, nil, nil); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-	ok, err := workspaceFromRows([]gen.Project{proj("p", "/w", true)}, []gen.Repo{rep("r1", "p", "a", "x", true)}, []string{"r1"})
+	ok, err := workspaceFromRows([]gen.Project{proj("p", "/w", true)}, []gen.Repo{rep("r1", "p", "a", "x", true)}, []string{"r1"}, nil)
 	if err != nil || len(ok.Projects) != 1 || ok.Busy["r1"] != corerepos.BusyBuildRunning {
 		t.Errorf("a consistent untracked project is rejected: %v", err)
 	}
@@ -303,7 +334,7 @@ func FuzzWorkspaceFromRows(f *testing.F) {
 		if untracked != "" {
 			r.UntrackedAt = sql.NullString{String: untracked, Valid: true}
 		}
-		ws, err := workspaceFromRows([]gen.Project{p}, []gen.Repo{r}, nil)
+		ws, err := workspaceFromRows([]gen.Project{p}, []gen.Repo{r}, nil, nil)
 		if err != nil {
 			return
 		}

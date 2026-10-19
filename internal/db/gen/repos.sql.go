@@ -176,6 +176,37 @@ func (q *Queries) ListBusyBuildRepos(ctx context.Context) ([]string, error) {
 	return items, nil
 }
 
+const listBusyTaskRepos = `-- name: ListBusyTaskRepos :many
+SELECT DISTINCT tr.repo_id FROM task_repos tr
+JOIN tasks t ON t.id = tr.task_id
+WHERE t.status IN ('queued', 'running', 'needs_you')
+ORDER BY tr.repo_id
+`
+
+// Repos in scope of a task that is queued, running or waiting for the user.
+func (q *Queries) ListBusyTaskRepos(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listBusyTaskRepos)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var repo_id string
+		if err := rows.Scan(&repo_id); err != nil {
+			return nil, err
+		}
+		items = append(items, repo_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listReposByProject = `-- name: ListReposByProject :many
 SELECT id, project_id, name, path, default_branch, trusted, created_at, untracked_at, rel_path FROM repos WHERE project_id = ? AND untracked_at IS NULL ORDER BY name
 `
@@ -214,7 +245,7 @@ func (q *Queries) ListReposByProject(ctx context.Context, projectID string) ([]R
 }
 
 const setRepoTrusted = `-- name: SetRepoTrusted :execrows
-UPDATE repos SET trusted = ? WHERE id = ?
+UPDATE repos SET trusted = ? WHERE id = ? AND untracked_at IS NULL
 `
 
 type SetRepoTrustedParams struct {

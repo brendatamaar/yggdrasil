@@ -11,6 +11,15 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/platform"
 )
 
+// relKey is what two repo folders are compared by: on Windows the same folder
+// can be spelled in different case.
+func relKey(rel corerepos.RelPath) string {
+	if platform.PathsCaseInsensitive {
+		return strings.ToLower(string(rel))
+	}
+	return string(rel)
+}
+
 // MaxPicks bounds the repos one request can track.
 const MaxPicks = 200
 
@@ -37,7 +46,18 @@ func ParseFolder(raw string) (corerepos.CleanPath, error) {
 	if !filepath.IsAbs(p) {
 		return "", invalid(fmt.Sprintf("%q isn't a full path. Choose a folder on this computer, such as C:\\work\\shop.", raw), nil)
 	}
-	long, err := platform.LongPath(filepath.Clean(p))
+	p = filepath.Clean(p)
+	// The folder itself must not be a link: its content would live somewhere
+	// else than the path says (invariant 6).
+	link, err := platform.IsReparsePoint(p)
+	if err != nil {
+		return "", invalid(fmt.Sprintf("The folder %q doesn't exist or can't be read. Choose another folder.", raw), err)
+	}
+	if link {
+		return "", invalid(fmt.Sprintf("The folder %q is a link to somewhere else. Choose the real folder.", raw), nil)
+	}
+	// One spelling per folder: the on-disk case of every segment, long names.
+	long, err := platform.CanonicalPath(p)
 	if err != nil {
 		return "", invalid(fmt.Sprintf("The folder %q doesn't exist or can't be read. Choose another folder.", raw), err)
 	}
@@ -99,17 +119,18 @@ func ParsePicks(path corerepos.CleanPath, raw []corerepos.Pick) ([]corerepos.Pic
 	if len(raw) > MaxPicks {
 		return nil, invalid(fmt.Sprintf("Select at most %d repos at a time.", MaxPicks), nil)
 	}
-	seen := make(map[corerepos.RelPath]bool, len(raw))
+	seen := make(map[string]bool, len(raw))
 	out := make([]corerepos.Pick, 0, len(raw))
 	for _, pk := range raw {
 		rel, err := corerepos.NewRelPath(string(pk.RelPath))
 		if err != nil {
 			return nil, invalid(fmt.Sprintf("The repo folder %q isn't a folder inside the project.", string(pk.RelPath)), err)
 		}
-		if seen[rel] {
+		key := relKey(rel)
+		if seen[key] {
 			return nil, invalid(fmt.Sprintf("The repo folder %q is selected twice.", string(rel)), nil)
 		}
-		seen[rel] = true
+		seen[key] = true
 		name := strings.TrimSpace(pk.Name)
 		if name == "" {
 			name = corerepos.DefaultRepoName(path, rel)

@@ -62,54 +62,6 @@ func needTime(what string, ts ...time.Time) error {
 	return nil
 }
 
-// Projects
-
-// CreateProject stores p. The caller supplies the ID and CreatedAt: the store
-// neither generates IDs nor reads the clock.
-func (tx *Tx) CreateProject(ctx context.Context, p core.Project) (core.Project, error) {
-	if err := needTime("project", p.CreatedAt); err != nil {
-		return p, err
-	}
-	p.CreatedAt = p.CreatedAt.UTC().Truncate(time.Millisecond)
-	if err := p.Validate(); err != nil {
-		return p, err
-	}
-	err := tx.q.CreateProject(ctx, gen.CreateProjectParams{
-		ID: string(p.ID), Name: p.Name, Path: p.Path, CreatedAt: fmtTime(p.CreatedAt),
-	})
-	if err != nil {
-		return p, fmt.Errorf("create project: %w", err)
-	}
-	return p, nil
-}
-
-// Repos
-
-// CreateRepo stores r. The caller supplies the ID and CreatedAt.
-func (tx *Tx) CreateRepo(ctx context.Context, r core.Repo) (core.Repo, error) {
-	if err := needTime("repo", r.CreatedAt); err != nil {
-		return r, err
-	}
-	r.CreatedAt = r.CreatedAt.UTC().Truncate(time.Millisecond)
-	if err := r.Validate(); err != nil {
-		return r, err
-	}
-	// rel_path is derived from the project's folder; it is unique per project.
-	proj, err := tx.q.GetProjectAny(ctx, string(r.ProjectID))
-	if err != nil {
-		return r, found("create repo: project "+string(r.ProjectID), err)
-	}
-	err = tx.q.CreateRepo(ctx, gen.CreateRepoParams{
-		ID: string(r.ID), ProjectID: string(r.ProjectID), Name: r.Name, Path: r.Path,
-		RelPath:       relPathOf(proj.Path, r.Path, r.Name),
-		DefaultBranch: r.DefaultBranch, Trusted: b2i(r.Trusted), CreatedAt: fmtTime(r.CreatedAt),
-	})
-	if err != nil {
-		return r, fmt.Errorf("create repo: %w", err)
-	}
-	return r, nil
-}
-
 // SetRepoTrusted records the user's answer to the repo-hooks prompt (SF-09).
 func (tx *Tx) SetRepoTrusted(ctx context.Context, id core.RepoID, trusted bool) error {
 	n, err := tx.q.SetRepoTrusted(ctx, gen.SetRepoTrustedParams{Trusted: b2i(trusted), ID: string(id)})

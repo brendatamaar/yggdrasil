@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -70,7 +71,11 @@ func newEnv(t *testing.T, fixture string, delay time.Duration, extra ...func(*De
 	t.Cleanup(func() { ts.Close(); srv.Close() })
 
 	project := dbtest.Project(t, store, core.Project{Name: "acme-shop", Path: t.TempDir()})
-	repo := dbtest.Repo(t, store, core.Repo{ProjectID: project.ID, Name: "shop-api", Path: t.TempDir()})
+	repoDir := filepath.Join(project.Path, "shop-api")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repo := dbtest.Repo(t, store, core.Repo{ProjectID: project.ID, Name: "shop-api", Path: repoDir})
 	return &env{srv: srv, ts: ts, store: store, project: project, repo: repo}
 }
 

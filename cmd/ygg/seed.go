@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/brendatamaar/yggdrasil/internal/apperr"
+	"github.com/brendatamaar/yggdrasil/internal/core"
 	corerepos "github.com/brendatamaar/yggdrasil/internal/core/repos"
 	"github.com/brendatamaar/yggdrasil/internal/repos"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
@@ -59,8 +60,12 @@ func seed(ctx context.Context, w io.Writer, cfg config, folder, projectName stri
 		}
 		return fmt.Errorf("track the folder: %w", err)
 	}
+	var tracked core.ProjectID
 	switch o := out.(type) {
-	case corerepos.Tracked, corerepos.AlreadyTracked:
+	case corerepos.Tracked:
+		tracked = o.ProjectID
+	case corerepos.AlreadyTracked:
+		tracked = o.ProjectID
 		// tracked or already tracked: read it back below
 	case corerepos.NameTaken:
 		return fmt.Errorf("a project called %q is already tracked at another folder. Give this one another name: ygg seed %s <name>", o.Name, path)
@@ -75,7 +80,7 @@ func seed(ctx context.Context, w io.Writer, cfg config, folder, projectName stri
 		return err
 	}
 	for _, p := range projects {
-		if p.Path != path {
+		if p.ID != tracked {
 			continue
 		}
 		fmt.Fprintf(w, "Project  %-20s %s\n", p.Name, p.ID)

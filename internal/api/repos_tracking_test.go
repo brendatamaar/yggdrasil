@@ -11,6 +11,7 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/apperr"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	corerepos "github.com/brendatamaar/yggdrasil/internal/core/repos"
+	"github.com/brendatamaar/yggdrasil/internal/repos"
 )
 
 // fakeTracking returns canned answers and records what the handlers pass.
@@ -245,12 +246,76 @@ func TestTrackingPublishesOnTheReposTopic(t *testing.T) {
 	subscribe(t, ws, TopicRepos)
 	time.Sleep(150 * time.Millisecond)
 
-	f.out = corerepos.AlreadyTracked{ProjectID: "prj_1"} // changes nothing: no message
-	e.do(t, http.MethodPost, "/api/projects", TrackProjectRequest{Path: "/w", Name: "n", Picks: []PickDTO{{RelPath: "a"}}})
+	// Handlers publish nothing themselves: the tracking service does, through
+	// Server.PublishReposChanged (covered in internal/repos).
 	f.out = corerepos.Tracked{ProjectID: "prj_1", Added: []core.RepoID{"rep_1"}, NewProject: true}
 	e.do(t, http.MethodPost, "/api/projects", TrackProjectRequest{Path: "/w", Name: "n", Picks: []PickDTO{{RelPath: "a"}}})
+	e.srv.PublishReposChanged()
 	m, err := readMsg(t, ws, 5*time.Second)
 	if err != nil || m.Type != MsgEvent || m.Topic != TopicRepos || m.Seq != 1 {
 		t.Fatalf("message = %+v, %v; want the first event on the repos topic", m, err)
+	}
+	if m, err := readMsg(t, ws, 300*time.Millisecond); err == nil {
+		t.Fatalf("a handler published too: %+v", m)
+	}
+}
+
+// Untracking a repo while an agent task runs in it is refused (invariant 6:
+// the task's worktree must not lose its tracked repo underneath it).
+func TestUntrackRefusedWhileATaskRuns(t *testing.T) {
+	e := newEnv(t, "subagents", 300*time.Millisecond, func(d *Deps) {
+		svc, err := repos.NewTrackingService(repos.Deps{Store: d.Store, Redactor: d.Redactor})
+		if err != nil {
+			t.Fatal(err)
+		}
+		d.Tracking = svc
+	})
+	task := e.create(t)
+	e.waitStatus(t, task.ID, core.TaskRunning)
+
+	resp, data := e.do(t, http.MethodPost, "/api/repos/"+string(e.repo.ID)+"/untrack", nil)
+	if resp.StatusCode != http.StatusConflict || errCode(t, data) != ErrConflict {
+		t.Fatalf("untrack repo during a running task = %d %s, want 409", resp.StatusCode, data)
+	}
+	if !containsAny(string(data), "task") {
+		t.Errorf("the message doesn't name the task as the reason: %s", data)
+	}
+	resp, data = e.do(t, http.MethodPost, "/api/projects/"+string(e.project.ID)+"/untrack", nil)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("untrack project during a running task = %d %s, want 409", resp.StatusCode, data)
+	}
+
+	// Once the task is over the repo can go.
+	e.do(t, http.MethodPost, "/api/tasks/"+string(task.ID)+"/cancel", nil)
+	e.waitStatus(t, task.ID, core.TaskCancelled)
+	resp, data = e.do(t, http.MethodPost, "/api/repos/"+string(e.repo.ID)+"/untrack", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("untrack after the task ended = %d %s", resp.StatusCode, data)
+	}
+}
+
+// Untracked repos and projects are invisible to tasks (invariant 6).
+func TestTasksRefuseUntrackedRepoAndProject(t *testing.T) {
+	e := newEnv(t, "plain", 0, func(d *Deps) {
+		svc, err := repos.NewTrackingService(repos.Deps{Store: d.Store, Redactor: d.Redactor})
+		if err != nil {
+			t.Fatal(err)
+		}
+		d.Tracking = svc
+	})
+	if resp, data := e.do(t, http.MethodPost, "/api/repos/"+string(e.repo.ID)+"/untrack", nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("untrack repo = %d %s", resp.StatusCode, data)
+	}
+	if resp, data := e.do(t, http.MethodPost, "/api/tasks", e.createReq()); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("task in an untracked repo = %d %s, want 404", resp.StatusCode, data)
+	}
+	if resp, data := e.do(t, http.MethodPost, "/api/projects/"+string(e.project.ID)+"/untrack", nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("untrack project = %d %s", resp.StatusCode, data)
+	}
+	if resp, data := e.do(t, http.MethodPost, "/api/tasks", e.createReq()); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("task in an untracked project = %d %s, want 404", resp.StatusCode, data)
+	}
+	if resp, data := e.do(t, http.MethodGet, "/api/tasks?project="+string(e.project.ID), nil); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("task list of an untracked project = %d %s, want 404", resp.StatusCode, data)
 	}
 }
