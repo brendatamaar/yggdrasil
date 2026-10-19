@@ -45,6 +45,8 @@ type app struct {
 	builds *builds.Service
 	// hosts polls the git hosts for MR and pipeline status (GH-02).
 	hosts *hosts.Service
+	// actions runs user-initiated git actions (WS-06, WS-07).
+	actions *repos.ActionsService
 }
 
 // newLogger writes redacted text logs: no token reaches a log (invariant 4).
@@ -132,6 +134,21 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		return nil, fmt.Errorf("start builds: %w", err)
 	}
 
+	batchPub := &lateBatchPublisher{}
+	actions, err := repos.NewActionsService(repos.ActionsDeps{
+		Store: store, Redactor: redactor, Git: g, Builds: buildSvc,
+		Status: status, Publisher: batchPub, Log: log,
+	})
+	if err != nil {
+		_ = d.Close()
+		return nil, fmt.Errorf("start git actions: %w", err)
+	}
+	opener, err := repos.NewOpenService(repos.OpenDeps{Store: store, Redactor: redactor, Env: safety.NewEnvBuilder()})
+	if err != nil {
+		_ = d.Close()
+		return nil, fmt.Errorf("start open in editor: %w", err)
+	}
+
 	hostsPub := &lateHostsPublisher{}
 	hostSvc := hosts.New(hosts.Deps{
 		Config: hostsCfg, EnvPath: envPath,
@@ -144,6 +161,7 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		Redactor: redactor, Version: version, Assets: assets,
 		Tracking: tracking, Status: status, RepoDetail: repos.NewDetailService(store, g),
 		Builds: buildSvc, Hosts: hostSvc,
+		GitActions: repos.GitActions{ActionsService: actions, OpenService: opener},
 	})
 	if err != nil {
 		_ = d.Close()
@@ -154,7 +172,8 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	reposPub.srv = srv
 	buildsPub.srv = srv
 	hostsPub.srv = srv
-	return &app{cfg: cfg, log: log, db: d, store: store, srv: srv, status: status, builds: buildSvc, hosts: hostSvc}, nil
+	batchPub.srv = srv
+	return &app{cfg: cfg, log: log, db: d, store: store, srv: srv, status: status, builds: buildSvc, hosts: hostSvc, actions: actions}, nil
 }
 
 // run serves on ln until ctx is cancelled. On the way out the server stops
@@ -165,6 +184,7 @@ func (a *app) run(ctx context.Context, ln net.Listener) error {
 	group, gctx := errgroup.WithContext(ctx)
 	group.Go(func() error { return a.status.Start(gctx) })
 	group.Go(func() error { return a.builds.Start(gctx) })
+	group.Go(func() error { return a.actions.Run(gctx) })
 	// The hosts service starts its own goroutines and returns at once; Close
 	// stops them after the server is done.
 	group.Go(func() error { return a.hosts.Start(gctx) })

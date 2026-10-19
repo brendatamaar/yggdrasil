@@ -7,6 +7,7 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/api"
 	"github.com/brendatamaar/yggdrasil/internal/builds"
 	"github.com/brendatamaar/yggdrasil/internal/core"
+	corerepos "github.com/brendatamaar/yggdrasil/internal/core/repos"
 	"github.com/brendatamaar/yggdrasil/internal/db"
 )
 
@@ -64,5 +65,15 @@ func (p *lateBuildsPublisher) PublishBuildChanged(id core.BuildID, status core.B
 func (p *lateBuildsPublisher) PublishBuildLog(id core.BuildID, step, attempt int, line string) {
 	if p.srv != nil {
 		p.srv.PublishBuildLog(id, step, attempt, line)
+	}
+}
+
+// lateBatchPublisher forwards git-action batch changes to the server, which is
+// built after the actions service. srv is set once, before run starts.
+type lateBatchPublisher struct{ srv *api.Server }
+
+func (p *lateBatchPublisher) PublishGitBatch(batch corerepos.BatchID, repoIDs []core.RepoID, finished bool) {
+	if p.srv != nil {
+		p.srv.PublishGitBatch(batch, repoIDs, finished)
 	}
 }
