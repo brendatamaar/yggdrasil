@@ -20,6 +20,10 @@ func relKey(rel corerepos.RelPath) string {
 	return string(rel)
 }
 
+// canonicalPath is replaceable so tests can simulate a path that resolves
+// to somewhere ParseFolder must refuse.
+var canonicalPath = platform.CanonicalPath
+
 // MaxPicks bounds the repos one request can track.
 const MaxPicks = 200
 
@@ -57,11 +61,16 @@ func ParseFolder(raw string) (corerepos.CleanPath, error) {
 		return "", invalid(fmt.Sprintf("The folder %q is a link to somewhere else. Choose the real folder.", raw), nil)
 	}
 	// One spelling per folder: the on-disk case of every segment, long names.
-	long, err := platform.CanonicalPath(p)
+	long, err := canonicalPath(p)
 	if err != nil {
 		return "", invalid(fmt.Sprintf("The folder %q doesn't exist or can't be read. Choose another folder.", raw), err)
 	}
-	long = filepath.Clean(long)
+	long = stripNamespace(filepath.Clean(long))
+	// A subst or mapped drive, or a junction in an ancestor, can resolve to a
+	// \\wsl$ or device path: check again on the resolved path (PL-04).
+	if err := platform.CheckPath(long); err != nil {
+		return "", invalid(err.Error(), err)
+	}
 	// The folder is the one the user chose; this only looks at it.
 	if st, err := os.Stat(long); err != nil || !st.IsDir() { //nolint:gosec // path chosen by the user
 		return "", invalid(fmt.Sprintf("%q isn't a folder. Choose a folder, not a file.", raw), err)

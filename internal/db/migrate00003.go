@@ -90,8 +90,28 @@ func execAll(ctx context.Context, tx *sql.Tx, stmts ...string) error {
 	return nil
 }
 
+// schemaApplied reports whether the 00003 schema is already in place: the
+// migration commits before goose records its version, so a crash between the
+// two leaves a database that has the schema but not the version row.
+func schemaApplied(ctx context.Context, tx *sql.Tx) (bool, error) {
+	var n int
+	err := tx.QueryRowContext(ctx, `SELECT
+  (SELECT count(*) FROM pragma_table_info('projects') WHERE name = 'version') +
+  (SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'settings')`).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("look for the repo-tracking schema: %w", err)
+	}
+	return n == 2, nil
+}
+
 func upRepoTracking(ctx context.Context, db *sql.DB) error {
+	// Safe to rerun. Goose inserts the version row afterwards on the idle second
+	// connection (see rebuildTx): never set SetMaxIdleConns(0) on the write pool.
+	// The check runs inside rebuildTx: the write pool has one connection.
 	return rebuildTx(ctx, db, func(ctx context.Context, tx *sql.Tx) error {
+		if done, err := schemaApplied(ctx, tx); err != nil || done {
+			return err
+		}
 		if err := execAll(ctx, tx,
 			`CREATE TABLE projects_new (
     id           TEXT PRIMARY KEY,

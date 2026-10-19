@@ -242,7 +242,7 @@ func (s *StatusService) step(ctx context.Context, g *errgroup.Group, state corer
 				next, cmds = s.restart(ctx, state)
 			}
 		}()
-		next, cmds = corerepos.Refresh(state, in)
+		next, cmds = refreshCore(state, in)
 	}()
 	for _, c := range cmds {
 		switch x := c.(type) {
@@ -259,6 +259,20 @@ func (s *StatusService) step(ctx context.Context, g *errgroup.Group, state corer
 	return next
 }
 
+// refreshCore is the core step; tests replace it to simulate a panic.
+var refreshCore = corerepos.Refresh
+
+// safeRefresh runs the core step and reports false when it panicked.
+func safeRefresh(state corerepos.Refresher, in corerepos.RefreshInput) (next corerepos.Refresher, cmds []corerepos.RefreshCommand, ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			ok = false
+		}
+	}()
+	next, cmds = refreshCore(state, in)
+	return next, cmds, true
+}
+
 // restart rebuilds the state from the active set. It keeps Seq and turns the
 // reads of the old state into orphans (Restarted), so attempts stay unique and
 // the bound holds while the old workers finish.
@@ -267,7 +281,14 @@ func (s *StatusService) restart(ctx context.Context, old corerepos.Refresher) (c
 	if err != nil {
 		s.log.Error("repo status could not reload the repos", "err", err)
 	}
-	return corerepos.Refresh(old.Restarted(), corerepos.ReposChanged{Active: active})
+	// A second panic must not take the process down: fall back to the empty
+	// restarted state, which the next reload fills.
+	next, cmds, ok := safeRefresh(old.Restarted(), corerepos.ReposChanged{Active: active})
+	if !ok {
+		s.log.Error("repo status core panicked again while restarting; starting from an empty state")
+		return old.Restarted(), nil
+	}
+	return next, cmds
 }
 
 // read is one worker: it reads a repo within the read timeout and sends the

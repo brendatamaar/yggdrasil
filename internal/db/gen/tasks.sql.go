@@ -24,8 +24,11 @@ func (q *Queries) AddTaskDependency(ctx context.Context, arg AddTaskDependencyPa
 	return err
 }
 
-const addTaskRepo = `-- name: AddTaskRepo :exec
-INSERT INTO task_repos (task_id, repo_id) VALUES (?, ?)
+const addTaskRepo = `-- name: AddTaskRepo :execrows
+INSERT INTO task_repos (task_id, repo_id)
+SELECT ?1, r.id FROM repos r
+WHERE r.id = ?2 AND r.untracked_at IS NULL
+  AND r.project_id = (SELECT t.project_id FROM tasks t WHERE t.id = ?1)
 `
 
 type AddTaskRepoParams struct {
@@ -33,9 +36,26 @@ type AddTaskRepoParams struct {
 	RepoID string
 }
 
-func (q *Queries) AddTaskRepo(ctx context.Context, arg AddTaskRepoParams) error {
-	_, err := q.db.ExecContext(ctx, addTaskRepo, arg.TaskID, arg.RepoID)
-	return err
+// A task only gets a repo that is still tracked and belongs to the task's
+// project; checked inside the write transaction (invariant 6). Zero rows
+// means the repo was untracked (or isn't the project's) meanwhile.
+func (q *Queries) AddTaskRepo(ctx context.Context, arg AddTaskRepoParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, addTaskRepo, arg.TaskID, arg.RepoID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const countTrackedProject = `-- name: CountTrackedProject :one
+SELECT count(*) FROM projects WHERE id = ? AND untracked_at IS NULL
+`
+
+func (q *Queries) CountTrackedProject(ctx context.Context, id string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countTrackedProject, id)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const createTask = `-- name: CreateTask :exec

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -118,7 +119,25 @@ func (s *TrackingService) load(ctx context.Context) (corerepos.Workspace, error)
 	if err != nil {
 		return corerepos.Workspace{}, err
 	}
-	return ws, nil
+	return canonicalizeProjects(ws), nil
+}
+
+// canonicalizeProjects gives every project path its on-disk spelling, because
+// the core compares paths with == and rows seeded by v0.2.0 kept the case the
+// user typed. A folder that no longer exists keeps its stored value. Nothing
+// is written back; repo paths are relative to the project, so they follow.
+func canonicalizeProjects(ws corerepos.Workspace) corerepos.Workspace {
+	projects := make(map[core.ProjectID]corerepos.Project, len(ws.Projects))
+	for id, p := range ws.Projects {
+		if c, err := canonicalPath(string(p.Path)); err == nil {
+			if cp, err := corerepos.NewCleanPath(stripNamespace(filepath.Clean(c))); err == nil {
+				p.Path = cp
+			}
+		}
+		projects[id] = p
+	}
+	ws.Projects = projects
+	return ws
 }
 
 // Preview implements api.TrackingService.
@@ -323,6 +342,9 @@ func (s *TrackingService) once(ctx context.Context, in corerepos.Input) (corerep
 		after = nil
 		w := tx.Workspace()
 		ws, err := w.Load(ctx)
+		if err == nil {
+			ws = canonicalizeProjects(ws)
+		}
 		if err != nil {
 			return err
 		}

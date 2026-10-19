@@ -84,6 +84,13 @@ func (tx *Tx) CreateTask(ctx context.Context, t core.Task) (core.Task, error) {
 	if err := t.Validate(); err != nil {
 		return t, err
 	}
+	// The tracked check happens here, inside the write transaction, so an
+	// untrack that committed after the caller's read cannot be missed.
+	if n, err := tx.q.CountTrackedProject(ctx, string(t.ProjectID)); err != nil {
+		return t, fmt.Errorf("create task: %w", err)
+	} else if n == 0 {
+		return t, fmt.Errorf("create task: project %s: %w", t.ProjectID, ErrNotFound)
+	}
 	err := tx.q.CreateTask(ctx, gen.CreateTaskParams{
 		ID: string(t.ID), ProjectID: string(t.ProjectID), ParentTaskID: nullStr(t.ParentTaskID),
 		Title: t.Title, Prompt: t.Prompt, Scope: string(t.Scope), Mode: string(t.Mode), Agent: t.Agent,
@@ -99,8 +106,13 @@ func (tx *Tx) CreateTask(ctx context.Context, t core.Task) (core.Task, error) {
 		return t, fmt.Errorf("create task: %w", err)
 	}
 	for _, r := range t.RepoIDs {
-		if err := tx.q.AddTaskRepo(ctx, gen.AddTaskRepoParams{TaskID: string(t.ID), RepoID: string(r)}); err != nil {
+		n, err := tx.q.AddTaskRepo(ctx, gen.AddTaskRepoParams{TaskID: string(t.ID), RepoID: string(r)})
+		if err != nil {
 			return t, fmt.Errorf("create task: %w", err)
+		}
+		if n == 0 {
+			// Returning the error rolls the whole transaction back, task row included.
+			return t, fmt.Errorf("create task: repo %s: %w", r, ErrNotFound)
 		}
 	}
 	return t, nil
