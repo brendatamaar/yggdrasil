@@ -480,3 +480,21 @@ Round 1 verdicts: safety **FAIL** (1 Blocking), FE part A no Must-fix, FE part B
 3. Live-host test hook `YGG_LIVE_HOST_TESTS=1`: recommend defer to Phase 6 manual verification.
 4. Per-line log redaction (split token at 64 KiB cut): document in `docs/threat-model.md`, no code change.
 5. Deferred to Phase 3: shared main-checkout lock closing the Busy-snapshot race.
+
+### Review gate `ca60153..main`: result (2026-10-23)
+
+Fix batch F1 merged (`25c1ce9`, tests `11fd801`). All checks green on `main`: generate (no drift), lint, typecheck, `task test`, `task test:web` (175 tests). The `internal/platform` PTY tests flake under load and pass alone. `-race` was run by the test-engineer on repos, builds, hosts and core only.
+
+- Round 1: safety FAIL (1 Blocking: host URLs in `href`); FE part A and B no Must-fix.
+- Round 2 (fixes only): safety **PASS**, FE **no Must-fix**. Gate met after two rounds.
+- Fixed: SafeWebURL + frontend `SafeLink`; redirect scheme check; `Redactor.Add` on reload; shutdown audit drain; reconcile retry; diff stdout cap, `LC_ALL=C`, `--literal-pathspecs`; hosts resolve timeout; `hostsFeeder`; FetchedAt clearing; Maven symlink/200-module/charset; the tests that could not fail; S1/S3/S4 shell tests; parser round-trips; HostClientContract clauses.
+- Decisions: Open/Reveal write no audit entry (no state change); no "fetch all" scope (bulk via `Repos[]`, limit 500); live-host test hook deferred to Phase 6; per-line log redaction can miss a token split by the 64 KiB cut (to document in `docs/threat-model.md`); Busy-snapshot race between a build start and a batch start stays until the Phase 3 shared lock.
+
+#### Open Should-fix / Consider (backlog, none blocking)
+1. Test: `actions_shell_test.go` S3 must assert the `git.fetch` audit entries exist after `Run` returns (nothing fails if `apply` again refuses all inputs when stopped).
+2. `internal/builds/interpret.go` ~56: call `pruneStarted` before the `Status == nil` early return.
+3. Flaky S4 test: `trackedProc` closes `dead` from a second `Wait` goroutine; close it in the overridden `Wait`, or poll in `alive()`.
+4. `safeInterpret` panic after commit leaves the build Running until restart: feed `ProcessLost` and signal wake.
+5. Reject `u.User != nil` in `SafeWebURL` and `safeHref`; add cases for whitespace, newline, `http:foo`, userinfo.
+6. `Blocked{Unsupported}` unblocks on every `ConfigChanged` (now costs a refetch); check the UI never reads a zero `FetchedAt` as "never fetched".
+7. `feeder.run`: re-mark after a failed `Snapshot`.
