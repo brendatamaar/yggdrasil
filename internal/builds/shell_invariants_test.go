@@ -56,6 +56,15 @@ type trackedProc struct {
 	platform.Process
 	key  stepID
 	dead chan struct{}
+	once sync.Once
+}
+
+// Wait closes dead before it returns, so the service's own Wait seeing the
+// exit happens-before any later alive() check (no race with a second waiter).
+func (p *trackedProc) Wait() (int, error) {
+	code, err := p.Process.Wait()
+	p.once.Do(func() { close(p.dead) })
+	return code, err
 }
 
 func (p *trackedProc) isDead() bool {
@@ -84,7 +93,7 @@ func (tr *tracker) Start(ctx context.Context, spec platform.Spec) (platform.Proc
 		return nil, err
 	}
 	tp := &trackedProc{Process: p, key: w.key, dead: make(chan struct{})}
-	go func() { _, _ = p.Wait(); close(tp.dead) }()
+	go func() { _, _ = tp.Wait() }()
 	tr.mu.Lock()
 	tr.procs = append(tr.procs, tp)
 	tr.mu.Unlock()

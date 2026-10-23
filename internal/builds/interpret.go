@@ -51,10 +51,13 @@ func (s *Service) lifecycle(ctx context.Context, id core.BuildID, before, after 
 	if !ok {
 		return
 	}
-	if _, was := before.(corebuilds.Finished); was || s.d.Status == nil {
+	if _, was := before.(corebuilds.Finished); was {
 		return
 	}
 	s.pruneStarted(id)
+	if s.d.Status == nil {
+		return
+	}
 	repos := uniqueRepos(fin.Spec)
 	refresh := func(rctx context.Context) {
 		if err := s.d.Status.Refresh(rctx, repos, corerepos.ReasonBuild); err != nil {
@@ -150,7 +153,18 @@ func (s *Service) startStep(ctx context.Context, c corebuilds.StartStep) []msg {
 	}
 	argv := append([]string{exe}, c.Argv[1:]...)
 	stepCtx, cancel := context.WithCancel(runCtx)
-	p, err := s.d.Start(stepCtx, platform.Spec{Argv: argv, Dir: dir, Env: env, Stdout: lw, Stderr: lw})
+	p, err := func() (platform.Process, error) {
+		// A panicking Start must not leak the open step log: close it, then
+		// let safeInterpret recover.
+		defer func() {
+			if r := recover(); r != nil {
+				cancel()
+				_ = lw.Close()
+				panic(r)
+			}
+		}()
+		return s.d.Start(stepCtx, platform.Spec{Argv: argv, Dir: dir, Env: env, Stdout: lw, Stderr: lw})
+	}()
 	if err != nil {
 		cancel()
 		reason, text := classifyStart(err, c.Argv[0])
