@@ -81,7 +81,7 @@ func NeedToken() error {
 // never reach the browser as an href (SAFETY-B1).
 func SafeWebURL(raw string) string {
 	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
+	if err != nil || u.Host == "" || u.User != nil {
 		return ""
 	}
 	switch strings.ToLower(u.Scheme) {

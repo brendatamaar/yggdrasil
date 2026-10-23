@@ -306,7 +306,10 @@ func (s *Service) handle(ctx context.Context, m msg) (result, []msg) {
 	}
 	follow, perr := s.safeInterpret(ctx, m.id, before, after, cmds)
 	if perr != nil {
-		return result{state: after, changed: true, err: errors.New("builds: internal error")}, nil
+		if _, again := m.in.(corebuilds.ProcessLost); again {
+			follow = nil // the recovery itself panicked: do not loop
+		}
+		return result{state: after, changed: true, err: errors.New("builds: internal error")}, follow
 	}
 	return result{state: after, changed: true}, follow
 }
@@ -321,10 +324,33 @@ func (s *Service) safeInterpret(ctx context.Context, id core.BuildID, before, af
 				types[i] = fmt.Sprintf("%T", c)
 			}
 			s.d.Log.Error("builds: interpreting commands panicked, some commands were lost", "build", id, "commands", types, "panic", r)
-			follow, perr = nil, r
+			// The remaining commands are lost. Recover through the core: a
+			// build left Running without a process ends Interrupted (like a
+			// restart would), and a Finished one ignores the input. Wake the
+			// queue so the next build can start.
+			follow = []msg{{id: id, in: corebuilds.ProcessLost{Now: s.d.Clock()}}}
+			perr = r
+			s.killBuild(id)
+			s.signalWake()
 		}
 	}()
 	return s.interpret(ctx, id, before, after, cmds), nil
+}
+
+// killBuild cancels every live step process of a build, so a build that the
+// recovery ends is left with no process (S4).
+func (s *Service) killBuild(id core.BuildID) {
+	s.mu.Lock()
+	var cancels []context.CancelFunc
+	for k, c := range s.live {
+		if k.build == id {
+			cancels = append(cancels, c)
+		}
+	}
+	s.mu.Unlock()
+	for _, c := range cancels {
+		c()
+	}
 }
 
 // commit loads, steps, saves and audits in one transaction, with one retry on
