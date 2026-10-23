@@ -47,6 +47,8 @@ type app struct {
 	hosts *hosts.Service
 	// actions runs user-initiated git actions (WS-06, WS-07).
 	actions *repos.ActionsService
+	// feeder gives the hosts service the repo set, off the status publish path.
+	feeder *hostsFeeder
 }
 
 // newLogger writes redacted text logs: no token reaches a log (invariant 4).
@@ -75,7 +77,11 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	envPath := hosts.EnvPath(cfg.dataDir, nil)
 	hostsCfg, err := hosts.LoadConfig(envPath, nil)
 	if err != nil {
-		return nil, fmt.Errorf("read the git host settings in %s: %w", envPath, err)
+		// An unreadable .env must not stop Yggdrasil: start with the default
+		// hosts and tell the user why in the settings (the error text has no
+		// file content).
+		hostsCfg = hosts.ParseConfig(map[string]hosts.Var{})
+		hostsCfg.Problems = append(hostsCfg.Problems, hosts.Problem{Name: hosts.EnvFileName, Reason: "the file could not be read, so only github.com and gitlab.com are known. Check its permissions."})
 	}
 	redactor := safety.NewRedactor(hostsCfg.Secrets()...)
 	log := newLogger(logOut, cfg.level, redactor)
@@ -154,6 +160,7 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		Config: hostsCfg, EnvPath: envPath,
 		Reload:  func() (hosts.Config, error) { return hosts.LoadConfig(envPath, nil) },
 		Clients: hostclients.New(nil, nil), Remotes: g, Publish: hostsPub, Log: log,
+		Secrets: redactor,
 	})
 
 	srv, err := api.New(api.Deps{
@@ -168,12 +175,13 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		return nil, fmt.Errorf("start the server: %w", err)
 	}
 	// Set before run starts any goroutine that could publish.
-	status.SetPublisher(statusPublisher{srv: srv, status: status, hosts: hostSvc, log: log})
+	feeder := newHostsFeeder(status, hostSvc, log)
+	status.SetPublisher(statusPublisher{srv: srv, feeder: feeder})
 	reposPub.srv = srv
 	buildsPub.srv = srv
 	hostsPub.srv = srv
 	batchPub.srv = srv
-	return &app{cfg: cfg, log: log, db: d, store: store, srv: srv, status: status, builds: buildSvc, hosts: hostSvc, actions: actions}, nil
+	return &app{cfg: cfg, log: log, db: d, store: store, srv: srv, status: status, builds: buildSvc, hosts: hostSvc, actions: actions, feeder: feeder}, nil
 }
 
 // run serves on ln until ctx is cancelled. On the way out the server stops
@@ -188,6 +196,7 @@ func (a *app) run(ctx context.Context, ln net.Listener) error {
 	// The hosts service starts its own goroutines and returns at once; Close
 	// stops them after the server is done.
 	group.Go(func() error { return a.hosts.Start(gctx) })
+	group.Go(func() error { return a.feeder.run(gctx) })
 	group.Go(func() error { return a.srv.Run(gctx, ln) })
 	serveErr := group.Wait()
 	a.hosts.Close()

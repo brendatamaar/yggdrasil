@@ -47,7 +47,7 @@ func isDraftTitle(t string) bool {
 }
 
 func (p pullJSON) toMR(needBranches bool) (corehosts.MergeRequest, error) {
-	if p.Number == nil || *p.Number <= 0 || p.Title == nil || p.HTMLURL == "" || p.State == "" || p.UpdatedAt == "" {
+	if p.Number == nil || *p.Number <= 0 || p.Title == nil || hosts.SafeWebURL(p.HTMLURL) == "" || p.State == "" || p.UpdatedAt == "" {
 		return corehosts.MergeRequest{}, errors.New("a pull request is missing number, title, html_url, state or updated_at")
 	}
 	merged, draft := p.Merged, p.Draft || isDraftTitle(*p.Title)
@@ -177,7 +177,7 @@ func parseStatus(body []byte) (*corehosts.Pipeline, error) {
 			}
 		}
 		if link == "" {
-			link = x.TargetURL
+			link = hosts.SafeWebURL(x.TargetURL)
 		}
 	}
 	return &corehosts.Pipeline{Status: st, URL: link, UpdatedAt: latest}, nil

@@ -66,9 +66,14 @@ func (Toolchain) Artifacts(d builds.Detection) []string {
 func (Toolchain) Modules(repo fs.FS, d builds.Detection) ([]corebuilds.Module, error) {
 	var out []corebuilds.Module
 	seen := map[string]bool{}
+	truncated := false
 	var walk func(dir string) error
 	walk = func(dir string) error {
-		if seen[dir] || len(seen) >= maxReactor {
+		if seen[dir] {
+			return nil
+		}
+		if len(seen) >= maxReactor {
+			truncated = true
 			return nil
 		}
 		seen[dir] = true
@@ -88,6 +93,9 @@ func (Toolchain) Modules(repo fs.FS, d builds.Detection) ([]corebuilds.Module, e
 			if !fs.ValidPath(sd) {
 				continue // would leave the repo
 			}
+			if symlinkedPath(repo, sd) {
+				return fmt.Errorf("the module folder %s is a symbolic link; Yggdrasil does not follow links inside a repo", sd)
+			}
 			if err := walk(sd); err != nil {
 				return err
 			}
@@ -97,5 +105,24 @@ func (Toolchain) Modules(repo fs.FS, d builds.Detection) ([]corebuilds.Module, e
 	if err := walk(path.Clean(d.Dir)); err != nil {
 		return nil, err
 	}
+	if truncated {
+		return nil, fmt.Errorf("this reactor lists more than %d modules, so the build order was not worked out; order the repos by hand", maxReactor)
+	}
 	return out, nil
+}
+
+// symlinkedPath reports whether dir, or a folder above it, is a symbolic
+// link. A missing entry is not one (the open that follows reports it).
+func symlinkedPath(repo fs.FS, dir string) bool {
+	parts := strings.Split(dir, "/")
+	for i := range parts {
+		fi, err := fs.Lstat(repo, strings.Join(parts[:i+1], "/"))
+		if err != nil {
+			return false
+		}
+		if fi.Mode()&fs.ModeSymlink != 0 {
+			return true
+		}
+	}
+	return false
 }

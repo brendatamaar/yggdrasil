@@ -214,7 +214,11 @@ func (p *Poller) config(v ConfigChanged, cmds *[]Command) {
 			continue
 		}
 		if o, had := old[t.Instance]; !had || o != p.Instances[t.Instance] || b.Why == BlockUnsupported {
-			e.Phase = b.Prev
+			// Zero FetchedAt makes the data stale, so it is fetched at once
+			// with the new token instead of waiting out the TTL.
+			prev := b.Prev
+			prev.FetchedAt = time.Time{}
+			e.Phase = prev
 			p.Entries[k] = e
 		}
 	}

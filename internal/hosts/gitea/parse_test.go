@@ -6,15 +6,15 @@ import (
 	corehosts "github.com/brendatamaar/yggdrasil/internal/core/hosts"
 )
 
-const okPull = `{"number":1,"title":"t","state":"open","updated_at":"2026-10-12T09:30:00Z","html_url":"u","head":{"ref":"a"},"base":{"ref":"main"}}`
+const okPull = `{"number":1,"title":"t","state":"open","updated_at":"2026-10-12T09:30:00Z","html_url":"https://h/u","head":{"ref":"a"},"base":{"ref":"main"}}`
 
 func TestParsePullsRejectsEachRule(t *testing.T) {
 	cases := map[string]string{
 		"not json":      `{`,
-		"no number":     `[{"title":"t","state":"open","updated_at":"2026-10-12T09:30:00Z","html_url":"u","head":{"ref":"a"},"base":{"ref":"b"}}]`,
-		"unknown state": `[{"number":1,"title":"t","state":"all","updated_at":"2026-10-12T09:30:00Z","html_url":"u","head":{"ref":"a"},"base":{"ref":"b"}}]`,
-		"no head":       `[{"number":1,"title":"t","state":"open","updated_at":"2026-10-12T09:30:00Z","html_url":"u","base":{"ref":"b"}}]`,
-		"bad time":      `[{"number":1,"title":"t","state":"open","updated_at":"x","html_url":"u","head":{"ref":"a"},"base":{"ref":"b"}}]`,
+		"no number":     `[{"title":"t","state":"open","updated_at":"2026-10-12T09:30:00Z","html_url":"https://h/u","head":{"ref":"a"},"base":{"ref":"b"}}]`,
+		"unknown state": `[{"number":1,"title":"t","state":"all","updated_at":"2026-10-12T09:30:00Z","html_url":"https://h/u","head":{"ref":"a"},"base":{"ref":"b"}}]`,
+		"no head":       `[{"number":1,"title":"t","state":"open","updated_at":"2026-10-12T09:30:00Z","html_url":"https://h/u","base":{"ref":"b"}}]`,
+		"bad time":      `[{"number":1,"title":"t","state":"open","updated_at":"x","html_url":"https://h/u","head":{"ref":"a"},"base":{"ref":"b"}}]`,
 	}
 	for name, body := range cases {
 		if got, err := parsePulls([]byte(body), "a"); err == nil {
@@ -29,17 +29,17 @@ func TestParsePullsRejectsEachRule(t *testing.T) {
 
 func TestStateAndDraftMapping(t *testing.T) {
 	mk := func(extra string) string {
-		return `[{"number":1,"title":"` + extra + `","state":"STATE","updated_at":"2026-10-12T09:30:00Z","html_url":"u","head":{"ref":"a"},"base":{"ref":"b"},"merged":MERGED}]`
+		return `[{"number":1,"title":"` + extra + `","state":"STATE","updated_at":"2026-10-12T09:30:00Z","html_url":"https://h/u","head":{"ref":"a"},"base":{"ref":"b"},"merged":MERGED}]`
 	}
 	_ = mk
 	cases := []struct {
 		body string
 		want corehosts.MRState
 	}{
-		{`[{"number":1,"title":"t","state":"open","merged":false,"updated_at":"2026-10-12T09:30:00Z","html_url":"u","head":{"ref":"a"},"base":{"ref":"b"}}]`, corehosts.MROpen},
-		{`[{"number":1,"title":"WIP: t","state":"open","merged":false,"updated_at":"2026-10-12T09:30:00Z","html_url":"u","head":{"ref":"a"},"base":{"ref":"b"}}]`, corehosts.MRDraft},
-		{`[{"number":1,"title":"t","state":"closed","merged":true,"updated_at":"2026-10-12T09:30:00Z","html_url":"u","head":{"ref":"a"},"base":{"ref":"b"}}]`, corehosts.MRMerged},
-		{`[{"number":1,"title":"t","state":"closed","merged":false,"updated_at":"2026-10-12T09:30:00Z","html_url":"u","head":{"ref":"a"},"base":{"ref":"b"}}]`, corehosts.MRClosed},
+		{`[{"number":1,"title":"t","state":"open","merged":false,"updated_at":"2026-10-12T09:30:00Z","html_url":"https://h/u","head":{"ref":"a"},"base":{"ref":"b"}}]`, corehosts.MROpen},
+		{`[{"number":1,"title":"WIP: t","state":"open","merged":false,"updated_at":"2026-10-12T09:30:00Z","html_url":"https://h/u","head":{"ref":"a"},"base":{"ref":"b"}}]`, corehosts.MRDraft},
+		{`[{"number":1,"title":"t","state":"closed","merged":true,"updated_at":"2026-10-12T09:30:00Z","html_url":"https://h/u","head":{"ref":"a"},"base":{"ref":"b"}}]`, corehosts.MRMerged},
+		{`[{"number":1,"title":"t","state":"closed","merged":false,"updated_at":"2026-10-12T09:30:00Z","html_url":"https://h/u","head":{"ref":"a"},"base":{"ref":"b"}}]`, corehosts.MRClosed},
 	}
 	for _, c := range cases {
 		got, err := parsePulls([]byte(c.body), "a")
@@ -93,7 +93,7 @@ func FuzzParseStatus(f *testing.F) {
 }
 
 func FuzzParseSearch(f *testing.F) {
-	f.Add([]byte(`[{"number":1,"title":"t","state":"open","updated_at":"2026-10-12T09:30:00Z","html_url":"u","repository":{"full_name":"a/b"}}]`))
+	f.Add([]byte(`[{"number":1,"title":"t","state":"open","updated_at":"2026-10-12T09:30:00Z","html_url":"https://h/u","repository":{"full_name":"a/b"}}]`))
 	f.Fuzz(func(t *testing.T, b []byte) {
 		items, err := parseSearch(b, corehosts.RoleAuthored)
 		if err != nil {
@@ -105,4 +105,17 @@ func FuzzParseSearch(f *testing.F) {
 			}
 		}
 	})
+}
+
+func TestUnsafeURLs(t *testing.T) {
+	for _, bad := range []string{"javascript:alert(1)", "data:text/html,x", "//h/x", "file:///etc/passwd"} {
+		body := `[{"number":1,"title":"t","state":"open","updated_at":"2026-10-12T09:30:00Z","html_url":"` + bad + `","head":{"ref":"a"},"base":{"ref":"b"}}]`
+		if got, err := parsePulls([]byte(body), "a"); err == nil {
+			t.Errorf("PR with %q accepted: %+v", bad, got)
+		}
+		p, err := parseStatus([]byte(`{"state":"success","statuses":[{"target_url":"` + bad + `","updated_at":"2026-10-12T09:45:00Z"}]}`))
+		if err != nil || p == nil || p.URL != "" {
+			t.Errorf("status with %q = %+v, %v; want a blank URL", bad, p, err)
+		}
+	}
 }

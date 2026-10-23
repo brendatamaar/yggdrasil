@@ -33,7 +33,7 @@ type mrJSON struct {
 }
 
 func (m mrJSON) toMR(needBranches bool) (corehosts.MergeRequest, error) {
-	if m.IID == nil || *m.IID <= 0 || m.Title == nil || m.WebURL == "" || m.State == "" || m.UpdatedAt == "" {
+	if m.IID == nil || *m.IID <= 0 || m.Title == nil || hosts.SafeWebURL(m.WebURL) == "" || m.State == "" || m.UpdatedAt == "" {
 		return corehosts.MergeRequest{}, errors.New("a merge request is missing iid, title, web_url, state or updated_at")
 	}
 	if needBranches && (m.SourceBranch == "" || m.TargetBranch == "") {
@@ -114,7 +114,7 @@ func parsePipelines(body []byte) (*corehosts.Pipeline, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &corehosts.Pipeline{Status: pipelineStatus(p.Status), URL: p.WebURL, UpdatedAt: at}, nil
+	return &corehosts.Pipeline{Status: pipelineStatus(p.Status), URL: hosts.SafeWebURL(p.WebURL), UpdatedAt: at}, nil
 }
 
 func pipelineStatus(s string) corehosts.PipelineStatus {

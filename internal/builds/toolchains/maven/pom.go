@@ -1,6 +1,7 @@
 package maven
 
 import (
+	"bytes"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -47,7 +48,13 @@ func parsePOM(r io.Reader) (corebuilds.Module, []string, error) {
 		return corebuilds.Module{}, nil, errors.New("pom.xml is larger than 4 MiB; Yggdrasil will not read it")
 	}
 	var p pomXML
-	if err := xml.Unmarshal(data, &p); err != nil {
+	dec := xml.NewDecoder(bytes.NewReader(data))
+	dec.CharsetReader = charsetReader
+	if err := dec.Decode(&p); err != nil {
+		var ce charsetError
+		if errors.As(err, &ce) {
+			return corebuilds.Module{}, nil, fmt.Errorf("pom.xml is encoded as %q; Yggdrasil reads UTF-8 and ISO-8859-1. Save the file as UTF-8", string(ce))
+		}
 		return corebuilds.Module{}, nil, fmt.Errorf("pom.xml is not valid XML: %w", err)
 	}
 	p.ArtifactID = strings.TrimSpace(p.ArtifactID)
