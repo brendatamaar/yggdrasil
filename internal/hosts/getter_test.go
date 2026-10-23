@@ -138,6 +138,21 @@ func TestGetRefusesRedirectToAnotherHost(t *testing.T) {
 	}
 }
 
+func TestGetRefusesRedirectToAnotherScheme(t *testing.T) {
+	check := newGetter().client.CheckRedirect
+	from, _ := http.NewRequest(http.MethodGet, "https://git.acme.dev/a", nil)
+	for target, wantErr := range map[string]bool{
+		"http://git.acme.dev/a":  true,  // downgrade: the token would travel in clear text
+		"https://git.acme.dev/b": false, // same host and scheme
+		"https://other.dev/b":    true,
+	} {
+		to, _ := http.NewRequest(http.MethodGet, target, nil)
+		if err := check(to, []*http.Request{from}); (err != nil) != wantErr {
+			t.Errorf("redirect to %s: err = %v, want error %v", target, err, wantErr)
+		}
+	}
+}
+
 func TestGetAllPartialNotModifiedRefetches(t *testing.T) {
 	var mu sync.Mutex
 	var calls []string

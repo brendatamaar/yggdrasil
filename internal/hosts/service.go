@@ -35,6 +35,12 @@ type RemoteReader interface {
 	RemoteURL(ctx context.Context, dir, name string) (string, error)
 }
 
+// SecretAdder adds secret values to the process-wide log redactor
+// (*safety.SecretRedactor).
+type SecretAdder interface {
+	Add(secrets ...string)
+}
+
 // Publisher tells subscribers that host data changed (*api.Server).
 type Publisher interface {
 	PublishHostsChanged(msg api.HostsChangedMessage)
@@ -63,6 +69,12 @@ type Deps struct {
 	TickEvery time.Duration
 	// FetchTimeout defaults to 20 s.
 	FetchTimeout time.Duration
+	// RemoteTimeout bounds one read of a repo's remote URL; it defaults to
+	// 10 s, so a hung git cannot hold up the poller.
+	RemoteTimeout time.Duration
+	// Secrets (optional) receives the tokens of a reloaded config, so the
+	// process-wide redactor masks them too (invariant 4).
+	Secrets SecretAdder
 }
 
 // link is what a repo's remote resolved to.
@@ -112,6 +124,9 @@ func New(d Deps) *Service {
 	}
 	if d.FetchTimeout <= 0 {
 		d.FetchTimeout = 20 * time.Second
+	}
+	if d.RemoteTimeout <= 0 {
+		d.RemoteTimeout = 10 * time.Second
 	}
 	s := &Service{
 		d: d, remotes: map[core.RepoID]remoteCache{}, links: map[core.RepoID]link{},
@@ -163,9 +178,10 @@ func (s *Service) Start(ctx context.Context) error {
 	s.started = true
 	s.ctx, s.cancel = context.WithCancel(ctx)
 	s.group, _ = errgroup.WithContext(s.ctx)
+	instances := s.cfg.CoreInstances()
 	s.mu.Unlock()
 
-	s.step(corehosts.ConfigChanged{Instances: s.cfg.CoreInstances(), Now: s.d.Clock()})
+	s.step(corehosts.ConfigChanged{Instances: instances, Now: s.d.Clock()})
 	s.group.Go(func() error {
 		tick := time.NewTicker(s.d.TickEvery)
 		defer tick.Stop()
@@ -197,9 +213,8 @@ func (s *Service) Close() {
 }
 
 // Reload re-reads the config from its source (the settings "reload" action).
-// A new token is sent from then on, but the process-wide log redactor was
-// built at startup: a token added by a reload is redacted by this service's
-// own logging only.
+// A new token is sent from then on, and is added to the process-wide log
+// redactor (Deps.Secrets) before it is used.
 func (s *Service) Reload() error {
 	if s.d.Reload == nil {
 		return errors.New("this service has no config source to reload")
@@ -207,6 +222,9 @@ func (s *Service) Reload() error {
 	cfg, err := s.d.Reload()
 	if err != nil {
 		return fmt.Errorf("reload the git host config: %w", err)
+	}
+	if s.d.Secrets != nil {
+		s.d.Secrets.Add(cfg.Secrets()...)
 	}
 	s.mu.Lock()
 	s.setConfig(cfg)
@@ -280,7 +298,9 @@ func (s *Service) readLink(r RepoRef) link {
 	if s.d.Remotes == nil {
 		return link{reason: "Git hosts can't be looked up here."}
 	}
-	raw, err := s.d.Remotes.RemoteURL(s.ctx, r.Path, "origin")
+	ctx, cancel := context.WithTimeout(s.ctx, s.d.RemoteTimeout)
+	defer cancel()
+	raw, err := s.d.Remotes.RemoteURL(ctx, r.Path, "origin")
 	if err != nil {
 		if errors.Is(err, git.ErrNoRemote) {
 			return link{reason: "This repo has no \"origin\" remote, so it can't be linked to a git host."}
@@ -378,6 +398,7 @@ func (s *Service) fetch(f corehosts.Fetch, inst corehosts.Instance, token string
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
+				s.log.Error("a host client panicked", "instance", string(f.Instance), "panic", truncate(s.redactText(fmt.Sprint(r)), 300))
 				err = fmt.Errorf("host client panicked: %v", r)
 			}
 		}()
@@ -418,11 +439,13 @@ func (s *Service) fetch(f corehosts.Fetch, inst corehosts.Instance, token string
 	s.step(in)
 }
 
-func (s *Service) redact(err error) string {
+func (s *Service) redact(err error) string { return s.redactText(err.Error()) }
+
+func (s *Service) redactText(text string) string {
 	s.mu.Lock()
 	red := s.red
 	s.mu.Unlock()
-	return red.Redact(err.Error())
+	return red.Redact(text)
 }
 
 func truncate(s string, n int) string {

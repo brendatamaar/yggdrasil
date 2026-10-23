@@ -36,7 +36,7 @@ type pullJSON struct {
 }
 
 func (p pullJSON) toMR(needBranches bool) (corehosts.MergeRequest, error) {
-	if p.Number == nil || *p.Number <= 0 || p.Title == nil || p.HTMLURL == "" || p.State == "" || p.UpdatedAt == "" {
+	if p.Number == nil || *p.Number <= 0 || p.Title == nil || hosts.SafeWebURL(p.HTMLURL) == "" || p.State == "" || p.UpdatedAt == "" {
 		return corehosts.MergeRequest{}, errors.New("a pull request is missing number, title, html_url, state or updated_at")
 	}
 	var state corehosts.MRState
@@ -190,7 +190,7 @@ func parsePipeline(checks, status []byte, fallbackURL string) (*corehosts.Pipeli
 		}
 		total++
 		if link == "" {
-			link = r.HTMLURL
+			link = hosts.SafeWebURL(r.HTMLURL)
 		}
 		if r.Status != "completed" {
 			running++
@@ -206,7 +206,7 @@ func parsePipeline(checks, status []byte, fallbackURL string) (*corehosts.Pipeli
 		case "failure", "timed_out", "action_required", "startup_failure":
 			failed++
 			if failLink == "" {
-				failLink = r.HTMLURL
+				failLink = hosts.SafeWebURL(r.HTMLURL)
 			}
 		case "cancelled":
 			canceled++
@@ -223,7 +223,7 @@ func parsePipeline(checks, status []byte, fallbackURL string) (*corehosts.Pipeli
 				return nil, err
 			}
 			if link == "" {
-				link = s.TargetURL
+				link = hosts.SafeWebURL(s.TargetURL)
 			}
 		}
 		total++
@@ -234,7 +234,7 @@ func parsePipeline(checks, status []byte, fallbackURL string) (*corehosts.Pipeli
 			failed++
 			for _, s := range cs.Statuses {
 				if (s.State == "failure" || s.State == "error") && failLink == "" {
-					failLink = s.TargetURL
+					failLink = hosts.SafeWebURL(s.TargetURL)
 				}
 			}
 		case "pending":
@@ -260,7 +260,7 @@ func parsePipeline(checks, status []byte, fallbackURL string) (*corehosts.Pipeli
 	default:
 		st = corehosts.PipelineSkipped
 	}
-	return &corehosts.Pipeline{Status: st, URL: cmpOr(link, fallbackURL), UpdatedAt: latest}, nil
+	return &corehosts.Pipeline{Status: st, URL: cmpOr(link, hosts.SafeWebURL(fallbackURL)), UpdatedAt: latest}, nil
 }
 
 func cmpOr(a, b string) string {

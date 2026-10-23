@@ -71,8 +71,8 @@ func NewGetter(base *http.Client, now func() time.Time) *Getter {
 		if len(via) >= 5 {
 			return errors.New("too many redirects")
 		}
-		if req.URL.Host != via[0].URL.Host {
-			return errors.New("refusing a redirect to another host")
+		if req.URL.Host != via[0].URL.Host || req.URL.Scheme != via[0].URL.Scheme {
+			return errors.New("refusing a redirect to another host or scheme")
 		}
 		return nil
 	}

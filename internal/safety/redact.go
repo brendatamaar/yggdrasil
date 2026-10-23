@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 )
 
 // Redacted replaces every secret found in text.
@@ -26,17 +27,35 @@ var (
 	rePairs = regexp.MustCompile(`(?i)([A-Za-z0-9_.-]*(?:token|password|passwd|secret|credential|private[_-]?key|api[_-]?key)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s&,;"']+)`)
 )
 
-type redactor struct {
+// SecretRedactor is the Redactor that also masks exact secret values. Add can
+// be called while other goroutines call Redact (a reloaded host token).
+type SecretRedactor struct {
+	mu      sync.RWMutex
 	secrets []string
 }
 
 // NewRedactor returns a Redactor that also masks the exact values in
 // secrets, such as the tokens Yggdrasil holds. Empty values are ignored.
-func NewRedactor(secrets ...string) Redactor {
-	s := slices.DeleteFunc(slices.Clone(secrets), func(v string) bool { return v == "" })
-	// A secret that JSON escapes (quotes, backslashes, & < >) appears in
-	// audit detail and JSON logs in its escaped form: mask that form too.
-	for _, v := range slices.Clone(s) {
+func NewRedactor(secrets ...string) *SecretRedactor {
+	r := &SecretRedactor{}
+	r.Add(secrets...)
+	return r
+}
+
+// Add makes the redactor mask more secret values from now on. It is safe to
+// call concurrently with Redact. Empty values are ignored; values already
+// known are kept.
+func (r *SecretRedactor) Add(secrets ...string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s := slices.Clone(r.secrets)
+	for _, v := range secrets {
+		if v == "" || slices.Contains(s, v) {
+			continue
+		}
+		s = append(s, v)
+		// A secret that JSON escapes (quotes, backslashes, & < >) appears in
+		// audit detail and JSON logs in its escaped form: mask that form too.
 		for _, esc := range jsonForms(v) {
 			if esc != v && !slices.Contains(s, esc) {
 				s = append(s, esc)
@@ -45,7 +64,7 @@ func NewRedactor(secrets ...string) Redactor {
 	}
 	// Longest first, so a secret that contains another one is masked whole.
 	slices.SortFunc(s, func(a, b string) int { return len(b) - len(a) })
-	return redactor{secrets: s}
+	r.secrets = s
 }
 
 // jsonForms returns the text of v inside a JSON string, with and without
@@ -68,8 +87,11 @@ func jsonForms(v string) []string {
 }
 
 // Redact implements Redactor.
-func (r redactor) Redact(s string) string {
-	for _, sec := range r.secrets {
+func (r *SecretRedactor) Redact(s string) string {
+	r.mu.RLock()
+	secrets := r.secrets
+	r.mu.RUnlock()
+	for _, sec := range secrets {
 		s = strings.ReplaceAll(s, sec, Redacted)
 	}
 	s = reBearer.ReplaceAllString(s, "${1}"+Redacted)

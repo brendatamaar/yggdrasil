@@ -75,3 +75,18 @@ func PathSegments(p corehosts.ProjectPath) string {
 func NeedToken() error {
 	return fetchErr(corehosts.FailUnauthorized, "this needs a token and none is configured")
 }
+
+// SafeWebURL returns raw when it is an http or https URL with a host, else "".
+// Host JSON is untrusted: a link such as "javascript:..." or "data:..." must
+// never reach the browser as an href (SAFETY-B1).
+func SafeWebURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		return raw
+	}
+	return ""
+}
