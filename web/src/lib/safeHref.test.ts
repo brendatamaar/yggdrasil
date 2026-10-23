@@ -13,6 +13,10 @@ describe("safeHref", () => {
     "//evil.example/x",
     "",
     "   ",
+    "https://user:pw@h/",
+    "https://user@h/",
+    "http://:pw@h/",
+    "  https://user:pw@h/",
   ])("rejects %j", (u) => {
     expect(safeHref(u)).toBeUndefined();
   });
