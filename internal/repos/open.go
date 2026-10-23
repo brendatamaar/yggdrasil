@@ -207,6 +207,9 @@ func (s *OpenService) SetEditor(ctx context.Context, e Editor, actor corerepos.A
 
 // Open opens the repo, or a file of it, in an editor: the requested one, the
 // saved one, or the first one found on the PATH.
+//
+// Open and Reveal write no audit entry on purpose: they change no state of
+// Yggdrasil, a repo or a remote (decision, F1-G2).
 func (s *OpenService) Open(ctx context.Context, id core.RepoID, req OpenRequest) error {
 	_, target, err := s.repoPath(ctx, id, req.File)
 	if err != nil {

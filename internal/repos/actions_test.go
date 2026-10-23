@@ -306,6 +306,7 @@ type actEnv struct {
 	rec   *actRefresh
 	pub   *actPub
 	bld   *fakeBuilds
+	stop  context.CancelFunc
 	ids   []core.RepoID
 }
 
@@ -363,6 +364,7 @@ func newActEnv(t *testing.T, o actOpts) *actEnv {
 		t.Fatal(err)
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
+	e.stop = cancel
 	done := make(chan struct{})
 	go func() { _ = e.svc.Run(runCtx); close(done) }()
 	t.Cleanup(func() {
@@ -673,5 +675,25 @@ func TestServiceRunsOnlyFetchPullCheckout(t *testing.T) {
 		if !strings.HasPrefix(c, "fetch:") && !strings.HasPrefix(c, "pull:") && !strings.HasPrefix(c, "checkout:") {
 			t.Errorf("unexpected git call %q", c)
 		}
+	}
+}
+
+// A command that already ran must still be audited when the server stops
+// while it is running (invariant 8).
+func TestServiceAuditsCommandThatEndsAfterShutdownStarted(t *testing.T) {
+	e := newActEnv(t, actOpts{repos: 1})
+	e.git.gate = make(chan struct{})
+	id, err := e.start("fetch", "", e.ids...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-e.git.started
+	e.stop() // the command now ends because its context is cancelled
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && !contains(e.audits("repo:"+string(e.ids[0])), "git.fetch") {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := e.audits("repo:" + string(e.ids[0])); !contains(got, "git.fetch") {
+		t.Fatalf("repo audit after shutdown = %v (batch %s)", got, id)
 	}
 }
