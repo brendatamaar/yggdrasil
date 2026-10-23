@@ -498,3 +498,16 @@ Fix batch F1 merged (`25c1ce9`, tests `11fd801`). All checks green on `main`: ge
 5. Reject `u.User != nil` in `SafeWebURL` and `safeHref`; add cases for whitespace, newline, `http:foo`, userinfo.
 6. `Blocked{Unsupported}` unblocks on every `ConfigChanged` (now costs a refetch); check the UI never reads a zero `FetchedAt` as "never fetched".
 7. `feeder.run`: re-mark after a failed `Snapshot`.
+
+### F2 mini-batch: result (2026-10-23)
+
+Merged `68ee526`: prune `started` before the `Status == nil` check; S4 test made stable; `safeInterpret` panic recovery (feeds `ProcessLost`, `killBuild`, wake); `SafeWebURL` and `safeHref` reject userinfo; shutdown-audit assertion in the S3 test. Lint, typecheck, `task test`, `task test:web` (179) green. Safety PASS, FE no Must-fix. Not run: `-race` on `main`.
+
+Backlog after F2 (none blocking):
+1. `recovery_test.go` `TestStartedPrunedWithoutStatusService` is racy: poll `StartedRecords() == 0` against a deadline instead of asserting right after Finished.
+2. `interpret.go` ~156-167: close the step log and cancel via one `defer` after `Logs.Open` (covers panics in `stepDir`, `Resolve`, etc.); add a log-close counter to the fake.
+3. A panic inside `lifecycle` on a Finished transition leaks the `started` entry and skips the status refresh: prune in the `safeInterpret` recovery path or via `defer`.
+4. Recovery fires for a panic in any command (including a `BuildStarted` subscriber) and so interrupts a healthy build; consider per-command recovery that escalates only for StartStep/KillStep/Collect. Add a test where `ProcessLost`'s own interpret panics.
+5. Log `%T` plus a redacted message instead of the raw panic value; log the stack before the re-panic in `startStep`.
+6. Go rejects `https://@h/`, TS accepts it (harmless).
+7. Earlier backlog items 6 and 7 (Unsupported unblock refetch; `feeder.run` re-mark after failed Snapshot) still open.
