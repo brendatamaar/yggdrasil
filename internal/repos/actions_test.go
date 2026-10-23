@@ -307,6 +307,7 @@ type actEnv struct {
 	pub   *actPub
 	bld   *fakeBuilds
 	stop  context.CancelFunc
+	done  chan struct{} // closed when Run returned
 	ids   []core.RepoID
 }
 
@@ -314,6 +315,8 @@ type actOpts struct {
 	repos int
 	max   int
 	ids   func(prefix string) string
+	// wrap, if set, puts a runner around the script runner.
+	wrap func(*scriptGit) repos.GitRunner
 }
 
 func newActEnv(t *testing.T, o actOpts) *actEnv {
@@ -356,8 +359,12 @@ func newActEnv(t *testing.T, o actOpts) *actEnv {
 	for _, r := range list {
 		e.ids = append(e.ids, r.ID)
 	}
+	var runner repos.GitRunner = e.git
+	if o.wrap != nil {
+		runner = o.wrap(e.git)
+	}
 	e.svc, err = repos.NewActionsService(repos.ActionsDeps{
-		Store: store, Redactor: red, Git: e.git, Builds: e.bld, Status: e.rec, Publisher: e.pub,
+		Store: store, Redactor: red, Git: runner, Builds: e.bld, Status: e.rec, Publisher: e.pub,
 		Max: o.max, IDs: o.ids,
 	})
 	if err != nil {
@@ -366,6 +373,7 @@ func newActEnv(t *testing.T, o actOpts) *actEnv {
 	runCtx, cancel := context.WithCancel(context.Background())
 	e.stop = cancel
 	done := make(chan struct{})
+	e.done = done
 	go func() { _ = e.svc.Run(runCtx); close(done) }()
 	t.Cleanup(func() {
 		cancel()
