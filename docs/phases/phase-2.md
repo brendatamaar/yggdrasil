@@ -511,3 +511,29 @@ Backlog after F2 (none blocking):
 5. Log `%T` plus a redacted message instead of the raw panic value; log the stack before the re-panic in `startStep`.
 6. Go rejects `https://@h/`, TS accepts it (harmless).
 7. Earlier backlog items 6 and 7 (Unsupported unblock refetch; `feeder.run` re-mark after failed Snapshot) still open.
+
+## B4 work breakdown (proposed, awaiting approval)
+
+Scope: code search (XR-01), the six remaining widgets (UI-03), the 50-repo perf check. Design: `docs/design/code-search.md` (approved 2026-10-18). Follow the functional-effect:model skill (docs/AGENTS.md 5.11).
+
+### Step 0: foundation (go-backend, alone, committed to `main` before fan-out)
+- `internal/core/search`: `Query`, `Search`, `Match`, input/command variants and `Step` as in the design, with property tests for its invariants and a parser for `Query` (round-trip, accepted ⇒ valid, one test per rejection rule, fuzz). Editor-link construction (pure) lives here.
+- `internal/api/types_search.go` (request/response DTOs) and `task generate`, so the frontend gets `web/src/api/gen/search.gen.ts`.
+- Gate: `task generate`, `lint`, `typecheck`, `test` green; merge to `main`.
+
+### Batch B4a (3 parallel, disjoint)
+| Task | Agent | Owns | PRD |
+|---|---|---|---|
+| search shell | `go-backend` | `internal/search` (git grep via `internal/git`/`platform.Start`, per-repo timeout and caps, merge via core), `internal/api/search.go`, search wiring in `cmd/ygg` | XR-01 |
+| widgets | `frontend` | `web/src/widgets/{git-activity,merge-requests,needs-attention,ci-failures,builds,recent-areas}` and their registry entries (`registry.ts`); uses existing status, hosts and builds endpoints; no cross-widget imports | UI-03 |
+| search page | `frontend` | `web/src/features/search`, route `web/src/routes/search*`, nav link | XR-01 UI |
+
+Constraints: search only reads tracked repos; pattern passed as argv after `--`/`-e`, no shell; output capped while streaming; editor links go through the existing open endpoint (inside the repo only). Widgets and page render host-provided URLs only through `SafeLink`.
+
+### Batch B4b (after B4a merges)
+| Task | Agent | Owns |
+|---|---|---|
+| tests + perf | `test-engineer` | search test map from the design (shell contract suite fake vs real git, redaction-free output caps, timeouts), demo-project fixtures (multi-repo, Maven/Node/Gradle manifests, recorded host HTTP) in `fixtures/demo-gen`, the 50-repo status-refresh perf test (< 10 s) |
+
+### Gates
+After Step 0 and after each batch: `task generate/lint/typecheck/test/test:web` on `main`, then `safety-reviewer` and `functional-effect:fe-reviewer` on that batch's diff; fix Blocking/Must-fix; re-run. Then Phase 2 close: bookkeeping, exit-criteria check, manual Windows checklist, proposed tag `v0.3.0` (no tag until you say so).
