@@ -242,6 +242,10 @@ type DiffOptions struct {
 	Mode     DiffMode
 	From, To string
 	Path     string
+	// Limit caps the output: git is stopped once it has printed more than
+	// Limit bytes and Diff returns at most Limit+1 bytes, so the caller can see
+	// that the diff was cut. 0 means no cap.
+	Limit int
 }
 
 // Diff returns unified diff text. Untracked files are not part of it. Bytes
@@ -268,7 +272,13 @@ func (g *Git) Diff(ctx context.Context, dir string, o DiffOptions) (string, erro
 	}
 	args = append(args, "--")
 	if o.Path != "" {
+		// A path from the UI is a file name, never a glob or pathspec magic.
+		args = append([]string{"--literal-pathspecs"}, args...)
 		args = append(args, o.Path)
 	}
-	return g.run(ctx, dir, "diff", true, args...)
+	limit := 0
+	if o.Limit > 0 {
+		limit = o.Limit + 1
+	}
+	return g.runLimited(ctx, dir, "diff", true, limit, args...)
 }

@@ -328,7 +328,9 @@ func (s *ActionsService) onBuildStarted(ev builds.BuildStarted) {
 // fails nothing is started and the state is unchanged.
 func (s *ActionsService) apply(in corerepos.ActInput) (BatchView, error) {
 	s.mu.Lock()
-	if s.stopped {
+	// While shutting down only new batches are refused. Results of commands that
+	// already ran are still applied so their audit entries are written (invariant 8).
+	if _, isStart := in.(corerepos.StartBatch); s.stopped && isStart {
 		s.mu.Unlock()
 		return BatchView{}, apperr.New(apperr.Unavailable, "Yggdrasil is shutting down.", errors.New("git actions stopped"))
 	}
@@ -390,8 +392,8 @@ func (s *ActionsService) step(in corerepos.ActInput) (next corerepos.Actions, cm
 // spawn starts a worker owned by the service. Callers hold s.mu.
 func (s *ActionsService) spawn(f func(ctx context.Context)) {
 	ctx := s.runCtx
-	if ctx == nil {
-		return
+	if ctx == nil || s.stopped {
+		return // no new commands once shutdown began; Run is already waiting on the group
 	}
 	s.group.Go(func() error { f(ctx); return nil })
 }

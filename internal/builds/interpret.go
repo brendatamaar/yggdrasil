@@ -54,8 +54,33 @@ func (s *Service) lifecycle(ctx context.Context, id core.BuildID, before, after 
 	if _, was := before.(corebuilds.Finished); was || s.d.Status == nil {
 		return
 	}
-	if err := s.d.Status.Refresh(ctx, uniqueRepos(fin.Spec), corerepos.ReasonBuild); err != nil {
-		s.d.Log.Warn("refresh repo status after a build", "build", id, "err", err)
+	s.pruneStarted(id)
+	repos := uniqueRepos(fin.Spec)
+	refresh := func(rctx context.Context) {
+		if err := s.d.Status.Refresh(rctx, repos, corerepos.ReasonBuild); err != nil {
+			s.d.Log.Warn("refresh repo status after a build", "build", id, "err", err)
+		}
+	}
+	// Off the owner goroutine: a slow status refresh must not stall every build.
+	s.mu.Lock()
+	runCtx, g := s.ctx, s.g
+	s.mu.Unlock()
+	if g == nil {
+		refresh(ctx)
+		return
+	}
+	g.Go(func() error { refresh(runCtx); return nil })
+}
+
+// pruneStarted forgets the start records of a finished build: a Finished build
+// never emits StartStep again, so the S1 guarantee holds without them.
+func (s *Service) pruneStarted(id core.BuildID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k := range s.started {
+		if k.build == id {
+			delete(s.started, k)
+		}
 	}
 }
 

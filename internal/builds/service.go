@@ -75,8 +75,11 @@ type Deps struct {
 	Redactor  safety.Redactor // default safety.NewRedactor()
 	Publisher Publisher       // optional
 	Status    StatusRefresher // optional
-	DataDir   string
-	Log       *slog.Logger
+	// ReconcileBackoff is the first wait between retries of the startup
+	// ListActive; it doubles per retry. Default 200 ms.
+	ReconcileBackoff time.Duration
+	DataDir          string
+	Log              *slog.Logger
 }
 
 // BuildStarted is sent to subscribers when a build is admitted.
@@ -217,11 +220,38 @@ func (s *Service) owner(ctx context.Context) {
 
 // reconcile marks builds that were running when ygg died as interrupted: the
 // job object killed their processes with ygg (S2).
+//
+// A failing ListActive is retried with a bounded backoff. When the store
+// returns some builds together with an error (one corrupt row), the parseable
+// ones are still reconciled and the error is logged.
 func (s *Service) reconcile(ctx context.Context) {
-	active, err := s.d.Store.ListActive(ctx)
-	if err != nil {
-		s.d.Log.Error("list active builds at startup", "err", err)
-		return
+	const attempts = 6
+	delay := s.d.ReconcileBackoff
+	if delay <= 0 {
+		delay = 200 * time.Millisecond
+	}
+	var active []corebuilds.State
+	for try := 1; ; try++ {
+		var err error
+		active, err = s.d.Store.ListActive(ctx)
+		if err == nil {
+			break
+		}
+		if len(active) > 0 {
+			s.d.Log.Error("list active builds at startup: some rows could not be read and were skipped", "err", err)
+			break
+		}
+		if try == attempts || ctx.Err() != nil {
+			s.d.Log.Error("list active builds at startup: giving up, interrupted builds stay Running until the next start", "err", err, "attempts", try)
+			return
+		}
+		s.d.Log.Warn("list active builds at startup failed, retrying", "err", err, "attempt", try)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+		delay = min(delay*2, 5*time.Second)
 	}
 	for _, st := range active {
 		id, ok := stateID(st)
@@ -274,8 +304,27 @@ func (s *Service) handle(ctx context.Context, m msg) (result, []msg) {
 	if len(cmds) == 0 {
 		return result{state: after}, nil
 	}
-	follow := s.interpret(ctx, m.id, before, after, cmds)
+	follow, perr := s.safeInterpret(ctx, m.id, before, after, cmds)
+	if perr != nil {
+		return result{state: after, changed: true, err: errors.New("builds: internal error")}, nil
+	}
 	return result{state: after, changed: true}, follow
+}
+
+// safeInterpret runs interpret and, if it panics, logs which commands were
+// committed but not (fully) performed. The state is already saved.
+func (s *Service) safeInterpret(ctx context.Context, id core.BuildID, before, after corebuilds.State, cmds []corebuilds.Command) (follow []msg, perr any) {
+	defer func() {
+		if r := recover(); r != nil {
+			types := make([]string, len(cmds))
+			for i, c := range cmds {
+				types[i] = fmt.Sprintf("%T", c)
+			}
+			s.d.Log.Error("builds: interpreting commands panicked, some commands were lost", "build", id, "commands", types, "panic", r)
+			follow, perr = nil, r
+		}
+	}()
+	return s.interpret(ctx, id, before, after, cmds), nil
 }
 
 // commit loads, steps, saves and audits in one transaction, with one retry on

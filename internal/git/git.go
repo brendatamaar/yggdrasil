@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/brendatamaar/yggdrasil/internal/platform"
@@ -55,7 +56,7 @@ func New(env []string, opts ...Option) (*Git, error) {
 	g := &Git{
 		exe: exe,
 		// Fresh slice: never append into the caller's backing array.
-		env:    append(append(make([]string, 0, len(env)+1), env...), "GIT_TERMINAL_PROMPT=0"),
+		env:    gitEnv(env),
 		redact: safety.NewRedactor(),
 	}
 	for _, o := range opts {
@@ -64,24 +65,81 @@ func New(env []string, opts ...Option) (*Git, error) {
 	return g, nil
 }
 
+// gitEnv is the clean env plus the settings git needs here: no terminal
+// prompts, and the C locale so the English stderr that classify reads does not
+// depend on the user's language. It copies env and never reads os.Environ.
+func gitEnv(env []string) []string {
+	out := make([]string, 0, len(env)+3)
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		switch strings.ToUpper(name) {
+		case "LC_ALL", "LANGUAGE", "GIT_TERMINAL_PROMPT":
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
+}
+
 // run starts git in dir and returns stdout. readOnly adds --no-optional-locks
 // so a status poll never blocks a user's own git. Arguments never hold a token.
 func (g *Git) run(ctx context.Context, dir, op string, readOnly bool, args ...string) (string, error) {
+	return g.runLimited(ctx, dir, op, readOnly, 0, args...)
+}
+
+// capWriter keeps at most max bytes and calls full once more would not fit.
+type capWriter struct {
+	buf  bytes.Buffer
+	max  int
+	full func()
+	hit  bool
+}
+
+func (w *capWriter) Write(p []byte) (int, error) {
+	if room := w.max - w.buf.Len(); len(p) > room {
+		w.buf.Write(p[:max(room, 0)])
+		if !w.hit {
+			w.hit = true
+			w.full()
+		}
+		return len(p), nil
+	}
+	return w.buf.Write(p)
+}
+
+// runLimited is run with stdout capped at limit bytes (0: no cap). When the cap
+// is reached git is stopped and the first limit bytes are returned without an
+// error, so a huge diff never grows an unbounded buffer.
+func (g *Git) runLimited(ctx context.Context, dir, op string, readOnly bool, limit int, args ...string) (string, error) {
 	argv := append([]string{g.exe}, baseConfig...)
 	if readOnly {
 		argv = append(argv, "--no-optional-locks")
 	}
 	argv = append(argv, args...)
 
-	var stdout, stderr bytes.Buffer
-	p, err := platform.Start(ctx, platform.Spec{
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	var out io.Writer = &stdout
+	var capped *capWriter
+	runCtx := ctx
+	if limit > 0 {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithCancel(ctx)
+		defer cancel()
+		capped = &capWriter{max: limit, full: cancel}
+		out = capped
+	}
+	p, err := platform.Start(runCtx, platform.Spec{
 		Argv: argv, Dir: dir, Env: g.env, TaskID: g.taskID,
-		Stdout: &stdout, Stderr: &stderr,
+		Stdout: out, Stderr: &stderr,
 	})
 	if err != nil {
 		return "", &Error{Op: op, Err: err, UserMsg: startMessage(err)}
 	}
 	code, err := p.Wait()
+	if capped != nil && capped.hit && ctx.Err() == nil {
+		return capped.buf.String(), nil
+	}
 	if err != nil {
 		return "", &Error{Op: op, Err: err, UserMsg: fmt.Sprintf("git %s did not finish. Try again.", op)}
 	}
@@ -91,6 +149,9 @@ func (g *Git) run(ctx context.Context, dir, op string, readOnly bool, args ...st
 	if code != 0 {
 		se := strings.TrimSpace(g.redact.Redact(stderr.String()))
 		return "", &Error{Op: op, Code: code, Stderr: se, Err: errors.New("exit status " + fmt.Sprint(code)), UserMsg: classify(op, se)}
+	}
+	if capped != nil {
+		return capped.buf.String(), nil
 	}
 	return stdout.String(), nil
 }

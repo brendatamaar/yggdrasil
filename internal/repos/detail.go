@@ -127,7 +127,7 @@ func (s *DetailService) Diff(ctx context.Context, id core.RepoID, path RelPath, 
 	if side == Staged {
 		mode = git.DiffStaged
 	}
-	out, err := s.git.Diff(ctx, dir, git.DiffOptions{Mode: mode, Path: path.String()})
+	out, err := s.git.Diff(ctx, dir, git.DiffOptions{Mode: mode, Path: path.String(), Limit: MaxDiffBytes})
 	if err != nil {
 		return DiffResult{}, gitErr(err)
 	}
@@ -172,7 +172,7 @@ func (s *DetailService) Commit(ctx context.Context, id core.RepoID, oid OID) (Co
 	if len(d.Parents) > 0 {
 		from = d.Parents[0]
 	}
-	out, err := s.git.Diff(ctx, dir, git.DiffOptions{Mode: git.DiffRefs, From: from, To: d.Hash})
+	out, err := s.git.Diff(ctx, dir, git.DiffOptions{Mode: git.DiffRefs, From: from, To: d.Hash, Limit: MaxDiffBytes})
 	if err != nil {
 		return CommitResult{}, gitErr(err)
 	}
