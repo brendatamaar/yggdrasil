@@ -93,6 +93,24 @@ func TestActionsShellS3_RunWaitsForCommandsAndStartsNoMore(t *testing.T) {
 	if entered != 2 {
 		t.Fatalf("%d git commands started, want the 2 that ran when shutdown began", entered)
 	}
+	// Invariant 8: every command that ran is audited, even though it ended after
+	// shutdown began; queued repos that never ran have no entry.
+	audited := 0
+	for _, id := range e.ids {
+		n := 0
+		for _, a := range e.audits("repo:" + string(id)) {
+			if a == "git.fetch" {
+				n++
+			}
+		}
+		if n > 1 {
+			t.Fatalf("repo %s has %d git.fetch audit entries, want at most one", id, n)
+		}
+		audited += n
+	}
+	if audited != 2 {
+		t.Fatalf("%d repos have a git.fetch audit entry, want exactly the 2 that were running", audited)
+	}
 	// Nothing starts later either, and a new batch is refused.
 	time.Sleep(250 * time.Millisecond)
 	if again, _ := lg.counts(); again != entered {
