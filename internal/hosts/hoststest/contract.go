@@ -187,6 +187,61 @@ func HostClientContract(t *testing.T, newHarness func(t *testing.T) Harness) {
 			t.Errorf("inbox = %v, want %v", got, want)
 		}
 	})
+	t.Run("inbox 429 and 403 are rate limited", func(t *testing.T) {
+		for scn, wait := range map[Scenario]time.Duration{RateLimited429: 120 * time.Second, RateLimited403: 5 * time.Minute} {
+			h := newHarness(t)
+			h.Use(t, scn)
+			_, err := h.Client.Inbox(ctx, h.Instance, h.Token)
+			fe := wantFail(t, err, corehosts.FailRateLimited)
+			if fe.RetryAt == nil || !fe.RetryAt.Equal(ContractNow.Add(wait)) {
+				t.Errorf("%s: inbox RetryAt = %v, want %v", scn, fe.RetryAt, ContractNow.Add(wait))
+			}
+		}
+	})
+	t.Run("inbox 500 is transient", func(t *testing.T) {
+		h := newHarness(t)
+		h.Use(t, ServerError)
+		_, err := h.Client.Inbox(ctx, h.Instance, h.Token)
+		_ = wantFail(t, err, corehosts.FailTransient)
+	})
+	t.Run("a body that is not JSON is an error, never data", func(t *testing.T) {
+		h := newHarness(t)
+		h.Use(t, BadJSON)
+		rs, _, err := h.Client.RepoState(ctx, h.Instance, h.Token, project, branch, "")
+		if err == nil || errors.Is(err, hosts.ErrNotModified) || rs.MR != nil || rs.Pipeline != nil {
+			t.Fatalf("repo state = %+v, %v", rs, err)
+		}
+		notAuth(t, err)
+		items, err := h.Client.Inbox(ctx, h.Instance, h.Token)
+		if err == nil || len(items) != 0 {
+			t.Fatalf("inbox = %v, %v", items, err)
+		}
+		notAuth(t, err)
+	})
+	t.Run("a cancelled or timed-out call is transient", func(t *testing.T) {
+		h := newHarness(t)
+		h.Use(t, Slow)
+		cctx, cancelNow := context.WithCancel(ctx)
+		cancelNow()
+		_, _, err := h.Client.RepoState(cctx, h.Instance, h.Token, project, branch, "")
+		_ = wantFail(t, err, corehosts.FailTransient)
+
+		start := time.Now()
+		tctx, stop := context.WithTimeout(ctx, 150*time.Millisecond)
+		defer stop()
+		_, _, err = h.Client.RepoState(tctx, h.Instance, h.Token, project, branch, "")
+		fe := wantFail(t, err, corehosts.FailTransient)
+		if !errors.Is(fe, context.DeadlineExceeded) {
+			t.Errorf("cause = %v, want the deadline", fe.Err)
+		}
+		ictx, stop2 := context.WithTimeout(ctx, 150*time.Millisecond)
+		defer stop2()
+		_, err = h.Client.Inbox(ictx, h.Instance, h.Token)
+		_ = wantFail(t, err, corehosts.FailTransient)
+		if d := time.Since(start); d > 2*time.Second {
+			t.Errorf("the calls took %v; they must end with their context", d)
+		}
+	})
 	t.Run("inbox 401 is unauthorized", func(t *testing.T) {
 		h := newHarness(t)
 		h.Use(t, Unauthorized)
@@ -224,5 +279,15 @@ func checkRequests(t *testing.T, h Harness) {
 		if h.Token != "" && !inHeader {
 			t.Errorf("%s %s: no token header was sent", r.Method, r.URI)
 		}
+	}
+}
+
+// notAuth: a body that cannot be parsed must not be mistaken for a bad token,
+// a missing repo or a rate limit; that would block the wrong thing.
+func notAuth(t *testing.T, err error) {
+	t.Helper()
+	var fe *hosts.FetchError
+	if errors.As(err, &fe) && fe.Kind != corehosts.FailTransient {
+		t.Errorf("an unparseable body was classified %s", fe.Kind)
 	}
 }
