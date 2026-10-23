@@ -461,10 +461,16 @@ func TestServiceFetchBatchAuditsAndRefreshes(t *testing.T) {
 			t.Errorf("repo %s audit = %v", r, got)
 		}
 	}
-	if len(e.rec.ids) != 3 || e.rec.rs[0] != corerepos.ReasonGitAction {
-		t.Errorf("refresh = %v %v", e.rec.ids, e.rec.rs)
+	e.rec.mu.Lock()
+	refreshed, reasons := append([]core.RepoID(nil), e.rec.ids...), append([]corerepos.RefreshReason(nil), e.rec.rs...)
+	e.rec.mu.Unlock()
+	if len(refreshed) != 3 || reasons[0] != corerepos.ReasonGitAction {
+		t.Errorf("refresh = %v %v", refreshed, reasons)
 	}
-	if e.pub.n == 0 {
+	e.pub.mu.Lock()
+	published := e.pub.n
+	e.pub.mu.Unlock()
+	if published == 0 {
 		t.Error("nothing was published")
 	}
 	if len(e.git.called()) != 3 {
