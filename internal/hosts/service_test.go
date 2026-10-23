@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -329,7 +330,9 @@ func TestServiceSentinelTokenNeverLeaks(t *testing.T) {
 	r := newRig(t, gitlabEnv, rem)
 	mode := 0
 	var mu sync.Mutex
+	var finished atomic.Int64 // calls that returned their result to the service
 	r.fake.SetRepoFn(func(_ context.Context, _ corehosts.Instance, token string, _ corehosts.ProjectPath, _ string, _ string) (corehosts.RepoState, string, error) {
+		defer finished.Add(1)
 		mu.Lock()
 		defer mu.Unlock()
 		mode++
@@ -344,6 +347,7 @@ func TestServiceSentinelTokenNeverLeaks(t *testing.T) {
 		return corehosts.RepoState{MR: &corehosts.MergeRequest{Number: 1, Title: "t"}}, "", nil
 	})
 	r.fake.SetInboxFn(func(_ context.Context, _ corehosts.Instance, token string) ([]corehosts.InboxItem, error) {
+		defer finished.Add(1)
 		return nil, errors.New("inbox failed " + token)
 	})
 	r.svc.SetRepos([]hosts.RepoRef{{ID: "a", Path: "/w/a", Branch: "main"}, {ID: "b", Path: "/w/b", Branch: "main"}})
@@ -353,7 +357,26 @@ func TestServiceSentinelTokenNeverLeaks(t *testing.T) {
 		if i%5 == 0 {
 			_ = r.svc.Refresh(context.Background(), nil)
 		}
-		time.Sleep(8 * time.Millisecond)
+		// Barrier: every call that started has returned and the poller no
+		// longer shows a key in flight, so the views below hold its result.
+		eventually(t, "fetches to complete", func() bool {
+			if finished.Load() != int64(len(r.fake.Calls())) {
+				return false
+			}
+			for _, id := range []core.RepoID{"a", "b"} {
+				v, _ := r.svc.RepoHost(context.Background(), id)
+				if _, f := v.Entry.Phase.(corehosts.Fetching); f {
+					return false
+				}
+			}
+			in, _ := r.svc.Inbox(context.Background())
+			for _, ii := range in.Instances {
+				if _, f := ii.Entry.Phase.(corehosts.Fetching); f {
+					return false
+				}
+			}
+			return true
+		})
 		for _, id := range []core.RepoID{"a", "b"} {
 			fmt.Fprintf(&views, "%+v\n", r.repoView(t, id))
 		}
