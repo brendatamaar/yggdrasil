@@ -64,6 +64,14 @@ describe("MR inbox", () => {
     });
   });
 
+  it("renders no anchor for a javascript: MR URL", async () => {
+    const bad = { ...(inbox.items[0] as NonNullable<(typeof inbox.items)[number]>), mr: { ...mr(9, "Evil MR"), url: "javascript:alert(1)" } };
+    renderMrs((c) => (c.path === "/api/mrs" ? { body: { ...inbox, items: [bad] } } : undefined));
+    expect(await screen.findByText("Evil MR")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Evil MR" })).toBeNull();
+    expect(document.querySelector('a[href*="javascript" i]')).toBeNull();
+  });
+
   it("explains that tokens are optional and where .env lives", async () => {
     renderMrs((c) => {
       if (c.path === "/api/mrs") return { body: { items: [], instances: [] } };

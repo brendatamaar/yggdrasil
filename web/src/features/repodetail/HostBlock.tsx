@@ -1,10 +1,10 @@
 import type { RepoHostResponse } from "../../api/gen/api.gen";
 import { describeError } from "../../api/client";
+import { SafeLink } from "../../components/SafeLink";
 import { relativeTime } from "../repos/ui";
 import { useRepoHost } from "./hooks";
 import { Notice } from "./parts";
 
-const ext = { target: "_blank", rel: "noreferrer noopener" } as const;
 const link = "text-accent underline";
 
 const blockText: Record<string, string> = {
@@ -17,10 +17,10 @@ function Links({ host }: { host: RepoHostResponse }) {
   const l = host.links;
   return (
     <nav aria-label="Host links" className="flex flex-wrap gap-3 text-sm">
-      <a className={link} href={l.repo} {...ext}>Repo</a>
-      {l.branch && <a className={link} href={l.branch} {...ext}>Branch</a>}
-      <a className={link} href={l.mrList} {...ext}>Merge requests</a>
-      <a className={link} href={l.pipelines} {...ext}>Pipelines</a>
+      <SafeLink className={link} href={l.repo}>Repo</SafeLink>
+      {l.branch && <SafeLink className={link} href={l.branch}>Branch</SafeLink>}
+      <SafeLink className={link} href={l.mrList}>Merge requests</SafeLink>
+      <SafeLink className={link} href={l.pipelines}>Pipelines</SafeLink>
     </nav>
   );
 }
@@ -62,9 +62,9 @@ export function HostBlock({ repoId }: { repoId: string }) {
             <dd>
               {host.mr ? (
                 <>
-                  <a className={link} href={host.mr.url} {...ext}>
+                  <SafeLink className={link} href={host.mr.url}>
                     #{host.mr.number} {host.mr.title}
-                  </a>{" "}
+                  </SafeLink>{" "}
                   <span className="rounded-sm border border-line px-1 text-xs">{host.mr.state}</span>
                 </>
               ) : (
@@ -78,9 +78,9 @@ export function HostBlock({ repoId }: { repoId: string }) {
                   <span className={host.pipeline.status === "failed" ? "text-danger" : host.pipeline.status === "success" ? "text-ok" : ""}>
                     {host.pipeline.status}
                   </span>{" "}
-                  <a className={link} href={host.pipeline.url} {...ext}>
+                  <SafeLink className={link} href={host.pipeline.url}>
                     Open pipeline
-                  </a>{" "}
+                  </SafeLink>{" "}
                   <span className="text-muted">{relativeTime(host.pipeline.updatedAt)}</span>
                 </>
               ) : (

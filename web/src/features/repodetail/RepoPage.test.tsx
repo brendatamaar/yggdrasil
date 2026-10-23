@@ -63,6 +63,20 @@ describe("repo page", () => {
     expect(screen.getByRole("link", { name: "Pipelines" })).toBeTruthy();
   });
 
+  it("renders no anchor for javascript: MR and pipeline URLs", async () => {
+    const evil: RepoHostResponse = {
+      ...host,
+      mr: { ...(host.mr as NonNullable<typeof host.mr>), url: "javascript:alert(1)" },
+      pipeline: { ...(host.pipeline as NonNullable<typeof host.pipeline>), url: " JaVaScRiPt:alert(2)" },
+    };
+    renderAt("/repos/r1", (c) => (c.path === "/api/repos/r1/host" ? { body: evil } : handler(c)));
+    expect(await screen.findByText(/#12 Cart totals/)).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /#12 Cart totals/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Open pipeline" })).toBeNull();
+    expect(screen.getByText("Open pipeline")).toBeTruthy();
+    expect(document.querySelector('a[href*="javascript" i]')).toBeNull();
+  });
+
   it("shows a blocked phase reason", async () => {
     renderAt("/repos/r1", (c) => (c.path === "/api/repos/r1/host" ? { body: { ...host, phase: "blocked", blockReason: "unauthorized", mr: undefined, pipeline: undefined } } : handler(c)));
     expect(await screen.findByText(/Add a token/)).toBeTruthy();

@@ -5,6 +5,7 @@ import { TopicHosts } from "../../api/gen/api.gen";
 import type { InboxItemDTO } from "../../api/gen/api.gen";
 import { fetchHostConfig, fetchInbox, refreshInbox } from "../../api/mrs";
 import { useWS } from "../../api/wsContext";
+import { SafeLink } from "../../components/SafeLink";
 import { btn } from "../repos/ui";
 import { phaseText } from "./ui";
 
@@ -20,9 +21,9 @@ function Item({ it }: { it: InboxItemDTO }) {
   return (
     <li className="flex flex-wrap items-baseline gap-2 border-t border-line py-1 text-sm">
       <span className="text-muted">{it.repo}</span>
-      <a href={it.mr.url} target="_blank" rel="noreferrer" className="underline">
+      <SafeLink href={it.mr.url} className="underline">
         {it.mr.title}
-      </a>
+      </SafeLink>
       <span className="rounded-sm border border-line px-1 text-xs">{it.mr.state}</span>
       <span className="ml-auto text-xs text-muted">{it.instance}</span>
     </li>
