@@ -7,6 +7,7 @@ package hoststest
 import (
 	"context"
 	"embed"
+	"errors"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -25,18 +26,22 @@ import (
 type Scenario string
 
 const (
-	OpenSuccess     Scenario = "open_success"
-	NoMR            Scenario = "no_mr"
-	Draft           Scenario = "draft"
-	Merged          Scenario = "merged"
-	PipelineFailed  Scenario = "pipeline_failed"
-	NoPipeline      Scenario = "no_pipeline"
-	NotModified     Scenario = "not_modified"
-	Unauthorized    Scenario = "unauthorized"
-	NotFound        Scenario = "not_found"
-	RateLimited429  Scenario = "rate_limited_429"
-	RateLimited403  Scenario = "rate_limited_403"
-	ServerError     Scenario = "server_error"
+	OpenSuccess    Scenario = "open_success"
+	NoMR           Scenario = "no_mr"
+	Draft          Scenario = "draft"
+	Merged         Scenario = "merged"
+	PipelineFailed Scenario = "pipeline_failed"
+	NoPipeline     Scenario = "no_pipeline"
+	NotModified    Scenario = "not_modified"
+	Unauthorized   Scenario = "unauthorized"
+	NotFound       Scenario = "not_found"
+	RateLimited429 Scenario = "rate_limited_429"
+	RateLimited403 Scenario = "rate_limited_403"
+	ServerError    Scenario = "server_error"
+	// BadJSON answers 200 with a body that is not JSON.
+	BadJSON Scenario = "bad_json"
+	// Slow never answers in time: the call must end when its context does.
+	Slow            Scenario = "slow"
 	InboxRoles      Scenario = "inbox"
 	defaultScenario Scenario = "default"
 )
@@ -115,12 +120,23 @@ func (r *Replay) serve(w http.ResponseWriter, req *http.Request) {
 	if r.Delay > 0 {
 		time.Sleep(r.Delay)
 	}
+	if scn == Slow {
+		select {
+		case <-req.Context().Done():
+		case <-time.After(3 * time.Second):
+		}
+		_, _ = w.Write([]byte("[]"))
+		return
+	}
 	if b, err := fs.ReadFile(statusFS, "testdata/status/"+string(scn)+"/all.status"); err == nil {
 		code, _ := strconv.Atoi(strings.TrimSpace(string(b)))
 		if h, err := fs.ReadFile(statusFS, "testdata/status/"+string(scn)+"/all.headers"); err == nil {
 			writeHeaders(w, h)
 		}
 		w.WriteHeader(code)
+		if body, err := fs.ReadFile(statusFS, "testdata/status/"+string(scn)+"/all.body"); err == nil {
+			_, _ = w.Write(body)
+		}
 		return
 	}
 	name := r.route(req)
@@ -231,6 +247,9 @@ func (f *Fake) RepoState(ctx context.Context, inst corehosts.Instance, token str
 	f.enter(Call{Inst: inst.ID, Token: token, Project: project, Branch: branch, ETag: etag})
 	defer f.leave()
 	f.wait(ctx)
+	if err := ctx.Err(); err != nil {
+		return corehosts.RepoState{}, "", &hosts.FetchError{Kind: corehosts.FailTransient, Err: err}
+	}
 	f.mu.Lock()
 	fn := f.repoFn
 	f.mu.Unlock()
@@ -245,6 +264,9 @@ func (f *Fake) Inbox(ctx context.Context, inst corehosts.Instance, token string)
 	f.enter(Call{Inbox: true, Inst: inst.ID, Token: token})
 	defer f.leave()
 	f.wait(ctx)
+	if err := ctx.Err(); err != nil {
+		return nil, &hosts.FetchError{Kind: corehosts.FailTransient, Err: err}
+	}
 	f.mu.Lock()
 	fn := f.inboxFn
 	f.mu.Unlock()
@@ -331,6 +353,14 @@ func (f *Fake) Script(s Scenario) {
 		fail(corehosts.FailRateLimited, &t)
 	case ServerError:
 		fail(corehosts.FailTransient, nil)
+	case BadJSON:
+		bad := errors.New("parse response: invalid character 'o' in literal null")
+		f.SetRepoFn(func(context.Context, corehosts.Instance, string, corehosts.ProjectPath, string, string) (corehosts.RepoState, string, error) {
+			return corehosts.RepoState{}, "", bad
+		})
+		f.SetInboxFn(func(context.Context, corehosts.Instance, string) ([]corehosts.InboxItem, error) { return nil, bad })
+	case Slow:
+		f.SetDelay(5 * time.Second)
 	case InboxRoles:
 		f.SetInboxFn(func(context.Context, corehosts.Instance, string) ([]corehosts.InboxItem, error) {
 			items := ExpectedInbox()

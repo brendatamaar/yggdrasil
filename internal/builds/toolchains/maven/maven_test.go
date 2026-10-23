@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	corebuilds "github.com/brendatamaar/yggdrasil/internal/core/builds"
 )
@@ -50,12 +51,58 @@ func TestParsePOMRejects(t *testing.T) {
 func FuzzParsePOM(f *testing.F) {
 	f.Add(corePOM)
 	f.Add("<project/>")
+	f.Add("<project><groupId> g </groupId><artifactId> a </artifactId><version> 1 </version>" +
+		"<dependencies><dependency><groupId> g </groupId><artifactId> b </artifactId><version> 2 </version></dependency>" +
+		"<dependency><artifactId>  </artifactId></dependency></dependencies></project>")
 	f.Fuzz(func(t *testing.T, s string) {
 		m, err := ParsePOM(bytes.NewReader([]byte(s)))
-		if err == nil && m.Coord.Artifact == "" {
+		if err != nil {
+			return
+		}
+		if len(s) > MaxPOMSize {
+			t.Fatalf("accepted a pom of %d bytes, the limit is %d", len(s), MaxPOMSize)
+		}
+		if m.Coord.Artifact == "" {
 			t.Fatal("accepted a pom without artifactId")
 		}
+		for _, v := range []string{m.Coord.Group, m.Coord.Artifact, m.Coord.Version} {
+			if v != strings.TrimSpace(v) {
+				t.Fatalf("untrimmed coordinate %q", v)
+			}
+		}
+		for _, d := range m.Deps {
+			if d.Artifact == "" || d.Artifact != strings.TrimSpace(d.Artifact) ||
+				d.Group != strings.TrimSpace(d.Group) || d.Version != strings.TrimSpace(d.Version) {
+				t.Fatalf("bad dependency %+v", d)
+			}
+		}
 	})
+}
+
+// A reactor whose module points back at the root (and at itself) must
+// terminate and list every pom once: the `seen` guard.
+func TestModulesCyclicReactorTerminates(t *testing.T) {
+	repo := fstest.MapFS{
+		"pom.xml":         {Data: []byte(`<project><artifactId>shop</artifactId><modules><module>api</module></modules></project>`)},
+		"api/pom.xml":     {Data: []byte(`<project><artifactId>shop-api</artifactId><modules><module>..</module><module>.</module><module>web</module></modules></project>`)},
+		"api/web/pom.xml": {Data: []byte(`<project><artifactId>shop-web</artifactId><modules><module>../../api</module></modules></project>`)},
+	}
+	d, _ := New().Detect(repo)
+	done := make(chan struct{})
+	var mods []corebuilds.Module
+	var err error
+	go func() { defer close(done); mods, err = New().Modules(repo, d) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Modules did not terminate on a cyclic reactor")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mods) != 3 {
+		t.Fatalf("modules = %+v, want shop, shop-api, shop-web once each", mods)
+	}
 }
 
 func TestDetectWrapper(t *testing.T) {

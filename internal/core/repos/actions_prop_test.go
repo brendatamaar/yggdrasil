@@ -5,6 +5,7 @@ import (
 	"math/rand/v2"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,6 +43,7 @@ type actModel struct {
 	auditBeg  map[BatchID]int
 	open      []ActCommand // emitted, not answered
 	violation string
+	only      string // when set, only violations tagged with it count ("A1" ...)
 }
 
 func newActModel() *actModel {
@@ -52,6 +54,9 @@ func newActModel() *actModel {
 }
 
 func (m *actModel) fail(f string, a ...any) {
+	if m.only != "" && !strings.HasPrefix(f, m.only+":") {
+		return
+	}
 	if m.violation == "" {
 		m.violation = fmt.Sprintf(f, a...)
 	}
@@ -298,8 +303,16 @@ func (d *actDriver) check(t *testing.T, seed uint64) {
 
 func runAct(t *testing.T, steps int, each func(d *actDriver)) {
 	t.Helper()
+	runActOnly(t, "", steps, each)
+}
+
+// runActOnly runs the same random sequences but counts only the invariant
+// named by tag ("A1" ...), so each test fails for its own invariant alone.
+func runActOnly(t *testing.T, tag string, steps int, each func(d *actDriver)) {
+	t.Helper()
 	for seed := uint64(1); seed <= actRuns; seed++ {
 		d := newActDriver(seed, 1+int(seed%5))
+		d.m.only = tag
 		for i := 0; i < steps; i++ {
 			d.step()
 			d.check(t, seed)
@@ -311,19 +324,19 @@ func runAct(t *testing.T, steps int, each func(d *actDriver)) {
 	}
 }
 
-func TestPropOneActionPerRepo(t *testing.T) { runAct(t, 80, nil) } // A1
+func TestPropOneActionPerRepo(t *testing.T) { runActOnly(t, "A1", 80, nil) } // A1
 
-func TestPropActionsBounded(t *testing.T) { runAct(t, 80, nil) } // A2
+func TestPropActionsBounded(t *testing.T) { runActOnly(t, "A2", 80, nil) } // A2
 
-func TestPropNoGitWhileBuildRuns(t *testing.T) { runAct(t, 80, nil) } // A3
+func TestPropNoGitWhileBuildRuns(t *testing.T) { runActOnly(t, "A3", 80, nil) } // A3
 
-func TestPropSwitchOnlyClean(t *testing.T) { runAct(t, 80, nil) } // A4
+func TestPropSwitchOnlyClean(t *testing.T) { runActOnly(t, "A4", 80, nil) } // A4
 
-func TestPropAuditPerAction(t *testing.T) { runAct(t, 80, nil) } // A6
+func TestPropAuditPerAction(t *testing.T) { runActOnly(t, "A6", 80, nil) } // A6
 
-func TestPropNoIdleWhilePending(t *testing.T) { runAct(t, 80, nil) } // A7
+func TestPropNoIdleWhilePending(t *testing.T) { runActOnly(t, "A7", 80, nil) } // A7
 
-func TestPropOnlySafeGit(t *testing.T) { runAct(t, 80, nil) } // A8
+func TestPropOnlySafeGit(t *testing.T) { runActOnly(t, "A8", 80, nil) } // A8
 
 // A5: once every command is answered, and the user cancels what is left,
 // every item is Done or Skipped. Cancel never leaves an item Pending.

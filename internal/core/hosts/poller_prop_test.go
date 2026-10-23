@@ -1,7 +1,6 @@
 package hosts
 
 import (
-	"fmt"
 	"math/rand"
 	"reflect"
 	"testing"
@@ -400,18 +399,75 @@ func TestPropReadOnlyCommands(t *testing.T) { // H9
 	})
 }
 
-func TestStepDoesNotMutateItsInput(t *testing.T) {
-	g := &gen{rng: rand.New(rand.NewSource(1)), now: t0, withRefresh: true, withConfig: true}
-	p, _ := Step(Poller{}, ConfigChanged{Instances: instances, Now: t0})
-	for i := 0; i < 200; i++ {
-		in := g.next(p)
-		snap := fmt.Sprintf("%#v", p)
-		p, _ = Step(p, in)
-		_ = snap
+// deepCopy copies v through maps, slices, pointers and interfaces, so a later
+// write through the original cannot show in the copy.
+func deepCopy(v reflect.Value) reflect.Value {
+	switch v.Kind() {
+	case reflect.Map:
+		if v.IsNil() {
+			return v
+		}
+		out := reflect.MakeMapWithSize(v.Type(), v.Len())
+		for _, k := range v.MapKeys() {
+			out.SetMapIndex(k, deepCopy(v.MapIndex(k)))
+		}
+		return out
+	case reflect.Slice:
+		if v.IsNil() {
+			return v
+		}
+		out := reflect.MakeSlice(v.Type(), v.Len(), v.Len())
+		for i := 0; i < v.Len(); i++ {
+			out.Index(i).Set(deepCopy(v.Index(i)))
+		}
+		return out
+	case reflect.Pointer:
+		if v.IsNil() {
+			return v
+		}
+		out := reflect.New(v.Type().Elem())
+		out.Elem().Set(deepCopy(v.Elem()))
+		return out
+	case reflect.Interface:
+		if v.IsNil() {
+			return v
+		}
+		out := reflect.New(v.Type()).Elem()
+		out.Set(deepCopy(v.Elem()))
+		return out
+	case reflect.Struct:
+		out := reflect.New(v.Type()).Elem()
+		out.Set(v) // unexported fields keep their value
+		for i := 0; i < v.NumField(); i++ {
+			if out.Field(i).CanSet() {
+				out.Field(i).Set(deepCopy(v.Field(i)))
+			}
+		}
+		return out
 	}
-	p0, _ := Step(Poller{}, TargetsChanged{Now: t0})
-	if p0.Targets == nil && len(p0.Entries) != 0 {
-		t.Fatal("unexpected")
+	return v
+}
+
+func cloneAny[T any](x T) T { return deepCopy(reflect.ValueOf(&x).Elem()).Interface().(T) }
+
+// Step must not write to the state or the input it receives: the caller keeps
+// using them.
+func TestStepDoesNotMutateItsInput(t *testing.T) {
+	for seed := int64(1); seed <= 20; seed++ {
+		g := &gen{rng: rand.New(rand.NewSource(seed)), now: t0, withRefresh: true, withConfig: true}
+		p, _ := Step(Poller{}, ConfigChanged{Instances: instances, Now: t0})
+		for i := 0; i < 200; i++ {
+			in := g.next(p)
+			snapP, snapIn := cloneAny(p), cloneAny(in)
+			next, _ := Step(p, in)
+			if !reflect.DeepEqual(p, snapP) {
+				t.Fatalf("seed %d step %d: Step changed its state: before %#v after %#v", seed, i, snapP, p)
+			}
+			if !reflect.DeepEqual(in, snapIn) {
+				t.Fatalf("seed %d step %d: Step changed its input %#v", seed, i, in)
+			}
+			p = next
+		}
 	}
 }
 
@@ -487,23 +543,188 @@ func TestRateLimitClampsRetryAt(t *testing.T) {
 	}
 }
 
+// onInstance lists the keys of an instance other than skip, in stable order.
+func onInstance(p Poller, inst InstanceID, skip Key) []Key {
+	var ks []Key
+	for k := range p.Targets {
+		if p.Targets[k].Instance == inst && k != skip {
+			ks = append(ks, k)
+		}
+	}
+	sortKeys(ks)
+	return ks
+}
+
+func isBlocked(ph Phase, why BlockReason) bool {
+	b, ok := ph.(Blocked)
+	return ok && b.Why == why
+}
+
+// An unauthorized answer for a token blocks every other key that uses the
+// token (Idle or Waiting; a fetch in flight reports for itself). An instance
+// without a token has no such propagation.
+func TestPropUnauthorizedBlocksTheTokensOtherKeys(t *testing.T) {
+	var withToken, withoutToken int
+	drive(t, true, true, func(t *testing.T, before, after Poller, in Input, _ []Command) {
+		f, ok := in.(FetchFailed)
+		if !ok || f.Kind != FailUnauthorized {
+			return
+		}
+		fg, isF := before.Entries[f.Key].Phase.(Fetching)
+		if _, targeted := before.Targets[f.Key]; !targeted || !isF || fg.Attempt != f.Attempt {
+			return
+		}
+		inst := before.Targets[f.Key].Instance
+		if !isBlocked(after.Entries[f.Key].Phase, BlockUnauthorized) {
+			t.Errorf("the failed key %v = %#v", f.Key, after.Entries[f.Key].Phase)
+		}
+		for _, k := range onInstance(before, inst, f.Key) {
+			was := before.Entries[k].Phase
+			now := after.Entries[k].Phase
+			switch was.(type) {
+			case Idle, Waiting:
+				if before.Instances[inst].Token {
+					withToken++
+					if !isBlocked(now, BlockUnauthorized) {
+						t.Errorf("%v on %s (token) was %T and is %#v after an unauthorized answer", k, inst, was, now)
+					}
+				} else {
+					withoutToken++
+					if isBlocked(now, BlockUnauthorized) {
+						t.Errorf("%v on %s (no token) was blocked by another key's unauthorized answer", k, inst)
+					}
+				}
+			case Fetching:
+				if _, still := now.(Fetching); !still {
+					t.Errorf("%v was in flight and is now %#v", k, now)
+				}
+			}
+		}
+	})
+	if withToken == 0 || withoutToken == 0 {
+		t.Fatalf("generator never covered both cases: with token %d, without %d", withToken, withoutToken)
+	}
+}
+
 func TestUnauthorizedBlocksTheTokensOtherKeys(t *testing.T) {
 	p, _ := Step(Poller{}, ConfigChanged{Instances: instances, Now: t0})
 	p, cmds := Step(p, TargetsChanged{Repos: []RepoTarget{
 		{Repo: "r1", Instance: "github.com", Project: "a/b", Branch: "main"},
 		{Repo: "r2", Instance: "github.com", Project: "a/c", Branch: "main"},
+		{Repo: "r3", Instance: "github.com", Project: "a/d", Branch: "main"},
+		{Repo: "r4", Instance: "git.acme.dev", Project: "a/e", Branch: "main"},
+		{Repo: "r5", Instance: "git.acme.dev", Project: "a/f", Branch: "main"},
 	}, Now: t0})
-	var first Fetch
+	attempt := map[Key]int{}
 	for _, c := range cmds {
-		if f, ok := c.(Fetch); ok && f.Key == (RepoKey{Repo: "r1", Branch: "main"}) {
-			first = f
+		if f, ok := c.(Fetch); ok {
+			attempt[f.Key] = f.Attempt
 		}
 	}
-	p, _ = Step(p, FetchFailed{Key: first.Key, Attempt: first.Attempt, Kind: FailUnauthorized, Now: t0})
-	if b, ok := p.Entries[InboxKey{Instance: "github.com"}].Phase.(Fetching); ok {
-		_ = b // the inbox was in flight: it reports for itself
+	// Let r2 finish and wait for its next poll, r3 stay Idle after a success.
+	k1, k2, k3 := RepoKey{Repo: "r1", Branch: "main"}, RepoKey{Repo: "r2", Branch: "main"}, RepoKey{Repo: "r3", Branch: "main"}
+	k4, k5 := RepoKey{Repo: "r4", Branch: "main"}, RepoKey{Repo: "r5", Branch: "main"}
+	p, _ = Step(p, Fetched{Key: k2, Attempt: attempt[k2], Payload: RepoState{}, Now: t0})
+	p, _ = Step(p, FetchFailed{Key: k3, Attempt: attempt[k3], Kind: FailTransient, Now: t0}) // Waiting
+	p, _ = Step(p, Fetched{Key: k5, Attempt: attempt[k5], Payload: RepoState{}, Now: t0})    // Idle, no token
+	if _, ok := p.Entries[k3].Phase.(Waiting); !ok {
+		t.Fatalf("setup: r3 = %#v", p.Entries[k3].Phase)
 	}
-	if _, ok := p.Entries[first.Key].Phase.(Blocked); !ok {
-		t.Fatalf("r1 = %#v", p.Entries[first.Key].Phase)
+	inbox := InboxKey{Instance: "github.com"}
+	if _, ok := p.Entries[inbox].Phase.(Fetching); !ok {
+		t.Fatalf("setup: inbox = %#v", p.Entries[inbox].Phase)
+	}
+
+	p, _ = Step(p, FetchFailed{Key: k1, Attempt: attempt[k1], Kind: FailUnauthorized, Now: t0})
+	for _, k := range []Key{k1, k2, k3} {
+		if !isBlocked(p.Entries[k].Phase, BlockUnauthorized) {
+			t.Errorf("%v = %#v, want Blocked{unauthorized}", k, p.Entries[k].Phase)
+		}
+	}
+	if _, ok := p.Entries[inbox].Phase.(Fetching); !ok {
+		t.Errorf("the inbox in flight = %#v, want it left alone", p.Entries[inbox].Phase)
+	}
+	// The same host without a token: another instance's key is not touched.
+	p, _ = Step(p, FetchFailed{Key: k4, Attempt: attempt[k4], Kind: FailUnauthorized, Now: t0})
+	if !isBlocked(p.Entries[k4].Phase, BlockUnauthorized) {
+		t.Errorf("r4 = %#v", p.Entries[k4].Phase)
+	}
+	if isBlocked(p.Entries[k5].Phase, BlockUnauthorized) {
+		t.Errorf("r5 on an instance with no token was blocked: %#v", p.Entries[k5].Phase)
+	}
+	for _, k := range []Key{k1, k2, k3} {
+		if b, ok := p.Entries[k].Phase.(Blocked); !ok || b.Since != t0 {
+			t.Errorf("%v = %#v, want blocked since %v", k, p.Entries[k].Phase, t0)
+		}
+	}
+}
+
+// H3, state side: a Blocked key that keeps its target leaves Blocked only
+// when the user asks for it (RefreshRequested names it), or a ConfigChanged
+// changed the key's instance (kind, token or base) or the reason was
+// "unsupported". A ConfigChanged that leaves the instance as it was never
+// unblocks anything, and no other input does.
+func TestPropBlockedLeavesOnlyForItsCause(t *testing.T) {
+	var unblocked int
+	drive(t, true, true, func(t *testing.T, before, after Poller, in Input, _ []Command) {
+		for k, e := range before.Entries {
+			b, wasBlocked := e.Phase.(Blocked)
+			if !wasBlocked || !kept(before, after, k) {
+				continue
+			}
+			if _, still := after.Entries[k].Phase.(Blocked); still {
+				continue
+			}
+			unblocked++
+			inst := before.Targets[k].Instance
+			switch v := in.(type) {
+			case ConfigChanged:
+				if before.Instances[inst] == after.Instances[inst] && b.Why != BlockUnsupported {
+					t.Errorf("%v (%s) left Blocked{%s} on a config change that did not touch %s", k, inst, b.Why, inst)
+				}
+			case RefreshRequested:
+				asked := len(v.Keys) == 0
+				for _, ak := range v.Keys {
+					asked = asked || ak == k
+				}
+				if !asked {
+					t.Errorf("%v left Blocked on a refresh that did not name it", k)
+				}
+			default:
+				t.Errorf("%v left Blocked on %T", k, in)
+			}
+		}
+	})
+	if unblocked == 0 {
+		t.Fatal("the generator never unblocked a key")
+	}
+}
+
+// A Blocked key that a config change unblocks has its FetchedAt cleared, so
+// the data counts as stale and is fetched at once with the new token.
+func TestPropConfigUnblockClearsFetchedAt(t *testing.T) {
+	var checked int
+	drive(t, true, true, func(t *testing.T, before, after Poller, in Input, _ []Command) {
+		if _, ok := in.(ConfigChanged); !ok {
+			return
+		}
+		for k, e := range before.Entries {
+			b, wasBlocked := e.Phase.(Blocked)
+			if !wasBlocked || !kept(before, after, k) {
+				continue
+			}
+			if _, still := after.Entries[k].Phase.(Blocked); still {
+				continue
+			}
+			if !b.Prev.FetchedAt.IsZero() {
+				checked++
+			}
+			if got := prevOf(after.Entries[k].Phase).FetchedAt; !got.IsZero() {
+				t.Errorf("%v unblocked by a config change keeps FetchedAt %v", k, got)
+			}
+		}
+	})
+	if checked == 0 {
+		t.Fatal("the generator never unblocked a key that had fetched data")
 	}
 }
