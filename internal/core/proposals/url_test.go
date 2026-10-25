@@ -37,11 +37,11 @@ func TestSafeWebURL(t *testing.T) {
 
 func TestParsePushOutput(t *testing.T) {
 	good := "remote: \nremote: View merge request for ygg/x:\nremote:   https://gitlab.example.com/acme/shop-api/-/merge_requests/7\nremote: \nTo origin\n"
-	r, err := ParsePushOutput(good)
+	r, err := ParsePushOutput(good, "gitlab.example.com")
 	if err != nil || r.MRURL != "https://gitlab.example.com/acme/shop-api/-/merge_requests/7" {
 		t.Fatalf("got %+v, %v", r, err)
 	}
-	r, err = ParsePushOutput("remote: View merge request for x: https://gl.example/m/1.\r\n")
+	r, err = ParsePushOutput("remote: View merge request for x: https://gl.example/m/1.\r\n", "gl.example")
 	if err != nil || r.MRURL != "https://gl.example/m/1" {
 		t.Fatalf("same line, CRLF: %+v, %v", r, err)
 	}
@@ -51,7 +51,7 @@ func TestParsePushOutput(t *testing.T) {
 		"hint only":     "remote: To create a merge request for x, visit:\nremote:   https://gl.example/m/new\n",
 		"marker no url": "remote: View merge request for x:\nremote: nothing\n",
 	} {
-		if _, err := ParsePushOutput(out); !errors.Is(err, ErrNoMRURL) {
+		if _, err := ParsePushOutput(out, "gl.example"); !errors.Is(err, ErrNoMRURL) {
 			t.Errorf("%s: err = %v, want ErrNoMRURL", name, err)
 		}
 	}
@@ -65,7 +65,7 @@ func TestParsePushOutput(t *testing.T) {
 		if u == "" {
 			continue
 		}
-		_, err := ParsePushOutput("remote: View merge request for x:\nremote:   " + u + "\n")
+		_, err := ParsePushOutput("remote: View merge request for x:\nremote:   "+u+"\n", "gl.example")
 		if !errors.Is(err, ErrUnsafeURL) {
 			t.Errorf("%s: err = %v, want ErrUnsafeURL", name, err)
 		}

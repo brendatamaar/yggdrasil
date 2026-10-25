@@ -68,6 +68,9 @@ func stepCreated(c Created) (Proposal, []Command) {
 	if p.Action == nil || supported(p.Action.Kind()) != nil {
 		return refuse(RefuseUnsupported)
 	}
+	if p.Action.Validate() != nil {
+		return refuse(RefuseBadFacts)
+	}
 	f := c.Facts
 	switch {
 	case !f.RepoTracked:

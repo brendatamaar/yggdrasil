@@ -78,7 +78,9 @@ func CheckRelPath(p string) error {
 			return invalid("path %q leaves the worktree or repeats itself (%s)", p, seg)
 		case strings.HasSuffix(seg, ".") || strings.HasSuffix(seg, " "):
 			return invalid("path %q has a part ending in a dot or space, which Windows rewrites", p)
-		case strings.EqualFold(seg, ".git"):
+		case hasShortNameAlias(seg):
+			return invalid("path %q has a part like NAME~1, which Windows can use as a short name for another file", p)
+		case asciiFold(seg, ".git"):
 			return invalid("path %q is inside .git", p)
 		case windowsDevice(seg):
 			return invalid("path %q uses a reserved Windows device name", p)
@@ -110,18 +112,73 @@ func checkPaths(ps []string) ([]RelPath, error) {
 	return out, nil
 }
 
-// IsProtectedPath reports whether p is one of the agent-config names that only
-// an agent_file proposal may write: .claude/**, .mcp.json, CLAUDE.md,
-// AGENTS.md, opencode.json, .opencode/**, GEMINI.md (case-insensitive). The
-// shell uses it for the Facts.PathsOK of every other kind.
-func IsProtectedPath(p RelPath) bool {
-	l := strings.ToLower(string(p))
-	switch l {
-	case ".mcp.json", "claude.md", "agents.md", "opencode.json", "gemini.md":
-		return true
+// hasShortNameAlias reports a "~" followed by a digit: the form of a Windows
+// 8.3 short name (GIT~1, CLAUDE~1) that could reach .git or agent config.
+func hasShortNameAlias(seg string) bool {
+	for i := 0; i+1 < len(seg); i++ {
+		if seg[i] == '~' && seg[i+1] >= '0' && seg[i+1] <= '9' {
+			return true
+		}
 	}
-	return strings.HasPrefix(l, ".claude/") && len(l) > len(".claude/") ||
-		strings.HasPrefix(l, ".opencode/") && len(l) > len(".opencode/")
+	return false
+}
+
+// asciiFold compares a and b ignoring ASCII case only; other bytes must match
+// exactly (no Kelvin sign or long s look-alikes).
+func asciiFold(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		x, y := a[i], b[i]
+		if x >= 'A' && x <= 'Z' {
+			x += 'a' - 'A'
+		}
+		if y >= 'A' && y <= 'Z' {
+			y += 'a' - 'A'
+		}
+		if x != y {
+			return false
+		}
+	}
+	return true
+}
+
+func isProtectedDirName(s string) bool {
+	for _, d := range protectedDirNames {
+		if asciiFold(s, d) {
+			return true
+		}
+	}
+	return false
+}
+
+func lastSegIsProtectedDir(p string) bool {
+	return isProtectedDirName(p[strings.LastIndexByte(p, '/')+1:])
+}
+
+// IsProtectedPath reports whether p names agent config at any depth: a
+// protected folder (.claude, .opencode, .codex, .gemini, .cursor, .husky,
+// .githooks) as any part, including a bare folder name (committing it would
+// stage everything below), or a protected file name (.mcp.json, CLAUDE.md,
+// CLAUDE.local.md, AGENTS.md, opencode.json, GEMINI.md, .gitmodules) as the
+// last part. ASCII case-insensitive. The list matches internal/core/guard.
+// The shell uses it for the Facts.PathsOK of every other kind.
+func IsProtectedPath(p RelPath) bool {
+	segs := strings.Split(string(p), "/")
+	for i, s := range segs {
+		if isProtectedDirName(s) {
+			return true
+		}
+		if i == len(segs)-1 {
+			for _, n := range protectedFileNames {
+				if asciiFold(s, n) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // CheckBranch applies the git ref-name rules, and refuses a leading "-" so a

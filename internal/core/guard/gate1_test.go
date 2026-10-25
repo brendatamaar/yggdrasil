@@ -86,11 +86,11 @@ func TestPropProgramInWriteRootDenied(t *testing.T) {
 // B3: only ASCII folds.
 func TestDecideKelvinAndLongSLookAlikes(t *testing.T) {
 	for _, c := range []struct{ root, canon string }{
-		{`C:\work\kit`, "C:\\work\\\u212Ait"},         // Kelvin sign
-		{`C:\work\sites`, "C:\\work\\\u017Fites"},     // long s
-		{`C:\work\ǆ`, "C:\\work\\ǅ"},                  // DŽ title case
-		{"C:\\work\\\u00e9", "C:\\work\\\u00c9"},      // é vs É
-		{"C:\\work\\\u212Ait", "C:\\work\\kit"},       // and the other way round
+		{`C:\work\kit`, "C:\\work\\\u212Ait"},          // Kelvin sign
+		{`C:\work\sites`, "C:\\work\\\u017Fites"},      // long s
+		{`C:\work\ǆ`, "C:\\work\\ǅ"},                   // DŽ title case
+		{"C:\\work\\\u00e9", "C:\\work\\\u00c9"},       // é vs É
+		{"C:\\work\\\u212Ait", "C:\\work\\kit"},        // and the other way round
 		{"C:\\work\\caf\u00e9", "C:\\work\\CAF\u00c9"}, // non-ASCII must match byte-exactly
 	} {
 		p := Policy{Mode: core.ModeCode, ReadRoots: []string{c.root}, WriteRoots: []string{c.root}, FoldCase: true, Enforcement: EnforcementHook}
@@ -133,19 +133,19 @@ func TestAsciiFold(t *testing.T) {
 func TestDecideReadOfGitConfigAndHooksDenied(t *testing.T) {
 	p := codePolicy()
 	for canon, want := range map[string]bool{
-		`C:\work\repo\.git\config`:             false,
-		`C:\work\repo\.GIT\CONFIG`:             false,
-		`C:\work\repo\.git\hooks`:              false,
-		`C:\work\repo\.git\hooks\pre-commit`:   false,
-		`C:\work\repo\sub\.git\hooks\x\y`:      false,
-		`C:\work\repo\.git\modules\m\config`:   true, // not a direct child; Read allowed
-		`C:\work\repo\.git\HEAD`:               true,
-		`C:\work\repo\.git\config.worktree`:    true,
-		`C:\work\repo\.github\hooks\x`:         true,
-		`C:\work\repo\src\config`:              true,
-		`C:\work\repo\hooks\x`:                 true,
-		`C:\work\repo\.git`:                    true,
-		`C:\work\repo\.git\objects\ab\cdef`:    true,
+		`C:\work\repo\.git\config`:           false,
+		`C:\work\repo\.GIT\CONFIG`:           false,
+		`C:\work\repo\.git\hooks`:            false,
+		`C:\work\repo\.git\hooks\pre-commit`: false,
+		`C:\work\repo\sub\.git\hooks\x\y`:    false,
+		`C:\work\repo\.git\modules\m\config`: true, // not a direct child; Read allowed
+		`C:\work\repo\.git\HEAD`:             true,
+		`C:\work\repo\.git\config.worktree`:  true,
+		`C:\work\repo\.github\hooks\x`:       true,
+		`C:\work\repo\src\config`:            true,
+		`C:\work\repo\hooks\x`:               true,
+		`C:\work\repo\.git`:                  true,
+		`C:\work\repo\.git\objects\ab\cdef`:  true,
 	} {
 		for _, tool := range []Tool{ToolRead, ToolSearch} {
 			v := Decide(p, Call{Tool: tool, Paths: []PathRef{ref(canon)}})
@@ -197,7 +197,7 @@ func TestProtectedListsAreCopies(t *testing.T) {
 func TestGlobsThatMatchParentFolder(t *testing.T) {
 	p := codePolicy()
 	for glob, want := range map[string]bool{
-		`.[.]/x`: false, `[.][.]/x`: false, `.[!a]/x`: false, `.[.]`: false, `[.].`: false,		`a[.]b`: true, `[ab].go`: true, `*.[ch]`: true, `.[a]`: true, `src/[a-z]*.go`: true, `.[!.]`: true,
+		`.[.]/x`: false, `[.][.]/x`: false, `.[!a]/x`: false, `.[.]`: false, `[.].`: false, `a[.]b`: true, `[ab].go`: true, `*.[ch]`: true, `.[a]`: true, `src/[a-z]*.go`: true, `.[!.]`: true,
 	} {
 		v := Decide(p, Call{Tool: ToolSearch, Globs: []string{glob}})
 		if v.Allow != want {
