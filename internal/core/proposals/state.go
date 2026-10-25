@@ -37,6 +37,8 @@ type Executed struct {
 
 // Failed leaves only through Retry, and only when Retryable.
 type Failed struct {
+	// Attempt is the attempt that failed; Retry starts Attempt+1.
+	Attempt   int
 	At        time.Time
 	Kind      FailKind
 	Message   string
