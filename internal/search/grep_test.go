@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -249,5 +250,53 @@ func TestGitFailureIsReported(t *testing.T) {
 	q := coresearch.Query{Pattern: "(", Mode: coresearch.ModeRegex, Case: true}
 	if _, err := g.Grep(context.Background(), dir, q); !errors.Is(err, search.ErrGitFailed) {
 		t.Fatalf("an invalid regex that reaches git: err = %v, want ErrGitFailed", err)
+	}
+}
+
+// A tracked symlink that points outside the repo must not make the search read
+// the target: no match may come from outside the repo (invariant 6).
+func TestTrackedSymlinksDoNotLeakOutsideFiles(t *testing.T) {
+	env := searchtest.GitEnv(t)
+	g, err := search.NewGitGrepper(env, platform.Start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const secret = "OUTSIDE_SECRET_acme_9f3"
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte(secret+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := searchtest.InitRepo(t, env, map[string]string{"a.txt": "inside\n"})
+	rel, err := filepath.Rel(dir, outside)
+	if err != nil {
+		t.Skip("no relative path to the other folder")
+	}
+	if err := os.Symlink(filepath.Join(rel, "secret.txt"), filepath.Join(dir, "link")); err != nil {
+		t.Skipf("cannot create symlinks here: %v", err)
+	}
+	if err := os.Symlink(rel, filepath.Join(dir, "linkdir")); err != nil {
+		t.Skipf("cannot create symlinks here: %v", err)
+	}
+	searchtest.RunGit(t, env, dir, "add", "-A")
+	searchtest.RunGit(t, env, dir, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "links")
+	for _, mode := range []coresearch.Mode{coresearch.ModeLiteral, coresearch.ModeRegex} {
+		q := coresearch.Query{Pattern: secret, Mode: mode, Case: true}
+		res, err := g.Grep(context.Background(), dir, q)
+		if err != nil {
+			t.Fatalf("%s: %v", mode, err)
+		}
+		for _, m := range res.Matches {
+			t.Errorf("%s: a match from outside the repo: %+v", mode, m)
+		}
+	}
+	// Whatever the tool reports for the links themselves stays a repo-relative path.
+	res, err := g.Grep(context.Background(), dir, coresearch.Query{Pattern: "secret.txt", Mode: coresearch.ModeLiteral, Case: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range res.Matches {
+		if strings.Contains(m.Text, secret) || strings.HasPrefix(m.Path, "linkdir/") || !filepath.IsLocal(filepath.FromSlash(m.Path)) {
+			t.Errorf("suspicious match %+v", m)
+		}
 	}
 }
