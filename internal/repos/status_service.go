@@ -244,6 +244,15 @@ func (s *StatusService) step(ctx context.Context, g *errgroup.Group, state corer
 		}()
 		next, cmds = refreshCore(state, in)
 	}()
+	if rc, ok := in.(corerepos.ReposChanged); ok {
+		if rt, ok := s.reader.(interface{ Retain([]corerepos.CleanPath) }); ok {
+			keep := make([]corerepos.CleanPath, 0, len(rc.Active))
+			for _, a := range rc.Active {
+				keep = append(keep, a.Path)
+			}
+			rt.Retain(keep)
+		}
+	}
 	for _, c := range cmds {
 		switch x := c.(type) {
 		case corerepos.ReadStatus:
