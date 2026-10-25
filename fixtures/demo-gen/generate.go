@@ -39,6 +39,11 @@ and screenshots. Every repo, person, email address and commit in it is made up.
 - shop-api: Java / Maven backend
 - shop-web: TypeScript storefront (pnpm)
 - shop-admin: JavaScript admin dashboard
+- shop-gateway: Kotlin / Gradle edge service (clean)
+- shop-payments: Go service (detached HEAD)
+- shop-inventory: Python / uv service (conflicted merge)
+
+hosts/ holds recorded GitLab, GitHub and Gitea answers (merge requests, pipelines).
 
 The origin of each repo is a local bare repo under ../remotes. Nothing here
 talks to a real git host.
@@ -68,6 +73,9 @@ var repos = []repoSpec{
 	{"shop-api", time.Date(2026, 3, 2, 8, 0, 0, 0, time.UTC), buildShopAPI},
 	{"shop-web", time.Date(2026, 3, 9, 8, 0, 0, 0, time.UTC), buildShopWeb},
 	{"shop-admin", time.Date(2026, 3, 16, 8, 0, 0, 0, time.UTC), buildShopAdmin},
+	{"shop-gateway", time.Date(2026, 3, 23, 8, 0, 0, 0, time.UTC), buildShopGateway},
+	{"shop-payments", time.Date(2026, 3, 30, 8, 0, 0, 0, time.UTC), buildShopPayments},
+	{"shop-inventory", time.Date(2026, 4, 6, 8, 0, 0, 0, time.UTC), buildShopInventory},
 }
 
 // generate writes the demo project into out and returns its absolute path.
@@ -91,6 +99,9 @@ func generate(out string) (string, []repoSummary, error) {
 			return "", nil, err
 		}
 		sums = append(sums, s)
+	}
+	if err := writeHostFixtures(root); err != nil {
+		return "", nil, err
 	}
 	return root, sums, nil
 }
@@ -144,7 +155,7 @@ type file struct{ path, content string }
 func f(path, content string) file { return file{path, content} }
 
 // executable lists paths stored with mode 100755.
-var executable = map[string]bool{"mvnw": true}
+var executable = map[string]bool{"mvnw": true, "gradlew": true}
 
 // builder writes blobs, trees and commits straight into object stores, so
 // hashes depend only on the script below, not on the file system or clock.

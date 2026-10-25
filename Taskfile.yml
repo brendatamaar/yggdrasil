@@ -65,11 +65,7 @@ tasks:
     desc: Go tests, CGO_ENABLED=0 (root module and fixtures/demo-gen)
     cmds:
       - CGO_ENABLED=0 go test ./...
-      - |
-        # Skip until the generator has Go code (go test fails on "no packages").
-        if [ -n "$(go -C fixtures/demo-gen list ./... 2>/dev/null)" ]; then
-          CGO_ENABLED=0 go -C fixtures/demo-gen test ./...
-        fi
+      - CGO_ENABLED=0 go -C fixtures/demo-gen test ./...
 
   test:race:
     desc: Go tests with the race detector (needs cgo and gcc; tests only, never shipped builds)
@@ -114,14 +110,19 @@ tasks:
       - powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke.ps1 -RealAgent
 
   fixtures:
-    desc: Generate fixtures/demo-project (fictional acme-shop repos)
+    desc: Generate fixtures/demo-project (fictional acme-shop repos); skips when it already exists
     cmds:
       - |
-        if [ -f fixtures/demo-gen/go.mod ]; then
-          go -C fixtures/demo-gen run . -out "{{.ROOT_DIR}}/fixtures/demo-project"
-        else
+        if [ ! -f fixtures/demo-gen/go.mod ]; then
           echo "fixtures/demo-gen doesn't exist yet: skipping"
+        else
+          go -C fixtures/demo-gen run . -out "{{.ROOT_DIR}}/fixtures/demo-project" -if-missing
         fi
+
+  perf:
+    desc: Performance check, not part of task test (status refresh for 50 repos under 10 s, PRD section 8)
+    cmds:
+      - YGG_PERF=1 CGO_ENABLED=0 go test ./internal/repos -run TestPerf -count=1 -v -timeout 10m
 
   license:
     desc: Check Go and npm production dependency licenses against docs/AGENTS.md section 2
