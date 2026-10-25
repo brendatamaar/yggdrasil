@@ -553,3 +553,19 @@ Backlog (none blocking), assigned to B4b where marked:
 6. Needs-attention ranking is client-side; CI failures makes one host request per failing repo (N+1); Git activity shows only the last commit per repo; Recent areas is a last-commit proxy (no endpoint for these yet).
 7. Unknown `RepoFailed` kind is now mapped silently: log when it happens; add a plain non-git temp dir to the NotRepo clause.
 8. Earlier backlog items (F2 list) still open: racy prune test, log close on panic outside `d.Start`, `lifecycle` panic leak, per-command recovery, panic logging, `Blocked{Unsupported}` refetch, `feeder.run` re-mark.
+
+### B4b review gate: result (2026-10-25)
+
+B4b merged (`0a9bac2`): search test gaps, demo-project generator (3 new repos, host JSON fixtures, `-if-missing`), `TestPerf_StatusRefresh50Repos` behind `YGG_PERF`/`task perf`, Taskfile `perf`/`fixtures`/`test`. Safety PASS, FE no Must-fix. Checks green on `main`: lint 0 issues, typecheck, `task test`, `task test:web` (252). `task license` not run (go-licenses not installed here).
+
+**Open exit criterion: 50-repo status refresh under 10 s.** Measured on the dev machine (Windows 11, antivirus active): 17.3 s startup, 17.6 s user refresh (second run 19.6 s / 19.8 s). 2 git processes per repo (`status --porcelain=v2 -z --branch --untracked-files=all`, `log -1`), 100 per refresh, 8 concurrent (`corerepos.DefaultMax`). Time is process spawn cost (about 0.3 s per bare `git --version` via `platform.Start`; about 1.4 s per call at 8-way parallelism, about 6 calls/s). Levers not applied: drop or merge `git log -1`, raise `WithMaxReads`, antivirus exclusion. Threshold unchanged. Decision pending from the human.
+
+Backlog from the B4b reviews (none blocking):
+1. Real-git mid-flight cancel clause is near-vacuous: wrap `NewGitGrepper`'s `StartFunc` with a stdout writer that signals `started` then blocks until ctx is done; assert exactly `context.Canceled`.
+2. `TestSearchDrainsAnswersThatLandAtTheDeadline` is statistical (low false-failure, small false-pass risk, weak `kept == 0` assertion): extract `drainReady` for a deterministic unit test, or tighten the assertion.
+3. `fixtures/demo-gen/main.go` `-if-missing`: skip only when a `.complete` marker exists (a half-written output otherwise skips silently forever); add a test for missing/empty/non-empty dirs.
+4. `testDeterministic` compares only ref hashes: add a byte-for-byte walk of non-`.git` files plus `.git/index` and `HEAD` for repos with working-tree state, and the `hosts/` files.
+5. `extras_test.go` `gitOut`: minimal env instead of `os.Environ()`.
+6. Perf test: re-assert counts after the user refresh; assert `startCalls >= 50` and a call-count delta; note that `copyTree` leaves the index stat-stale (conservative).
+7. Hostile-config test: skip-on-control could drift into always skipping; log it and add a CI-only fatal via env var. `t.Run` per `MoreNotRepos` folder. `git branch -D` in the perf helper: use `update-ref -d`.
+8. Earlier backlog (F2/B4a lists) still open, including the UNC `vscode://` link (item 5 above) and the symlink test that cannot fail on unprivileged Windows (needs a Unix or privileged run).
