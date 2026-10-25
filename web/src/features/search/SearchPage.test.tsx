@@ -133,7 +133,7 @@ describe("search page", () => {
 
 describe("search request lifetime", () => {
   const signalOf = (api: ReturnType<typeof renderSearch>, n: number) => {
-    const calls = api.fn.mock.calls.filter((c) => String(c[0]) === "/api/search");
+    const calls = api.fn.mock.calls.filter((c) => (c[0] as string) === "/api/search");
     return calls[n]?.[1]?.signal;
   };
 

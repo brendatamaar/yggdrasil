@@ -17,6 +17,8 @@ function problemText(p: SearchProblemDTO): string {
       return "Git could not search this repo.";
     case "missing":
       return "This repo's folder is missing.";
+    case "paths_skipped":
+      return p.message || "Some matches were skipped because their paths cannot be opened safely.";
     default:
       return "This repo could not be searched.";
   }
