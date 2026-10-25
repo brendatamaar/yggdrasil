@@ -8,8 +8,10 @@ func Admit(r Request) Admission {
 	if r.Mode.Validate() != nil {
 		return refuse(ReasonModeUnavailable)
 	}
-	// An untrusted repo (or an unknown trust value) admits Ask only.
-	if r.Trust != TrustNone && r.Trust != TrustTrusted && r.Mode != core.ModeAsk {
+	// An untrusted repo (or an unknown trust value) admits Ask only. Every
+	// repo the mode touches must be trusted, and a list that names no repo
+	// proves nothing, so it admits Ask only too.
+	if r.Mode != core.ModeAsk && !allReposTrusted(r.Trust) {
 		return refuse(ReasonRepoUntrusted)
 	}
 	// A switch goes between Ask and the task's own writing mode, nothing else.
@@ -34,6 +36,18 @@ func Admit(r Request) Admission {
 		return wide(r, WarningEditsAllRepos)
 	}
 	return refuse(ReasonModeUnavailable)
+}
+
+func allReposTrusted(views []TrustView) bool {
+	if len(views) == 0 {
+		return false
+	}
+	for _, v := range views {
+		if v != TrustNone && v != TrustTrusted {
+			return false
+		}
+	}
+	return true
 }
 
 // wide admits a mode that edits main checkouts: it needs the opt-in and a

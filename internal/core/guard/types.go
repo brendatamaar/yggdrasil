@@ -70,6 +70,9 @@ type Call struct {
 	Globs []string
 	// Argv is the parsed command line (Exec).
 	Argv []string
+	// Program is the executable the shell resolved argv[0] to, with platform
+	// resolution and the working directory never searched (Exec). D11 needs it.
+	Program *PathRef
 	// ParseErr: the command line had shell syntax we refuse (Exec).
 	ParseErr bool
 	// Isolation is "" or the agent-native isolation a sub-agent asked for.
@@ -166,10 +169,26 @@ func checkRoot(r string) error {
 	if !looksAbsolute(r) {
 		return fmt.Errorf("folder %q is not absolute", r)
 	}
+	var segs []string
 	for _, seg := range strings.FieldsFunc(r, func(c rune) bool { return c == '/' || c == '\\' }) {
 		if seg == ".." {
 			return fmt.Errorf("folder %q has a parent-folder part", r)
 		}
+		if seg != "." {
+			segs = append(segs, seg)
+		}
+	}
+	// A whole drive, the filesystem root or a bare network host or share is
+	// not a repo: it would let the policy reach far more than one project.
+	need := 1 // "/x": one part; "C:\x": the drive and one part below it
+	switch {
+	case strings.HasPrefix(r, `\\`) || strings.HasPrefix(r, "//"):
+		need = 3 // host, share and one more part (or `?`, drive and one more)
+	case len(segs) > 0 && isDriveSeg(segs[0]):
+		need = 2
+	}
+	if len(segs) < need {
+		return fmt.Errorf("folder %q is a drive, a share or the filesystem root, not a project folder", r)
 	}
 	return nil
 }
@@ -261,9 +280,13 @@ type Request struct {
 	Mode core.TaskMode
 	// Previous is the task's earlier write mode when this is a mode switch,
 	// nil for a first turn.
-	Previous    *core.TaskMode
-	OptIn       bool
-	Trust       TrustView
+	Previous *core.TaskMode
+	OptIn    bool
+	// Trust has one view per repo the mode touches (the task's repo for
+	// Code, the main checkout for CurrentBranch, every repo for Project). A
+	// non-Ask mode is admitted only if all are Trusted or None; an empty
+	// list is refused.
+	Trust       []TrustView
 	Enforcement Enforcement
 }
 

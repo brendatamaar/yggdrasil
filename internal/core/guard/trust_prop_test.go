@@ -3,12 +3,17 @@ package guard
 import (
 	"fmt"
 	"math/rand"
+	"reflect"
 	"testing"
 )
 
 func genTrustInput(r *rand.Rand, s Trust) TrustInput {
 	hashes := []string{"h1", "h2", "h3"}
-	switch r.Intn(6) {
+	switch r.Intn(8) {
+	case 6:
+		return ScanFailed{Repo: "r1", Why: "boom"}
+	case 7:
+		return pick(r, TrustInput(Scanned{Repo: "r2", Scan: scan("h1", "f"), Now: t0}), TrustInput(UserTrusts{Repo: "r2", Hash: "h1", Now: t0}), TrustInput(ScanFailed{Repo: "r2"}))
 	case 0:
 		return UserRevokes{Repo: "r1", Now: t0}
 	case 1, 2:
@@ -30,12 +35,12 @@ func genTrustInput(r *rand.Rand, s Trust) TrustInput {
 func driveTrust(t *testing.T, chk func(prev Trust, in TrustInput, next Trust, cmds []Command, lastScan string)) {
 	t.Helper()
 	forSeeds(t, func(t *testing.T, r *rand.Rand) {
-		var s Trust = NoConfig{}
+		var s Trust = Unknown{Repo: "r1"}
 		last := ""
 		for i := 0; i < 30; i++ {
 			in := genTrustInput(r, s)
 			next, cmds := StepTrust(s, in)
-			if sc, ok := in.(Scanned); ok {
+			if sc, ok := in.(Scanned); ok && sc.Repo == "r1" {
 				last = sc.Scan.Hash
 				if sc.Scan.Empty() {
 					last = "-"
@@ -79,7 +84,7 @@ func TestPropChangedConfigLosesTrust(t *testing.T) {
 	driveTrust(t, func(prev Trust, in TrustInput, next Trust, cmds []Command, _ string) {
 		pt, ok := prev.(Trusted)
 		sc, ok2 := in.(Scanned)
-		if !ok || !ok2 || sc.Scan.Hash == pt.Hash {
+		if !ok || !ok2 || sc.Scan.Hash == pt.Hash || sc.Repo != "r1" {
 			return
 		}
 		if _, still := next.(Trusted); still {
@@ -99,6 +104,32 @@ func TestPropTrustMatchesLastScan(t *testing.T) {
 	driveTrust(t, func(prev Trust, in TrustInput, next Trust, cmds []Command, last string) {
 		if nt, ok := next.(Trusted); ok && nt.Hash != last {
 			t.Fatalf("trusted %q but the last scan was %q", nt.Hash, last)
+		}
+	})
+}
+
+// T4: a failed scan of this repo always leaves it untrusted; an input for
+// another repo never changes the state.
+func TestPropScanFailedAndOtherRepos(t *testing.T) {
+	driveTrust(t, func(prev Trust, in TrustInput, next Trust, cmds []Command, _ string) {
+		if sf, ok := in.(ScanFailed); ok && sf.Repo == "r1" {
+			if View(next) != TrustUntrusted {
+				t.Fatalf("scan failed but %#v", next)
+			}
+		}
+		repo := "r1"
+		switch x := in.(type) {
+		case Scanned:
+			repo = string(x.Repo)
+		case UserTrusts:
+			repo = string(x.Repo)
+		case UserRevokes:
+			repo = string(x.Repo)
+		case ScanFailed:
+			repo = string(x.Repo)
+		}
+		if repo != "r1" && (!reflect.DeepEqual(prev, next) || len(cmds) != 0) {
+			t.Fatalf("an input for %q changed %#v to %#v", repo, prev, next)
 		}
 	})
 }

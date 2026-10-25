@@ -58,7 +58,7 @@ func TestStepIntegrityTable(t *testing.T) {
 					t.Fatalf("no FlagTask in %#v", c)
 				}
 			}},
-		{"checking + changed, no paths known", Checking{Turn: turn, Before: snapA}, SnapshotTaken{Turn: turn, Phase: PhaseAfter, Snap: Snapshot{Head: "h2"}},
+		{"checking + changed, no paths known", Checking{Turn: turn, Before: snapA}, SnapshotTaken{Turn: turn, Phase: PhaseAfter, Snap: Snapshot{Head: "h2", Status: "s1", DiffHash: "d1"}},
 			Violated{Turn: turn}, nil, func(t *testing.T, c []Command) { wantStop(t, c, turn, StopTreeChanged) }},
 		{"checking + after failed", Checking{Turn: turn, Before: snapA}, SnapshotFailed{Turn: turn, Phase: PhaseAfter, Reason: "git missing"},
 			Unverifiable{Turn: turn, Why: "git missing"}, nil, func(t *testing.T, c []Command) { wantStop(t, c, turn, StopCannotVerify) }},

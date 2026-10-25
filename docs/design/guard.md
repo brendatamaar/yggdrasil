@@ -106,8 +106,8 @@ type CommandRule struct {
 | D8 | Tool is `Write` otherwise | Deny `OutsideWorktree` |
 | D9 | Tool is `Exec` and `Mode == ask` | Deny `AskIsReadOnly` |
 | D10 | Tool is `Exec` and `ParseErr` | Deny `ShellSyntax` (pipes, `&&`, redirects, `$()`, backticks, newlines) |
-| D11 | Tool is `Exec`; some `CommandRule` matches `Argv` (program base name, fixed args, tail rule) | Allow |
-| D12 | Tool is `Exec` otherwise | Deny `NotAllowlisted` |
+| D11 | Tool is `Exec`; `Call.Program` is set, `OK`, and in no `WriteRoot`; and some `CommandRule` matches `Argv` (`argv[0]` is the exact bare name or the name plus `.exe`, fixed args, tail rule) | Allow |
+| D12 | Tool is `Exec` otherwise (`Program` nil or inside a write root, no rule matches). `Program` not `OK` is `PathUnresolved` | Deny `NotAllowlisted` |
 | D13 | Tool is `Subagent` with `Isolation != ""` | Deny `AgentWorktreeBlocked` (AG-22) |
 | D14 | Tool is `Subagent` | Allow (depth and concurrency are K1's and the hook's caps) |
 | D15 | anything else | Deny `UnknownTool` |
@@ -120,7 +120,7 @@ Paths are compared with `FoldCase`. A path equals a root or is below it; `Canon`
 
 | Mode asked | Condition | Result |
 |---|---|---|
-| any | `Trust` is `Untrusted` | Admit only `ask`; every other mode `Refused{RepoUntrusted}` |
+| any | any view in `Trust []TrustView` (one per repo the mode touches) is not `None`/`Trusted`, or the list is empty | Admit only `ask`; every other mode `Refused{RepoUntrusted}` |
 | `ask` | always | Admit |
 | `code` | `Enforcement` is `hook` or `limited` | Admit (limited = worktree-only, which is what `code` is) |
 | `current_branch` | `OptIn` and `Enforcement == hook` | Admit with `Warning{EditsMainCheckout}` |
@@ -306,3 +306,15 @@ Shell:
 ## Decisions (approved 2026-10-25)
 
 All five recommendations accepted: (1) strict allowlist tails, `Tail=Paths` only; (2) allowlist per repo in settings, seeded from toolchain defaults, no per-task override; (3) Ask turns read the task's scope only; (4) repo scripts are out of the allowlist's reach, recorded in the threat model; (5) protected names as listed.
+
+## Review gate 1 fixes
+
+Changes made after the first review gate (all in `internal/core/guard`, tests first):
+
+- **B1 command lines.** `ParseCommandLine` is a character allowlist: every word, bare or quoted, holds only `[A-Za-z0-9_@%+=:,./-]` (quoted words may also hold spaces). Backslash, `$`, braces, globs, parentheses, `!`, `~`, `#`, ANSI-C quotes, tabs inside quotes, non-ASCII and control characters are refused, as is a second `%` anywhere. `tailArgOK` judges the word through the same `wordAllowed` check before the leading `-`, `@`, `~` rule, so `go test \-exec=evil.sh` is refused. Quotes only group; they are never part of a word. A property test and a fuzz target compare accepted lines with an independent model of bash expansion (backslash, `$055`, braces, quote removal, globs, variables): accepted implies the shell word equals the judged word and no tail word is a flag.
+- **B2 programs.** A rule matches only `argv[0]` equal to the bare name or the name plus `.exe` (no `.bat`, `.cmd`, `.com`). New `Call.Program *PathRef` is the executable the shell resolved with platform resolution (the working directory is never searched). D11 needs it set, `OK`, absolute, ordinary and in no `WriteRoot`; nil gives `NotAllowlisted`, not `OK` gives `PathUnresolved`.
+- **B3 case folding.** Segment comparison and the protected-name check fold ASCII only (`asciiEqualFold`); non-ASCII segments match byte-exactly, so U+212A (Kelvin) and U+017F (long s) no longer match `k` and `s`.
+- **M2 integrity.** A snapshot with an empty `Head`, `Status` or `DiffHash` is `Unverifiable`, never `Clean`. New input `TurnAborted{Turn}`: `Arming` goes back to `Idle` (the run never started); `Armed` and `Checking` become `Unverifiable` with an audit entry and **no** `StopTask` (the turn is already dead; the tree was not checked). `TurnStarts` for a new turn ID starts fresh from `Clean`, `Violated` and `Unverifiable` (`ask`: `Arming`; other modes: `Idle`). The same ID in a terminal state changes nothing. The shell holds `RunFinished` until the After snapshot is checked (core/tasks).
+- **M3 trust.** New explicit starting state `Unknown{Repo}`, viewed as untrusted. Every state carries `Repo`; an input for another repo changes nothing. New input `ScanFailed{Repo, Why}` gives `Untrusted{WhyScanIncomplete}` from any state (audit `scan_incomplete`, no free text, persisted trust left for the next complete scan). `NoConfig` is only reached by a complete scan.
+- **M5 admit.** `Request.Trust` is `[]TrustView`, one per repo the mode touches; a non-Ask mode needs every view `None` or `Trusted`, and an empty list is refused.
+- **Policy and paths.** `Policy.Validate` refuses a drive root, `/`, and a UNC root without host, share and one more part. Protected names add `.codex/**`, `.gemini/**`, `.cursor/**`, `.husky/**`, `.githooks/**`, `CLAUDE.local.md`, `.gitmodules`; they are exported as `ProtectedDirNames` and `ProtectedFileNames` for the cross-check test in `core/proposals`. A glob part with a `[..]` class that can match `..` (for example `.[.]`) is refused. Read and Search of `.git/config` and anything under `.git/hooks` give `Deny ProtectedPath`.

@@ -5,26 +5,50 @@ import (
 	"strings"
 )
 
-// ErrShellSyntax is returned for a command line with shell syntax we refuse:
-// & | ; < > backtick $( %VAR% ^ newline, an unbalanced quote, or nothing.
+// ErrShellSyntax is returned for a command line with syntax we refuse: any
+// character outside the word allowlist (see wordAllowed), an unbalanced
+// quote, or nothing.
 var ErrShellSyntax = errors.New("the command line uses shell syntax that isn't allowed")
+
+// wordAllowed reports whether a is made only of the characters a word may
+// hold: [A-Za-z0-9_@%+=:,./-] and, inside quotes, the space. It is the single
+// definition used by ParseCommandLine (to refuse) and by the tail rule of the
+// allowlist (to judge), so the word we judge is the word the shell sees: no
+// character in it is special to bash, cmd or PowerShell, except that "%" is
+// allowed once (a second "%" could close a cmd variable, see below).
+func wordAllowed(a string) bool {
+	for i := 0; i < len(a); i++ {
+		if !wordByte(a[i]) && a[i] != ' ' {
+			return false
+		}
+	}
+	return strings.Count(a, "%") < 2
+}
+
+func wordByte(c byte) bool {
+	switch {
+	case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		return true
+	}
+	return strings.IndexByte("_@%+=:,./-", c) >= 0
+}
 
 // ParseCommandLine splits a command line into argv, or refuses it. The shell
 // sets Call.ParseErr when this returns an error.
 //
-// The refused characters are refused everywhere, quoted or not, because cmd
-// and PowerShell treat them differently from a POSIX shell. Backslash is an
-// ordinary character (Windows paths); only ' and " group words.
+// A word may hold only the characters of wordAllowed, bare or inside '...' or
+// "..." (a quoted word may also hold spaces). Backslash is refused: agents use
+// forward slashes, and a backslash is an escape to bash and a path separator
+// to cmd. $, braces, globs, parentheses, "!", "~", "#", ANSI-C quotes and
+// every control character are refused too, so no expansion can make the shell
+// run a word other than the one we judged. Quotes only group words; they are
+// never part of one.
 func ParseCommandLine(line string) ([]string, error) {
-	if strings.ContainsAny(line, "&|;<>`^\n\r\x00") || strings.Contains(line, "$(") ||
-		strings.Count(line, "%") >= 2 {
-		return nil, ErrShellSyntax
-	}
 	var (
 		argv   []string
 		cur    strings.Builder
 		inWord bool
-		quote  rune
+		quote  byte
 	)
 	flush := func() {
 		if inWord {
@@ -33,22 +57,28 @@ func ParseCommandLine(line string) ([]string, error) {
 			inWord = false
 		}
 	}
-	for _, c := range line {
+	for i := 0; i < len(line); i++ {
+		c := line[i]
 		switch {
 		case quote != 0:
-			if c == quote {
+			switch {
+			case c == quote:
 				quote = 0
-			} else {
-				cur.WriteRune(c)
+			case wordByte(c) || c == ' ':
+				cur.WriteByte(c)
+			default:
+				return nil, ErrShellSyntax
 			}
 		case c == '"' || c == '\'':
 			quote = c
 			inWord = true
 		case c == ' ' || c == '\t':
 			flush()
-		default:
-			cur.WriteRune(c)
+		case wordByte(c):
+			cur.WriteByte(c)
 			inWord = true
+		default:
+			return nil, ErrShellSyntax
 		}
 	}
 	if quote != 0 {
@@ -58,11 +88,9 @@ func ParseCommandLine(line string) ([]string, error) {
 	if len(argv) == 0 {
 		return nil, ErrShellSyntax
 	}
-	// Quotes can glue "$" and "(" together ($""( ), so look again at the result.
-	for _, a := range argv {
-		if strings.Contains(a, "$(") {
-			return nil, ErrShellSyntax
-		}
+	// "%" pairs form a cmd variable (%PATH%), even across words: one per line.
+	if strings.Count(line, "%") >= 2 {
+		return nil, ErrShellSyntax
 	}
 	return argv, nil
 }
@@ -78,27 +106,8 @@ func FormatCommandLine(argv []string) string {
 }
 
 func quoteWord(a string) string {
-	if a == "" {
-		return `""`
+	if a == "" || strings.Contains(a, " ") {
+		return `"` + a + `"`
 	}
-	if !strings.ContainsAny(a, " \t\"'") {
-		return a
-	}
-	// Runs without a double quote go inside "...", runs of double quotes go
-	// inside '...'; adjacent pieces join into one word.
-	var b strings.Builder
-	for len(a) > 0 {
-		isQuote := a[0] == '"'
-		n := 0
-		for n < len(a) && (a[n] == '"') == isQuote {
-			n++
-		}
-		if isQuote {
-			b.WriteString("'" + a[:n] + "'")
-		} else {
-			b.WriteString(`"` + a[:n] + `"`)
-		}
-		a = a[n:]
-	}
-	return b.String()
+	return a
 }
