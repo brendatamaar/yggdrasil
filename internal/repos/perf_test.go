@@ -40,6 +40,7 @@ type countingGit struct {
 	longest time.Duration
 	active  atomic.Int64
 	peak    atomic.Int64
+	direct  atomic.Int64
 }
 
 func (c *countingGit) enter() func(isLog bool) {
@@ -76,6 +77,16 @@ func (c *countingGit) Log(ctx context.Context, dir string, n int) ([]git.Commit,
 	done := c.enter()
 	defer done(true)
 	return c.g.Log(ctx, dir, n)
+}
+
+// HeadCommit forwards the direct object-store read (no process); the test
+// counts those separately from git invocations.
+func (c *countingGit) HeadCommit(dir, oid string) (git.Commit, bool) {
+	cm, ok := c.g.HeadCommit(dir, oid)
+	if ok {
+		c.direct.Add(1)
+	}
+	return cm, ok
 }
 
 func (c *countingGit) calls() int {
@@ -234,22 +245,29 @@ func TestPerf_StatusRefresh50Repos(t *testing.T) {
 	startup := waitAll("startup refresh", began)
 	startCalls := cg.calls()
 
-	s, err := svc.Snapshot(ctx)
-	if err != nil {
-		t.Fatal(err)
+	checkCounts := func(label string) {
+		t.Helper()
+		s, err := svc.Snapshot(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for id, w := range want {
+			fr, ok := s.Entries[id].View.(corerepos.Fresh)
+			if !ok {
+				t.Fatalf("%s: %s: view is %T, want Fresh", label, id, s.Entries[id].View)
+			}
+			got := perfWant{fr.Snap.Ahead, fr.Snap.Behind, fr.Snap.Unstaged, fr.Snap.Untracked}
+			if got != w {
+				t.Errorf("%s: %s: snapshot counts = %+v, want %+v", label, id, got, w)
+			}
+			if fr.Snap.LastCommit == nil {
+				t.Errorf("%s: %s: no last commit", label, id)
+			}
+		}
 	}
-	for id, w := range want {
-		fr, ok := s.Entries[id].View.(corerepos.Fresh)
-		if !ok {
-			t.Fatalf("%s: view is %T, want Fresh", id, s.Entries[id].View)
-		}
-		got := perfWant{fr.Snap.Ahead, fr.Snap.Behind, fr.Snap.Unstaged, fr.Snap.Untracked}
-		if got != w {
-			t.Errorf("%s: snapshot counts = %+v, want %+v", id, got, w)
-		}
-		if fr.Snap.LastCommit == nil {
-			t.Errorf("%s: no last commit", id)
-		}
+	checkCounts("startup")
+	if startCalls < perfRepoCount {
+		t.Errorf("startup made %d git calls for %d repos, want at least one per repo", startCalls, perfRepoCount)
 	}
 
 	begin := time.Now()
@@ -257,6 +275,13 @@ func TestPerf_StatusRefresh50Repos(t *testing.T) {
 		t.Fatal(err)
 	}
 	user := waitAll("user refresh", begin)
+	checkCounts("user refresh")
+	userCalls := cg.calls() - startCalls
+	t.Logf("PERF git invocations: startup %d, user refresh %d (%d commits read from the object store without a process)",
+		startCalls, userCalls, cg.direct.Load())
+	if userCalls < perfRepoCount {
+		t.Errorf("user refresh made %d git calls for %d repos, want at least one per repo", userCalls, perfRepoCount)
+	}
 
 	cg.mu.Lock()
 	t.Logf("PERF 50 repos, max reads %d (peak seen %d): startup %v, user refresh %v (budget %v)",
