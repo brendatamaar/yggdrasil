@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
+	"github.com/brendatamaar/yggdrasil/internal/core/guard"
 )
 
 // Adapter runs one agent CLI and converts its output into Events (AG-01).
@@ -58,4 +59,26 @@ type StartOptions struct {
 	MaxConcurrentSubagents int
 	// BudgetUSD is the spend cap for the run; 0 means none (AG-16).
 	BudgetUSD float64
+	// Policy is what the guard enforces for this run: mode, readable and
+	// writable roots and the command allowlist (SF-06). Adapters that enforce
+	// through a hook write it where the hook reads it. The zero value is not
+	// a valid policy; adapters that use it call Policy.Validate first.
+	Policy guard.Policy
+}
+
+// RepoConfigProvider is optionally implemented by an adapter whose CLI reads
+// agent config from the repo (hooks, MCP servers, sub-agent definitions).
+// The trust scan hashes these files (SF-09). Paths are relative to the repo
+// root, with forward slashes; a folder means everything below it.
+type RepoConfigProvider interface {
+	ConfigPaths() []string
+}
+
+// MCPConfigurer is optionally implemented by an adapter that can be pointed at
+// Yggdrasil's MCP server. WriteMCPConfig writes the CLI's MCP config file into
+// dir and returns its path. The URL and the bearer token go into the file,
+// never onto a command line (invariant 4); the adapter passes the file to the
+// CLI, and only that server may load.
+type MCPConfigurer interface {
+	WriteMCPConfig(dir, url, token string) (path string, err error)
 }
