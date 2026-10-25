@@ -19,10 +19,6 @@ import (
 
 var tzShape = regexp.MustCompile(`^[+-][0-9]{4}$`)
 
-// knownBugs switches on the checks that currently fail because of reported
-// bugs (see fastcommit_knownbugs_test.go). Run with YGG_KNOWN_BUGS=1 to see them.
-var knownBugs = os.Getenv("YGG_KNOWN_BUGS") != ""
-
 // checkAccepted asserts what every accepted commit must satisfy.
 func checkAccepted(t *testing.T, oid string, raw []byte, c Commit) {
 	t.Helper()
@@ -55,7 +51,7 @@ func checkAccepted(t *testing.T, oid string, raw []byte, c Commit) {
 		if strings.HasPrefix(rest, c.Author+" <"+c.Email+">") {
 			found = true
 			tz := strings.Fields(rest[strings.LastIndexByte(rest, '>')+1:])
-			if knownBugs && len(tz) == 2 && !tzShape.MatchString(tz[1]) {
+			if len(tz) == 2 && !tzShape.MatchString(tz[1]) {
 				t.Errorf("accepted a time zone that is not [+-]hhmm: %q", tz[1])
 			}
 		}
@@ -102,7 +98,7 @@ func FuzzParseIdent(f *testing.F) {
 		if len(fields) != 2 {
 			t.Fatalf("accepted %q with %d trailing fields", s, len(fields))
 		}
-		if knownBugs && !tzShape.MatchString(fields[1]) {
+		if !tzShape.MatchString(fields[1]) {
 			t.Errorf("accepted time zone %q", fields[1])
 		}
 		ts, perr := strconv.ParseInt(fields[0], 10, 64)

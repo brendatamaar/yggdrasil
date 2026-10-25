@@ -455,7 +455,11 @@ func parseCommitObject(oid string, raw []byte) (Commit, error) {
 	for _, line := range strings.Split(string(head), "\n") {
 		switch {
 		case strings.HasPrefix(line, "parent "):
-			c.Parents = append(c.Parents, line[len("parent "):])
+			p := line[len("parent "):]
+			if len(p) != 40 || strings.Trim(p, "0123456789abcdef") != "" {
+				return Commit{}, errNoFastPath
+			}
+			c.Parents = append(c.Parents, p)
 		case strings.HasPrefix(line, "author "):
 			name, email, when, err := parseIdent(line[len("author "):])
 			if err != nil {
@@ -492,7 +496,7 @@ func parseIdent(s string) (name, email string, when time.Time, err error) {
 	if lt < 1 || gt < lt || s[lt-1] != ' ' {
 		return "", "", time.Time{}, errNoFastPath
 	}
-	name, email = s[:lt-1], s[lt+1:gt]
+	name, email = strings.TrimRight(s[:lt], " "), s[lt+1:gt]
 	if strings.ContainsAny(name, "<>") || strings.ContainsAny(email, "<>") {
 		return "", "", time.Time{}, errNoFastPath
 	}
@@ -502,6 +506,9 @@ func parseIdent(s string) (name, email string, when time.Time, err error) {
 	}
 	ts, err := strconv.ParseInt(f[0], 10, 64)
 	if err != nil {
+		return "", "", time.Time{}, errNoFastPath
+	}
+	if strings.Trim(f[1][1:], "0123456789") != "" {
 		return "", "", time.Time{}, errNoFastPath
 	}
 	hh, e1 := strconv.Atoi(f[1][1:3])

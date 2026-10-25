@@ -8,14 +8,9 @@ import (
 
 // Known bugs in the direct commit read, found by the parity and fuzz tests.
 // Each case below is a commit that git reads one way and ReadCommitDirect
-// reads another (a wrong answer, not a fallback). The tests are skipped unless
-// YGG_KNOWN_BUGS=1, so `task test` stays green while the bugs are open; set the
-// variable to see them fail. Delete the gate when the read is fixed.
+// reads another (a wrong answer, not a fallback). All fixed; kept as regression tests.
 
 func TestKnownBugs_DirectReadWrongAnswers(t *testing.T) {
-	if !knownBugs {
-		t.Skip("known bugs in ReadCommitDirect (see the report); set YGG_KNOWN_BUGS=1 to run")
-	}
 	f := newFx(t)
 	dir := f.repo("known-bugs")
 	root := f.storeRaw(dir, commitRaw(goodAuthor, "", "root\n"))
