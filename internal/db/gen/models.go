@@ -96,6 +96,13 @@ type Proposal struct {
 	CreatedAt   string
 	DecidedAt   sql.NullString
 	Version     int64
+	ActionHash  string
+	Attempt     int64
+	Source      string
+	FailKind    sql.NullString
+	Result      sql.NullString
+	Message     string
+	Retryable   int64
 }
 
 type Repo struct {
@@ -106,6 +113,7 @@ type Repo struct {
 	DefaultBranch string
 	Trusted       int64
 	CreatedAt     string
+	TrustHash     string
 	UntrackedAt   sql.NullString
 	RelPath       string
 }
@@ -132,6 +140,8 @@ type Task struct {
 	UpdatedAt    string
 	FinishedAt   sql.NullString
 	Version      int64
+	CurrentTurn  sql.NullString
+	IdleOutcome  sql.NullString
 }
 
 type TaskDependency struct {
@@ -152,13 +162,34 @@ type TaskRepo struct {
 	RepoID string
 }
 
+type TaskTurn struct {
+	ID               string
+	TaskID           string
+	Seq              int64
+	Mode             string
+	Prompt           string
+	Attempt          int64
+	State            string
+	StartedAt        sql.NullString
+	FinishedAt       sql.NullString
+	Outcome          sql.NullString
+	InputTokens      int64
+	OutputTokens     int64
+	CacheWriteTokens int64
+	CacheReadTokens  int64
+	CostMicroUsd     int64
+	CostKnown        int64
+	DurationMs       int64
+}
+
 type Worktree struct {
-	ID        string
-	RepoID    string
-	TaskID    string
-	Name      string
-	Path      string
-	Branch    string
-	Status    string
-	CreatedAt string
+	ID         string
+	RepoID     string
+	TaskID     string
+	Name       string
+	Path       string
+	Branch     string
+	Status     string
+	CreatedAt  string
+	BaseCommit string
 }

@@ -45,7 +45,7 @@ func (q *Queries) CreateProposal(ctx context.Context, arg CreateProposalParams) 
 }
 
 const getProposal = `-- name: GetProposal :one
-SELECT id, change_set_id, task_id, repo_id, kind, status, summary, payload, created_at, decided_at, version FROM proposals WHERE id = ?
+SELECT id, change_set_id, task_id, repo_id, kind, status, summary, payload, created_at, decided_at, version, action_hash, attempt, source, fail_kind, result, message, retryable FROM proposals WHERE id = ?
 `
 
 func (q *Queries) GetProposal(ctx context.Context, id string) (Proposal, error) {
@@ -63,12 +63,19 @@ func (q *Queries) GetProposal(ctx context.Context, id string) (Proposal, error) 
 		&i.CreatedAt,
 		&i.DecidedAt,
 		&i.Version,
+		&i.ActionHash,
+		&i.Attempt,
+		&i.Source,
+		&i.FailKind,
+		&i.Result,
+		&i.Message,
+		&i.Retryable,
 	)
 	return i, err
 }
 
 const listProposalsByChangeSet = `-- name: ListProposalsByChangeSet :many
-SELECT id, change_set_id, task_id, repo_id, kind, status, summary, payload, created_at, decided_at, version FROM proposals WHERE change_set_id = ? ORDER BY created_at, id
+SELECT id, change_set_id, task_id, repo_id, kind, status, summary, payload, created_at, decided_at, version, action_hash, attempt, source, fail_kind, result, message, retryable FROM proposals WHERE change_set_id = ? ORDER BY created_at, id
 `
 
 func (q *Queries) ListProposalsByChangeSet(ctx context.Context, changeSetID sql.NullString) ([]Proposal, error) {
@@ -92,6 +99,13 @@ func (q *Queries) ListProposalsByChangeSet(ctx context.Context, changeSetID sql.
 			&i.CreatedAt,
 			&i.DecidedAt,
 			&i.Version,
+			&i.ActionHash,
+			&i.Attempt,
+			&i.Source,
+			&i.FailKind,
+			&i.Result,
+			&i.Message,
+			&i.Retryable,
 		); err != nil {
 			return nil, err
 		}
@@ -107,7 +121,7 @@ func (q *Queries) ListProposalsByChangeSet(ctx context.Context, changeSetID sql.
 }
 
 const listProposalsByStatus = `-- name: ListProposalsByStatus :many
-SELECT id, change_set_id, task_id, repo_id, kind, status, summary, payload, created_at, decided_at, version FROM proposals WHERE status = ? ORDER BY created_at, id
+SELECT id, change_set_id, task_id, repo_id, kind, status, summary, payload, created_at, decided_at, version, action_hash, attempt, source, fail_kind, result, message, retryable FROM proposals WHERE status = ? ORDER BY created_at, id
 `
 
 func (q *Queries) ListProposalsByStatus(ctx context.Context, status string) ([]Proposal, error) {
@@ -131,6 +145,13 @@ func (q *Queries) ListProposalsByStatus(ctx context.Context, status string) ([]P
 			&i.CreatedAt,
 			&i.DecidedAt,
 			&i.Version,
+			&i.ActionHash,
+			&i.Attempt,
+			&i.Source,
+			&i.FailKind,
+			&i.Result,
+			&i.Message,
+			&i.Retryable,
 		); err != nil {
 			return nil, err
 		}
