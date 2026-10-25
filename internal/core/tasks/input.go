@@ -88,6 +88,7 @@ type RunFinished struct {
 
 // UsageReported: tokens and cost from the run, as an increment or as totals.
 type UsageReported struct {
+	Turn       TurnID
 	Attempt    Attempt
 	Usage      Usage
 	Cumulative bool
@@ -95,6 +96,7 @@ type UsageReported struct {
 
 // SubagentStarted: the run observed a sub-agent start.
 type SubagentStarted struct {
+	Turn    TurnID
 	Attempt Attempt
 	AgentID string
 	Depth   int
@@ -102,6 +104,7 @@ type SubagentStarted struct {
 
 // SubagentStopped: the run observed a sub-agent end.
 type SubagentStopped struct {
+	Turn    TurnID
 	Attempt Attempt
 	AgentID string
 }

@@ -47,9 +47,13 @@ func TestPropStaleInputIgnored(t *testing.T) {
 				Prepared{Turn: turn, Attempt: att + 1, Now: now},
 				PrepareFailed{Turn: turn, Attempt: att + 1, Now: now},
 				LocksDenied{Turn: turn + "x", Attempt: att},
-				UsageReported{Attempt: att + 1, Usage: Usage{InputTokens: 1}},
-				SubagentStarted{Attempt: att + 1, AgentID: "z", Depth: 1},
-				SubagentStopped{Attempt: att + 1, AgentID: "z"},
+				UsageReported{Turn: turn, Attempt: att + 1, Usage: Usage{InputTokens: 1}},
+				UsageReported{Turn: turn + "x", Attempt: att, Usage: Usage{InputTokens: 1}},
+				SubagentStarted{Turn: turn, Attempt: att + 1, AgentID: "z", Depth: 1},
+				SubagentStarted{Turn: turn + "x", Attempt: att, AgentID: "z", Depth: 1},
+				SubagentStarted{Turn: turn + "x", Attempt: att, AgentID: "z", Depth: 99},
+				SubagentStopped{Turn: turn, Attempt: att + 1, AgentID: "z"},
+				SubagentStopped{Turn: turn + "x", Attempt: att, AgentID: "z"},
 				RunFinished{Turn: turn, Attempt: att + 1, Status: RunCompleted, Now: now},
 				RunFinished{Turn: turn + "x", Attempt: att, Status: RunCompleted, Now: now},
 				IntegrityViolated{Turn: turn + "x", Now: now},
@@ -169,7 +173,7 @@ func TestPropSubagentCapsEnforced(t *testing.T) {
 		return func(prev Task, in Input, next Task, cmds []Command) error {
 			e, ok := in.(SubagentStarted)
 			r, running := prev.State.(Running)
-			if !ok || !running || r.Attempt != e.Attempt {
+			if !ok || !running || r.Turn != e.Turn || r.Attempt != e.Attempt {
 				return nil
 			}
 			active := false

@@ -177,13 +177,13 @@ func stepLocksDenied(t Task, l LocksDenied) (Task, []Command) {
 func stepUsage(t Task, u UsageReported) (Task, []Command) {
 	switch s := t.State.(type) {
 	case Running:
-		if s.Attempt != u.Attempt {
+		if s.Turn != u.Turn || s.Attempt != u.Attempt {
 			return t, nil
 		}
 		s.Usage = mergeUsage(s.Usage, u.Usage, u.Cumulative)
 		return t.with(s), nil
 	case Stopping:
-		if s.Attempt != u.Attempt {
+		if s.Turn != u.Turn || s.Attempt != u.Attempt {
 			return t, nil
 		}
 		s.Usage = mergeUsage(s.Usage, u.Usage, u.Cumulative)
@@ -226,7 +226,7 @@ func mergeUsage(cur, in Usage, cumulative bool) Usage {
 
 func stepSubagentStarted(t Task, e SubagentStarted) (Task, []Command) {
 	r, ok := t.State.(Running)
-	if !ok || r.Attempt != e.Attempt {
+	if !ok || r.Turn != e.Turn || r.Attempt != e.Attempt {
 		return t, nil
 	}
 	active := false
@@ -252,7 +252,7 @@ func stepSubagentStarted(t Task, e SubagentStarted) (Task, []Command) {
 
 func stepSubagentStopped(t Task, e SubagentStopped) (Task, []Command) {
 	r, ok := t.State.(Running)
-	if !ok || r.Attempt != e.Attempt {
+	if !ok || r.Turn != e.Turn || r.Attempt != e.Attempt {
 		return t, nil
 	}
 	var kept []Subagent
