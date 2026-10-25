@@ -1,48 +1,10 @@
 package guard
 
 import (
-	"reflect"
 	"testing"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
 )
-
-// The stubs must fail closed until G1 replaces them.
-func TestStubsFailClosed(t *testing.T) {
-	p := Policy{Mode: core.ModeCode, ReadRoots: []string{"/r"}, WriteRoots: []string{"/r"}, Enforcement: EnforcementHook}
-	for _, c := range []Call{
-		{Tool: ToolRead, Paths: []PathRef{{Canon: "/r/a", OK: true}}},
-		{Tool: ToolWrite, Paths: []PathRef{{Canon: "/r/a", OK: true}}},
-		{Tool: ToolExec, Argv: []string{"go", "test"}},
-		{},
-	} {
-		if v := Decide(p, c); v.Allow || v.Reason == "" {
-			t.Errorf("Decide(%+v) = %+v, want a denial with a reason", c, v)
-		}
-	}
-	for _, m := range []core.TaskMode{core.ModeCode, core.ModeCurrentBranch, core.ModeProject} {
-		if a := Admit(Request{Mode: m, OptIn: true, Trust: TrustTrusted, Enforcement: EnforcementHook}); a.Admitted || a.Refusal == "" {
-			t.Errorf("Admit(%s) = %+v, want a refusal", m, a)
-		}
-	}
-	if a := Admit(Request{Mode: core.ModeAsk, Trust: TrustUntrusted, Enforcement: EnforcementLimited}); !a.Admitted {
-		t.Errorf("Admit(ask) = %+v, want admitted", a)
-	}
-	if _, err := ParseCommandLine("go test ./..."); err == nil {
-		t.Error("ParseCommandLine stub accepted a line")
-	}
-	if _, err := ParsePolicy([]byte(`{}`)); err == nil {
-		t.Error("ParsePolicy stub accepted a policy")
-	}
-	var s Integrity = Armed{Turn: "t", Before: Snapshot{Head: "a"}}
-	if got, cmds := StepIntegrity(s, TurnEnds{Turn: "t"}); !reflect.DeepEqual(got, s) || cmds != nil {
-		t.Errorf("StepIntegrity stub changed something")
-	}
-	var tr Trust = NoConfig{}
-	if got, cmds := StepTrust(tr, UserTrusts{}); got != tr || cmds != nil {
-		t.Errorf("StepTrust stub changed something")
-	}
-}
 
 func TestEveryReasonHasAMessage(t *testing.T) {
 	for r := range reasonMessages {

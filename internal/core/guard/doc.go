@@ -6,11 +6,6 @@
 // outside data into these types and interprets the commands. The types carry
 // no JSON tags.
 //
-// Foundations only: every decision is a fail-closed stub until task G1.
-// Decide denies, Admit admits Ask only, and the Step functions change nothing.
+// Every doubt is a refusal: unknown values, unresolved paths and unparsable
+// policy all deny.
 package guard
-
-import "errors"
-
-// ErrNotImplemented is returned by boundary parsers that are still stubs.
-var ErrNotImplemented = errors.New("guard: not implemented yet")

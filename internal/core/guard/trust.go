@@ -94,9 +94,61 @@ func View(t Trust) TrustView {
 
 // StepTrust is (state, input) -> (state, commands) for repo trust (the
 // StepTrust table of docs/design/guard.md).
-//
-// STUB (task G1 implements it): returns the state unchanged and no commands.
 func StepTrust(t Trust, in TrustInput) (Trust, []Command) {
-	_ = in
+	switch st := t.(type) {
+	case NoConfig:
+		if in, ok := in.(Scanned); ok && !in.Scan.Empty() {
+			return Untrusted{Found: in.Scan, Why: Why{Kind: WhyNeverTrusted}}, []Command{
+				Audit{Entry: trustEntry("trust_required", in.Repo, in.Scan)},
+			}
+		}
+	case Untrusted:
+		switch in := in.(type) {
+		case Scanned:
+			if in.Scan.Empty() {
+				return NoConfig{}, nil
+			}
+			return Untrusted{Found: in.Scan, Why: st.Why}, nil
+		case UserTrusts:
+			if in.Hash != "" && in.Hash == st.Found.Hash {
+				return Trusted{Hash: in.Hash, At: in.Now, Scan: st.Found}, []Command{
+					PersistTrust{Repo: in.Repo, Hash: in.Hash},
+					Audit{Entry: trustEntry("trusted", in.Repo, st.Found)},
+				}
+			}
+			return t, []Command{Audit{Entry: AuditEntry{Action: "guard.trust", Outcome: "trust_stale", Repo: in.Repo}}}
+		}
+	case Trusted:
+		switch in := in.(type) {
+		case Scanned:
+			switch {
+			case in.Scan.Hash == st.Hash:
+				return t, nil
+			case in.Scan.Empty():
+				return NoConfig{}, []Command{
+					ClearTrust{Repo: in.Repo},
+					Audit{Entry: AuditEntry{Action: "guard.trust", Outcome: "config_removed", Repo: in.Repo}},
+				}
+			default:
+				return Untrusted{Found: in.Scan, Why: Why{Kind: WhyConfigChanged, Was: st.Hash}}, []Command{
+					ClearTrust{Repo: in.Repo},
+					Audit{Entry: trustEntry("trust_lost", in.Repo, in.Scan)},
+				}
+			}
+		case UserRevokes:
+			return Untrusted{Found: st.Scan, Why: Why{Kind: WhyRevoked}}, []Command{
+				ClearTrust{Repo: in.Repo},
+				Audit{Entry: trustEntry("revoked", in.Repo, st.Scan)},
+			}
+		}
+	}
 	return t, nil
+}
+
+func trustEntry(outcome string, repo core.RepoID, s Scan) AuditEntry {
+	e := AuditEntry{Action: "guard.trust", Outcome: outcome, Repo: repo}
+	for _, f := range s.Files {
+		e.Files = append(e.Files, f.Path)
+	}
+	return e
 }

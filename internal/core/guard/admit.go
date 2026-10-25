@@ -3,12 +3,49 @@ package guard
 import "github.com/brendatamaar/yggdrasil/internal/core"
 
 // Admit decides whether a turn may run in a mode (the Admit table of
-// docs/design/guard.md). It is stateless and pure.
-//
-// STUB (task G1 implements it): fails closed, only Ask is admitted.
+// docs/design/guard.md). It is stateless and pure. Unknown values refuse.
 func Admit(r Request) Admission {
-	if r.Mode == core.ModeAsk {
-		return Admission{Admitted: true}
+	if r.Mode.Validate() != nil {
+		return refuse(ReasonModeUnavailable)
 	}
-	return Admission{Refusal: ReasonModeUnavailable}
+	// An untrusted repo (or an unknown trust value) admits Ask only.
+	if r.Trust != TrustNone && r.Trust != TrustTrusted && r.Mode != core.ModeAsk {
+		return refuse(ReasonRepoUntrusted)
+	}
+	// A switch goes between Ask and the task's own writing mode, nothing else.
+	if r.Previous != nil {
+		prev := *r.Previous
+		writing := prev.Validate() == nil && prev != core.ModeAsk
+		if r.Mode != core.ModeAsk && (!writing || r.Mode != prev) {
+			return refuse(ReasonModeSwitchNotAllowed)
+		}
+	}
+	switch r.Mode {
+	case core.ModeAsk:
+		return Admission{Admitted: true}
+	case core.ModeCode:
+		if r.Enforcement == EnforcementHook || r.Enforcement == EnforcementLimited {
+			return Admission{Admitted: true}
+		}
+		return refuse(ReasonModeUnavailable)
+	case core.ModeCurrentBranch:
+		return wide(r, WarningEditsMainCheckout)
+	case core.ModeProject:
+		return wide(r, WarningEditsAllRepos)
+	}
+	return refuse(ReasonModeUnavailable)
 }
+
+// wide admits a mode that edits main checkouts: it needs the opt-in and a
+// hook that enforces the limits.
+func wide(r Request, w Warning) Admission {
+	if !r.OptIn {
+		return refuse(ReasonNeedsOptIn)
+	}
+	if r.Enforcement != EnforcementHook {
+		return refuse(ReasonLimitedEnforcement)
+	}
+	return Admission{Admitted: true, Warning: w}
+}
+
+func refuse(r Reason) Admission { return Admission{Refusal: r} }
