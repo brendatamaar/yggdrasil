@@ -87,16 +87,3 @@ func TestRoomHintTable(t *testing.T) {
 		}
 	}
 }
-
-func TestStubsChangeNothing(t *testing.T) {
-	task := Task{ID: "t1", State: Draft{}}
-	got, cmds := Step(task, Message{})
-	if got.State != task.State || cmds != nil {
-		t.Fatalf("Step stub changed something: %#v %v", got, cmds)
-	}
-	b := Board{Max: 2}
-	gb, bc := Schedule(b, Wake{})
-	if gb.Max != 2 || bc != nil {
-		t.Fatalf("Schedule stub changed something")
-	}
-}

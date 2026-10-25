@@ -78,5 +78,9 @@ type Task struct {
 	Mode      core.TaskMode
 	SessionID string
 	Turns     int
-	State     State
+	// Caps are the sub-agent limits of the current turn (from the Message
+	// that started it). Not stored: a live turn is never resumed after a
+	// restart, and the shell sets it when it loads a waiting task.
+	Caps  Caps
+	State State
 }
