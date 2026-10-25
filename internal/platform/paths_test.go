@@ -109,6 +109,59 @@ func TestIndependentRuleAgreesWithSeeds(t *testing.T) {
 	}
 }
 
+func TestIsReservedName(t *testing.T) {
+	reserved := []string{
+		"CON", "nul", "Prn.txt", "AUX", "COM1", "lpt9.log", "NUL .txt", "NUL  ", "con. .x", "COM1 .a",
+		"COM¹", "COM²", "COM³", "LPT¹", "LPT².txt", "lpt³ .x",
+	}
+	for _, s := range reserved {
+		if !isReservedName(s) {
+			t.Errorf("isReservedName(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []string{"", "COM", "COM0", "COM10", "CONSOLE", "NULL", "xNUL", "COM⁴", "COM¹¹", "a.NUL", " NUL"} {
+		if isReservedName(s) {
+			t.Errorf("isReservedName(%q) = true, want false", s)
+		}
+	}
+}
+
+func TestShortDirNameAvoidsExtendedReservedNames(t *testing.T) {
+	for _, s := range []string{"NUL .txt", "COM¹", "LPT³"} {
+		if got := ShortDirName(s, 30); isReservedName(got) {
+			t.Errorf("ShortDirName(%q) = %q is reserved", s, got)
+		}
+	}
+}
+
+func TestHasShortNameSegment(t *testing.T) {
+	yes := []string{
+		"PROGRA~1", `PROGRA~1\x`, "a/LONGDI~1/b", `a\LONGDI~12\b.txt`, "LONGDI~1.TXT", "x/DOCUME~3.d", "a~1.tar.gz", "a.b~2", "a~1.x/b",
+	}
+	for _, s := range yes {
+		if !HasShortNameSegment(s) {
+			t.Errorf("HasShortNameSegment(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []string{"", "src/main.go", "~1", "a~", "a~b", "a~1b", "dir ~1 /x", "my~file.txt", "a/~12", "tilde~"} {
+		if HasShortNameSegment(s) {
+			t.Errorf("HasShortNameSegment(%q) = true, want false", s)
+		}
+	}
+}
+
+func FuzzIsReservedName(f *testing.F) {
+	for _, s := range []string{"CON", "NUL .txt", "COM¹", "LPT³.x", "COM1 ", "x", ""} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, s string) {
+		// trailing spaces and dots never change the answer
+		if isReservedName(s) != isReservedName(s+" ") || isReservedName(s) != isReservedName(s+".") {
+			t.Fatalf("trailing space or dot changes the answer for %q", s)
+		}
+	})
+}
+
 func FuzzCheckPath(f *testing.F) {
 	for _, s := range []string{
 		`\\wsl$\x`, `\\?\UNC\wsl$\x`, `\\.\UNC\wsl.localhost\x`, `\\?\\wsl$`, `//wsl.localhost/x`,

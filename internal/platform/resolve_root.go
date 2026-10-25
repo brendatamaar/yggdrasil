@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -20,6 +21,7 @@ var (
 	ErrPathChars       = errors.New("the path contains characters that are not allowed in file names")
 	ErrPathUnreadable  = errors.New("the path could not be read; check that it exists and that access is allowed")
 	ErrPathBrokenLink  = errors.New("the path goes through a link whose target does not exist")
+	ErrPathDotDot      = errors.New("the path contains a \"..\" part, which is not allowed here; use the full path without it")
 )
 
 // PathResolver is what the guard needs from the platform to judge a path
@@ -42,12 +44,14 @@ func (RealPaths) ResolveRoot(path string) (string, error) { return ResolveRoot(p
 func (RealPaths) FoldCase() bool { return FoldCase() }
 
 // FoldCase reports whether two spellings of a path that differ only in case
-// name the same file: true on Windows, false elsewhere. It is the only OS
-// check the guard needs.
+// name the same file: true on Windows and macOS, false on Linux. Callers that
+// fold must use ASCII lower-casing, which only ever makes a guard stricter.
+// Windows-only name rules are not tied to it.
 func FoldCase() bool { return PathsCaseInsensitive }
 
 // ResolveRoot returns the absolute canonical form of path: ".." collapsed
-// lexically first, then the deepest existing part resolved on disk (long
+// lexically first on Windows (as Win32 does; refused with ErrPathDotDot
+// elsewhere, where the kernel resolves it physically), then the deepest existing part resolved on disk (long
 // names instead of 8.3, links and junctions followed, on-disk case); the part
 // that does not exist yet is appended as written, so a read of a missing file
 // is still judged. It refuses what could name something other than it seems:
@@ -101,9 +105,16 @@ func CleanRootPath(path string) (string, error) {
 	if strings.ContainsRune(path, 0) {
 		return "", ErrPathNUL
 	}
-	if !PathsCaseInsensitive {
+	if runtime.GOOS != "windows" {
 		if !filepath.IsAbs(path) {
 			return "", ErrPathNotAbsolute
+		}
+		// The kernel resolves ".." physically (link/.. is the parent of the
+		// link's target), so collapsing it lexically would judge another path.
+		for _, seg := range strings.Split(path, "/") {
+			if seg == ".." {
+				return "", ErrPathDotDot
+			}
 		}
 		return filepath.Clean(path), nil
 	}
