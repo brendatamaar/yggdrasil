@@ -30,3 +30,6 @@ Thumbs.db
 /ygg
 /ygg.exe
 *.exe
+
+# Claude Code subagent worktrees
+.claude/worktrees/
