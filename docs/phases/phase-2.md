@@ -537,3 +537,19 @@ Constraints: search only reads tracked repos; pattern passed as argv after `--`/
 
 ### Gates
 After Step 0 and after each batch: `task generate/lint/typecheck/test/test:web` on `main`, then `safety-reviewer` and `functional-effect:fe-reviewer` on that batch's diff; fix Blocking/Must-fix; re-run. Then Phase 2 close: bookkeeping, exit-criteria check, manual Windows checklist, proposed tag `v0.3.0` (no tag until you say so).
+
+### B4a review gate: result (2026-10-25)
+
+B4a merged (`bea5bdb`: search shell `internal/search`, `POST /api/search`, search page, six widgets). Round 1: safety PASS, FE no Must-fix. Fix batch F3 merged (`a2a16db`, `4b1923a`): git config hardening flags, total-bytes cap, dispatcher in its own errgroup, `\?\` link prefix, `paths_skipped` problem, independent C2/C5/validity oracles, contract clauses, abort signal, `rank.ts`. Round 2: safety PASS, FE no Must-fix. All checks green on `main` (web 252 tests).
+
+Decisions/deviations: search default scope is every non-untracked project's repos (design said current project); `LC_ALL=C` kept (ASCII-only `-i`, documented in design "Known limits"); the search page follows the saved editor because the backend builds `editorUrl` from it.
+
+Backlog (none blocking), assigned to B4b where marked:
+1. (B4b) `TestSearchKeepsAnswersGivenBeforeTheDeadline` does not pin the drain branch in `service.go`: use a grepper hook that answers then blocks.
+2. (B4b) Real-git mid-flight cancel clause accepts "nil or Canceled": give the real harness a blocking wrapper or record that kill-on-cancel is covered by `TestCancelLeavesNoProcess` and the platform tests.
+3. (B4b) Behavioural test that a hostile `core.fsmonitor` in `.git/config` does not run under `Grep` (marker file absent).
+4. (B4b) Symlink test via `git update-index --cacheinfo 120000,...` so it runs without OS symlink privilege (the current test skips on unprivileged Windows).
+5. UNC verbatim path gives `vscode://file/srv/share/a.go` (host lost; `f3_test.go` pins it): return no link for UNC, then fix the test.
+6. Needs-attention ranking is client-side; CI failures makes one host request per failing repo (N+1); Git activity shows only the last commit per repo; Recent areas is a last-commit proxy (no endpoint for these yet).
+7. Unknown `RepoFailed` kind is now mapped silently: log when it happens; add a plain non-git temp dir to the NotRepo clause.
+8. Earlier backlog items (F2 list) still open: racy prune test, log close on panic outside `d.Start`, `lifecycle` panic leak, per-command recovery, panic logging, `Blocked{Unsupported}` refetch, `feeder.run` re-mark.
