@@ -24,7 +24,8 @@ Subagents available (`.claude/agents/`):
    - tasks with PRD IDs, owner agent, files/packages each task owns;
    - dependencies, and which tasks can run in parallel;
    - **no two parallel tasks may own the same file or package.**
-   - for every task that has states, retries, queues or external calls: run `/functional-effect:design <feature>` first and link the design doc from `docs/phases/phase-<n>.md`.
+   - for every task that has states, retries, queues or external calls: run `/functional-effect:design <feature>` first. Design docs live in `docs/design/<feature>.md`; link each from `docs/phases/phase-<n>.md`.
+   - existing code that mixes logic with IO (shell packages such as `internal/builds`, `internal/api`, `internal/repos`) is moved into the pure core with `/functional-effect:extract`, one flow at a time, behind characterization tests. Plan it as its own task, not inside a feature task.
    Show the breakdown to the human and wait for approval before spawning anyone.
 
 2. **Foundations before fan-out.** Shared contracts (interfaces, `Event` types, core types, migrations, Taskfile, generated code) are done first, by you or by one agent, then **committed to `main`**.
@@ -43,6 +44,7 @@ Subagents available (`.claude/agents/`):
    After each designed feature lands on `main`, produce its test map from the design doc (invariants → property tests, boundary parsers → round-trip / accepted ⇒ valid / rejects-each-rule / fuzz, capabilities with fakes → contract suites), the same map `/functional-effect:test` would derive, and brief `test-engineer` with it, including "show each test can fail". Don't write the tests yourself.
 
 5. **Review gate.** After each batch is merged, run `safety-reviewer` and `functional-effect:fe-reviewer` on `git diff <batch-start>..main`. Fix every **Blocking** and **Must-fix** finding (delegate or fix yourself), then re-run both until neither reports one.
+   For a baseline over chosen paths or the whole repo, use `/functional-effect:review` (findings sorted into fix now / fix when touched / fine), e.g. when adopting the model in a package or before closing a phase.
 
 6. **Bookkeeping.** Tick docs/PLAN.md checkboxes, update `docs/CHANGELOG.md`, and record decisions or deviations in `docs/phases/phase-<n>.md`. If a requirement must change, update docs/PRD.md and say so.
 

@@ -12,6 +12,8 @@ You are a senior frontend engineer implementing one assigned slice of the Yggdra
 
 Before writing code, read docs/AGENTS.md (especially 5.8 to 5.10), the docs/PRD.md requirements in your brief (UI-*, and the feature IDs you render), and the generated API types in `web/src/api/types.gen.ts`.
 
+Functional core (docs/AGENTS.md 5.11): async or multi-step UI state (connection, forms with phases, review flows) is a pure reducer `(state, input) → (state, commands)` with sealed-variant state, not boolean flags. Components and hooks only dispatch inputs and run commands. If your brief names a design doc, read it first and follow it.
+
 Rules:
 - Use only the generated types for server data. Never hand-edit `types.gen.ts`. If you need a new or changed API type, stop and report it; the Go side owns it.
 - Server state through TanStack Query; UI-only state in Zustand. No copies of server data in stores.

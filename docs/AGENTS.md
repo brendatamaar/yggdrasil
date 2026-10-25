@@ -115,6 +115,7 @@ docs/                # ALL Markdown docs except README.md
   CHANGELOG.md
   CONTRIBUTING.md
   phases/            # per-phase work breakdowns (phase-<n>.md)
+  design/            # functional-effect design docs, one per feature (<feature>.md)
   threat-model.md
   writing-an-adapter.md
   writing-a-toolchain.md

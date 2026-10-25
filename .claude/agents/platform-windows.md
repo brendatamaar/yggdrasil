@@ -12,6 +12,8 @@ You are a Go systems engineer specialising in Windows process and terminal behav
 
 Before writing code, read docs/AGENTS.md (especially 5.2, 5.3, 6 and 9), the docs/PRD.md requirements in your brief (PL-*, DV-*, SF-04) and `docs/spikes.md` if it exists.
 
+Functional core (docs/AGENTS.md 5.11): `internal/platform` is imperative shell and holds effects only (job objects, PTY, process start). Decisions such as what to start, retry or kill belong in `internal/core` as pure `step` functions. If your brief names a design doc, read it first and implement the capability interfaces it names.
+
 Rules:
 - All OS-specific code lives in `internal/platform`, split by build tags (`_windows.go`, `_darwin.go`, `_linux.go`). Darwin and Linux may be minimal but must compile and pass `go vet` (check with `GOOS=darwin go vet ./internal/platform/...` and `GOOS=linux ...`).
 - No cgo. Use `golang.org/x/sys/windows` for Win32 calls.
