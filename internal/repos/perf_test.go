@@ -244,6 +244,14 @@ func TestPerf_StatusRefresh50Repos(t *testing.T) {
 
 	startup := waitAll("startup refresh", began)
 	startCalls := cg.calls()
+	startLogs, startDirect := cg.logCalls(), cg.direct.Load()
+	// Every repo's last commit must come from the object store, not from a log call.
+	if startDirect != perfRepoCount {
+		t.Errorf("startup: %d commits read directly for %d repos, want one each", startDirect, perfRepoCount)
+	}
+	if startLogs != 0 {
+		t.Errorf("startup: log ran %d times, want 0", startLogs)
+	}
 
 	checkCounts := func(label string) {
 		t.Helper()
@@ -277,6 +285,13 @@ func TestPerf_StatusRefresh50Repos(t *testing.T) {
 	user := waitAll("user refresh", begin)
 	checkCounts("user refresh")
 	userCalls := cg.calls() - startCalls
+	// An unchanged HEAD is answered by the oid cache: no log call, no new direct read.
+	if n := cg.logCalls() - startLogs; n != 0 {
+		t.Errorf("user refresh: log ran %d times, want 0", n)
+	}
+	if n := cg.direct.Load() - startDirect; n != 0 {
+		t.Errorf("user refresh: %d direct reads, want 0 (the oid cache should answer)", n)
+	}
 	t.Logf("PERF git invocations: startup %d, user refresh %d (%d commits read from the object store without a process)",
 		startCalls, userCalls, cg.direct.Load())
 	if userCalls < perfRepoCount {
