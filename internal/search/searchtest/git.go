@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/brendatamaar/yggdrasil/internal/platform"
@@ -52,6 +53,28 @@ func InitRepo(t *testing.T, env []string, files map[string]string) string {
 	RunGit(t, env, dir, "add", "-A")
 	RunGit(t, env, dir, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init")
 	return dir
+}
+
+// GitOutput runs git in dir with stdin and returns its trimmed stdout. The
+// test fails on a non-zero exit.
+func GitOutput(t *testing.T, env []string, dir, stdin string, args ...string) string {
+	t.Helper()
+	exe, err := platform.Resolve("git", "", env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	p, err := platform.Start(context.Background(), platform.Spec{
+		Argv: append([]string{exe}, args...), Dir: dir, Env: env,
+		Stdin: strings.NewReader(stdin), Stdout: &out, Stderr: &errb,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, err := p.Wait(); err != nil || code != 0 {
+		t.Fatalf("git %v: exit %d, %v\n%s", args, code, err, errb.String())
+	}
+	return strings.TrimSpace(out.String())
 }
 
 // RunGit runs git in dir and fails the test on a non-zero exit.

@@ -10,6 +10,8 @@ func TestEditorURLStripsVerbatimPrefixes(t *testing.T) {
 	}{
 		{EditorVSCode, `\\?\C:\x`, "vscode://file/C:/x:3:4"},
 		{EditorCursor, `\\?\C:\acme shop\a.go`, "cursor://file/C:/acme%20shop/a.go:3:4"},
+		// TODO(backlog item 5, docs/phases/phase-2.md): the UNC host is lost in
+		// the two UNC cases; once production returns no link for UNC, expect "".
 		{EditorVSCode, `\\?\UNC\srv\share\a.go`, "vscode://file/srv/share/a.go:3:4"},
 		{EditorIdea, `\\?\C:\x`, "idea://open?file=C%3A/x&line=3"},
 		{EditorIdea, `\\?\UNC\srv\share\a.go`, "idea://open?file=//srv/share/a.go&line=3"},
