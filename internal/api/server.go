@@ -58,6 +58,16 @@ type Deps struct {
 	// and the editor setting (WS-06 to WS-08).
 	GitActions GitActionsService
 
+	// The services of the Phase 3 areas. Their endpoints are registered
+	// whether or not the service is wired; until the owning task replaces a
+	// stub handler it answers 501 with a plain message.
+	Worktrees WorktreeService
+	Proposals ProposalService
+	Trust     TrustService
+	Board     BoardService
+	Composer  ComposerService
+	MCP       MCPService
+
 	// Clock and IDs are the shell's time and randomness for handlers that
 	// make core inputs (docs/AGENTS.md 5.11). Defaults: time.Now().UTC() and
 	// db.NewID.
@@ -92,6 +102,12 @@ type Server struct {
 	search     SearchService
 	repoDetail RepoDetailService
 	gitActions GitActionsService
+	worktrees  WorktreeService
+	proposals  ProposalService
+	trust      TrustService
+	board      BoardService
+	composer   ComposerService
+	mcp        MCPService
 	clock      func() time.Time
 	ids        func(prefix string) string
 
@@ -137,6 +153,7 @@ func New(d Deps) (*Server, error) {
 	s.tracking, s.status, s.builds, s.hosts, s.search = d.Tracking, d.Status, d.Builds, d.Hosts, d.Search
 	s.repoDetail = d.RepoDetail
 	s.gitActions = d.GitActions
+	s.worktrees, s.proposals, s.trust, s.board, s.composer, s.mcp = d.Worktrees, d.Proposals, d.Trust, d.Board, d.Composer, d.MCP
 	s.clock, s.ids = d.Clock, d.IDs
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }
@@ -171,6 +188,12 @@ func (s *Server) Handler() http.Handler {
 	s.routesBuilds(mux)
 	s.routesHosts(mux)
 	s.routesSearch(mux)
+	s.routesWorktrees(mux)
+	s.routesProposals(mux)
+	s.routesTrust(mux)
+	s.routesBoard(mux)
+	s.routesComposer(mux)
+	s.routesMCP(mux)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, ErrNotFound, "That API endpoint doesn't exist.", "")
 	})

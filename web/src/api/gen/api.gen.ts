@@ -283,6 +283,77 @@ export interface SetEditorRequest {
 }
 
 //////////
+// source: types_board.go
+
+/**
+ * TopicBoard carries BoardChangedMessage: a task moved between columns or the
+ * maxAgents setting changed. The client refetches the board.
+ */
+export const TopicBoard = "board";
+/**
+ * BoardChangedMessage is the data of a message on TopicBoard. It holds no
+ * prompt or output (docs/AGENTS.md 5.9).
+ */
+export interface BoardChangedMessage {
+  taskId?: core.TaskID;
+  column?: string;
+}
+/**
+ * UsageDTO is tokens and cost. Cost is in micro-USD (1,000,000 = one dollar);
+ * CostKnown is false when the agent reports no cost, so the UI shows "unknown"
+ * instead of zero.
+ */
+export interface UsageDTO {
+  inputTokens: number /* int64 */;
+  outputTokens: number /* int64 */;
+  cacheWriteTokens: number /* int64 */;
+  cacheReadTokens: number /* int64 */;
+  costMicroUsd: number /* int64 */;
+  costKnown: boolean;
+  durationMs: number /* int64 */;
+}
+/**
+ * BoardCardDTO is one task on the board. Column is "working", "needs_you",
+ * "review" or "done". BlockedBy says in plain words why a queued task has not
+ * started.
+ */
+export interface BoardCardDTO {
+  taskId: core.TaskID;
+  title: string;
+  mode: core.TaskMode;
+  agent: string;
+  status: core.TaskStatus;
+  column: string;
+  repoNames: string[];
+  pendingProposals: number /* int */;
+  blockedBy?: string;
+  usage: UsageDTO;
+  updatedAt: string;
+}
+/**
+ * RoomHintDTO suggests raising maxAgents; RaiseTo is 0 when there is no
+ * suggestion.
+ */
+export interface RoomHintDTO {
+  raiseTo: number /* int */;
+}
+/**
+ * BoardResponse is the body of GET /api/board.
+ */
+export interface BoardResponse {
+  maxAgents: number /* int */;
+  active: number /* int */;
+  hint: RoomHintDTO;
+  cards: BoardCardDTO[];
+}
+/**
+ * SetMaxAgentsRequest is the body of PUT /api/board/max-agents (1 to 16).
+ */
+export interface SetMaxAgentsRequest {
+  maxAgents: number /* int */;
+}
+
+//////////
 // source: types_builds.go
 
 /**
@@ -451,6 +522,82 @@ export interface BuildLogMessage {
   step: number /* int */;
   attempt: number /* int */;
   line: string;
+}
+
+//////////
+// source: types_composer.go
+
+/**
+ * SavedPromptDTO is a reusable prompt.
+ */
+export interface SavedPromptDTO {
+  id: string;
+  name: string;
+  text: string;
+}
+/**
+ * SavedPromptsResponse is the body of GET /api/composer/prompts.
+ */
+export interface SavedPromptsResponse {
+  prompts: SavedPromptDTO[];
+}
+/**
+ * SavePromptRequest is the body of POST /api/composer/prompts.
+ */
+export interface SavePromptRequest {
+  name: string;
+  text: string;
+}
+/**
+ * MentionDTO is a file or folder in a tracked repo that the @ picker offers.
+ * Path is relative to the repo.
+ */
+export interface MentionDTO {
+  repoId: core.RepoID;
+  repoName: string;
+  path: string;
+  /**
+   * Kind is "file" or "dir".
+   */
+  kind: string;
+}
+/**
+ * MentionsResponse is the body of GET /api/composer/mentions?project=&q=.
+ */
+export interface MentionsResponse {
+  mentions: MentionDTO[];
+  truncated: boolean;
+}
+/**
+ * ModelDTO is one model an agent offers.
+ */
+export interface ModelDTO {
+  id: string;
+  label: string;
+}
+/**
+ * ModelsResponse is the body of GET /api/composer/models?agent=.
+ */
+export interface ModelsResponse {
+  agent: string;
+  models: ModelDTO[];
+}
+/**
+ * DraftRequest is the body of POST /api/composer/drafts. Kind is
+ * "commit_message", "mr_title" or "mr_description".
+ */
+export interface DraftRequest {
+  kind: string;
+  repoId: core.RepoID;
+  taskId?: core.TaskID;
+  agent?: string;
+}
+/**
+ * DraftResponse is the draft text. The user edits it before anything is
+ * proposed.
+ */
+export interface DraftResponse {
+  text: string;
 }
 
 //////////
@@ -641,6 +788,93 @@ export interface RefreshHostsRequest {
 export interface HostsChangedMessage {
   repo?: core.RepoID;
   instance?: string;
+}
+
+//////////
+// source: types_mcp.go
+
+/**
+ * McpStatusDTO is the body of GET /api/mcp/status. Url is the loopback
+ * address agents are given; it never contains a token.
+ */
+export interface McpStatusDTO {
+  enabled: boolean;
+  url: string;
+  /**
+   * ActiveSessions is the number of tasks with a live MCP session.
+   */
+  activeSessions: number /* int */;
+}
+
+//////////
+// source: types_proposals.go
+
+/**
+ * TopicProposals carries ProposalChangedMessage: a proposal was created or
+ * changed state. The client refetches by ID.
+ */
+export const TopicProposals = "proposals";
+/**
+ * ProposalChangedMessage is the data of a message on TopicProposals.
+ */
+export interface ProposalChangedMessage {
+  proposalId: core.ProposalID;
+  taskId: core.TaskID;
+  status: core.ProposalStatus;
+}
+/**
+ * ProposalResultDTO is what an executed proposal produced.
+ */
+export interface ProposalResultDTO {
+  commitId?: string;
+  mrUrl?: string;
+  movedPaths?: string[];
+  buildId?: core.BuildID;
+  note?: string;
+}
+/**
+ * ProposalDTO is one proposal. Source is "agent" or "user". FailKind, Message
+ * and Retryable are set on a failed proposal. ActionHash is what Confirm must
+ * send back.
+ */
+export interface ProposalDTO {
+  id: core.ProposalID;
+  changeSetId?: core.ChangeSetID;
+  taskId?: core.TaskID;
+  repoId?: core.RepoID;
+  repoName?: string;
+  kind: core.ProposalKind;
+  status: core.ProposalStatus;
+  source: string;
+  /**
+   * Summary is the agent's own text, shown as plain text.
+   */
+  summary: string;
+  /**
+   * Lines is what the confirmation dialog shows.
+   */
+  lines: string[];
+  actionHash: string;
+  attempt: number /* int */;
+  failKind?: string;
+  message?: string;
+  retryable?: boolean;
+  result?: ProposalResultDTO;
+  createdAt: string;
+  decidedAt?: string;
+}
+/**
+ * ProposalsResponse is the body of GET /api/proposals.
+ */
+export interface ProposalsResponse {
+  proposals: ProposalDTO[];
+}
+/**
+ * ConfirmProposalRequest is the body of POST /api/proposals/{id}/confirm. Hash
+ * is the ActionHash the user saw (64 hex digits).
+ */
+export interface ConfirmProposalRequest {
+  hash: string;
 }
 
 //////////
@@ -1043,4 +1277,63 @@ export interface SearchResponse {
   matches: SearchMatchDTO[];
   problems: SearchProblemDTO[];
   truncated: boolean;
+}
+
+//////////
+// source: types_trust.go
+
+/**
+ * TrustFileDTO is one agent-config file of a repo. WouldRun says in plain
+ * words what it would start (hooks, MCP servers); Opaque is true when the file
+ * could not be read as text.
+ */
+export interface TrustFileDTO {
+  path: string;
+  wouldRun: string[];
+  opaque?: boolean;
+}
+/**
+ * TrustDTO is the trust state of a repo. State is "none" (the repo ships no
+ * agent config), "untrusted" or "trusted". Why is "never_trusted",
+ * "config_changed", "revoked" or "scan_incomplete" for an untrusted repo.
+ * Hash is the 64-hex hash of the config shown; trusting must send it back.
+ */
+export interface TrustDTO {
+  repoId: core.RepoID;
+  state: string;
+  why?: string;
+  hash?: string;
+  files: TrustFileDTO[];
+}
+/**
+ * TrustRequest is the body of POST /api/repos/{id}/trust.
+ */
+export interface TrustRequest {
+  hash: string;
+}
+
+//////////
+// source: types_worktrees.go
+
+/**
+ * WorktreeDTO is one worktree of a task. Path is the folder on disk, shown so
+ * the user can open it; it is never sent to agents or MCP.
+ */
+export interface WorktreeDTO {
+  id: core.WorktreeID;
+  repoId: core.RepoID;
+  repoName: string;
+  taskId: core.TaskID;
+  name: string;
+  branch: string;
+  baseCommit: string;
+  path: string;
+  status: core.WorktreeStatus;
+  createdAt: string;
+}
+/**
+ * WorktreesResponse is the body of GET /api/tasks/{id}/worktrees.
+ */
+export interface WorktreesResponse {
+  worktrees: WorktreeDTO[];
 }

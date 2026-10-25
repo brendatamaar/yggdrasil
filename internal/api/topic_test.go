@@ -44,6 +44,8 @@ func TestTopicWireStrings(t *testing.T) {
 		{buildsTopic{}, "builds"},
 		{buildTopic{ID: "abc"}, "build:abc"},
 		{hostsTopic{}, "hosts"},
+		{proposalsTopic{}, "proposals"},
+		{boardTopic{}, "board"},
 	}
 	for _, c := range cases {
 		if got := c.topic.String(); got != c.want {
@@ -51,6 +53,7 @@ func TestTopicWireStrings(t *testing.T) {
 		}
 	}
 	if TopicTasks != "tasks" || TopicRepos != "repos" || TopicBuilds != "builds" || TopicHosts != "hosts" ||
+		TopicProposals != "proposals" || TopicBoard != "board" ||
 		TopicTaskPrefix != "task:" || TopicRepoPrefix != "repo:" || TopicBuildPrefix != "build:" {
 		t.Fatal("a wire constant changed: the frontend subscribes with these strings")
 	}
@@ -58,7 +61,7 @@ func TestTopicWireStrings(t *testing.T) {
 
 func TestParseTopicRoundTrip(t *testing.T) {
 	r := rand.New(rand.NewSource(1))
-	cases := []wsTopic{tasksTopic{}, reposTopic{}, buildsTopic{}, hostsTopic{}}
+	cases := []wsTopic{tasksTopic{}, reposTopic{}, buildsTopic{}, hostsTopic{}, proposalsTopic{}, boardTopic{}}
 	for range 300 {
 		cases = append(cases,
 			taskTopic{ID: core.TaskID(randomValidID(r))},
@@ -81,6 +84,7 @@ func TestParseTopicAcceptedIsValid(t *testing.T) {
 	inputs := []string{
 		"tasks", "task:abc", "task:a-b_c", "task:", "", "tasks:x", "task:../x", "task: x", "Tasks", "task:a b",
 		"repos", "repo:r1", "repo:", "repos:x", "builds", "build:b1", "build:", "builds:x", "hosts", "hosts:x", "host:x",
+		"proposals", "proposals:x", "proposal:x", "board", "board:x", "boards",
 	}
 	for _, in := range inputs {
 		got, err := parseTopic(in)
@@ -122,6 +126,14 @@ func TestParseTopicRejects(t *testing.T) {
 		{"repo id with newline", "repo:a\n"},
 		{"build id with tab", "build:a\t"},
 		{"plural prefix", "tasks:abc"},
+		{"proposals with suffix", "proposals:abc"},
+		{"proposals with id", "proposals:p1"},
+		{"singular proposal", "proposal"},
+		{"proposals case differs", "Proposals"},
+		{"board with suffix", "board:abc"},
+		{"board with id", "board:t1"},
+		{"plural board", "boards"},
+		{"board case differs", "Board"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -136,6 +148,7 @@ func FuzzParseTopic(f *testing.F) {
 	for _, s := range []string{
 		"tasks", "task:abc", "task:", "", "task:a/b", "x",
 		"repos", "repo:r1", "repo:", "repo:a b", "builds", "build:b1", "build:", "build:a/b", "hosts", "hosts:x",
+		"proposals", "proposals:x", "board", "board:x",
 	} {
 		f.Add(s)
 	}
