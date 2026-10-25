@@ -235,3 +235,7 @@ Shell:
 ## Decisions (approved 2026-10-25)
 
 All six recommendations accepted: (1) hooks disabled for proposal commits and pushes; (2) no pushes to the default branch; (3) MR description is one line, GitLab only; (4) no auto-retry after a crash; (5) confirmation-order execution, one executor per worktree or main checkout; (6) install through the builds service under the main-checkout lock.
+
+## Deviation (X1, 2026-10-25)
+
+`Failed` carries the failed `Attempt` (Retry needs a+1; the table persists it). A non-retryable `Failed` proposal is terminal: it stays in the list as history and is not rejected (the design's "user rejects it" means: ignore it and ask again). `Step` computes `ActionHash` itself. Payload JSON is one strict struct per kind (keys: `worktree`|`repo`, `paths`, `message`, `expect_head`, `expect_diff_hash`, `branch`, `remote`, `target`, `title`, `description`, `path`, `content`, `expect_hash`, `step`); MCP arguments use the same names. Shell: use `proposals.IsProtectedPath` for `Facts.PathsOK` on every kind except `agent_file`; `Describe` names the worktree/repo ID, so the API adds "branch X of repo Y" from its own lookups.
