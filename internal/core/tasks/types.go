@@ -25,9 +25,13 @@ type Attempt int
 // Limits.
 const (
 	MaxPromptBytes = 100 * 1024
-	MinMaxAgents   = 1
-	MaxMaxAgents   = 16
-	DefaultMax     = 2
+	// MaxSubagentDepth and MaxSubagentConcurrent are the fixed platform
+	// maximums of the sub-agent caps (AG-22). No message can ask for more.
+	MaxSubagentDepth      = 4
+	MaxSubagentConcurrent = 8
+	MinMaxAgents          = 1
+	MaxMaxAgents          = 16
+	DefaultMax            = 2
 	// RoomHintCeiling is the highest maxAgents RoomHint ever suggests.
 	RoomHintCeiling = 8
 )

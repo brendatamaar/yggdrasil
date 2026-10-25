@@ -122,6 +122,9 @@ func genInput(r *rand.Rand, t Task, now time.Time, turnSeq *int) Input {
 	if turn == "" || r.Intn(8) == 0 {
 		turn = TurnID(fmt.Sprintf("t%d", 1+r.Intn(*turnSeq+1)))
 	}
+	if i, ok := t.State.(Idle); ok && i.Turn != "" && r.Intn(2) == 0 {
+		turn = i.Turn // late inputs for the turn that just finished
+	}
 	if r.Intn(8) == 0 {
 		att += Attempt(r.Intn(3) - 1)
 	}
@@ -131,7 +134,7 @@ func genInput(r *rand.Rand, t Task, now time.Time, turnSeq *int) Input {
 		m := Message{
 			Turn: TurnID(fmt.Sprintf("t%d", *turnSeq)), Mode: allModes[r.Intn(4)], Prompt: "do it", Now: now,
 			Admission: Admission{Admitted: r.Intn(5) > 0, Reason: "r", Message: "no"},
-			Caps:      Caps{Depth: r.Intn(3), Concurrent: r.Intn(3)},
+			Caps:      Caps{Depth: 1 + r.Intn(MaxSubagentDepth), Concurrent: 1 + r.Intn(3)},
 		}
 		if m.Mode == core.ModeCurrentBranch || r.Intn(6) == 0 {
 			m.EditsMain = []core.RepoID{"r1"}
@@ -147,13 +150,13 @@ func genInput(r *rand.Rand, t Task, now time.Time, turnSeq *int) Input {
 		}
 		return LocksDenied{Turn: turn, Attempt: att, Repo: "r1", Holder: "build"}
 	case 7, 8:
-		return UsageReported{Attempt: att, Usage: genUsage(r), Cumulative: r.Intn(2) == 0}
+		return UsageReported{Turn: turn, Attempt: att, Usage: genUsage(r), Cumulative: r.Intn(2) == 0}
 	case 9, 10:
 		id := fmt.Sprintf("a%d", r.Intn(3))
 		if r.Intn(3) == 0 {
-			return SubagentStopped{Attempt: att, AgentID: id}
+			return SubagentStopped{Turn: turn, Attempt: att, AgentID: id}
 		}
-		return SubagentStarted{Attempt: att, AgentID: id, Depth: 1 + r.Intn(3)}
+		return SubagentStarted{Turn: turn, Attempt: att, AgentID: id, Depth: 1 + r.Intn(3)}
 	case 11, 12:
 		st := []RunStatus{RunCompleted, RunFailed, RunCancelled}[r.Intn(3)]
 		return RunFinished{Turn: turn, Attempt: att, Status: st, StartFail: r.Intn(4) == 0, Usage: genUsage(r), SessionID: []string{"", "s1"}[r.Intn(2)], Now: now}
@@ -171,7 +174,7 @@ func genInput(r *rand.Rand, t Task, now time.Time, turnSeq *int) Input {
 		if r.Intn(3) == 0 {
 			return Recovered{Now: now}
 		}
-		return UsageReported{Attempt: att, Usage: genUsage(r)}
+		return UsageReported{Turn: turn, Attempt: att, Usage: genUsage(r)}
 	}
 }
 

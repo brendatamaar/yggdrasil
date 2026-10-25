@@ -277,3 +277,11 @@ All five recommendations accepted: (1) project mode uses one worktree per repo; 
 ## Deviation (foundations, 2026-10-25)
 
 archtest `coreSubpackages` forbids core domains importing each other, so `core/tasks` does not call `guard.Admit`. `tasks.Message` carries `Admission{Admitted, Warning, Reason, Message}`, filled by the shell from `guard.Admit`; `Step` refuses (`Reject`) when `!Admitted` and never starts a turn the admission did not allow (K12 is tested on that). `guard.TurnID` and `tasks.TurnID` are separate types converted in the shell.
+
+## Review gate 1 fixes (2026-10-25)
+
+- **Stale inputs (M1).** `UsageReported`, `SubagentStarted` and `SubagentStopped` carry `Turn` and are guarded by `Turn` and `Attempt`, like every other input; `Attempt` restarts at 1 each turn, so it alone is not enough.
+- **Integrity ordering (M2a, SF-07, invariant 9).** `Idle` remembers the last turn (`Idle.Turn`; stored in `tasks.current_turn` for an idle task, empty for legacy rows). `IntegrityViolated{Turn}` for that turn while `Idle{Answered}` or `Idle{ReadyForReview}` becomes `Idle{NeedsYou{IntegrityViolated}}` with `Audit` and `Publish` (no second `FinishTurn`). While `Stopping` for another cause it upgrades the cause to `IntegrityViolated` (no second `KillRun`). **Shell rule:** hold `RunFinished` until the After snapshot has been checked and `IntegrityViolated` sent; the Idle row is only the safety net. Property: `TestPropViolatedTurnNeverAnswered`.
+- **Caps (M4).** `Message.Caps` must be in `[1, MaxSubagentDepth=4]` and `[1, MaxSubagentConcurrent=8]` (constants in `types.go`), otherwise `Reject`. A later message keeps or narrows the caps of the turn before (`min` per field) when those are known; the shell must load `Task.Caps` of the previous turn with the task, a zero `Caps` means none yet. Property: `TestPropCapsBoundedAndNeverGrow`.
+- **Stopping (C2).** `PrepareFailed` and `Prepared` for the current attempt end a `Stopping` task as `Idle` with the outcome of its cause (`FinishTurn`, `ReleaseLocks`, `Audit`, `Publish`); `ProcessesGone` stays ignored.
+- **Tests (S1).** K9 has a fixed boundary table (`TestSubagentCapTable`); K15 has the positive cases and an equivalence property.

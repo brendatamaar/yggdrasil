@@ -84,7 +84,7 @@ func stepMessage(t Task, m Message) (Task, []Command) {
 	}
 	next := t
 	next.Mode = m.Mode
-	next.Caps = m.Caps
+	next.Caps = narrowCaps(t.Caps, m.Caps)
 	next.Turns++
 	next.State = Waiting{Turn: m.Turn, BlockedBy: BlockedNone{}}
 	cmds := []Command{
@@ -96,6 +96,16 @@ func stepMessage(t Task, m Message) (Task, []Command) {
 	return next, cmds
 }
 
+// narrowCaps keeps the caps of the turn before when they are known (both
+// above zero): a later message may keep or narrow them, never raise them. The
+// shell loads the previous caps with the task; a zero Caps means "none yet".
+func narrowCaps(prev, asked Caps) Caps {
+	if prev.Depth < 1 || prev.Concurrent < 1 {
+		return asked
+	}
+	return Caps{Depth: min(prev.Depth, asked.Depth), Concurrent: min(prev.Concurrent, asked.Concurrent)}
+}
+
 func messageFlaw(m Message) string {
 	switch {
 	case m.Turn.Validate() != nil:
@@ -104,7 +114,8 @@ func messageFlaw(m Message) string {
 		return "That message has an unknown mode."
 	case len(m.Prompt) > MaxPromptBytes:
 		return "That message is too long."
-	case m.Caps.Depth < 0 || m.Caps.Concurrent < 0:
+	case m.Caps.Depth < 1 || m.Caps.Concurrent < 1 ||
+		m.Caps.Depth > MaxSubagentDepth || m.Caps.Concurrent > MaxSubagentConcurrent:
 		return "That message has invalid sub-agent limits."
 	case m.Mode == core.ModeCurrentBranch && len(m.EditsMain) == 0:
 		return "A current-branch task must name the repo it edits."
@@ -128,6 +139,11 @@ func stepAdmitted(t Task, a Admitted) (Task, []Command) {
 }
 
 func stepPrepared(t Task, p Prepared) (Task, []Command) {
+	if st, ok := t.State.(Stopping); ok && st.Turn == p.Turn && st.Attempt == p.Attempt {
+		// The stop raced the prepare: nothing was started, so the stop ends
+		// here (C2). KillTask is harmless and covers a half-started process.
+		return toIdle(t, st.Turn, st.Attempt, st.Usage, "", st.Cause.outcome(), p.Now, true)
+	}
 	s, ok := t.State.(Starting)
 	if !ok || s.Turn != p.Turn || s.Attempt != p.Attempt {
 		return t, nil
@@ -153,10 +169,13 @@ func toIdle(t Task, turn TurnID, attempt Attempt, usage Usage, session string, o
 		cmds = append(cmds, KillTask{})
 	}
 	cmds = append(cmds, change("task.finish", OutcomeCode(o), turn, o.status())...)
-	return t.with(Idle{Outcome: o, At: now}), cmds
+	return t.with(Idle{Outcome: o, Turn: turn, At: now}), cmds
 }
 
 func stepPrepareFailed(t Task, p PrepareFailed) (Task, []Command) {
+	if st, ok := t.State.(Stopping); ok && st.Turn == p.Turn && st.Attempt == p.Attempt {
+		return toIdle(t, st.Turn, st.Attempt, st.Usage, "", st.Cause.outcome(), p.Now, false)
+	}
 	s, ok := t.State.(Starting)
 	if !ok || s.Turn != p.Turn || s.Attempt != p.Attempt {
 		return t, nil
@@ -177,13 +196,13 @@ func stepLocksDenied(t Task, l LocksDenied) (Task, []Command) {
 func stepUsage(t Task, u UsageReported) (Task, []Command) {
 	switch s := t.State.(type) {
 	case Running:
-		if s.Attempt != u.Attempt {
+		if s.Turn != u.Turn || s.Attempt != u.Attempt {
 			return t, nil
 		}
 		s.Usage = mergeUsage(s.Usage, u.Usage, u.Cumulative)
 		return t.with(s), nil
 	case Stopping:
-		if s.Attempt != u.Attempt {
+		if s.Turn != u.Turn || s.Attempt != u.Attempt {
 			return t, nil
 		}
 		s.Usage = mergeUsage(s.Usage, u.Usage, u.Cumulative)
@@ -226,7 +245,7 @@ func mergeUsage(cur, in Usage, cumulative bool) Usage {
 
 func stepSubagentStarted(t Task, e SubagentStarted) (Task, []Command) {
 	r, ok := t.State.(Running)
-	if !ok || r.Attempt != e.Attempt {
+	if !ok || r.Turn != e.Turn || r.Attempt != e.Attempt {
 		return t, nil
 	}
 	active := false
@@ -252,7 +271,7 @@ func stepSubagentStarted(t Task, e SubagentStarted) (Task, []Command) {
 
 func stepSubagentStopped(t Task, e SubagentStopped) (Task, []Command) {
 	r, ok := t.State.(Running)
-	if !ok || r.Attempt != e.Attempt {
+	if !ok || r.Turn != e.Turn || r.Attempt != e.Attempt {
 		return t, nil
 	}
 	var kept []Subagent
@@ -291,16 +310,7 @@ func stepRunFinished(t Task, f RunFinished) (Task, []Command) {
 		if s.Turn != f.Turn || s.Attempt != f.Attempt {
 			return t, nil
 		}
-		var o Outcome
-		switch s.Cause {
-		case CauseIntegrityViolated:
-			o = NeedsYou{Why: NeedsIntegrityViolated}
-		case CauseCapExceeded:
-			o = NeedsYou{Why: NeedsCapExceeded}
-		default:
-			o = Cancelled{}
-		}
-		return toIdle(t, s.Turn, s.Attempt, mergeUsage(s.Usage, f.Usage, true), f.SessionID, o, f.Now, true)
+		return toIdle(t, s.Turn, s.Attempt, mergeUsage(s.Usage, f.Usage, true), f.SessionID, s.Cause.outcome(), f.Now, true)
 	}
 	return t, nil
 }
@@ -313,7 +323,7 @@ func stepCancel(t Task, c CancelRequested) (Task, []Command) {
 			FinishTurn{Turn: s.Turn, Attempt: s.Attempt, SessionID: t.SessionID},
 		}
 		cmds = append(cmds, change("task.finish", OutcomeCode(Cancelled{}), s.Turn, core.TaskCancelled)...)
-		return t.with(Idle{Outcome: Cancelled{}, At: c.Now}), cmds
+		return t.with(Idle{Outcome: Cancelled{}, Turn: s.Turn, At: c.Now}), cmds
 	case Starting:
 		return t.with(Stopping{Turn: s.Turn, Attempt: s.Attempt, Since: s.Since, Cause: CauseUserCancel}), stopCmds(s.Turn, s.Attempt, "task.cancel")
 	case Running:
@@ -329,13 +339,38 @@ func stopCmds(turn TurnID, attempt Attempt, action string) []Command {
 	}
 }
 
+// stepIntegrity handles guard.StepIntegrity's verdict. It is never dropped
+// for the turn it names (SF-07): a running turn is stopped, a stop in progress
+// is upgraded to the integrity cause, and a turn that already finished as
+// answered or ready for review becomes needs_you. The shell should hold
+// RunFinished until the After snapshot is checked; the Idle row is the safety
+// net when it does not.
 func stepIntegrity(t Task, v IntegrityViolated) (Task, []Command) {
-	r, ok := t.State.(Running)
-	if !ok || r.Turn != v.Turn {
-		return t, nil
+	switch s := t.State.(type) {
+	case Running:
+		if s.Turn != v.Turn {
+			return t, nil
+		}
+		return t.with(Stopping{Turn: s.Turn, Attempt: s.Attempt, Since: s.Since, Cause: CauseIntegrityViolated, Usage: s.Usage}),
+			stopCmds(s.Turn, s.Attempt, "task.integrity")
+	case Stopping:
+		if s.Turn != v.Turn || s.Cause == CauseIntegrityViolated {
+			return t, nil
+		}
+		s.Cause = CauseIntegrityViolated
+		return t.with(s), []Command{Audit{Entry: AuditEntry{Action: "task.integrity", Outcome: "stopping", Turn: s.Turn}}}
+	case Idle:
+		if v.Turn == "" || s.Turn != v.Turn {
+			return t, nil
+		}
+		switch s.Outcome.(type) {
+		case Answered, ReadyForReview:
+			o := NeedsYou{Why: NeedsIntegrityViolated}
+			return t.with(Idle{Outcome: o, Turn: s.Turn, At: v.Now}),
+				change("task.integrity", OutcomeCode(o), s.Turn, o.status())
+		}
 	}
-	return t.with(Stopping{Turn: r.Turn, Attempt: r.Attempt, Since: r.Since, Cause: CauseIntegrityViolated, Usage: r.Usage}),
-		stopCmds(r.Turn, r.Attempt, "task.integrity")
+	return t, nil
 }
 
 func stepDismiss(t Task, d DismissRequested) (Task, []Command) {
@@ -345,7 +380,7 @@ func stepDismiss(t Task, d DismissRequested) (Task, []Command) {
 	}
 	switch i.Outcome.(type) {
 	case ReadyForReview, NeedsYou:
-		return t.with(Idle{Outcome: Dismissed{}, At: d.Now}), change("task.dismiss", OutcomeCode(Dismissed{}), "", core.TaskDone)
+		return t.with(Idle{Outcome: Dismissed{}, Turn: i.Turn, At: d.Now}), change("task.dismiss", OutcomeCode(Dismissed{}), "", core.TaskDone)
 	}
 	return t, nil
 }

@@ -71,8 +71,27 @@ const (
 type Caps struct {
 	Resume          bool
 	PermissionHooks bool
-	// Enforcement is "hook" or "limited".
-	Enforcement string
+	Enforcement     Enforcement
+}
+
+// Enforcement is the core-side copy of the adapter's enforcement level
+// (core packages cannot import each other or internal/agents).
+type Enforcement string
+
+const (
+	// EnforcementHook: a pre-tool hook can block calls and fails closed.
+	EnforcementHook Enforcement = "hook"
+	// EnforcementLimited: Yggdrasil's limits hold only through flags.
+	EnforcementLimited Enforcement = "limited"
+)
+
+// Validate reports whether e is one of the two known levels.
+func (e Enforcement) Validate() error {
+	switch e {
+	case EnforcementHook, EnforcementLimited:
+		return nil
+	}
+	return fmt.Errorf("unknown enforcement level %q", string(e))
 }
 
 // Context is what Offered and Authorize know about the calling task. The

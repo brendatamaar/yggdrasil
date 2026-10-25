@@ -215,3 +215,10 @@ Shell:
 ## Decisions (approved 2026-10-25)
 
 (1) `pull` stays a direct tool with the four conditions (ff-only, clean tree, no build or editor holds the checkout, audited with old and new commit); the threat model records it as the one explicit reading of invariant 2. (2)-(6) recommendations accepted as written.
+
+## Review gate 1 fixes (2026-10-25)
+
+- **Limiter (C5, S2).** `StepLimiter` denies a zero `Tick.Now` and changes nothing; a backwards tick refills nothing and never moves `Last` back. `TestPropLimiterBound` checks M5 over random forward and backward schedules.
+- **M4 test name.** The test is `TestToolsHaveNoConfirm`, as in the table above.
+- **Enforcement (S6).** `mcp.Caps.Enforcement` is the typed `mcp.Enforcement` (`hook`, `limited`) with `Validate`; the shell converts from `agents.Enforcement` (core packages do not import each other).
+- Offered, Authorize and ParseCall are still stubs (task M1).
