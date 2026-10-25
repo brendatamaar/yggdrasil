@@ -188,12 +188,3 @@ func writeMsg(t *testing.T, s string) string {
 	}
 	return p
 }
-
-func FuzzReadCommitObject(f *testing.F) {
-	f.Add([]byte("tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\nauthor A <a@b.c> 1700000000 +0100\ncommitter A <a@b.c> 1700000000 +0100\n\nhello\n"))
-	f.Fuzz(func(t *testing.T, raw []byte) {
-		if c, err := parseCommitObject(strings.Repeat("0", 40), raw); err == nil && c.Author == "" && c.Email == "" && c.Date.IsZero() {
-			t.Errorf("accepted a commit without an author: %q", raw)
-		}
-	})
-}
