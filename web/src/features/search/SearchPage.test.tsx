@@ -1,6 +1,6 @@
 import { createMemoryHistory } from "@tanstack/react-router";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { App } from "../../App";
 import { WSClient } from "../../api/ws";
 import type { SearchResponse } from "../../api/gen/api.gen";
@@ -128,5 +128,47 @@ describe("search page", () => {
     expect(document.activeElement).toBe(rows[0]);
     fireEvent.keyDown(rows[0] as HTMLElement, { key: "ArrowUp" });
     expect(document.activeElement).toBe(box);
+  });
+});
+
+describe("search request lifetime", () => {
+  const signalOf = (api: ReturnType<typeof renderSearch>, n: number) => {
+    const calls = api.fn.mock.calls.filter((c) => String(c[0]) === "/api/search");
+    return calls[n]?.[1]?.signal;
+  };
+
+  it("passes an abort signal and aborts the previous request on a new search", async () => {
+    const api = renderSearch(() => ({ body: { matches: [], problems: [], truncated: false } }));
+    await submit("one");
+    await waitFor(() => {
+      expect(signalOf(api, 0)).toBeTruthy();
+    });
+    await submit("two");
+    await waitFor(() => {
+      expect(signalOf(api, 1)).toBeTruthy();
+    });
+    expect(signalOf(api, 0)?.aborted).toBe(true);
+    expect(signalOf(api, 1)?.aborted).toBe(false);
+  });
+
+  it("aborts the request on unmount", async () => {
+    const api = renderSearch(() => ({ body: { matches: [], problems: [], truncated: false } }));
+    await submit("one");
+    await waitFor(() => {
+      expect(signalOf(api, 0)).toBeTruthy();
+    });
+    const sig = signalOf(api, 0);
+    expect(sig?.aborted).toBe(false);
+    cleanup();
+    expect(sig?.aborted).toBe(true);
+  });
+
+  it("does not warn about duplicate keys for matches at the same line and column", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    renderSearch(() => ({ body: { matches: [match({}), match({ text: "other" })], problems: [], truncated: false } }));
+    await submit("total");
+    await screen.findAllByRole("listitem");
+    expect(err).not.toHaveBeenCalled();
+    err.mockRestore();
   });
 });

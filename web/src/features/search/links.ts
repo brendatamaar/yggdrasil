@@ -4,7 +4,7 @@ const editorSchemes = new Set(["vscode:", "cursor:", "idea:"]);
 
 /**
  * Returns the URL only when it may be opened as an editor link: vscode:,
- * cursor:, idea:, or a plain http(s) URL without credentials. Anything else
+ * cursor:, idea:, or a plain http(s) URL without credentials (also for the editor schemes). Anything else
  * (javascript:, data:, ...) gives undefined.
  */
 export function safeEditorHref(url: string | null | undefined): string | undefined {
@@ -16,6 +16,6 @@ export function safeEditorHref(url: string | null | undefined): string | undefin
   } catch {
     return undefined;
   }
-  if (editorSchemes.has(u.protocol)) return trimmed;
+  if (editorSchemes.has(u.protocol)) return u.username === "" && u.password === "" ? trimmed : undefined;
   return safeHref(trimmed);
 }

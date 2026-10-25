@@ -66,14 +66,26 @@ export function SearchPage() {
   const [paths, setPaths] = useState("");
   const [picked, setPicked] = useState<Set<string>>(new Set());
 
+  const abortRef = useRef<AbortController | null>(null);
+
   useEffect(() => {
     boxRef.current?.focus();
+    return () => {
+      abortRef.current?.abort();
+    };
   }, []);
 
   const repos = useQuery({ queryKey: ["repos", "all"], queryFn: () => fetchRepos("all") });
   const repoList = useMemo(() => (repos.data?.projects ?? []).flatMap((p) => p.repos), [repos.data]);
 
-  const search = useMutation({ mutationFn: (req: SearchRequest) => searchCode(req) });
+  const search = useMutation({
+    mutationFn: (req: SearchRequest) => {
+      abortRef.current?.abort();
+      const ctl = new AbortController();
+      abortRef.current = ctl;
+      return searchCode(req, ctl.signal);
+    },
+  });
 
   const run = () => {
     if (pattern.trim() === "") return;
@@ -244,8 +256,8 @@ export function SearchPage() {
                   <div key={path}>
                     <h3 className="font-mono text-xs text-muted">{path}</h3>
                     <ul>
-                      {ms.map((m) => (
-                        <MatchRow key={`${String(m.line)}:${String(m.col)}`} m={m} />
+                      {ms.map((m, i) => (
+                        <MatchRow key={`${String(i)}:${String(m.line)}:${String(m.col)}`} m={m} />
                       ))}
                     </ul>
                   </div>
