@@ -64,7 +64,16 @@ func TestSearchEndpoint(t *testing.T) {
 	if body.Matches[0].EditorURL != want || !strings.HasPrefix(want, "vscode://file/") {
 		t.Errorf("editor url = %q, want %q", body.Matches[0].EditorURL, want)
 	}
-	if len(body.Problems) != 1 || body.Problems[0].Kind != "missing" || body.Problems[0].RepoName != "shop-web" || body.Problems[0].Message == "" {
+	// The dropped match (a path that leaves its repo) is reported for shop-api,
+	// next to shop-web's own failure.
+	byKind := map[string]string{}
+	for _, p := range body.Problems {
+		if p.Message == "" {
+			t.Errorf("problem without a message: %+v", p)
+		}
+		byKind[p.Kind] = p.RepoName
+	}
+	if len(body.Problems) != 2 || byKind["missing"] != "shop-web" || byKind["paths_skipped"] != "shop-api" {
 		t.Errorf("problems = %+v", body.Problems)
 	}
 
