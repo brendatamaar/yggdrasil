@@ -1,11 +1,12 @@
+import type { Capabilities } from "../../api/gen/agents.gen";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { describeError } from "../../api/client";
 import { cancelTask, taskKeys, useTask } from "../../api/queries";
-import { Transcript, UsageSummary } from "../../components/transcript/Transcript";
-import { taskTotals } from "../../components/transcript/tree";
-import { useTranscript } from "../../components/transcript/useTranscript";
+import { StatusLine, Transcript, UsageSummary, taskUsage, useTranscript } from "../../features/transcript";
 import { statusLabel } from "../../stores/notifications";
 
+// The API does not expose the adapter capabilities yet; undefined shows every feature.
+const capabilities: Capabilities | undefined = undefined;
 const cancellable = new Set(["queued", "running"]);
 
 /** One task: its status, its totals and the live transcript. */
@@ -46,7 +47,8 @@ export function TaskPage({ taskId }: { taskId: string }) {
             </button>
           ) : null}
         </div>
-        <UsageSummary {...taskTotals(transcript.events)} />
+        <UsageSummary usage={taskUsage(transcript.events)} capabilities={capabilities} />
+        <StatusLine events={transcript.events} label={status ? statusLabel(status) : undefined} />
       </header>
 
       {loadError ? (
@@ -60,7 +62,7 @@ export function TaskPage({ taskId }: { taskId: string }) {
         </p>
       ) : null}
       {transcript.loaded ? (
-        <Transcript events={transcript.events} />
+        <Transcript events={transcript.events} capabilities={capabilities} />
       ) : (
         <p className="text-sm text-muted">Loading the transcript…</p>
       )}
