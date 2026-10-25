@@ -20,6 +20,13 @@ const notFound: Reply = { status: 404, body: { code: "not_found", message: "That
 function defaultReply(call: Call): Reply {
   if (call.path.startsWith("/api/tasks?")) return { body: { tasks: [] } };
   if (call.path === "/api/health") return { body: { status: "ok", version: "test" } };
+  // The home widgets read these; "nothing yet" keeps unrelated tests quiet.
+  if (call.path.startsWith("/api/repos?")) {
+    const counts = { all: 0, uncommitted: 0, behind: 0, ahead: 0, failedPipeline: 0, problems: 0 };
+    return { body: { projects: [], counts } };
+  }
+  if (call.path === "/api/mrs") return { body: { items: [], instances: [] } };
+  if (call.path.startsWith("/api/builds")) return { body: { builds: [] } };
   if (/^\/api\/tasks\/[^/]+\/events/.test(call.path)) return { body: { events: [] } };
   return notFound;
 }

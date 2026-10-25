@@ -11,6 +11,13 @@ describe("widget registry", () => {
     expect(ids).toContain("this-machine");
   });
 
+  it("registers the home widgets of UI-03", () => {
+    const ids = widgetRegistry.map((w) => w.id);
+    for (const id of ["git-activity", "merge-requests", "needs-attention", "ci-failures", "builds", "recent-areas"]) {
+      expect(ids.filter((i) => i === id)).toHaveLength(1);
+    }
+  });
+
   it("gives every widget a title and a size that fits the grid", () => {
     for (const w of widgetRegistry) {
       expect(w.title.trim()).not.toBe("");
