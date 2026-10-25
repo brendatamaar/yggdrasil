@@ -33,6 +33,45 @@ func TestSearchClientLeavesWhileReposAreQueued(t *testing.T) {
 	}
 }
 
+// The drain loop in Search: answers that reach the channel as the deadline
+// fires are kept. Every answering repo returns at the instant the overall
+// deadline cancels its context, so the answers race the service's own wake-up.
+// Without the drain loop none of them can be kept (the service wakes on the
+// deadline first and times out everything pending), so "some answer was kept"
+// fails deterministically for broken code. For correct code it holds with
+// overwhelming probability: one answer out of many attempts must land before
+// the first non-blocking read.
+func TestSearchDrainsAnswersThatLandAtTheDeadline(t *testing.T) {
+	const attempts, answering = 25, 20
+	kept := 0
+	for i := 0; i < attempts; i++ {
+		f := searchtest.NewFake()
+		repos := refs(f, answering+1, nil)
+		for _, r := range repos[:answering] {
+			f.Script(r.Path, func(ctx context.Context) (search.GrepResult, error) {
+				<-ctx.Done()
+				return search.GrepResult{}, nil // answered, no matches
+			})
+		}
+		f.Script(repos[answering].Path, func(ctx context.Context) (search.GrepResult, error) {
+			<-ctx.Done()
+			return search.GrepResult{}, ctx.Err()
+		})
+		s := newSvc(t, f, repos, func(d *search.Deps) { d.Deadline = 15 * time.Millisecond; d.Parallel = answering + 1 })
+		st, err := s.Search(context.Background(), lit("needle"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.Problems[repos[answering].ID] == "" {
+			t.Fatalf("the blocked repo is not marked: %v", st.Problems)
+		}
+		kept += answering - (len(st.Problems) - 1)
+	}
+	if kept == 0 {
+		t.Fatal("no answer given at the deadline was kept: the drain loop is missing")
+	}
+}
+
 // A repo that answered before the deadline is not marked timed out when the
 // deadline fires while another is still running.
 func TestSearchKeepsAnswersGivenBeforeTheDeadline(t *testing.T) {
