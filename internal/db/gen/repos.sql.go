@@ -60,7 +60,7 @@ func (q *Queries) CreateRepo(ctx context.Context, arg CreateRepoParams) error {
 
 const getRepo = `-- name: GetRepo :one
 
-SELECT id, project_id, name, path, default_branch, trusted, created_at, untracked_at, rel_path FROM repos WHERE id = ? AND untracked_at IS NULL
+SELECT id, project_id, name, path, default_branch, trusted, created_at, trust_hash, untracked_at, rel_path FROM repos WHERE id = ? AND untracked_at IS NULL
 `
 
 // Untracked repos (untracked_at set) are invisible to GetRepo and
@@ -77,6 +77,7 @@ func (q *Queries) GetRepo(ctx context.Context, id string) (Repo, error) {
 		&i.DefaultBranch,
 		&i.Trusted,
 		&i.CreatedAt,
+		&i.TrustHash,
 		&i.UntrackedAt,
 		&i.RelPath,
 	)
@@ -84,7 +85,7 @@ func (q *Queries) GetRepo(ctx context.Context, id string) (Repo, error) {
 }
 
 const getRepoIncludingUntracked = `-- name: GetRepoIncludingUntracked :one
-SELECT id, project_id, name, path, default_branch, trusted, created_at, untracked_at, rel_path FROM repos WHERE id = ?
+SELECT id, project_id, name, path, default_branch, trusted, created_at, trust_hash, untracked_at, rel_path FROM repos WHERE id = ?
 `
 
 func (q *Queries) GetRepoIncludingUntracked(ctx context.Context, id string) (Repo, error) {
@@ -98,6 +99,7 @@ func (q *Queries) GetRepoIncludingUntracked(ctx context.Context, id string) (Rep
 		&i.DefaultBranch,
 		&i.Trusted,
 		&i.CreatedAt,
+		&i.TrustHash,
 		&i.UntrackedAt,
 		&i.RelPath,
 	)
@@ -106,7 +108,7 @@ func (q *Queries) GetRepoIncludingUntracked(ctx context.Context, id string) (Rep
 
 const listAllRepos = `-- name: ListAllRepos :many
 
-SELECT id, project_id, name, path, default_branch, trusted, created_at, untracked_at, rel_path FROM repos ORDER BY id
+SELECT id, project_id, name, path, default_branch, trusted, created_at, trust_hash, untracked_at, rel_path FROM repos ORDER BY id
 `
 
 // Workspace loading and decisions of the repo-tracking step. They see
@@ -128,6 +130,7 @@ func (q *Queries) ListAllRepos(ctx context.Context) ([]Repo, error) {
 			&i.DefaultBranch,
 			&i.Trusted,
 			&i.CreatedAt,
+			&i.TrustHash,
 			&i.UntrackedAt,
 			&i.RelPath,
 		); err != nil {
@@ -208,7 +211,7 @@ func (q *Queries) ListBusyTaskRepos(ctx context.Context) ([]string, error) {
 }
 
 const listReposByProject = `-- name: ListReposByProject :many
-SELECT id, project_id, name, path, default_branch, trusted, created_at, untracked_at, rel_path FROM repos WHERE project_id = ? AND untracked_at IS NULL ORDER BY name
+SELECT id, project_id, name, path, default_branch, trusted, created_at, trust_hash, untracked_at, rel_path FROM repos WHERE project_id = ? AND untracked_at IS NULL ORDER BY name
 `
 
 func (q *Queries) ListReposByProject(ctx context.Context, projectID string) ([]Repo, error) {
@@ -228,6 +231,7 @@ func (q *Queries) ListReposByProject(ctx context.Context, projectID string) ([]R
 			&i.DefaultBranch,
 			&i.Trusted,
 			&i.CreatedAt,
+			&i.TrustHash,
 			&i.UntrackedAt,
 			&i.RelPath,
 		); err != nil {

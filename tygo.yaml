@@ -34,6 +34,13 @@ packages:
       - builds.go
       - hosts.go
       - search.go
+      - stubs.go
+      - worktrees.go
+      - proposals.go
+      - trust.go
+      - board.go
+      - composer.go
+      - mcp.go
     frontmatter: |
       import type * as agents from "./agents.gen";
       import type * as core from "./core.gen";
@@ -46,6 +53,11 @@ packages:
       core.TaskID: core.TaskID
       core.BuildID: core.BuildID
       core.WorktreeID: core.WorktreeID
+      core.WorktreeStatus: core.WorktreeStatus
+      core.ProposalID: core.ProposalID
+      core.ChangeSetID: core.ChangeSetID
+      core.ProposalKind: core.ProposalKind
+      core.ProposalStatus: core.ProposalStatus
       core.BuildStatus: core.BuildStatus
       core.StepStatus: core.StepStatus
       core.StepOutcome: core.StepOutcome

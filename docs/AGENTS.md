@@ -68,7 +68,7 @@ cmd/
   ygg/               # main: wires config, server, embedded web assets; `doctor` subcommand
 internal/
   core/              # functional core: domain types and pure decisions (docs/AGENTS.md 5.11);
-                     #   subpackages per domain: core/builds, core/proposals, core/guard, core/tasks, ...
+                     #   subpackages per domain: core/builds, core/proposals, core/guard, core/tasks, core/mcp, ...
   db/
     migrations/      # goose migrations (never edit an applied one)
     queries/         # SQL for sqlc

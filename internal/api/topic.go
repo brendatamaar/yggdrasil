@@ -12,7 +12,8 @@ import (
 // as types, only as the strings String returns.
 //
 // wsTopic is a WebSocket subscription topic, a closed set (tasksTopic,
-// taskTopic, reposTopic, repoTopic, buildsTopic, buildTopic, hostsTopic).
+// taskTopic, reposTopic, repoTopic, buildsTopic, buildTopic, hostsTopic,
+// proposalsTopic, boardTopic).
 // Outside data becomes a wsTopic only through parseTopic, so a value is
 // always valid.
 
@@ -35,6 +36,16 @@ type buildTopic struct{ ID core.BuildID } // one build: changes and log lines
 
 type hostsTopic struct{} // host instances or their MR/pipeline data changed
 
+type proposalsTopic struct{} // a proposal was created or changed state
+
+type boardTopic struct{} // a task moved between board columns, or maxAgents changed
+
+func (proposalsTopic) isTopic() {}
+func (boardTopic) isTopic()     {}
+
+func (proposalsTopic) String() string { return TopicProposals }
+func (boardTopic) String() string     { return TopicBoard }
+
 func (tasksTopic) isTopic()  {}
 func (taskTopic) isTopic()   {}
 func (reposTopic) isTopic()  {}
@@ -53,7 +64,8 @@ func (t buildTopic) String() string {
 	return TopicBuildPrefix + string(t.ID)
 }
 
-// parseTopic accepts the fixed names "tasks", "repos", "builds" and "hosts",
+// parseTopic accepts the fixed names "tasks", "repos", "builds", "hosts",
+// "proposals" and "board",
 // and "task:<id>", "repo:<id>" and "build:<id>" with a valid ID.
 func parseTopic(s string) (wsTopic, error) {
 	switch s {
@@ -65,6 +77,10 @@ func parseTopic(s string) (wsTopic, error) {
 		return buildsTopic{}, nil
 	case TopicHosts:
 		return hostsTopic{}, nil
+	case TopicProposals:
+		return proposalsTopic{}, nil
+	case TopicBoard:
+		return boardTopic{}, nil
 	}
 	if id, ok := strings.CutPrefix(s, TopicTaskPrefix); ok {
 		tid := core.TaskID(id)

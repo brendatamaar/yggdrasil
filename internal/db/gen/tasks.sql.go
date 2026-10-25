@@ -102,7 +102,7 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) error {
 }
 
 const getTask = `-- name: GetTask :one
-SELECT id, project_id, parent_task_id, title, prompt, scope, mode, agent, model, status, session_id, created_at, updated_at, finished_at, version FROM tasks WHERE id = ?
+SELECT id, project_id, parent_task_id, title, prompt, scope, mode, agent, model, status, session_id, created_at, updated_at, finished_at, version, current_turn, idle_outcome FROM tasks WHERE id = ?
 `
 
 func (q *Queries) GetTask(ctx context.Context, id string) (Task, error) {
@@ -124,12 +124,14 @@ func (q *Queries) GetTask(ctx context.Context, id string) (Task, error) {
 		&i.UpdatedAt,
 		&i.FinishedAt,
 		&i.Version,
+		&i.CurrentTurn,
+		&i.IdleOutcome,
 	)
 	return i, err
 }
 
 const listSubTasks = `-- name: ListSubTasks :many
-SELECT id, project_id, parent_task_id, title, prompt, scope, mode, agent, model, status, session_id, created_at, updated_at, finished_at, version FROM tasks WHERE parent_task_id = ? ORDER BY created_at, id
+SELECT id, project_id, parent_task_id, title, prompt, scope, mode, agent, model, status, session_id, created_at, updated_at, finished_at, version, current_turn, idle_outcome FROM tasks WHERE parent_task_id = ? ORDER BY created_at, id
 `
 
 func (q *Queries) ListSubTasks(ctx context.Context, parentTaskID sql.NullString) ([]Task, error) {
@@ -157,6 +159,8 @@ func (q *Queries) ListSubTasks(ctx context.Context, parentTaskID sql.NullString)
 			&i.UpdatedAt,
 			&i.FinishedAt,
 			&i.Version,
+			&i.CurrentTurn,
+			&i.IdleOutcome,
 		); err != nil {
 			return nil, err
 		}
@@ -226,7 +230,7 @@ func (q *Queries) ListTaskRepos(ctx context.Context, taskID string) ([]string, e
 }
 
 const listTasksByProject = `-- name: ListTasksByProject :many
-SELECT id, project_id, parent_task_id, title, prompt, scope, mode, agent, model, status, session_id, created_at, updated_at, finished_at, version FROM tasks WHERE project_id = ? ORDER BY created_at, id
+SELECT id, project_id, parent_task_id, title, prompt, scope, mode, agent, model, status, session_id, created_at, updated_at, finished_at, version, current_turn, idle_outcome FROM tasks WHERE project_id = ? ORDER BY created_at, id
 `
 
 func (q *Queries) ListTasksByProject(ctx context.Context, projectID string) ([]Task, error) {
@@ -254,6 +258,8 @@ func (q *Queries) ListTasksByProject(ctx context.Context, projectID string) ([]T
 			&i.UpdatedAt,
 			&i.FinishedAt,
 			&i.Version,
+			&i.CurrentTurn,
+			&i.IdleOutcome,
 		); err != nil {
 			return nil, err
 		}

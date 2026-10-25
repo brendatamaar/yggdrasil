@@ -40,7 +40,7 @@ func (q *Queries) CreateWorktree(ctx context.Context, arg CreateWorktreeParams) 
 }
 
 const getWorktree = `-- name: GetWorktree :one
-SELECT id, repo_id, task_id, name, path, branch, status, created_at FROM worktrees WHERE id = ?
+SELECT id, repo_id, task_id, name, path, branch, status, created_at, base_commit FROM worktrees WHERE id = ?
 `
 
 func (q *Queries) GetWorktree(ctx context.Context, id string) (Worktree, error) {
@@ -55,12 +55,13 @@ func (q *Queries) GetWorktree(ctx context.Context, id string) (Worktree, error) 
 		&i.Branch,
 		&i.Status,
 		&i.CreatedAt,
+		&i.BaseCommit,
 	)
 	return i, err
 }
 
 const listWorktreesByTask = `-- name: ListWorktreesByTask :many
-SELECT id, repo_id, task_id, name, path, branch, status, created_at FROM worktrees WHERE task_id = ? ORDER BY created_at, id
+SELECT id, repo_id, task_id, name, path, branch, status, created_at, base_commit FROM worktrees WHERE task_id = ? ORDER BY created_at, id
 `
 
 func (q *Queries) ListWorktreesByTask(ctx context.Context, taskID string) ([]Worktree, error) {
@@ -81,6 +82,7 @@ func (q *Queries) ListWorktreesByTask(ctx context.Context, taskID string) ([]Wor
 			&i.Branch,
 			&i.Status,
 			&i.CreatedAt,
+			&i.BaseCommit,
 		); err != nil {
 			return nil, err
 		}
