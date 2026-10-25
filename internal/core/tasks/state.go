@@ -19,7 +19,11 @@ type Draft struct{}
 
 // Waiting: a turn is queued.
 type Waiting struct {
-	Turn      TurnID
+	Turn TurnID
+	// Attempt is the number of attempts already made for Turn (0 for a turn
+	// that never started). A new admission becomes Attempt+1, so attempts
+	// never decrease and an input from an earlier attempt stays stale (K4, K5).
+	Attempt   Attempt
 	BlockedBy Blocker
 }
 
@@ -43,7 +47,10 @@ type Running struct {
 type Stopping struct {
 	Turn    TurnID
 	Attempt Attempt
+	Since   time.Time
 	Cause   StopCause
+	// Usage is carried over from Running so FinishTurn does not lose it.
+	Usage Usage
 }
 
 // Idle: no run is live. It accepts a new message whatever the outcome.
