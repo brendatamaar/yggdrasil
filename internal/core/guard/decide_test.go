@@ -6,6 +6,13 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/core"
 )
 
+func goProgram() *PathRef { return &PathRef{Canon: `C:\tools\go\bin\go.exe`, OK: true} }
+
+// execCall is an Exec call whose program resolved outside every write root.
+func execCall(argv []string) Call { return Call{Tool: ToolExec, Argv: argv, Program: goProgram()} }
+
+func withParseErr(c Call) Call { c.ParseErr = true; return c }
+
 func ref(p string) PathRef { return PathRef{Canon: p, OK: true, Raw: p} }
 
 func codePolicy() Policy {
@@ -43,7 +50,7 @@ func TestDecideRows(t *testing.T) {
 		{"D1 unknown mode", func() Policy { p := codePolicy(); p.Mode = "yolo"; return p }(),
 			Call{Tool: ToolRead, Paths: []PathRef{ref(`C:\work\repo\a`)}}, ReasonUnknownTool},
 		{"D2 unresolved read", codePolicy(), Call{Tool: ToolRead, Paths: []PathRef{{Canon: `C:\work\repo\a`, OK: false}}}, ReasonPathUnresolved},
-		{"D2 unresolved exec path", codePolicy(), Call{Tool: ToolExec, Argv: []string{"go", "test"}, Paths: []PathRef{{OK: false}}}, ReasonPathUnresolved},
+		{"D2 unresolved exec path", codePolicy(), func() Call { c := execCall([]string{"go", "test"}); c.Paths = []PathRef{{OK: false}}; return c }(), ReasonPathUnresolved},
 		{"D3 read inside", codePolicy(), Call{Tool: ToolRead, Paths: []PathRef{ref(`C:\work\repo\src\a.go`)}}, ""},
 		{"D3 read the root itself", codePolicy(), Call{Tool: ToolRead, Paths: []PathRef{ref(`C:\work\repo`)}}, ""},
 		{"D3 read in second read root", codePolicy(), Call{Tool: ToolRead, Paths: []PathRef{ref(`C:\work\lib\x`)}}, ""},
@@ -65,23 +72,23 @@ func TestDecideRows(t *testing.T) {
 		{"D8 write outside", codePolicy(), Call{Tool: ToolWrite, Paths: []PathRef{ref(`C:\work\extra\a`)}}, ReasonOutsideWorktree},
 		{"D8 write readable but not writable", codePolicy(), Call{Tool: ToolWrite, Paths: []PathRef{ref(`C:\work\lib\a`)}}, ReasonOutsideWorktree},
 		{"D8 write naming no path", codePolicy(), Call{Tool: ToolWrite}, ReasonOutsideWorktree},
-		{"D9 exec in ask", askPolicy(), Call{Tool: ToolExec, Argv: []string{"go", "test"}}, ReasonAskIsReadOnly},
-		{"D10 exec with shell syntax", codePolicy(), Call{Tool: ToolExec, Argv: []string{"go", "test"}, ParseErr: true}, ReasonShellSyntax},
-		{"D11 exec matches", codePolicy(), Call{Tool: ToolExec, Argv: []string{"go", "vet", "./..."}}, ""},
-		{"D11 exec .exe and case", codePolicy(), Call{Tool: ToolExec, Argv: []string{"GO.EXE", "vet", "./..."}}, ""},
-		{"D11 exec wrapper .cmd", codePolicy(), Call{Tool: ToolExec, Argv: []string{"mvnw.cmd", "verify"}}, ""},
-		{"D11 exec tail path inside", codePolicy(), Call{Tool: ToolExec, Argv: []string{"go", "test", `C:\work\repo\pkg`, "./pkg"}}, ""},
-		{"D12 exec not listed", codePolicy(), Call{Tool: ToolExec, Argv: []string{"git", "push"}}, ReasonNotAllowlisted},
-		{"D12 exec extra arg without tail rule", codePolicy(), Call{Tool: ToolExec, Argv: []string{"go", "vet", "./...", "extra"}}, ReasonNotAllowlisted},
-		{"D12 exec missing fixed arg", codePolicy(), Call{Tool: ToolExec, Argv: []string{"go", "vet"}}, ReasonNotAllowlisted},
-		{"D12 exec flag in tail", codePolicy(), Call{Tool: ToolExec, Argv: []string{"go", "test", "-run", "X"}}, ReasonNotAllowlisted},
-		{"D12 exec response file in tail", codePolicy(), Call{Tool: ToolExec, Argv: []string{"go", "test", "@args.txt"}}, ReasonNotAllowlisted},
-		{"D12 exec tail path outside", codePolicy(), Call{Tool: ToolExec, Argv: []string{"go", "test", `C:\elsewhere\x`}}, ReasonNotAllowlisted},
-		{"D12 exec tail parent escape", codePolicy(), Call{Tool: ToolExec, Argv: []string{"go", "test", `..\x`}}, ReasonNotAllowlisted},
-		{"D12 exec program with folder", codePolicy(), Call{Tool: ToolExec, Argv: []string{`.\go`, "vet", "./..."}}, ReasonNotAllowlisted},
-		{"D12 exec program with full path", codePolicy(), Call{Tool: ToolExec, Argv: []string{`C:\evil\go.exe`, "vet", "./..."}}, ReasonNotAllowlisted},
-		{"D12 exec no argv", codePolicy(), Call{Tool: ToolExec}, ReasonNotAllowlisted},
-		{"D12 exec empty allowlist", func() Policy { p := codePolicy(); p.Allow = nil; return p }(), Call{Tool: ToolExec, Argv: []string{"go", "vet", "./..."}}, ReasonNotAllowlisted},
+		{"D9 exec in ask", askPolicy(), execCall([]string{"go", "test"}), ReasonAskIsReadOnly},
+		{"D10 exec with shell syntax", codePolicy(), withParseErr(execCall([]string{"go", "test"})), ReasonShellSyntax},
+		{"D11 exec matches", codePolicy(), execCall([]string{"go", "vet", "./..."}), ""},
+		{"D11 exec .exe and case", codePolicy(), execCall([]string{"GO.EXE", "vet", "./..."}), ""},
+		{"D12 exec wrapper .cmd is not the bare name", codePolicy(), execCall([]string{"mvnw.cmd", "verify"}), ReasonNotAllowlisted},
+		{"D11 exec tail path inside", codePolicy(), execCall([]string{"go", "test", `C:/work/repo/pkg`, "./pkg"}), ""},
+		{"D12 exec not listed", codePolicy(), execCall([]string{"git", "push"}), ReasonNotAllowlisted},
+		{"D12 exec extra arg without tail rule", codePolicy(), execCall([]string{"go", "vet", "./...", "extra"}), ReasonNotAllowlisted},
+		{"D12 exec missing fixed arg", codePolicy(), execCall([]string{"go", "vet"}), ReasonNotAllowlisted},
+		{"D12 exec flag in tail", codePolicy(), execCall([]string{"go", "test", "-run", "X"}), ReasonNotAllowlisted},
+		{"D12 exec response file in tail", codePolicy(), execCall([]string{"go", "test", "@args.txt"}), ReasonNotAllowlisted},
+		{"D12 exec tail path outside", codePolicy(), execCall([]string{"go", "test", `C:\elsewhere\x`}), ReasonNotAllowlisted},
+		{"D12 exec tail parent escape", codePolicy(), execCall([]string{"go", "test", `../x`}), ReasonNotAllowlisted},
+		{"D12 exec program with folder", codePolicy(), execCall([]string{`.\go`, "vet", "./..."}), ReasonNotAllowlisted},
+		{"D12 exec program with full path", codePolicy(), execCall([]string{`C:\evil\go.exe`, "vet", "./..."}), ReasonNotAllowlisted},
+		{"D12 exec no argv", codePolicy(), Call{Tool: ToolExec, Program: goProgram()}, ReasonNotAllowlisted},
+		{"D12 exec empty allowlist", func() Policy { p := codePolicy(); p.Allow = nil; return p }(), execCall([]string{"go", "vet", "./..."}), ReasonNotAllowlisted},
 		{"D13 sub-agent isolation", codePolicy(), Call{Tool: ToolSubagent, Isolation: "worktree"}, ReasonAgentWorktreeBlocked},
 		{"D14 sub-agent", codePolicy(), Call{Tool: ToolSubagent}, ""},
 		{"D14 sub-agent in ask", askPolicy(), Call{Tool: ToolSubagent}, ""},

@@ -55,7 +55,7 @@ func genPathString(r *rand.Rand) string {
 	case 8:
 		s = root + sep + ".claude" + sep + "settings.json"
 	case 9:
-		s = root + sep + pick(r, ".mcp.json", "CLAUDE.md", "AGENTS.md", "opencode.json", "GEMINI.md", ".opencode")
+		s = root + sep + pick(r, ".mcp.json", "CLAUDE.md", "AGENTS.md", "opencode.json", "GEMINI.md", ".opencode", ".codex", "CLAUDE.local.md", ".gitmodules", ".husky")
 	case 10:
 		s = `C:\Users\someone\secrets.txt`
 	case 11:
@@ -89,13 +89,38 @@ func genPolicy(r *rand.Rand) Policy {
 }
 
 func genArgv(r *rand.Rand) []string {
-	prog := pick(r, "go", "go.exe", "GO", "npm.cmd", "mvnw.cmd", "git", "evil", `.\go`, `/usr/bin/go`, "")
+	prog := pick(r, "go", "go.exe", "GO", "go.bat", "go.com", "npm.cmd", "npm", "mvnw.cmd", "git", "evil", `.\go`, `/usr/bin/go`, "")
 	argv := []string{prog}
 	argv = append(argv, pick(r, nil, []string{"test"}, []string{"vet", "./..."}, []string{"run", "test"}, []string{"push", "--force"})...)
 	for n := r.Intn(3); n > 0; n-- {
-		argv = append(argv, pick(r, "pkg", "./pkg", "-run", "--config=x", "@r.txt", `C:\work\repo\x`, `C:\elsewhere\x`, "../x", ""))
+		argv = append(argv, pick(r, "pkg", "./pkg", "-run", "--config=x", "@r.txt", `C:\work\repo\x`, "C:/work/repo/x", `C:\elsewhere\x`, "../x", "",
+			`\-exec=evil.sh`, `$'\055x'`, `{-x,y}`, `"-"x`, `''-x`, "-", "$HOME", "*", "~", "é", "a b", "a\tb", "a;b", "x\\y"))
 	}
 	return argv
+}
+
+// asciiLowerRef lowers A-Z only; the reference for ASCII folding.
+func asciiLowerRef(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if c >= 'A' && c <= 'Z' {
+			b[i] = c + 32
+		}
+	}
+	return string(b)
+}
+
+func genProgram(r *rand.Rand) *PathRef {
+	switch r.Intn(5) {
+	case 0:
+		return nil
+	case 1:
+		return &PathRef{Canon: pick(r, genRoots...) + `\bin\go.exe`, OK: true}
+	case 2:
+		return &PathRef{Canon: `C:\tools\go.exe`, OK: false}
+	default:
+		return &PathRef{Canon: `C:\tools\go\bin\go.exe`, OK: true}
+	}
 }
 
 func genCall(r *rand.Rand) Call {
@@ -109,6 +134,7 @@ func genCall(r *rand.Rand) Call {
 	if c.Tool == ToolExec {
 		c.Argv = genArgv(r)
 		c.ParseErr = r.Intn(6) == 0
+		c.Program = genProgram(r)
 	}
 	if c.Tool == ToolSubagent {
 		c.Isolation = pick(r, "", "", "worktree")
@@ -122,7 +148,7 @@ func refInside(root, p string, fold bool) bool {
 	n := func(s string) string {
 		s = strings.ReplaceAll(s, `\`, "/")
 		if fold {
-			s = strings.ToLower(s)
+			s = asciiLowerRef(s)
 		}
 		lead := ""
 		for i := 0; i < len(s) && s[i] == '/' && i < 2; i++ {

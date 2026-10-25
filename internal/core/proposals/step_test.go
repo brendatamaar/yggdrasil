@@ -89,6 +89,7 @@ type fakeAction struct{ k core.ProposalKind }
 
 func (f fakeAction) Kind() core.ProposalKind { return f.k }
 func (fakeAction) isAction()                 {}
+func (fakeAction) Validate() error           { return nil }
 
 func TestCreatedIgnoresOutsideHash(t *testing.T) {
 	b := base()

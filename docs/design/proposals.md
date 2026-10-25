@@ -192,7 +192,7 @@ No outbox: every executor is fenced by a read-only precondition and `Reconcile`,
 
 | Capability | Live | Test | Contract |
 |---|---|---|---|
-| `ProposalStore` (`Create`, `Load`, `LoadByStatus`, `Save` with version, `EnsureChangeSet`) | `internal/db` | `dbtest` | round trip for every action kind and state; payload with an unknown field or kind rejected; version conflict; change set created once per task |
+| `ProposalStore` (`Create`, `Load`, `LoadByStatus`, `Save` with version, `EnsureChangeSet`) | `internal/db` | `dbtest` | round trip for every action kind and state; payload with an unknown field or kind rejected; version conflict; change set created once per task; contract: `Failed.Message` and `ExecFailed.Message` are free text (git or host output), so the shell must redact tokens and paths before it persists or shows them |
 | `GitWriter` (`Head`, `DiffHash`, `Add`, `Commit`, `Push`, `LsRemote`, `RemoteURL`) | `internal/git` | `gittest.Fake` (in-memory refs and trees) | `GitWriterContract`: commit creates one commit with the given message and parent; commit with a stale head fails; push to a bare remote moves the ref; push of a non-ff ref is refused and no force is possible; hooks in `.git/hooks` and `core.hooksPath` do not run; credentials in the URL are refused. Real git with a local bare repo |
 | `Files` (`WriteAtomic`, `MoveAside`) | `internal/proposals` (os) | none: tests use `t.TempDir()` | `FilesContract`: atomic write replaces content or leaves the old; `MoveAside` keeps the tree and suffixes clashes; path outside the root refused; no remove call exists (archtest) |
 | `Builds` (`Enqueue`, `Wait`) | `internal/builds` | `buildstest` fake | existing builds contract |
@@ -239,3 +239,11 @@ All six recommendations accepted: (1) hooks disabled for proposal commits and pu
 ## Deviation (X1, 2026-10-25)
 
 `Failed` carries the failed `Attempt` (Retry needs a+1; the table persists it). A non-retryable `Failed` proposal is terminal: it stays in the list as history and is not rejected (the design's "user rejects it" means: ignore it and ask again). `Step` computes `ActionHash` itself. Payload JSON is one strict struct per kind (keys: `worktree`|`repo`, `paths`, `message`, `expect_head`, `expect_diff_hash`, `branch`, `remote`, `target`, `title`, `description`, `path`, `content`, `expect_hash`, `step`); MCP arguments use the same names. Shell: use `proposals.IsProtectedPath` for `Facts.PathsOK` on every kind except `agent_file`; `Describe` names the worktree/repo ID, so the API adds "branch X of repo Y" from its own lookups.
+
+## Review gate 1 fixes
+
+- **M1 short names and depth.** `CheckRelPath` rejects any path part holding `~` followed by a digit (Windows 8.3 aliases such as `GIT~1`, `CLAUDE~1`), and compares `.git` with an ASCII-only fold. `IsProtectedPath` matches at any depth with the same lists as `core/guard` (folders `.claude`, `.opencode`, `.codex`, `.gemini`, `.cursor`, `.husky`, `.githooks`; files `.mcp.json`, `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `opencode.json`, `GEMINI.md`, `.gitmodules`). A bare folder name is protected too, because committing it stages everything below; an `agent_file` path still has to name a file. A test in `gate1_test.go` imports `core/guard` and fails if the lists differ.
+- **Remotes.** `CheckRemote` refuses a leading `-` in the ssh user and in the host.
+- **MR links.** `ParsePushOutput(out, remoteHost)` accepts a link only on the remote own host (case-insensitive, port ignored); any other host is `ErrUnsafeURL`.
+- **Defence in depth.** `Action.Validate()` re-runs the `ParseAction` rules on each kind and `Step(Created)` refuses an invalid action with `RefuseBadFacts`.
+- **Redaction contract.** `Failed.Message` and `ExecFailed.Message` are free text; the shell redacts before persisting (see the `ProposalStore` row).

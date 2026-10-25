@@ -32,6 +32,17 @@ func Decide(p Policy, c Call) Verdict {
 				return Deny(ReasonOutsideRepo)
 			}
 		}
+		// D4b: .git/config and .git/hooks hold what a repo would run.
+		for _, ref := range c.Paths {
+			if isGitInternal(ref.Canon) {
+				return Deny(ReasonProtectedPath)
+			}
+		}
+		for _, g := range c.Globs {
+			if globReadsGitInternals(g) {
+				return Deny(ReasonProtectedPath)
+			}
+		}
 		return Allowed()
 	case ToolWrite:
 		// D5
@@ -63,6 +74,17 @@ func Decide(p Policy, c Call) Verdict {
 		if c.ParseErr {
 			return Deny(ReasonShellSyntax)
 		}
+		// D11: the executable the shell resolved must be known and must not
+		// be a file the agent could have written.
+		if c.Program == nil {
+			return Deny(ReasonNotAllowlisted)
+		}
+		if !c.Program.OK {
+			return Deny(ReasonPathUnresolved)
+		}
+		if !programOutsideWriteRoots(p, c.Program.Canon) {
+			return Deny(ReasonNotAllowlisted)
+		}
 		// D11, D12
 		for _, r := range p.Allow {
 			if ruleMatches(r, c.Argv, p.ReadRoots, p.FoldCase) {
@@ -81,18 +103,23 @@ func Decide(p Policy, c Call) Verdict {
 	return Deny(ReasonUnknownTool)
 }
 
-// programExts are the Windows wrapper extensions dropped before comparing a
-// program name with a rule.
-var programExts = []string{".exe", ".cmd", ".bat", ".com"}
-
-func programBase(s string) string {
-	l := strings.ToLower(s)
-	for _, e := range programExts {
-		if strings.HasSuffix(l, e) && len(s) > len(e) {
-			return s[:len(s)-len(e)]
-		}
+// programOutsideWriteRoots reports whether the resolved program is an
+// absolute, ordinary path that is in no write root. A path we cannot reason
+// about (relative, "..", a part Windows would trim) counts as inside.
+func programOutsideWriteRoots(p Policy, canon string) bool {
+	parts := splitPath(canon, true)
+	if !parts.ok || !parts.abs || parts.trims {
+		return false
 	}
-	return s
+	return !insideAny(p.WriteRoots, canon, p.FoldCase)
+}
+
+// programMatches reports whether argv[0] is the rule's program: the bare name
+// or the name plus ".exe", nothing else. ".bat", ".cmd" and ".com" are not
+// dropped: they are other files, which the shell resolves from the bare name
+// (platform resolution) if the user's own tools provide them.
+func programMatches(arg0, program string, fold bool) bool {
+	return segEq(arg0, program, fold) || segEq(arg0, program+".exe", fold)
 }
 
 // ruleMatches reports whether argv is the rule's program with its fixed
@@ -103,7 +130,7 @@ func ruleMatches(r CommandRule, argv, readRoots []string, fold bool) bool {
 	if len(argv) == 0 || r.Program == "" || strings.ContainsAny(argv[0], `/\`) {
 		return false
 	}
-	if !segEq(programBase(argv[0]), r.Program, fold) {
+	if !programMatches(argv[0], r.Program, fold) {
 		return false
 	}
 	rest := argv[1:]
@@ -130,10 +157,14 @@ func ruleMatches(r CommandRule, argv, readRoots []string, fold bool) bool {
 	return false
 }
 
-// tailArgOK accepts a plain word, or a path inside the read roots. Anything
-// that starts with "-" (a flag), "@" (a response file) or "~" is refused.
+// tailArgOK accepts a plain word, or a path inside the read roots. The word
+// is judged after the character allowlist of ParseCommandLine: a word with a
+// backslash, expansion, glob or control character is refused whatever it
+// looks like, because the shell may not run the word we are looking at.
+// Anything that starts with "-" (a flag), "@" (a response file) or "~" is
+// refused.
 func tailArgOK(a string, readRoots []string, fold bool) bool {
-	if a == "" || strings.HasPrefix(a, "-") || strings.HasPrefix(a, "@") || strings.HasPrefix(a, "~") {
+	if a == "" || !wordAllowed(a) || strings.ContainsAny(a[:1], "-@~") {
 		return false
 	}
 	parts := splitPath(a, fold)

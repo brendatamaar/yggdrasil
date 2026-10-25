@@ -7,7 +7,7 @@ import (
 )
 
 func FuzzParseCommandLine(f *testing.F) {
-	for _, s := range []string{"go test ./...", `a "b c" 'd"e'`, `x ""`, "a && b", `"unclosed`, "", "100%", "$(x)", "a\tb", `it's "x"`} {
+	for _, s := range []string{"go test ./...", `a "b c" 'd"e'`, `x ""`, "a && b", `"unclosed`, "", "100%", "$(x)", "a\tb", `it's "x"`, `a\-b`, `$'\055'`, "{a,b}", "*"} {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, line string) {
@@ -31,6 +31,8 @@ func FuzzDecidePaths(f *testing.F) {
 	f.Add(`C:\work\repo-evil\a`, `C:\work\repo`, false, uint8(2))
 	f.Add(`/srv/repo/../etc`, `/srv/repo`, false, uint8(1))
 	f.Add(`c:/WORK/repo/x`, `C:\work\repo`, true, uint8(0))
+	f.Add("C:\\wor\u212A\\repo\\x", `C:\work\repo`, true, uint8(0)) // Kelvin sign
+	f.Add("/\u017Frv/repo/x", `/srv/repo`, true, uint8(2))          // long s
 	f.Fuzz(func(t *testing.T, canon, root string, fold bool, tool uint8) {
 		tl := []Tool{ToolRead, ToolSearch, ToolWrite}[int(tool)%3]
 		p := Policy{Mode: core.ModeCode, ReadRoots: []string{root}, WriteRoots: []string{root}, FoldCase: fold, Enforcement: EnforcementHook}

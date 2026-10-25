@@ -11,5 +11,10 @@ func (*Adapter) ConfigPaths() []string {
 		".claude/settings.local.json",
 		".mcp.json",
 		".claude/agents",
+		".claude/skills",
+		".claude/commands",
+		".claude/hooks",
+		"CLAUDE.md",
+		"CLAUDE.local.md",
 	}
 }

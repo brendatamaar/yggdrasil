@@ -246,7 +246,7 @@ func buildAgentFile(v agentFileArgs) (Action, error) {
 	if err := CheckRelPath(v.Path); err != nil {
 		return nil, err
 	}
-	if !IsProtectedPath(RelPath(v.Path)) {
+	if !IsProtectedPath(RelPath(v.Path)) || lastSegIsProtectedDir(v.Path) {
 		return nil, invalid("path %q is not an agent configuration file (.claude/**, .mcp.json, CLAUDE.md, AGENTS.md, opencode.json, .opencode/**, GEMINI.md)", v.Path)
 	}
 	if len(v.Content) > MaxContentSize {

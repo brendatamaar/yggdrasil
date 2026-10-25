@@ -84,6 +84,10 @@ type SnapshotFailed struct {
 // TurnEnds: the run of the turn finished.
 type TurnEnds struct{ Turn TurnID }
 
+// TurnAborted: the turn was cancelled or crashed.
+type TurnAborted struct{ Turn TurnID }
+
+func (TurnAborted) isIntegrityInput()    {}
 func (TurnStarts) isIntegrityInput()     {}
 func (SnapshotTaken) isIntegrityInput()  {}
 func (SnapshotFailed) isIntegrityInput() {}
@@ -92,32 +96,70 @@ func (TurnEnds) isIntegrityInput()       {}
 // StepIntegrity is (state, input) -> (state, commands) for the integrity
 // check (the StepIntegrity table of docs/design/guard.md). Any pair it does
 // not handle, including an input for another turn, changes nothing.
+//
+// A snapshot with an empty field proves nothing, so it is Unverifiable, never
+// Clean. A TurnAborted (cancelled or crashed turn) before the run started
+// goes back to Idle; after it started it is Unverifiable, because the tree
+// was not checked. No StopTask is emitted for an abort: the turn is already
+// stopped. A TurnStarts for a new turn ID starts fresh from any terminal
+// state (Ask: Arming; other modes: Idle).
 func StepIntegrity(s Integrity, in IntegrityInput) (Integrity, []Command) {
 	switch st := s.(type) {
 	case IntegrityIdle:
-		if in, ok := in.(TurnStarts); ok && in.Mode == core.ModeAsk {
-			return Arming{Turn: in.Turn}, []Command{TakeSnapshot{Turn: in.Turn, Phase: PhaseBefore}}
+		return startTurn(s, in)
+	case Clean:
+		if ts, ok := in.(TurnStarts); ok && ts.Turn != st.Turn {
+			return startTurn(IntegrityIdle{}, in)
+		}
+	case Violated:
+		if ts, ok := in.(TurnStarts); ok && ts.Turn != st.Turn {
+			return startTurn(IntegrityIdle{}, in)
+		}
+	case Unverifiable:
+		if ts, ok := in.(TurnStarts); ok && ts.Turn != st.Turn {
+			return startTurn(IntegrityIdle{}, in)
 		}
 	case Arming:
 		switch in := in.(type) {
 		case SnapshotTaken:
 			if in.Turn == st.Turn && in.Phase == PhaseBefore {
+				if !in.Snap.complete() {
+					return unverifiable(st.Turn, "the snapshot before the turn was incomplete")
+				}
 				return Armed{Turn: st.Turn, Before: in.Snap}, nil
 			}
 		case SnapshotFailed:
 			if in.Turn == st.Turn && in.Phase == PhaseBefore {
 				return unverifiable(st.Turn, in.Reason)
 			}
+		case TurnAborted:
+			if in.Turn == st.Turn {
+				return IntegrityIdle{}, nil
+			}
 		}
 	case Armed:
-		if in, ok := in.(TurnEnds); ok && in.Turn == st.Turn {
-			return Checking(st), []Command{TakeSnapshot{Turn: st.Turn, Phase: PhaseAfter}}
+		switch in := in.(type) {
+		case TurnEnds:
+			if in.Turn == st.Turn {
+				return Checking(st), []Command{TakeSnapshot{Turn: st.Turn, Phase: PhaseAfter}}
+			}
+		case TurnAborted:
+			if in.Turn == st.Turn {
+				return aborted(st.Turn)
+			}
 		}
 	case Checking:
 		switch in := in.(type) {
+		case TurnAborted:
+			if in.Turn == st.Turn {
+				return aborted(st.Turn)
+			}
 		case SnapshotTaken:
 			if in.Turn != st.Turn || in.Phase != PhaseAfter {
 				break
+			}
+			if !in.Snap.complete() || !st.Before.complete() {
+				return unverifiable(st.Turn, "the snapshot after the turn was incomplete")
 			}
 			if st.Before.Equal(in.Snap) {
 				return Clean{Turn: st.Turn}, []Command{
@@ -138,6 +180,29 @@ func StepIntegrity(s Integrity, in IntegrityInput) (Integrity, []Command) {
 	}
 	return s, nil
 }
+
+// startTurn handles TurnStarts from a state with no live check.
+func startTurn(s Integrity, in IntegrityInput) (Integrity, []Command) {
+	ts, ok := in.(TurnStarts)
+	if !ok {
+		return s, nil
+	}
+	if ts.Mode == core.ModeAsk {
+		return Arming{Turn: ts.Turn}, []Command{TakeSnapshot{Turn: ts.Turn, Phase: PhaseBefore}}
+	}
+	return IntegrityIdle{}, nil
+}
+
+// aborted: the turn ended without its After check. The task is already
+// stopped, so there is no StopTask; the user sees the Unverifiable state.
+func aborted(t TurnID) (Integrity, []Command) {
+	return Unverifiable{Turn: t, Why: "the turn was cancelled or crashed before it could be checked"}, []Command{
+		Audit{Entry: AuditEntry{Action: "guard.integrity", Outcome: "unverifiable", Turn: t}},
+	}
+}
+
+// complete reports whether the snapshot has all three fingerprints.
+func (s Snapshot) complete() bool { return s.Head != "" && s.Status != "" && s.DiffHash != "" }
 
 func unverifiable(t TurnID, why string) (Integrity, []Command) {
 	return Unverifiable{Turn: t, Why: why}, []Command{

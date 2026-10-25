@@ -62,7 +62,7 @@ func FuzzParsePushOutput(f *testing.F) {
 	f.Add("remote: View merge request for x: https://u:p@gl.example/m/1")
 	f.Add("View merge request http://[::1]:80/a")
 	f.Fuzz(func(t *testing.T, out string) {
-		r, err := ParsePushOutput(out)
+		r, err := ParsePushOutput(out, "")
 		if err != nil {
 			return
 		}

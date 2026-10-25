@@ -28,6 +28,8 @@ func (MainCheckout) isTarget() {}
 type Action interface {
 	// Kind is the stored kind.
 	Kind() core.ProposalKind
+	// Validate re-checks every argument with the rules of ParseAction.
+	Validate() error
 	isAction()
 }
 

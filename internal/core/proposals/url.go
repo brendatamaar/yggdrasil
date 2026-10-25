@@ -51,7 +51,7 @@ func validHostPort(hp string) bool {
 			return false
 		}
 	}
-	if host == "" || host == "[]" {
+	if host == "" || host == "[]" || strings.HasPrefix(host, "-") {
 		return false
 	}
 	for _, c := range port {
@@ -97,7 +97,7 @@ func SafeWebURL(u string) bool {
 // link on that line or the next one). The link must pass SafeWebURL.
 // ErrNoMRURL means the push output has no such link; the caller then reports
 // "pushed; open the MR from the repo page".
-func ParsePushOutput(out string) (Result, error) {
+func ParsePushOutput(out, remoteHost string) (Result, error) {
 	lines := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n")
 	for i, raw := range lines {
 		line := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(raw), "remote:"))
@@ -112,7 +112,7 @@ func ParsePushOutput(out string) (Result, error) {
 			for _, f := range strings.Fields(c) {
 				f = strings.TrimRight(f, ".,;:")
 				if len(f) > 7 && (strings.HasPrefix(strings.ToLower(f), "http://") || strings.HasPrefix(strings.ToLower(f), "https://")) {
-					if !SafeWebURL(f) {
+					if !SafeWebURL(f) || !sameHost(f, remoteHost) {
 						return Result{}, ErrUnsafeURL
 					}
 					return Result{MRURL: f}, nil
@@ -132,7 +132,7 @@ type Remote struct {
 }
 
 func validSSHUser(u string) bool {
-	if u == "" {
+	if u == "" || strings.HasPrefix(u, "-") {
 		return false
 	}
 	for _, c := range u {
@@ -193,4 +193,25 @@ func CheckRemote(raw string) (Remote, error) {
 		return bad()
 	}
 	return Remote{Scheme: "scp", Host: host, Path: path}, nil
+}
+
+// hostName returns the lower-case host of "host", "host:port", "[v6]" or
+// "[v6]:port".
+func hostName(hp string) string {
+	if strings.HasPrefix(hp, "[") {
+		if j := strings.Index(hp, "]"); j >= 0 {
+			return strings.ToLower(hp[:j+1])
+		}
+		return ""
+	}
+	if i := strings.LastIndex(hp, ":"); i >= 0 {
+		hp = hp[:i]
+	}
+	return strings.ToLower(hp)
+}
+
+func sameHost(u, remoteHost string) bool {
+	_, authority, _, ok := splitAuthority(u)
+	h := hostName(remoteHost)
+	return ok && h != "" && hostName(authority) == h
 }

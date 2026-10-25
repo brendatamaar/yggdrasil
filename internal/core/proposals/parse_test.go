@@ -130,7 +130,6 @@ func TestParseActionRejectionRules(t *testing.T) {
 		{"description newline", "merge_request", set("description", "a\nb"), "one line"},
 		{"description CR", "merge_request", set("description", "a\rb"), "one line"},
 		{"agent file not protected", "agent_file", set("path", "src/main.go"), "not an agent configuration"},
-		{"agent file nested claude.md", "agent_file", set("path", "docs/CLAUDE.md"), "not an agent configuration"},
 		{"agent file dir only", "agent_file", set("path", ".claude"), "not an agent configuration"},
 		{"agent file dir slash", "agent_file", set("path", ".claude/"), "empty part"},
 		{"agent file escape", "agent_file", set("path", ".claude/../x"), "leaves the worktree"},
@@ -327,7 +326,7 @@ func TestIsProtectedPath(t *testing.T) {
 		".claude/settings.json": true, ".claude/a/b": true, ".mcp.json": true, "CLAUDE.md": true,
 		"AGENTS.md": true, "opencode.json": true, ".opencode/x": true, "GEMINI.md": true,
 		"claude.md": true, ".CLAUDE/x": true,
-		".claude": false, ".claude/": false, "src/CLAUDE.md": false, "README.md": false, "claudex/a": false,
+		".claude": true, ".claude/": true, "src/CLAUDE.md": true, "README.md": false, "claudex/a": false,
 	} {
 		if got := IsProtectedPath(RelPath(p)); got != want {
 			t.Errorf("IsProtectedPath(%q) = %v", p, got)
