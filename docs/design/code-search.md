@@ -160,6 +160,11 @@ Each parser gets round-trip, accepted ⇒ valid, one test per rejection rule, an
   - `internal/search/searchtest/` (fake + `GrepperContract`).
 - **`internal/api`:** `search.go` (handler) and the DTOs in a new `types_search.go`.
 
+## Known limits
+
+- The search runs with `LC_ALL=C`: case-insensitive search is ASCII-only, and matched text cut in the middle of a character is repaired with a replacement character.
+- The output of one repo is capped at 8 MiB in total (also lines that cannot be parsed); past it the search of that repo stops and is marked truncated.
+
 ## Open questions
 
 Approved by the human on 2026-10-18 with every recommendation below.

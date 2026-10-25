@@ -69,10 +69,14 @@ func searchResponse(st coresearch.Search, editor coresearch.Editor) SearchRespon
 		repos[r.ID] = r
 	}
 	out := SearchResponse{Matches: []SearchMatchDTO{}, Problems: []SearchProblemDTO{}, Truncated: st.Truncated}
+	dropped := map[core.RepoID]bool{} // repos with a match that could not be shown
 	for _, m := range st.Results {
 		repo, ok := repos[m.Repo]
 		abs, inside := joinInside(repo.Path, m.Path)
 		if !ok || !inside {
+			if ok {
+				dropped[m.Repo] = true
+			}
 			continue
 		}
 		dto := SearchMatchDTO{Repo: m.Repo, RepoName: repo.Name, Path: m.Path, Line: m.Line, Col: m.Col, Text: m.Text}
@@ -86,6 +90,15 @@ func searchResponse(st coresearch.Search, editor coresearch.Editor) SearchRespon
 	for id, kind := range st.Problems {
 		out.Problems = append(out.Problems, SearchProblemDTO{
 			Repo: id, RepoName: repos[id].Name, Kind: string(kind), Message: searchProblemMessage(kind),
+		})
+	}
+	for id := range dropped {
+		if _, has := st.Problems[id]; has {
+			continue // the repo is already flagged
+		}
+		out.Problems = append(out.Problems, SearchProblemDTO{
+			Repo: id, RepoName: repos[id].Name, Kind: "paths_skipped",
+			Message: "Some matches in this repo were left out because their file names cannot be opened safely on this system.",
 		})
 	}
 	slices.SortFunc(out.Problems, func(a, b SearchProblemDTO) int {

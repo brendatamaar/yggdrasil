@@ -42,6 +42,10 @@ var (
 // line is dropped (the text is trimmed to 300 runes anyway).
 const maxLineBytes = 64 << 10
 
+// maxTotalBytes bounds all stdout of one repo, including lines that fail to
+// parse. Past it the search is stopped and the repo counts as truncated.
+const maxTotalBytes = 8 << 20
+
 // maxStderrBytes bounds the stderr kept for the log.
 const maxStderrBytes = 4 << 10
 
@@ -84,6 +88,8 @@ func NewGitGrepper(env []string, start platform.StartFunc) (*GitGrepper, error) 
 func (g *GitGrepper) argv(q coresearch.Query) []string {
 	a := []string{g.exe,
 		"-c", "core.longpaths=true", "-c", "core.quotepath=false", "-c", "credential.helper=",
+		// Repo config must not start helper processes.
+		"-c", "core.fsmonitor=false", "-c", "core.hooksPath=", "-c", "protocol.allow=never",
 		"--no-optional-locks"}
 	if len(q.Paths) == 0 {
 		a = append(a, "--literal-pathspecs")
@@ -159,10 +165,16 @@ type lineSink struct {
 	matches  []coresearch.Match
 	skipped  int
 	full     bool
+	total    int // bytes seen so far
 }
 
 func (s *lineSink) Write(p []byte) (int, error) {
 	n := len(p)
+	s.total += n
+	if s.total > maxTotalBytes && !s.full {
+		s.full = true
+		s.stop()
+	}
 	for len(p) > 0 && !s.full {
 		i := bytes.IndexByte(p, '\n')
 		if i < 0 {
