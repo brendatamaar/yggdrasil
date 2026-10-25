@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -42,10 +43,55 @@ func TestFakePathsScriptedError(t *testing.T) {
 	}
 }
 
+// FoldCase is true on Windows and macOS (case-insensitive by default), false
+// on Linux. Folding only makes the guard stricter when the caller folds with
+// ASCII lower-casing.
 func TestFoldCaseMatchesOS(t *testing.T) {
-	want := filepath.Separator == '\\'
+	want := runtime.GOOS == "windows" || runtime.GOOS == "darwin"
 	if got := platform.FoldCase(); got != want {
 		t.Errorf("FoldCase() = %v, want %v", got, want)
+	}
+}
+
+// Off Windows a ".." segment is refused: the kernel resolves it physically, so
+// link/.. is not the parent of the lexical path.
+func TestCleanRootPathRefusesDotDotOffWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows collapses .. lexically, like Win32")
+	}
+	root := string(filepath.Separator) + "repo"
+	for _, in := range []string{
+		root + "/link/../x", root + "/..", root + "/a/b/../../c", "/../x", root + "/./a/../b",
+	} {
+		_, err := platform.CleanRootPath(in)
+		if !errors.Is(err, platform.ErrPathDotDot) {
+			t.Errorf("CleanRootPath(%q) = %v, want ErrPathDotDot", in, err)
+		}
+		if _, err := platform.ResolveRoot(in); !errors.Is(err, platform.ErrPathDotDot) {
+			t.Errorf("ResolveRoot(%q) = %v, want ErrPathDotDot", in, err)
+		}
+	}
+	if strings.Contains(platform.ErrPathDotDot.Error(), "/") || strings.Contains(platform.ErrPathDotDot.Error(), "repo") {
+		t.Errorf("error text should be path-free: %v", platform.ErrPathDotDot)
+	}
+	// Names that merely contain dots are fine.
+	for _, in := range []string{root + "/..a", root + "/a..", root + "/...", root + "/a/./b"} {
+		if _, err := platform.CleanRootPath(in); err != nil {
+			t.Errorf("CleanRootPath(%q) = %v, want nil", in, err)
+		}
+	}
+}
+
+func TestResolveRootDotDotThroughSymlinkOffWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows collapses .. lexically, like Win32")
+	}
+	root, outside := canonDir(t), canonDir(t)
+	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
+		t.Skipf("can't create symlinks here: %v", err)
+	}
+	if got, err := platform.ResolveRoot(root + "/link/../x"); err == nil {
+		t.Errorf("link/../x accepted as %q", got)
 	}
 }
 
@@ -63,7 +109,7 @@ func TestCleanRootPathErrorsAreSentinels(t *testing.T) {
 }
 
 func TestCleanRootPathWindowsForms(t *testing.T) {
-	if !platform.FoldCase() {
+	if runtime.GOOS != "windows" {
 		t.Skip("Windows path forms")
 	}
 	ok := map[string]string{
@@ -160,7 +206,7 @@ func FuzzResolveRoot(f *testing.F) {
 			if seg == ".." {
 				t.Fatalf("accepted %q, result %q has a .. segment", in, got)
 			}
-			if platform.FoldCase() {
+			if runtime.GOOS == "windows" {
 				if strings.Contains(seg, ":") {
 					t.Fatalf("accepted %q, result %q has ':' outside the drive", in, got)
 				}

@@ -35,6 +35,7 @@ task test:web
 - **Licenses.** Dependencies must be MIT, BSD, ISC, Apache-2.0, MPL-2.0, 0BSD, CC0-1.0, BlueOak-1.0.0 or Unlicense. `task license` checks them. Explain every new dependency in your PR.
 - **Safety invariants** (AGENTS.md section 6) are never weakened. If your change touches that area, say so in the PR description.
 - **Mock data only.** Fixtures, screenshots and examples use fictional projects, people and hosts (e.g. `acme-shop` with `shop-api`, `shop-web`, `shop-admin`). Never commit real hostnames, usernames, paths or tokens.
+- **Path fixtures.** The path contract skips its 8.3 and link clauses when the OS can't make the fixture; set `YGG_REQUIRE_PATH_FIXTURES=1` (as CI should on Windows) to make those skips fail.
 - **Docs** go in `docs/`. `README.md` is the only Markdown file at the root.
 
 ## Commits and pull requests

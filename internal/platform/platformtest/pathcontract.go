@@ -1,7 +1,10 @@
 package platformtest
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -25,8 +28,31 @@ type PathFixture struct {
 
 const secretName = "secret-name-7431"
 
+// RequirePathFixturesEnv is the environment variable that makes the contract
+// fail, instead of skip, a clause whose fixture is empty (no 8.3 name, no
+// link). Set it to 1 in CI so a runner that cannot create the fixture cannot
+// pass silently. The 8.3 clause is only required on Windows, the only OS with
+// 8.3 names.
+const RequirePathFixturesEnv = "YGG_REQUIRE_PATH_FIXTURES"
+
+// windowsRules is true where the Windows file-name rules and lexical ".."
+// apply (it mirrors platform.CleanRootPath).
+var windowsRules = runtime.GOOS == "windows"
+
+func skipOrFail(t *testing.T, why string) {
+	t.Helper()
+	if os.Getenv(RequirePathFixturesEnv) == "1" && (windowsRules || !strings.Contains(why, "8.3")) {
+		t.Fatalf("%s, but %s=1 requires the fixture", why, RequirePathFixturesEnv)
+	}
+	t.Skip(why)
+}
+
 // PathResolverContract is the contract suite of platform.PathResolver, run
 // against the fake and the real implementation (docs/AGENTS.md 5.11).
+//
+// The 8.3 and link clauses skip when the fixture leaves Short/Long or
+// LinkOut/Outside empty; set YGG_REQUIRE_PATH_FIXTURES=1 to turn those skips
+// into failures.
 func PathResolverContract(t *testing.T, r platform.PathResolver, fx PathFixture) {
 	t.Helper()
 	resolve := func(t *testing.T, p string) string {
@@ -53,7 +79,21 @@ func PathResolverContract(t *testing.T, r platform.PathResolver, fx PathFixture)
 			t.Errorf("got %q, want %q", got, fx.Root)
 		}
 	})
-	t.Run("dotdot collapses lexically", func(t *testing.T) {
+	t.Run("dotdot refused off Windows", func(t *testing.T) {
+		if windowsRules {
+			t.Skip("Windows collapses .. lexically")
+		}
+		sep := string(filepath.Separator)
+		for _, in := range []string{fx.Root + sep + "a" + sep + ".." + sep + "c", fx.Root + sep + ".."} {
+			if got, err := r.ResolveRoot(in); !errors.Is(err, platform.ErrPathDotDot) {
+				t.Errorf("ResolveRoot(%q) = %q, %v; want ErrPathDotDot", in, got, err)
+			}
+		}
+	})
+	t.Run("dotdot collapses lexically on Windows", func(t *testing.T) {
+		if !windowsRules {
+			t.Skip("only Windows collapses .. lexically")
+		}
 		in := filepath.Join(fx.Root, "a", "b") + string(filepath.Separator) + ".." + string(filepath.Separator) + ".." + string(filepath.Separator) + "c"
 		want := filepath.Join(fx.Root, "c")
 		if got := resolve(t, in); got != want {
@@ -84,7 +124,7 @@ func PathResolverContract(t *testing.T, r platform.PathResolver, fx PathFixture)
 	})
 	t.Run("short name equals long form", func(t *testing.T) {
 		if fx.Short == "" || fx.Long == "" {
-			t.Skip("no 8.3 names here")
+			skipOrFail(t, "no 8.3 names here")
 		}
 		want := resolve(t, fx.Long)
 		if got := resolve(t, fx.Short); got != want {
@@ -96,7 +136,7 @@ func PathResolverContract(t *testing.T, r platform.PathResolver, fx PathFixture)
 	})
 	t.Run("link out of the root resolves outside", func(t *testing.T) {
 		if fx.LinkOut == "" || fx.Outside == "" {
-			t.Skip("no link here")
+			skipOrFail(t, "no link here")
 		}
 		got := resolve(t, filepath.Join(fx.LinkOut, "file.txt"))
 		want := filepath.Join(fx.Outside, "file.txt")
@@ -113,7 +153,7 @@ func PathResolverContract(t *testing.T, r platform.PathResolver, fx PathFixture)
 		}
 	})
 	t.Run("Windows name tricks refused", func(t *testing.T) {
-		if !r.FoldCase() {
+		if !windowsRules {
 			t.Skip("these names are ordinary file names on this platform")
 		}
 		for _, name := range []string{

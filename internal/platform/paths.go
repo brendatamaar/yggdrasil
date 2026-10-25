@@ -45,14 +45,50 @@ func ShortDirName(name string, maxLen int) string {
 	return strings.TrimRight(string(runes), " .") + suffix
 }
 
-// isReservedName reports Windows device names (CON, NUL, COM1, ...), with or
-// without an extension.
+// isReservedName reports Windows device names (CON, NUL, COM1, COM¹, ...),
+// with or without an extension. Win32 drops trailing spaces and dots from the
+// base name, so "NUL .txt" is NUL too.
 func isReservedName(s string) bool {
 	base, _, _ := strings.Cut(strings.ToUpper(s), ".")
+	base = strings.TrimRight(base, " ")
 	switch base {
 	case "CON", "PRN", "AUX", "NUL":
 		return true
 	}
-	return len(base) == 4 && (strings.HasPrefix(base, "COM") || strings.HasPrefix(base, "LPT")) &&
-		base[3] >= '1' && base[3] <= '9'
+	if !strings.HasPrefix(base, "COM") && !strings.HasPrefix(base, "LPT") {
+		return false
+	}
+	switch base[3:] {
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9", "¹", "²", "³":
+		return true
+	}
+	return false
+}
+
+// HasShortNameSegment reports whether a segment of the relative path looks
+// like an 8.3 alias: a name ending in ~digits, before an optional extension
+// (PROGRA~1, LONGDI~1.TXT). Both / and \ separate segments. Such a spelling can
+// name a file whose long name the caller's rules would judge differently, so
+// callers on Windows refuse or resolve it before deciding.
+func HasShortNameSegment(rel string) bool {
+	for _, seg := range strings.FieldsFunc(rel, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if i := strings.IndexByte(seg, '.'); i >= 0 && endsInTildeDigits(seg[:i]) {
+			return true
+		}
+		if i := strings.LastIndexByte(seg, '.'); i >= 0 && endsInTildeDigits(seg[:i]) {
+			return true
+		}
+		if endsInTildeDigits(seg) {
+			return true
+		}
+	}
+	return false
+}
+
+func endsInTildeDigits(name string) bool {
+	n := len(name)
+	for n > 0 && name[n-1] >= '0' && name[n-1] <= '9' {
+		n--
+	}
+	return n < len(name) && n > 1 && name[n-1] == '~'
 }
