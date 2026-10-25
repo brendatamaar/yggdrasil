@@ -9,18 +9,51 @@ import (
 
 var _ agents.RepoConfigProvider = (*Adapter)(nil)
 
-// ConfigPaths and ownAgentConfig must name the same files, or the trust scan
-// would miss a file the adapter treats as config.
-func TestConfigPathsMatchOwnAgentConfig(t *testing.T) {
+// scannedOnly are paths the trust scan hashes although ownAgentConfig does
+// not refuse them (they can still change what Claude Code runs).
+var scannedOnly = []string{
+	".claude/skills", ".claude/commands", ".claude/hooks", "CLAUDE.md", "CLAUDE.local.md",
+}
+
+// Every file ownAgentConfig refuses must be in ConfigPaths, or the trust scan
+// would miss a file the adapter treats as config; every other listed path
+// must be named in scannedOnly, so the list cannot grow unnoticed.
+func TestConfigPathsCoverOwnAgentConfig(t *testing.T) {
 	paths := New(Options{}).ConfigPaths()
 	if len(paths) == 0 {
 		t.Fatal("no config paths")
 	}
+	extra := map[string]bool{}
+	for _, p := range scannedOnly {
+		extra[p] = true
+	}
 	for _, p := range paths {
 		want := filepath.Join("/r", p)
 		exists := func(got string) bool { return got == want }
-		if got := ownAgentConfig("/r", exists); got != p {
-			t.Errorf("ownAgentConfig finds %q for a repo with only %q", got, p)
+		got := ownAgentConfig("/r", exists)
+		switch {
+		case got == p:
+		case got == "" && extra[p]:
+		default:
+			t.Errorf("path %q: ownAgentConfig finds %q and it is not in scannedOnly", p, got)
+		}
+	}
+	for _, own := range []string{".claude/settings.json", ".claude/settings.local.json", ".mcp.json", ".claude/agents"} {
+		found := false
+		for _, p := range paths {
+			found = found || p == own
+		}
+		if !found {
+			t.Errorf("ConfigPaths lacks %q that ownAgentConfig refuses", own)
+		}
+	}
+	for _, p := range scannedOnly {
+		found := false
+		for _, q := range paths {
+			found = found || p == q
+		}
+		if !found {
+			t.Errorf("ConfigPaths lacks %q", p)
 		}
 	}
 }
