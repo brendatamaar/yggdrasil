@@ -6,6 +6,7 @@ import { settingsRoute } from "./routes/settings";
 import { buildRoute, buildsRoute } from "./routes/builds/route";
 import { mrsRoute } from "./routes/mrs/route";
 import { repoRoute } from "./routes/repos/route";
+import { searchRoute } from "./routes/search/route";
 import { taskRoute } from "./routes/tasks/route";
 
 const routeTree = rootRoute.addChildren([
@@ -16,6 +17,7 @@ const routeTree = rootRoute.addChildren([
   buildsRoute,
   buildRoute,
   mrsRoute,
+  searchRoute,
   settingsRoute,
 ]);
 

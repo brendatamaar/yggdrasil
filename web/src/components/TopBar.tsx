@@ -24,6 +24,9 @@ export function TopBar() {
         <Link to="/mrs" className={navClass}>
           Merge requests
         </Link>
+        <Link to="/search" className={navClass}>
+          Search
+        </Link>
         <Link to="/settings" className={navClass}>
           Settings
         </Link>
