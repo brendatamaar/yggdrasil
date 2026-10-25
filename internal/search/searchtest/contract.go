@@ -24,6 +24,9 @@ type Harness struct {
 	Missing string
 	// NotRepo returns an existing folder that is not a git repository.
 	NotRepo func() string
+	// MoreNotRepos return further existing folders that are not repositories
+	// (e.g. a plain temp dir). Optional.
+	MoreNotRepos []func() string
 	// Block returns a repo whose search stays running until its context ends,
 	// and a channel that is closed once the search runs. Optional: when nil,
 	// the mid-flight clause only checks that cancelling never yields a
@@ -201,8 +204,12 @@ func GrepperContract(t *testing.T, newHarness func(t *testing.T) Harness) {
 	sub("cancelling mid-flight returns the context error", func(t *testing.T) {
 		h := newHarness(t)
 		if h.Block == nil {
-			// Real git: the search may finish before the cancel lands, so only
-			// the failure mode is pinned: never a git failure.
+			// Real git: no deterministic way to keep git busy without a huge
+			// repo (> 1 s, too slow for CI) or by rewriting its argv. The search
+			// may finish before the cancel lands, so only the failure mode is
+			// pinned here: never a git failure. That the git process is killed
+			// on cancel is pinned by TestCancelLeavesNoProcess (every process
+			// started must have exited) and the platform tests.
 			dir := h.Repo(map[string]string{"a.txt": strings.Repeat("needle\n", 3000)})
 			ctx, cancel := context.WithCancel(context.Background())
 			go func() { time.Sleep(10 * time.Millisecond); cancel() }()
@@ -243,9 +250,11 @@ func GrepperContract(t *testing.T, newHarness func(t *testing.T) Harness) {
 	})
 	sub("a folder that is not a repo is ErrGitFailed", func(t *testing.T) {
 		h := newHarness(t)
-		res, err := h.Grepper.Grep(context.Background(), h.NotRepo(), q("needle"))
-		if !errors.Is(err, search.ErrGitFailed) || len(res.Matches) != 0 {
-			t.Fatalf("matches=%v err=%v, want ErrGitFailed", res.Matches, err)
+		for _, mk := range append([]func() string{h.NotRepo}, h.MoreNotRepos...) {
+			res, err := h.Grepper.Grep(context.Background(), mk(), q("needle"))
+			if !errors.Is(err, search.ErrGitFailed) || len(res.Matches) != 0 {
+				t.Fatalf("matches=%v err=%v, want ErrGitFailed", res.Matches, err)
+			}
 		}
 	})
 	sub("a regex both engines refuse is ErrGitFailed", func(t *testing.T) {

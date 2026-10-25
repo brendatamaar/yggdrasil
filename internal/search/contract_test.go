@@ -12,7 +12,7 @@ import (
 func TestGrepperContractFake(t *testing.T) {
 	searchtest.GrepperContract(t, func(t *testing.T) searchtest.Harness {
 		f := searchtest.NewFake()
-		return searchtest.Harness{Grepper: f, Repo: f.Repo, Missing: "no-such-repo", NotRepo: f.NotRepo, Block: f.Block}
+		return searchtest.Harness{Grepper: f, Repo: f.Repo, Missing: "no-such-repo", NotRepo: f.NotRepo, Block: f.Block, MoreNotRepos: []func() string{f.NotRepo}}
 	})
 }
 
@@ -31,6 +31,8 @@ func TestGrepperContractRealGit(t *testing.T) {
 			NotRepo: func() string {
 				return filepath.Join(searchtest.InitRepo(t, env, map[string]string{"sub/loose.txt": "needle\n"}), "sub")
 			},
+			// A plain folder with no git at all.
+			MoreNotRepos: []func() string{func() string { return t.TempDir() }},
 		}
 	})
 }
