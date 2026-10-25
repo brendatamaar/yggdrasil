@@ -1,3 +1,9 @@
+import { builds } from "./builds";
+import { ciFailures } from "./ci-failures";
+import { gitActivity } from "./git-activity";
+import { mergeRequests } from "./merge-requests";
+import { needsAttention } from "./needs-attention";
+import { recentAreas } from "./recent-areas";
 import { thisMachine } from "./this-machine";
 import type { WidgetModule } from "./types";
 import { workingNow } from "./working-now";
@@ -6,7 +12,16 @@ import { workingNow } from "./working-now";
  * Every widget the home page can show. Adding a widget means adding its
  * folder and one line here; the layout and the "Add widget" menu follow.
  */
-export const widgetRegistry: readonly WidgetModule[] = [workingNow, thisMachine];
+export const widgetRegistry: readonly WidgetModule[] = [
+  workingNow,
+  thisMachine,
+  needsAttention,
+  gitActivity,
+  mergeRequests,
+  ciFailures,
+  builds,
+  recentAreas,
+];
 
 export function getWidget(id: string): WidgetModule | undefined {
   return widgetRegistry.find((w) => w.id === id);

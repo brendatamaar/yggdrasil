@@ -66,12 +66,12 @@ describe("widget grid", () => {
 
     expect(screen.queryByRole("heading", { name: "Working now" })).toBeNull();
     expect(saved().version).toBe(1);
-    expect(saved().items.map((i) => i.id)).toEqual(["this-machine"]);
+    expect(saved().items.map((i) => i.id)).toEqual(widgetRegistry.map((w) => w.id).filter((id) => id !== "working-now"));
     expect(screen.getByRole<HTMLButtonElement>("button", { name: "Add widget" }).disabled).toBe(false);
 
     fireEvent.click(screen.getByRole("button", { name: "Reset layout" }));
     expect(await screen.findByRole("heading", { name: "Working now" })).toBeTruthy();
-    expect(saved().items.map((i) => i.id)).toEqual(["working-now", "this-machine"]);
+    expect(saved().items.map((i) => i.id)).toEqual(widgetRegistry.map((w) => w.id));
   });
 
   it("adds a removed widget back from the menu", async () => {
@@ -83,7 +83,7 @@ describe("widget grid", () => {
     fireEvent.keyDown(screen.getByRole("button", { name: "Add widget" }), { key: "Enter" });
     fireEvent.click(await screen.findByRole("menuitem", { name: "This machine" }));
     expect(await screen.findByRole("heading", { name: "This machine" })).toBeTruthy();
-    expect(saved().items.map((i) => i.id)).toEqual(["working-now", "this-machine"]);
+    expect(saved().items.map((i) => i.id).sort()).toEqual(widgetRegistry.map((w) => w.id).sort());
   });
 
   it("explains an empty grid", async () => {
