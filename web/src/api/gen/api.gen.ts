@@ -994,3 +994,53 @@ export interface BranchDTO {
 export interface BranchesResponse {
   branches: BranchDTO[];
 }
+
+//////////
+// source: types_search.go
+
+/**
+ * SearchRequest is the body of POST /api/search. Mode is "literal" (default)
+ * or "regex". Case means case-sensitive. Repos limits the search to those
+ * repos (empty means every active repo in scope). Paths are pathspec globs
+ * relative to each repo, for example "*.java".
+ */
+export interface SearchRequest {
+  pattern: string;
+  mode?: string;
+  case?: boolean;
+  repos?: core.RepoID[];
+  paths?: string[];
+}
+/**
+ * SearchMatchDTO is one matching line. Text is at most 300 characters.
+ * EditorURL opens the file at the match in the user's editor; it is empty when
+ * no editor is configured.
+ */
+export interface SearchMatchDTO {
+  repo: core.RepoID;
+  repoName: string;
+  path: string;
+  line: number /* int */;
+  col: number /* int */;
+  text: string;
+  editorUrl?: string;
+}
+/**
+ * SearchProblemDTO says why a repo could not be searched. Kind is
+ * "timed_out", "git_failed" or "missing". Message says what to do next.
+ */
+export interface SearchProblemDTO {
+  repo: core.RepoID;
+  repoName: string;
+  kind: string;
+  message: string;
+}
+/**
+ * SearchResponse is the 200 body of POST /api/search. Truncated is true when
+ * a cap (200 per repo, 1,000 in total) cut some matches.
+ */
+export interface SearchResponse {
+  matches: SearchMatchDTO[];
+  problems: SearchProblemDTO[];
+  truncated: boolean;
+}
