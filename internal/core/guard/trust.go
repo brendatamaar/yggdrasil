@@ -143,7 +143,7 @@ func StepTrust(t Trust, in TrustInput) (Trust, []Command) {
 	case Unknown:
 		if in, ok := in.(Scanned); ok {
 			if in.Scan.Empty() {
-				return NoConfig{Repo: st.Repo}, nil
+				return NoConfig(st), nil
 			}
 			return neverTrusted(st.Repo, in.Scan)
 		}

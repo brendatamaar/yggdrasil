@@ -178,9 +178,7 @@ func checkAcceptedLine(t *testing.T, tail string) {
 	}
 	var seen []string
 	for _, raw := range splitRaw(line) {
-		for _, w := range bashWords(raw) {
-			seen = append(seen, w)
-		}
+		seen = append(seen, bashWords(raw)...)
 	}
 	if len(seen) != len(argv) {
 		t.Fatalf("%q: shell makes %q, guard judged %q", line, seen, argv)

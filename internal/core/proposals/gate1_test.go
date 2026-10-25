@@ -57,10 +57,7 @@ func TestProtectedListsMatchTheGuard(t *testing.T) {
 		return out
 	}
 	// ".git" is refused by CheckRelPath, not by IsProtectedPath.
-	var dirs []string
-	for _, d := range protectedDirNames {
-		dirs = append(dirs, d)
-	}
+	dirs := append([]string(nil), protectedDirNames...)
 	guardDirs := guard.ProtectedDirNames()
 	var guardNoGit []string
 	for _, d := range guardDirs {
