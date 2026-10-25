@@ -203,3 +203,11 @@ Approved 2026-10-25. (1) Phase 2 checklist done, v0.3.0 tagged by the human. (2)
 - `docs/design/guard.md`, `docs/design/tasks.md`, `docs/design/proposals.md`, `docs/design/mcp.md`.
 - Decision recorded: MCP `pull` stays a direct tool (ff-only, clean tree, no build/editor on the checkout, audited). Read as the one explicit exception to invariant 2; goes into the threat model.
 - Next: foundations (one go-backend agent), then batch 1.
+
+### Progress log
+
+- **Foundations** merged (`89f763a`, `6f9a669`): contracts for guard, tasks, proposals, mcp; adapter `Policy`/`RepoConfigProvider`/`MCPConfigurer`; migration 00004; API stubs (501) and DTOs; `proposals`/`board` topics. archtest now allows `crypto/sha256` and `encoding/hex` in core. Core domains cannot import each other, so `tasks.Message` carries a shell-filled `Admission` (see tasks.md Deviation).
+- **Batch 1** merged: G1 `core/guard` (`fbaf9ec`), K1 `core/tasks`, P1 `platform.ResolveRoot` + `PathResolver` contract. Notes for later tasks:
+  - S1: `StateFromRows` rejects Phase 2 `queued`/`running` rows with no turn row; startup must mark them interrupted before loading. `Task.Caps` is not stored; set it on load. `Schedule` admits only on `Wake`: send one after every enqueue and release. Extra `FinishTurn` on cancel-while-waiting and `PrepareFailed`; `TaskRow.IdleAt` goes to `tasks.finished_at`. Cancel of a `Starting` task relies on the shell feeding `RunFinished{Cancelled}` after `KillRun`.
+  - S2/C1: `guard.Trusted` carries a `Scan` slice (no `==`). The shell sets `Call.Globs` and the cwd so relative globs resolve inside a root. `ResolveRoot` accepts `\host\share`; the guard compares roots.
+  - Manual (P1): 8.3 short-name subtest with a short `TEMP`; junction into `\wsl$` returns `ErrWSLPath`; symlink tests with Developer Mode.
