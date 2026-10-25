@@ -22,6 +22,13 @@ All notable changes to Yggdrasil are documented here. The format follows [Keep a
 - Themes: System, Harbour, Daylight, Dracula, Rosé Pine, Nord and Gruvbox, all checked for readable contrast (UI-05).
 - `task smoke` (also in CI) checks the built `ygg.exe` on Windows: doctor, seed, a demo task, loopback and Host/Origin refusal, static files, the refusal of a repo with its own Claude Code configuration, and that killing `ygg` ends an agent's whole process tree; `task smoke:real` runs a short real Claude Code session (a sub-agent, the Ask-mode and repo-folder refusals, cancel).
 
+- Repo page with changes, diffs, history, commit detail and branches; git actions (fetch, fast-forward-only pull, checkout, cross-repo branch switch) that never force, reset or delete (WS-05 to WS-07). Open a repo in your editor or show it in the folder view (WS-08).
+- Git hosts: GitLab (several instances), GitHub and Gitea. Merge/pull request and pipeline status per repo, an MR inbox, tokens optional and read from `.env`; links from hosts are only shown when they are http(s) (GH-01, GH-02, GH-04).
+- Builds: toolchain modules for Node, Maven (with dependency ordering), Gradle and custom commands; an ordered build queue with presets, live logs, history and artifacts (BL-01 to BL-07, BL-10, BL-11, BL-15). Draft of `docs/writing-a-toolchain.md`.
+- Code search across tracked repos with `git grep`, literal or regex, file filters and editor links (XR-01).
+- Home widgets: Git activity, Merge requests, Needs attention, CI failures, Builds and Recent areas (UI-03).
+- `task fixtures` generates the demo project with extra repos and recorded host data; `task perf` checks that 50 repos refresh in under 10 seconds (WS-02).
+
 ### Changed
 - Only Ask mode (read-only) can be started in this version; Code mode needs worktrees and the path guard (Phase 3).
 - An agent will not run in a repo that has its own Claude Code configuration (settings, MCP servers, agent definitions) until repo trust exists (SF-09).
@@ -31,6 +38,7 @@ All notable changes to Yggdrasil are documented here. The format follows [Keep a
 - The "light" theme is now called Daylight.
 
 ### Fixed
+- Status refresh for 50 repos: about 8 s instead of 15 to 20 s, by reading the last commit from the git object store without a process (falls back to `git log` when unsure) and caching it by HEAD (WS-02).
 - Terminal sessions now check a `.cmd` or `.bat` program's arguments the same way as other processes do. No child process on Windows looks for commands in its working folder, so a program planted in a worktree can't run instead of the real one (SF-02).
 - WSL paths written with `\\.\UNC\`, `\??\` or `GLOBALROOT` device prefixes are refused like `\\wsl$` paths (PL-04).
 - Live task status messages always arrive in order, so the browser no longer refetches on a gap that wasn't one.

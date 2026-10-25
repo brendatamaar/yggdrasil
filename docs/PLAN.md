@@ -65,23 +65,23 @@ Goal: the structure every feature builds on.
 
 Goal: the workspace half matches the personal tool.
 
-- [ ] Project and repo tracking with folder browser, preview, rescan (WS-01).
-- [ ] Repo status, filters, Projects page tabs with live counts (WS-02, WS-03, WS-04).
-- [ ] Repo page: changes, diffs, history, commit detail, branches (WS-05).
-- [ ] Git actions: fetch, fetch all, ff-only pull, checkout, cross-repo branch switch (WS-06, WS-07).
-- [ ] Open in editor / show in folder (WS-08).
-- [ ] Git hosts: GitLab (multiple instances), GitHub, Gitea; MR/PR and pipeline status; MR inbox; optional tokens (GH-01, GH-02, GH-04). MR creation via push options (GH-03) moved to Phase 3: it is a push, so it needs proposals.
-- [ ] Toolchain module interface (BL-10) and `docs/writing-a-toolchain.md` draft.
-- [ ] Toolchain modules: Node, Maven (with dependency ordering), Gradle, and the custom command fallback (BL-01, BL-02, BL-04, BL-11, BL-15).
+- [x] Project and repo tracking with folder browser, preview, rescan (WS-01).
+- [x] Repo status, filters, Projects page tabs with live counts (WS-02, WS-03, WS-04).
+- [x] Repo page: changes, diffs, history, commit detail, branches (WS-05).
+- [x] Git actions: fetch, fetch all (per-project; no all-projects scope, see phase-2.md), ff-only pull, checkout, cross-repo branch switch (WS-06, WS-07).
+- [x] Open in editor / show in folder (WS-08).
+- [x] Git hosts: GitLab (multiple instances), GitHub, Gitea; MR/PR and pipeline status; MR inbox; optional tokens (GH-01, GH-02, GH-04). MR creation via push options (GH-03) moved to Phase 3: it is a push, so it needs proposals.
+- [x] Toolchain module interface (BL-10) and `docs/writing-a-toolchain.md` draft.
+- [x] Toolchain modules: Node, Maven (with dependency ordering), Gradle, and the custom command fallback (BL-01, BL-02, BL-04, BL-11, BL-15).
   - **Core:** Maven dependency ordering (BL-04) is pure, in `internal/core/builds`; detection and runs in `internal/builds`.
-- [ ] Builds: ordered steps, queue, presets, live logs, history, artifacts (BL-03, BL-05–BL-07).
+- [x] Builds: ordered steps, queue, presets, live logs, history, artifacts (BL-03, BL-05–BL-07).
   - **Design:** `docs/design/builds.md` (approved 2026-10-18). Foundations on `main`: migration 00002, `Store.Commit`, `platform.StartFunc` with fake and contract suite, hub `publishNext` and topic type, `apperr`.
   - **Core:** queue and step state machine in `internal/core/builds`; execution, logs and artifacts in `internal/builds`.
-- [ ] Code search with editor links (XR-01).
+- [x] Code search with editor links (XR-01).
 - [x] Home: hero scene, composer placeholder, suggestion chips (UI-01).
-- [ ] Widgets: Git activity, Merge requests, Needs attention, CI failures, Builds, Recent areas, This machine (UI-03).
+- [x] Widgets: Git activity, Merge requests, Needs attention, CI failures, Builds, Recent areas, This machine (UI-03).
 - [x] Remaining themes (UI-05).
-- [ ] Performance check: status refresh for 50 repos under 10 seconds.
+- [x] Performance check: status refresh for 50 repos under 10 seconds. Measured 8.0 to 8.4 s on the dev machine (was 15 to 20 s); re-verify on a typical machine with `task perf`.
 
 **Exit:** the demo project shows correct status, MRs, pipelines and builds; daily workspace use is possible.
 
