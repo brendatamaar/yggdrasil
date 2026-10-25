@@ -92,9 +92,73 @@ func (TurnEnds) isIntegrityInput()       {}
 // StepIntegrity is (state, input) -> (state, commands) for the integrity
 // check (the StepIntegrity table of docs/design/guard.md). Any pair it does
 // not handle, including an input for another turn, changes nothing.
-//
-// STUB (task G1 implements it): returns the state unchanged and no commands.
 func StepIntegrity(s Integrity, in IntegrityInput) (Integrity, []Command) {
-	_ = in
+	switch st := s.(type) {
+	case IntegrityIdle:
+		if in, ok := in.(TurnStarts); ok && in.Mode == core.ModeAsk {
+			return Arming{Turn: in.Turn}, []Command{TakeSnapshot{Turn: in.Turn, Phase: PhaseBefore}}
+		}
+	case Arming:
+		switch in := in.(type) {
+		case SnapshotTaken:
+			if in.Turn == st.Turn && in.Phase == PhaseBefore {
+				return Armed{Turn: st.Turn, Before: in.Snap}, nil
+			}
+		case SnapshotFailed:
+			if in.Turn == st.Turn && in.Phase == PhaseBefore {
+				return unverifiable(st.Turn, in.Reason)
+			}
+		}
+	case Armed:
+		if in, ok := in.(TurnEnds); ok && in.Turn == st.Turn {
+			return Checking(st), []Command{TakeSnapshot{Turn: st.Turn, Phase: PhaseAfter}}
+		}
+	case Checking:
+		switch in := in.(type) {
+		case SnapshotTaken:
+			if in.Turn != st.Turn || in.Phase != PhaseAfter {
+				break
+			}
+			if st.Before.Equal(in.Snap) {
+				return Clean{Turn: st.Turn}, []Command{
+					Audit{Entry: AuditEntry{Action: "guard.integrity", Outcome: "clean", Turn: st.Turn}},
+				}
+			}
+			changes := diff(in.Snap)
+			return Violated{Turn: st.Turn, Changes: changes}, []Command{
+				StopTask{Turn: st.Turn, Reason: StopTreeChanged},
+				FlagTask{Turn: st.Turn, Changes: changes},
+				Audit{Entry: AuditEntry{Action: "guard.integrity", Outcome: "violated", Turn: st.Turn, Files: changePaths(changes)}},
+			}
+		case SnapshotFailed:
+			if in.Turn == st.Turn && in.Phase == PhaseAfter {
+				return unverifiable(st.Turn, in.Reason)
+			}
+		}
+	}
 	return s, nil
+}
+
+func unverifiable(t TurnID, why string) (Integrity, []Command) {
+	return Unverifiable{Turn: t, Why: why}, []Command{
+		StopTask{Turn: t, Reason: StopCannotVerify},
+		Audit{Entry: AuditEntry{Action: "guard.integrity", Outcome: "unverifiable", Turn: t}},
+	}
+}
+
+// diff lists the paths the shell attached to the After snapshot.
+func diff(after Snapshot) []Change {
+	var out []Change
+	for _, p := range after.Paths {
+		out = append(out, Change{Path: p})
+	}
+	return out
+}
+
+func changePaths(cs []Change) []string {
+	var out []string
+	for _, c := range cs {
+		out = append(out, c.Path)
+	}
+	return out
 }
