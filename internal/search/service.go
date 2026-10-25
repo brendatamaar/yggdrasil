@@ -104,16 +104,28 @@ func (s *Service) Search(ctx context.Context, q coresearch.Query) (coresearch.Se
 
 	state, cmds := coresearch.Step(coresearch.Search{}, coresearch.Begin{Query: q, Repos: repos})
 	inputs := make(chan coresearch.Input, len(repos)) // one answer per repo: workers never block
-	var g errgroup.Group
-	g.SetLimit(s.d.Parallel)
-	for _, c := range cmds {
-		if cmd, ok := c.(coresearch.Grep); ok {
-			g.Go(func() error {
+	var workers, dispatcher errgroup.Group
+	workers.SetLimit(s.d.Parallel)
+	// The dispatcher blocks while all slots are busy, so it runs in its own
+	// goroutine: this goroutine keeps watching runCtx and the client.
+	dispatcher.Go(func() error {
+		for _, c := range cmds {
+			cmd, ok := c.(coresearch.Grep)
+			if !ok {
+				continue
+			}
+			if runCtx.Err() != nil { // no slot is worth waiting for now
+				inputs <- coresearch.RepoFailed{Repo: cmd.Repo.ID, Kind: coresearch.ProblemTimedOut}
+				continue
+			}
+			workers.Go(func() error {
 				inputs <- s.worker(runCtx, cmd)
 				return nil
 			})
 		}
-	}
+		return workers.Wait()
+	})
+	wait := func() { _ = dispatcher.Wait() } // S1: no git process outlives the request
 
 	for state.Searching() {
 		select {
@@ -123,8 +135,23 @@ func (s *Service) Search(ctx context.Context, q coresearch.Query) (coresearch.Se
 			s.run(out, cancelAll)
 		case <-runCtx.Done():
 			if ctx.Err() != nil { // the client went away
-				_ = g.Wait()
+				wait()
 				return coresearch.Search{}, ctx.Err()
+			}
+			// A repo that already answered is not timed out.
+		drain:
+			for state.Searching() {
+				select {
+				case in := <-inputs:
+					var out []coresearch.Command
+					state, out = coresearch.Step(state, in)
+					s.run(out, cancelAll)
+				default:
+					break drain
+				}
+			}
+			if !state.Searching() {
+				break
 			}
 			var out []coresearch.Command
 			state, out = coresearch.Step(state, coresearch.Deadline{})
@@ -132,7 +159,7 @@ func (s *Service) Search(ctx context.Context, q coresearch.Query) (coresearch.Se
 		}
 	}
 	cancelAll()
-	_ = g.Wait() // S1: no git process outlives the request
+	wait()
 	return state, nil
 }
 
