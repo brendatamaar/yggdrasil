@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/brendatamaar/yggdrasil/internal/core"
 )
 
 func TestParseQueryAccepts(t *testing.T) {
@@ -97,31 +99,88 @@ func TestParseQueryRoundTrip(t *testing.T) {
 	}
 }
 
+// validQuery is an independent statement of what a parsed Query must satisfy.
+// It deliberately does not call ParseQuery or Validate.
+func validQuery(q Query) bool {
+	if strings.TrimSpace(q.Pattern) == "" || len(q.Pattern) > MaxPatternBytes ||
+		!utf8.ValidString(q.Pattern) || strings.ContainsAny(q.Pattern, "\x00\r\n") {
+		return false
+	}
+	if q.Mode != ModeLiteral && q.Mode != ModeRegex {
+		return false
+	}
+	if len(q.Repos) > MaxRepoFilter {
+		return false
+	}
+	seenRepo := map[string]bool{}
+	for _, id := range q.Repos {
+		s := string(id)
+		if s == "" || strings.ContainsAny(s, " \t\r\n/\\") || seenRepo[s] {
+			return false
+		}
+		seenRepo[s] = true
+	}
+	if len(q.Paths) > MaxPaths {
+		return false
+	}
+	seenPath := map[string]bool{}
+	for _, p := range q.Paths {
+		if strings.TrimSpace(p) == "" || len(p) > MaxPathBytes || !utf8.ValidString(p) ||
+			strings.ContainsAny(p, "\x00\r\n") || strings.HasPrefix(p, "-") ||
+			strings.Contains(p, ":") || strings.HasPrefix(p, "/") || strings.HasPrefix(p, "\\") ||
+			seenPath[p] {
+			return false
+		}
+		seenPath[p] = true
+		for _, seg := range strings.Split(strings.ReplaceAll(p, "\\", "/"), "/") {
+			if seg == ".." {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func TestValidQueryOracleRejects(t *testing.T) {
+	// The oracle itself must be able to say no.
+	bad := []Query{
+		{Pattern: "", Mode: ModeLiteral},
+		{Pattern: "a", Mode: ""},
+		{Pattern: "a", Mode: ModeLiteral, Paths: []string{"a/../b"}},
+		{Pattern: "a", Mode: ModeLiteral, Paths: []string{`a\..\b`}},
+		{Pattern: "a", Mode: ModeLiteral, Repos: []core.RepoID{"a/b"}},
+	}
+	for _, q := range bad {
+		if validQuery(q) {
+			t.Errorf("oracle accepted %+v", q)
+		}
+	}
+}
+
 func FuzzParseQuery(f *testing.F) {
 	for _, s := range []string{"foo", "-v", "--output=x", "a\nb", "a\x00", strings.Repeat("a", 600), "é", ""} {
-		f.Add(s, "literal", "*.go")
-		f.Add(s, "regex", "../x")
-		f.Add(s, "", ":(top)")
+		f.Add(s, "literal", "*.go", "r1")
+		f.Add(s, "regex", "*.go", "a b")
+		f.Add(s, "", "*.go", "")
+		f.Add(s, "regex", "../x", "r")
+		f.Add(s, "regex", ":(top)", "r")
+		f.Add(s, "regex", "a/../b", "r")
+		f.Add(s, "regex", `a\..\b`, "r")
+		f.Add(s, "regex", "-x", "r")
+		f.Add(s, "regex", "/abs", "r")
+		f.Add(s, "regex", "C:/x", "r")
 	}
-	f.Fuzz(func(t *testing.T, pattern, mode, path string) {
-		q, err := ParseQuery(RawQuery{Pattern: pattern, Mode: mode, Paths: []string{path}})
+	f.Fuzz(func(t *testing.T, pattern, mode, path, repo string) {
+		q, err := ParseQuery(RawQuery{Pattern: pattern, Mode: mode, Paths: []string{path}, Repos: []string{repo}})
 		if err != nil {
 			if !errors.Is(err, ErrInvalidQuery) {
 				t.Fatalf("unclassified error: %v", err)
 			}
 			return
 		}
-		// accepted => valid
-		if err := q.Validate(); err != nil {
-			t.Fatalf("accepted but invalid: %v", err)
-		}
-		if !utf8.ValidString(q.Pattern) || len(q.Pattern) > MaxPatternBytes || strings.ContainsAny(q.Pattern, "\x00\r\n") {
-			t.Fatalf("bad pattern accepted: %q", q.Pattern)
-		}
-		for _, p := range q.Paths {
-			if strings.HasPrefix(p, "-") || strings.Contains(p, ":") || strings.HasPrefix(p, "/") || strings.Contains(p, "..") && slicesHasDotDot(p) {
-				t.Fatalf("bad path accepted: %q", p)
-			}
+		// accepted => valid, by the independent predicate
+		if !validQuery(q) {
+			t.Fatalf("accepted an invalid query: %+v", q)
 		}
 		// round trip
 		q2, err := ParseQuery(q.Raw())
@@ -129,15 +188,6 @@ func FuzzParseQuery(f *testing.F) {
 			t.Fatalf("round trip failed: %+v %+v %v", q, q2, err)
 		}
 	})
-}
-
-func slicesHasDotDot(p string) bool {
-	for _, seg := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
-		if seg == ".." {
-			return true
-		}
-	}
-	return false
 }
 
 func TestParseEditor(t *testing.T) {

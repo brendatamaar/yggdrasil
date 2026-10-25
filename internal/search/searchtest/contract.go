@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	coresearch "github.com/brendatamaar/yggdrasil/internal/core/search"
 	"github.com/brendatamaar/yggdrasil/internal/search"
@@ -21,6 +22,13 @@ type Harness struct {
 	Repo func(files map[string]string) string
 	// Missing is a folder that does not exist.
 	Missing string
+	// NotRepo returns an existing folder that is not a git repository.
+	NotRepo func() string
+	// Block returns a repo whose search stays running until its context ends,
+	// and a channel that is closed once the search runs. Optional: when nil,
+	// the mid-flight clause only checks that cancelling never yields a
+	// failure other than the context's error.
+	Block func() (dir string, started <-chan struct{})
 }
 
 // GrepperContract is the contract of search.Grepper. It runs against the fake
@@ -77,12 +85,18 @@ func GrepperContract(t *testing.T, newHarness func(t *testing.T) Harness) {
 		h := newHarness(t)
 		query := q("a.c")
 		query.Mode = coresearch.ModeRegex
-		res := run(t, h, h.Repo(files), query)
-		if len(res.Matches) != 2 || res.Matches[0].Col != 7 { // README.md and regex.txt ("abc")
+		dir := h.Repo(files)
+		res := run(t, h, dir, query)
+		// README.md ("a.c" at column 7) and regex.txt ("abc" at column 1), nothing else.
+		if len(res.Matches) != 2 {
+			t.Fatalf("matches = %+v", res.Matches)
+		}
+		if a, b := res.Matches[0], res.Matches[1]; a.Path != "README.md" || a.Line != 1 || a.Col != 7 ||
+			b.Path != "regex.txt" || b.Line != 1 || b.Col != 1 {
 			t.Fatalf("matches = %+v", res.Matches)
 		}
 		query.Pattern = "ne+dle = [0-9]"
-		if res := run(t, h, h.Repo(files), query); len(res.Matches) != 1 {
+		if res := run(t, h, dir, query); len(res.Matches) != 1 || res.Matches[0].Path != "src/App.java" {
 			t.Fatalf("matches = %+v", res.Matches)
 		}
 	})
@@ -95,8 +109,13 @@ func GrepperContract(t *testing.T, newHarness func(t *testing.T) Harness) {
 		}
 		insensitive := q("Needle")
 		insensitive.Case = false
-		if res := run(t, h, dir, insensitive); len(res.Matches) < 4 {
+		// App.java, Aid.go, README.md, -dash/file.txt, with space/a.txt (the binary is skipped).
+		if res := run(t, h, dir, insensitive); len(res.Matches) != 5 {
 			t.Fatalf("case-insensitive matches = %+v", res.Matches)
+		}
+		lower := run(t, h, dir, q("needle"))
+		if len(lower.Matches) != 3 { // App.java, -dash/file.txt, with space/a.txt
+			t.Fatalf("case-sensitive lower-case matches = %+v", lower.Matches)
 		}
 	})
 	sub("pathspec filter", func(t *testing.T) {
@@ -177,6 +196,71 @@ func GrepperContract(t *testing.T, newHarness func(t *testing.T) Harness) {
 		_, err := h.Grepper.Grep(ctx, dir, q("needle"))
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("err = %v, want context.Canceled", err)
+		}
+	})
+	sub("cancelling mid-flight returns the context error", func(t *testing.T) {
+		h := newHarness(t)
+		if h.Block == nil {
+			// Real git: the search may finish before the cancel lands, so only
+			// the failure mode is pinned: never a git failure.
+			dir := h.Repo(map[string]string{"a.txt": strings.Repeat("needle\n", 3000)})
+			ctx, cancel := context.WithCancel(context.Background())
+			go func() { time.Sleep(10 * time.Millisecond); cancel() }()
+			_, err := h.Grepper.Grep(ctx, dir, q("needle"))
+			cancel()
+			if err != nil && !errors.Is(err, context.Canceled) {
+				t.Fatalf("err = %v, want nil or context.Canceled", err)
+			}
+			return
+		}
+		dir, started := h.Block()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() {
+			_, err := h.Grepper.Grep(ctx, dir, q("needle"))
+			done <- err
+		}()
+		select {
+		case <-started:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the search never started")
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("the search ended before the cancel: %v", err)
+		case <-time.After(20 * time.Millisecond):
+		}
+		cancel()
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("err = %v, want context.Canceled", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("the search did not stop after the cancel")
+		}
+	})
+	sub("a folder that is not a repo is ErrGitFailed", func(t *testing.T) {
+		h := newHarness(t)
+		res, err := h.Grepper.Grep(context.Background(), h.NotRepo(), q("needle"))
+		if !errors.Is(err, search.ErrGitFailed) || len(res.Matches) != 0 {
+			t.Fatalf("matches=%v err=%v, want ErrGitFailed", res.Matches, err)
+		}
+	})
+	sub("a regex both engines refuse is ErrGitFailed", func(t *testing.T) {
+		h := newHarness(t)
+		dir := h.Repo(files)
+		for _, p := range []string{"(ab", "[a"} {
+			query := q(p)
+			query.Mode = coresearch.ModeRegex
+			if _, err := h.Grepper.Grep(context.Background(), dir, query); !errors.Is(err, search.ErrGitFailed) {
+				t.Errorf("pattern %q: err = %v, want ErrGitFailed", p, err)
+			}
+		}
+		// The same text as a literal is fine.
+		if res := run(t, h, dir, q("(ab")); len(res.Matches) != 0 {
+			t.Errorf("literal %q: %+v", "(ab", res.Matches)
 		}
 	})
 	sub("a missing folder is ErrMissing", func(t *testing.T) {

@@ -1,8 +1,10 @@
 package search_test
 
 import (
+	"regexp/syntax"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/brendatamaar/yggdrasil/internal/apperr"
 	coresearch "github.com/brendatamaar/yggdrasil/internal/core/search"
@@ -57,10 +59,60 @@ func TestParseRequestRejectsEachRule(t *testing.T) {
 	}
 }
 
+// validRequest is an independent statement of what an accepted request must
+// satisfy; it does not call ParseQuery, Validate or CheckRegex.
+func validRequest(q coresearch.Query) bool {
+	if strings.TrimSpace(q.Pattern) == "" || len(q.Pattern) > coresearch.MaxPatternBytes ||
+		!utf8.ValidString(q.Pattern) || strings.ContainsAny(q.Pattern, "\x00\r\n") {
+		return false
+	}
+	switch q.Mode {
+	case coresearch.ModeLiteral:
+	case coresearch.ModeRegex:
+		if strings.Contains(q.Pattern, "(?") {
+			return false
+		}
+		if _, err := syntax.Parse(q.Pattern, syntax.Perl); err != nil {
+			return false
+		}
+	default:
+		return false
+	}
+	if len(q.Repos) > coresearch.MaxRepoFilter || len(q.Paths) > coresearch.MaxPaths {
+		return false
+	}
+	for _, id := range q.Repos {
+		if id == "" || strings.ContainsAny(string(id), " \t\r\n/\\") {
+			return false
+		}
+	}
+	for _, p := range q.Paths {
+		if strings.TrimSpace(p) == "" || len(p) > coresearch.MaxPathBytes || !utf8.ValidString(p) ||
+			strings.ContainsAny(p, "\x00\r\n") || strings.HasPrefix(p, "-") || strings.Contains(p, ":") ||
+			strings.HasPrefix(p, "/") || strings.HasPrefix(p, "\\") {
+			return false
+		}
+		for _, seg := range strings.Split(strings.ReplaceAll(p, "\\", "/"), "/") {
+			if seg == ".." {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func FuzzParseRequest(f *testing.F) {
 	f.Add("needle", "literal", "*.go", "rep_a")
 	f.Add("(a|b)+", "regex", "src/x", "")
-	f.Add("--x", "regex", "-x", "../")
+	f.Add("--x", "regex", "-x", "r")
+	f.Add("--x", "regex", "*.go", "../")
+	f.Add("x", "regex", "../x", "r")
+	f.Add("x", "regex", ":(top)x", "r")
+	f.Add("x", "regex", "/abs", "r")
+	f.Add("(ab", "regex", "", "")
+	f.Add("(?i)a", "regex", "", "")
+	f.Add("a", "literal", `a\..\b`, "")
+	f.Add("a", "literal", "a/../b", "")
 	f.Fuzz(func(t *testing.T, pattern, mode, path, repo string) {
 		raw := coresearch.RawQuery{Pattern: pattern, Mode: mode, Case: true}
 		if path != "" {
@@ -73,14 +125,8 @@ func FuzzParseRequest(f *testing.F) {
 		if err != nil {
 			return
 		}
-		// accepted => valid
-		if q.Validate() != nil || search.CheckRegex(q) != nil {
+		if !validRequest(q) {
 			t.Fatalf("accepted an invalid query %+v", q)
-		}
-		for _, p := range q.Paths {
-			if strings.HasPrefix(p, "-") || strings.Contains(p, "..") && strings.Contains(p, "/..") {
-				t.Fatalf("accepted path filter %q", p)
-			}
 		}
 		again, err := search.ParseRequest(q.Raw())
 		if err != nil || again.Pattern != q.Pattern {

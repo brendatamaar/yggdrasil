@@ -109,7 +109,8 @@ func TestPropCapsHold(t *testing.T) {
 	})
 }
 
-// C2: results are sorted by (repo name, repo, path, line, col) with no duplicates.
+// C2: results are sorted strictly by (repo name, repo id, path, line, col). The
+// oracle is a field-by-field comparator that does not use the production one.
 func TestPropResultsOrdered(t *testing.T) {
 	forSeeds(t, func(t *testing.T, r *rand.Rand) {
 		repos := genRepos(r)
@@ -117,14 +118,38 @@ func TestPropResultsOrdered(t *testing.T) {
 		for _, rr := range repos {
 			names[rr.ID] = rr.Name
 		}
+		// less is strict "a sorts before b".
+		less := func(a, b Match) bool {
+			if na, nb := names[a.Repo], names[b.Repo]; na != nb {
+				return na < nb
+			}
+			if a.Repo != b.Repo {
+				return a.Repo < b.Repo
+			}
+			if a.Path != b.Path {
+				return a.Path < b.Path
+			}
+			if a.Line != b.Line {
+				return a.Line < b.Line
+			}
+			return a.Col < b.Col
+		}
 		stepAll(t, repos, genInputs(r, repos), func(s Search) {
 			for i := 1; i < len(s.Results); i++ {
 				a, b := s.Results[i-1], s.Results[i]
-				if compare(a, b, names) >= 0 {
-					t.Fatalf("results %d and %d out of order or equal: %+v then %+v", i-1, i, a, b)
+				if !less(a, b) {
+					t.Fatalf("results %d and %d out of order or duplicate: %+v then %+v", i-1, i, a, b)
 				}
-				if a.Repo == b.Repo && a.Path == b.Path && a.Line == b.Line && a.Col == b.Col {
-					t.Fatalf("duplicate position: %+v %+v", a, b)
+			}
+			for id, n := range s.PerRepo {
+				got := 0
+				for _, m := range s.Results {
+					if m.Repo == id {
+						got++
+					}
+				}
+				if got != n || n == 0 {
+					t.Fatalf("stale PerRepo[%s] = %d, results have %d", id, n, got)
 				}
 			}
 		})
@@ -230,37 +255,92 @@ func equalMaps[K comparable, V comparable](a, b map[K]V) bool {
 	return true
 }
 
-// C5: once done, every repo of Begin is in exactly one of: has matches, has no
-// matches, has a problem. A problem repo has no matches, and a repo that is
-// still pending is not yet accounted for.
+// C5: once done, every repo of Begin is in exactly one bucket. The oracle
+// records the first input each repo had accepted and predicts the bucket.
 func TestPropEveryRepoAccounted(t *testing.T) {
-	forSeeds(t, func(t *testing.T, r *rand.Rand) {
-		repos := genRepos(r)
-		ins := genInputs(r, repos)
-		ins = append(ins, Deadline{}) // forces done
-		s := stepAll(t, repos, ins, func(Search) {})
-		if !s.Done() {
-			t.Fatal("not done after the deadline")
-		}
-		has := map[core.RepoID]bool{}
-		for _, m := range s.Results {
-			has[m.Repo] = true
-		}
-		for _, rr := range repos {
-			_, problem := s.Problems[rr.ID]
-			if problem && has[rr.ID] {
-				t.Fatalf("repo %s has both matches and a problem", rr.ID)
-			}
-			if s.Pending[rr.ID] {
-				t.Fatalf("repo %s still pending when done", rr.ID)
-			}
-		}
-		for id := range s.Problems {
-			if !slices.ContainsFunc(repos, func(rr RepoRef) bool { return rr.ID == id }) {
-				t.Fatalf("problem for unknown repo %s", id)
-			}
-		}
-	})
+	for _, finalDeadline := range []bool{true, false} {
+		t.Run(fmt.Sprintf("finalDeadline=%v", finalDeadline), func(t *testing.T) {
+			forSeeds(t, func(t *testing.T, r *rand.Rand) {
+				repos := genRepos(r)
+				ins := genInputs(r, repos)
+				if finalDeadline {
+					ins = append(ins, Deadline{})
+				}
+				asked := map[core.RepoID]bool{}
+				for _, rr := range repos {
+					asked[rr.ID] = true
+				}
+				type first struct {
+					failed bool
+					kind   ProblemKind
+				}
+				firsts := map[core.RepoID]first{}
+				timedOut := map[core.RepoID]bool{}
+				deadline := false
+				for _, in := range ins {
+					if deadline {
+						break // everything after the deadline is ignored
+					}
+					switch x := in.(type) {
+					case RepoResult:
+						if _, ok := firsts[x.Repo]; asked[x.Repo] && !ok {
+							firsts[x.Repo] = first{}
+						}
+					case RepoFailed:
+						if _, ok := firsts[x.Repo]; asked[x.Repo] && !ok {
+							firsts[x.Repo] = first{failed: true, kind: x.Kind}
+						}
+					case Deadline:
+						// A deadline only acts while somebody is pending.
+						if len(firsts) < len(asked) {
+							deadline = true
+							for id := range asked {
+								if _, ok := firsts[id]; !ok {
+									timedOut[id] = true
+								}
+							}
+						}
+					}
+				}
+				s := stepAll(t, repos, ins, func(Search) {})
+				wantDone := len(firsts) == len(asked) || deadline
+				if s.Done() != wantDone {
+					t.Fatalf("Done = %v, want %v", s.Done(), wantDone)
+				}
+				has := map[core.RepoID]bool{}
+				for _, m := range s.Results {
+					has[m.Repo] = true
+				}
+				for id := range asked {
+					f, answered := firsts[id]
+					kind, problem := s.Problems[id]
+					switch {
+					case answered && !f.failed:
+						if problem || s.Pending[id] {
+							t.Fatalf("repo %s answered with a result but problem=%v pending=%v", id, problem, s.Pending[id])
+						}
+					case answered && f.failed:
+						if kind != f.kind || has[id] || s.Pending[id] {
+							t.Fatalf("repo %s failed with %s, got problem %q matches=%v pending=%v", id, f.kind, kind, has[id], s.Pending[id])
+						}
+					case timedOut[id]:
+						if kind != ProblemTimedOut || has[id] || s.Pending[id] {
+							t.Fatalf("repo %s never answered: want timed_out, got %q matches=%v pending=%v", id, kind, has[id], s.Pending[id])
+						}
+					default: // still waiting, no deadline
+						if !s.Pending[id] || problem || has[id] {
+							t.Fatalf("repo %s should be pending only", id)
+						}
+					}
+				}
+				for id := range s.Problems {
+					if !asked[id] {
+						t.Fatalf("problem for unknown repo %s", id)
+					}
+				}
+			})
+		})
+	}
 }
 
 // Commands are data: Begin gives one Grep per distinct repo, a Deadline gives
