@@ -79,6 +79,9 @@ jobs:
       - name: Typecheck
         run: task typecheck
       - name: Go tests (CGO_ENABLED=0)
+        env:
+          # The path contract's 8.3 and link clauses must run on the required job, not skip.
+          YGG_REQUIRE_PATH_FIXTURES: "1"
         run: task test
       - name: Go tests with race detector (cgo, tests only)
         run: task test:race
