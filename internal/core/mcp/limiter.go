@@ -23,6 +23,11 @@ type Allowance struct {
 // token if there is one. A clock that goes backwards refills nothing. M5: it
 // never allows more than Burst + rate x elapsed calls in any window.
 func StepLimiter(b Bucket, t Tick) (Bucket, Allowance) {
+	if t.Now.IsZero() {
+		// No clock reading: deny, change nothing. A zero time must not look
+		// like "a very long time ago" and refill the bucket (C5).
+		return b, Allowance{RetryAfter: time.Second / RatePerSecond}
+	}
 	tokens := b.Tokens
 	if b.Last.IsZero() {
 		tokens = Burst
