@@ -97,26 +97,3 @@ func (Install) isAction()      {}
 
 // Line is one line of the confirmation dialog.
 type Line struct{ Text string }
-
-// Hash is what the user confirms: sha256 hex of the canonical action, a
-// function of the action alone (P8).
-//
-// STUB (task X1 implements it): returns "". internal/core/proposals cannot
-// import crypto/sha256 under the current archtest allowlist; X1 either gets
-// "crypto/sha256" added to the allowlist or hashes a canonical string the core
-// returns. A Confirm compares hashes, so the stub Step never confirms.
-func Hash(a Action) string {
-	_ = a
-	return ""
-}
-
-// Describe is the exact words the confirmation dialog shows: every path, the
-// branch, the remote and the message of the action (P9).
-//
-// STUB (task X1 implements it): one generic line.
-func Describe(a Action) []Line {
-	if a == nil {
-		return nil
-	}
-	return []Line{{Text: "Proposal of kind " + string(a.Kind())}}
-}
