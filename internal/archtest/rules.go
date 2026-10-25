@@ -117,7 +117,7 @@ func onlyInternalImports(name, folder string, allowed ...string) rule {
 // library. Paths match exactly, so "math" does not admit math/rand. time is
 // here for its types (time.Time, time.Duration); clock reads are the linter's job.
 var corePureStdlib = []string{
-	"cmp", "encoding/json", "errors", "fmt", "maps", "math", "math/bits",
+	"cmp", "crypto/sha256", "encoding/hex", "encoding/json", "errors", "fmt", "maps", "math", "math/bits",
 	"slices", "sort", "strconv", "strings", "time", "unicode", "unicode/utf8",
 }
 

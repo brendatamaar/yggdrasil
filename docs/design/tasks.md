@@ -273,3 +273,7 @@ Shell:
 ## Decisions (approved 2026-10-25)
 
 All five recommendations accepted: (1) project mode uses one worktree per repo; (2) idle tasks always accept a new message; (3) Ask turn → `done`, writing turn → `review` until dismissed or shipped; (4) `maxAgents` 1..16, lowering never stops a running task; (5) `internal/mainlock` adopted by builds and repo actions in a small follow-up task.
+
+## Deviation (foundations, 2026-10-25)
+
+archtest `coreSubpackages` forbids core domains importing each other, so `core/tasks` does not call `guard.Admit`. `tasks.Message` carries `Admission{Admitted, Warning, Reason, Message}`, filled by the shell from `guard.Admit`; `Step` refuses (`Reject`) when `!Admitted` and never starts a turn the admission did not allow (K12 is tested on that). `guard.TurnID` and `tasks.TurnID` are separate types converted in the shell.
