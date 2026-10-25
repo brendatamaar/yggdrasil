@@ -50,6 +50,14 @@ func NewGitReader(g gitReads) *GitReader {
 	return &GitReader{g: g, cache: map[string]cachedCommit{}}
 }
 
+// CommitRetainer is the optional interface of a StatusReader that caches per
+// folder. The status service calls Retain when the set of tracked repos changes.
+type CommitRetainer interface {
+	Retain(keep []corerepos.CleanPath)
+}
+
+var _ CommitRetainer = (*GitReader)(nil)
+
 // Retain forgets the cached commits of every folder not in keep. The status
 // service calls it when the set of tracked repos changes, so an untracked
 // repo leaves nothing behind.
@@ -74,7 +82,13 @@ func (r *GitReader) cached(dir, oid string) (git.Commit, bool) {
 	if !ok || c.oid != oid {
 		return git.Commit{}, false
 	}
-	return c.commit, true
+	return cloneCommit(c.commit), true
+}
+
+// cloneCommit copies the slice so a cached commit is never shared with a caller.
+func cloneCommit(c git.Commit) git.Commit {
+	c.Parents = append([]string(nil), c.Parents...)
+	return c
 }
 
 // direct reads the commit from the object store when the git wrapper offers
@@ -90,10 +104,13 @@ func (r *GitReader) direct(dir, oid string) (git.Commit, bool) {
 	return d.HeadCommit(dir, oid)
 }
 
+// remember caches c. A read that finishes after Retain dropped its folder can
+// add one entry back; the next Retain removes it, so the leak is bounded by the
+// number of reads in flight.
 func (r *GitReader) remember(dir, oid string, c git.Commit) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.cache[dir] = cachedCommit{oid: oid, commit: c}
+	r.cache[dir] = cachedCommit{oid: oid, commit: cloneCommit(c)}
 }
 
 // Read implements StatusReader.

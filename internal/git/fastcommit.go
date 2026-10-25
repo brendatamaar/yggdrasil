@@ -25,6 +25,11 @@ import (
 const (
 	maxCommitBytes = 1 << 20
 	maxDeltaDepth  = 50
+	// maxInflateBudget bounds all bytes inflated or produced while resolving
+	// one packed commit, so a long chain of large deltas cannot use much memory.
+	maxInflateBudget = 8 << 20
+	// maxPacks bounds how many pack indexes are tried; beyond it git answers.
+	maxPacks = 64
 )
 
 var errNoFastPath = errors.New("commit is not readable without git")
@@ -33,7 +38,8 @@ var errNoFastPath = errors.New("commit is not readable without git")
 // repo in dir, without starting git. ok is false when it cannot answer for
 // sure (SHA-256 repo, linked worktree, alternates, replace refs, a commit with
 // an encoding header, a signature it cannot parse, a missing object, a pack
-// format it does not know ...); the caller then asks git. Short is left empty.
+// format it does not know ...); the caller then asks git. Short is the first 7 characters of the id, which
+// is what git log shows unless a big repo needs a longer prefix.
 // It only reads files under dir/.git.
 func ReadCommitDirect(dir, oid string) (c Commit, ok bool) {
 	defer func() {
@@ -41,6 +47,11 @@ func ReadCommitDirect(dir, oid string) (c Commit, ok bool) {
 			c, ok = Commit{}, false
 		}
 	}()
+	return readCommitDirect(dir, oid)
+}
+
+// readCommitDirect is ReadCommitDirect without the recover, so tests see panics.
+func readCommitDirect(dir, oid string) (c Commit, ok bool) {
 	if len(oid) != 40 {
 		return Commit{}, false
 	}
@@ -48,13 +59,24 @@ func ReadCommitDirect(dir, oid string) (c Commit, ok bool) {
 		return Commit{}, false
 	}
 	gitDir := filepath.Join(dir, ".git")
-	if fi, err := os.Stat(gitDir); err != nil || !fi.IsDir() {
+	// Real directories only: a symlinked .git or objects could point outside
+	// the tracked repo.
+	if !isRealDir(gitDir) {
 		return Commit{}, false
+	}
+	obj := filepath.Join(gitDir, "objects")
+	if !isRealDir(obj) {
+		return Commit{}, false
+	}
+	// Shallow and grafted repos hide parents; git decides what they mean.
+	for _, f := range []string{"shallow", filepath.Join("info", "grafts")} {
+		if _, err := os.Lstat(filepath.Join(gitDir, f)); !errors.Is(err, os.ErrNotExist) {
+			return Commit{}, false
+		}
 	}
 	if replaceRefsPossible(gitDir) {
 		return Commit{}, false
 	}
-	obj := filepath.Join(gitDir, "objects")
 	if _, err := os.Stat(filepath.Join(obj, "info", "alternates")); err == nil {
 		return Commit{}, false
 	}
@@ -73,7 +95,15 @@ func ReadCommitDirect(dir, oid string) (c Commit, ok bool) {
 	if err != nil {
 		return Commit{}, false
 	}
+	// git log's %h is the shortest unique prefix, at least 7 characters: exactly
+	// 7 in a repo with few objects, longer in a big one.
+	c.Short = oid[:7]
 	return c, true
+}
+
+func isRealDir(p string) bool {
+	fi, err := os.Lstat(p)
+	return err == nil && fi.Mode().IsDir() && fi.Mode()&os.ModeSymlink == 0
 }
 
 func replaceRefsPossible(gitDir string) bool {
@@ -104,6 +134,9 @@ func readObject(objDir, oid string) ([]byte, error) {
 		return nil, err
 	}
 	sum, _ := hex.DecodeString(oid)
+	if len(packs) > maxPacks {
+		return nil, errNoFastPath
+	}
 	for _, idx := range packs {
 		b, err := readPacked(idx, sum)
 		if err == nil {
@@ -172,6 +205,9 @@ func (p *packIndex) find(sum []byte) (off int64, ok bool, err error) {
 		return 0, false, err
 	}
 	hi = int64(binary.BigEndian.Uint32(fan[:]))
+	if lo > hi || hi > p.n {
+		return 0, false, errNoFastPath // damaged index
+	}
 	base := int64(8 + 1024)
 	var cur [20]byte
 	for lo < hi {
@@ -217,7 +253,8 @@ func readPacked(idxPath string, sum []byte) ([]byte, error) {
 		return nil, err
 	}
 	defer pack.Close()
-	typ, data, err := readPackEntry(pack, idx, off, 0)
+	budget := int64(maxInflateBudget)
+	typ, data, err := readPackEntry(pack, idx, off, 0, &budget)
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +266,7 @@ func readPacked(idxPath string, sum []byte) ([]byte, error) {
 
 // readPackEntry returns the type (1 commit, 2 tree, 3 blob, 4 tag) and content
 // of the entry at off, resolving deltas.
-func readPackEntry(pack *os.File, idx *packIndex, off int64, depth int) (int, []byte, error) {
+func readPackEntry(pack *os.File, idx *packIndex, off int64, depth int, budget *int64) (int, []byte, error) {
 	if depth > maxDeltaDepth {
 		return 0, nil, errNoFastPath
 	}
@@ -259,6 +296,11 @@ func readPackEntry(pack *os.File, idx *packIndex, off int64, depth int) (int, []
 	if size > 4*maxCommitBytes {
 		return 0, nil, errNoFastPath
 	}
+	// Each entry inflates `size` bytes and a delta produces about as many; the
+	// budget is shared by the whole chain.
+	if *budget -= 2 * size; *budget < 0 {
+		return 0, nil, errNoFastPath
+	}
 	dataOff := off + int64(i)
 	switch typ {
 	case 1, 2, 3, 4:
@@ -286,7 +328,7 @@ func readPackEntry(pack *os.File, idx *packIndex, off int64, depth int) (int, []
 		if err != nil {
 			return 0, nil, err
 		}
-		bt, base, err := readPackEntry(pack, idx, off-rel, depth+1)
+		bt, base, err := readPackEntry(pack, idx, off-rel, depth+1, budget)
 		if err != nil {
 			return 0, nil, err
 		}
@@ -304,7 +346,7 @@ func readPackEntry(pack *os.File, idx *packIndex, off int64, depth int) (int, []
 		if err != nil {
 			return 0, nil, err
 		}
-		bt, base, err := readPackEntry(pack, idx, boff, depth+1)
+		bt, base, err := readPackEntry(pack, idx, boff, depth+1, budget)
 		if err != nil {
 			return 0, nil, err
 		}
@@ -383,13 +425,13 @@ func applyDelta(base, delta []byte) ([]byte, error) {
 			if sz == 0 {
 				sz = 0x10000
 			}
-			if off < 0 || off+sz > len(base) {
+			if off < 0 || sz < 0 || off+sz > len(base) || len(out)+sz > rs {
 				return nil, errNoFastPath
 			}
 			out = append(out, base[off:off+sz]...)
 		} else if op != 0 {
 			n := int(op)
-			if i+n > len(delta) {
+			if i+n > len(delta) || len(out)+n > rs {
 				return nil, errNoFastPath
 			}
 			out = append(out, delta[i:i+n]...)
