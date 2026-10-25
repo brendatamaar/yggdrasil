@@ -25,12 +25,16 @@ func Step(s Search, in Input) (Search, []Command) {
 		}
 		return merge(s, x), nil
 	case RepoFailed:
-		if !s.Searching() || !s.Pending[x.Repo] || x.Kind.Validate() != nil {
+		if !s.Searching() || !s.Pending[x.Repo] {
 			return s, nil
+		}
+		kind := x.Kind
+		if kind.Validate() != nil {
+			kind = ProblemGitFailed // an unknown reason still ends the repo's wait
 		}
 		n := clone(s)
 		delete(n.Pending, x.Repo)
-		n.Problems[x.Repo] = x.Kind
+		n.Problems[x.Repo] = kind
 		return n, nil
 	case Deadline:
 		if !s.Searching() {

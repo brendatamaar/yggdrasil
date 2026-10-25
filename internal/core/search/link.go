@@ -39,11 +39,23 @@ func EditorURL(e Editor, absPath string, line, col int) (string, error) {
 		return "", fmt.Errorf("editor link needs a file path")
 	}
 	line, col = max(line, 1), max(col, 1)
-	p := strings.ReplaceAll(absPath, "\\", "/")
+	p := strings.ReplaceAll(stripVerbatim(absPath), "\\", "/")
 	if e == EditorIdea {
 		return "idea://open?file=" + escape(p, false) + "&line=" + strconv.Itoa(line), nil
 	}
 	return string(e) + "://file/" + escape(strings.TrimLeft(p, "/"), true) + ":" + strconv.Itoa(line) + ":" + strconv.Itoa(col), nil
+}
+
+// stripVerbatim removes the Windows verbatim prefixes (\\?\ and \\?\UNC\),
+// which editors do not understand. A UNC path becomes \\server\share\...
+func stripVerbatim(p string) string {
+	if rest, ok := strings.CutPrefix(p, `\\?\UNC\`); ok {
+		return `\\` + rest
+	}
+	if rest, ok := strings.CutPrefix(p, `\\?\`); ok {
+		return rest
+	}
+	return p
 }
 
 const hexDigits = "0123456789ABCDEF"
