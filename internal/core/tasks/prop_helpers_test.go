@@ -122,6 +122,9 @@ func genInput(r *rand.Rand, t Task, now time.Time, turnSeq *int) Input {
 	if turn == "" || r.Intn(8) == 0 {
 		turn = TurnID(fmt.Sprintf("t%d", 1+r.Intn(*turnSeq+1)))
 	}
+	if i, ok := t.State.(Idle); ok && i.Turn != "" && r.Intn(2) == 0 {
+		turn = i.Turn // late inputs for the turn that just finished
+	}
 	if r.Intn(8) == 0 {
 		att += Attempt(r.Intn(3) - 1)
 	}
@@ -131,7 +134,7 @@ func genInput(r *rand.Rand, t Task, now time.Time, turnSeq *int) Input {
 		m := Message{
 			Turn: TurnID(fmt.Sprintf("t%d", *turnSeq)), Mode: allModes[r.Intn(4)], Prompt: "do it", Now: now,
 			Admission: Admission{Admitted: r.Intn(5) > 0, Reason: "r", Message: "no"},
-			Caps:      Caps{Depth: r.Intn(3), Concurrent: r.Intn(3)},
+			Caps:      Caps{Depth: 1 + r.Intn(MaxSubagentDepth), Concurrent: 1 + r.Intn(3)},
 		}
 		if m.Mode == core.ModeCurrentBranch || r.Intn(6) == 0 {
 			m.EditsMain = []core.RepoID{"r1"}

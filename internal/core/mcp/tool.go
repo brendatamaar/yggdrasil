@@ -71,7 +71,7 @@ const (
 type Caps struct {
 	Resume          bool
 	PermissionHooks bool
-	Enforcement Enforcement
+	Enforcement     Enforcement
 }
 
 // Enforcement is the core-side copy of the adapter's enforcement level

@@ -55,6 +55,9 @@ type Stopping struct {
 
 // Idle: no run is live. It accepts a new message whatever the outcome.
 type Idle struct {
+	// Turn is the last turn that ran (empty for rows written before turns
+	// existed). IntegrityViolated for it still counts after it finished.
+	Turn    TurnID
 	Outcome Outcome
 	At      time.Time
 }
@@ -109,6 +112,17 @@ const (
 	CauseIntegrityViolated StopCause = "integrity_violated"
 	CauseCapExceeded       StopCause = "cap_exceeded"
 )
+
+// outcome is how a stop of this cause ends.
+func (c StopCause) outcome() Outcome {
+	switch c {
+	case CauseIntegrityViolated:
+		return NeedsYou{Why: NeedsIntegrityViolated}
+	case CauseCapExceeded:
+		return NeedsYou{Why: NeedsCapExceeded}
+	}
+	return Cancelled{}
+}
 
 // NeedsWhy says why an idle task needs the user.
 type NeedsWhy string

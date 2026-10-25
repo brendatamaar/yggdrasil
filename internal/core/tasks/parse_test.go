@@ -179,7 +179,7 @@ func canonicalStates() []State {
 		NeedsYou{Why: NeedsIntegrityViolated}, NeedsYou{Why: NeedsCapExceeded},
 		Failed{Kind: FailPrepare}, Failed{Kind: FailStart}, Failed{Kind: FailRun}, Failed{Kind: FailInterrupted},
 	} {
-		out = append(out, Idle{Outcome: o, At: at}, Idle{Outcome: o})
+		out = append(out, Idle{Outcome: o, At: at}, Idle{Outcome: o}, Idle{Outcome: o, Turn: "t1", At: at}, Idle{Outcome: o, Turn: "t2"})
 	}
 	return out
 }
@@ -241,6 +241,8 @@ func TestStateFromRowsRejects(t *testing.T) {
 	mk := func(f func() (TaskRow, *TurnRow)) rows { a, b := f(); return rows{a, b} }
 	cases := map[string]rows{
 		"unknown status":            {TaskRow{Status: "paused"}, nil},
+		"idle with a bad turn id":   {TaskRow{Status: core.TaskDone, IdleOutcome: "answered", CurrentTurn: "a b"}, nil},
+		"idle turn row mismatch":    {TaskRow{Status: core.TaskDone, IdleOutcome: "answered", CurrentTurn: "t1"}, &TurnRow{ID: "t2", State: TurnFinished}},
 		"empty status":              {TaskRow{}, nil},
 		"draft with turn":           {TaskRow{Status: core.TaskDraft, CurrentTurn: "t1"}, nil},
 		"draft with outcome":        {TaskRow{Status: core.TaskDraft, IdleOutcome: "answered"}, nil},

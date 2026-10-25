@@ -185,7 +185,9 @@ func FormatMax(n int) string { return strconv.Itoa(n) }
 
 // TaskRow is the part of the tasks row that carries the state.
 type TaskRow struct {
-	Status      core.TaskStatus
+	Status core.TaskStatus
+	// CurrentTurn is the live turn; for an idle task it is the last turn that
+	// ran (empty for rows written before turns existed).
 	CurrentTurn TurnID
 	// IdleOutcome is the Idle outcome as stored (tasks.idle_outcome); empty
 	// unless the task is idle. Rows written before turns existed have it
@@ -273,6 +275,11 @@ func StateFromRows(t TaskRow, turn *TurnRow) (State, error) {
 		return liveFromRows(t, turn)
 	}
 	// Idle statuses.
+	if t.CurrentTurn != "" {
+		if err := t.CurrentTurn.Validate(); err != nil || (turn != nil && turn.ID != t.CurrentTurn) {
+			return nil, errors.New("the task's last turn is not valid or does not match its turn row")
+		}
+	}
 	if turn != nil && turn.State != TurnFinished {
 		return nil, errors.New("an idle task cannot have a turn in flight")
 	}
@@ -291,7 +298,7 @@ func StateFromRows(t TaskRow, turn *TurnRow) (State, error) {
 	if o.status() != t.Status {
 		return nil, fmt.Errorf("task status %q does not match outcome %q", string(t.Status), t.IdleOutcome)
 	}
-	return Idle{Outcome: o, At: since(t.IdleAt)}, nil
+	return Idle{Outcome: o, Turn: t.CurrentTurn, At: since(t.IdleAt)}, nil
 }
 
 func liveFromRows(t TaskRow, turn *TurnRow) (State, error) {
@@ -361,7 +368,7 @@ func RowsOf(s State) (TaskRow, *TurnRow) {
 		at := st.Since
 		return TaskRow{Status: core.TaskRunning, CurrentTurn: st.Turn}, &TurnRow{ID: st.Turn, Attempt: st.Attempt, State: TurnStopping, StartedAt: &at, Usage: st.Usage}
 	case Idle:
-		row := TaskRow{Status: st.Status(), IdleOutcome: OutcomeCode(st.Outcome)}
+		row := TaskRow{Status: st.Status(), CurrentTurn: st.Turn, IdleOutcome: OutcomeCode(st.Outcome)}
 		if !st.At.IsZero() {
 			at := st.At
 			row.IdleAt = &at
