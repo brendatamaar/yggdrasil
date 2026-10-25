@@ -32,8 +32,8 @@ func genDemo(t *testing.T, dir string) (string, []repoSummary) {
 	if err != nil {
 		t.Fatalf("generate(%q): %v", out, err)
 	}
-	if len(sums) != len(repoNames) {
-		t.Fatalf("got %d repo summaries, want %d", len(sums), len(repoNames))
+	if len(sums) != len(repos) {
+		t.Fatalf("got %d repo summaries, want %d", len(sums), len(repos))
 	}
 	return root, sums
 }
