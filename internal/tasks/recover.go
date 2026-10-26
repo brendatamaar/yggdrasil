@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	coretasks "github.com/brendatamaar/yggdrasil/internal/core/tasks"
@@ -76,7 +77,11 @@ func (s *Service) recoverTask(ctx context.Context, id core.TaskID) error {
 	if err != nil {
 		return err
 	}
-	u, skipped := SumUsage(events)
+	var since time.Time
+	if st, err := s.snapshot(ctx, id); err == nil && st.Turn != nil && st.Turn.StartedAt != nil {
+		since = *st.Turn.StartedAt
+	}
+	u, skipped := SumUsage(events, since)
 	if skipped > 0 {
 		s.c.Log.Warn("recovery skipped undecodable events", "task", id, "count", skipped)
 	}

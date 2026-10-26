@@ -433,7 +433,7 @@ func TestSumUsageSkipsUndecodableEvents(t *testing.T) {
 		{Data: []byte(`{"kind":"status","status":"started"}`)}, // a later run: earlier ones do not count
 		{Data: []byte(`{"kind":"usage","usage":{"inputTokens":1}}`)},
 	}
-	u, skipped := SumUsage(rows)
+	u, skipped := SumUsage(rows, time.Time{})
 	if skipped != 1 || u.InputTokens != 1 || u.CostKnown {
 		t.Errorf("u=%+v skipped=%d", u, skipped)
 	}
