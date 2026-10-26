@@ -127,6 +127,28 @@ func runFake(mode string) int {
 		_ = os.WriteFile(out+".cwd", []byte(cwd), 0o600)
 		fmt.Println(`{"type":"result","subtype":"success","is_error":false,"session_id":"sess-capture","total_cost_usd":0.5,"num_turns":1,"duration_ms":10}`)
 		return 0
+	case "streamhook":
+		// Stands in for the CLI and the hook: logs the IDs in YGG_FAKE_HOOKED
+		// (comma list), then replays the stream.
+		var cfg HookConfig
+		data, _ := os.ReadFile(os.Getenv(HookConfigEnv))
+		_ = json.Unmarshal(data, &cfg)
+		for _, id := range strings.Split(os.Getenv("YGG_FAKE_HOOKED"), ",") {
+			if id != "" {
+				_ = appendRecord(cfg.LogPath, hookRecord{Event: eventPreToolUse, Tool: "Read", ToolUseID: id, Decision: decisionAllow})
+			}
+		}
+		if os.Getenv("YGG_FAKE_FLOOD") != "" {
+			for i := 0; i < 130; i++ {
+				_ = appendRecord(cfg.LogPath, hookRecord{Event: eventPreToolUse, Tool: "Bash", ToolUseID: fmt.Sprintf("flood_%d", i), Decision: decisionDeny, Reason: "no"})
+			}
+		}
+		if os.Getenv("YGG_FAKE_TAMPER") != "" {
+			_ = os.WriteFile(cfg.PolicyPath, []byte("{}\n"), 0o600)
+		}
+		out, _ := os.ReadFile(os.Getenv(fakeStream))
+		_, _ = os.Stdout.Write(out)
+		return 0
 	case "sleep":
 		fmt.Println(`{"type":"system","subtype":"init","session_id":"sess-sleep"}`)
 		time.Sleep(60 * time.Second)
@@ -178,7 +200,7 @@ func startOpts(t *testing.T, mode string, extra map[string]string) agents.StartO
 	return agents.StartOptions{
 		TaskID: "tsk_test", Prompt: "Find the order routes.", Mode: core.ModeAsk,
 		Dir: dir, Env: env, MaxSubagentDepth: 2, MaxConcurrentSubagents: 4,
-		Policy: policyFor(t, core.ModeAsk, dir),
+		Policy: policyFor(t, core.ModeAsk, dir), Admitted: true,
 	}
 }
 

@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/agents"
 	"github.com/brendatamaar/yggdrasil/internal/core"
@@ -39,17 +38,7 @@ func prepareMCPFile(work, src string) (string, error) {
 // checkMCPFileOutsidePolicy refuses an MCP config file inside a folder the
 // agent may read or write: the file holds a bearer token (invariant 4).
 func checkMCPFileOutsidePolicy(p guard.Policy, path string) error {
-	canon, err := platform.ResolveRoot(path)
-	if err != nil {
-		canon = filepath.Clean(path)
-	}
-	fold := platform.FoldCase() || p.FoldCase
-	for _, roots := range [][]string{p.ReadRoots, p.WriteRoots} {
-		if withinAny(roots, canon, fold) || withinAny(roots, path, fold) {
-			return errors.New("the MCP config file is inside a folder of the policy")
-		}
-	}
-	return nil
+	return checkOutsidePolicy(p, path, "the MCP config file")
 }
 
 // within reports whether p is root or below it, comparing lexically (both are
@@ -111,21 +100,7 @@ func checkPolicyNotWider(o agents.StartOptions, dir string) error {
 
 // deniesFromLog lists the refusals in the hook log. Tool names are cleaned and
 // reasons are the fixed texts of the guard; no tool input is ever in the log.
-func deniesFromLog(path string) []agents.Deny {
-	recs, err := readHookLog(path)
-	if err != nil {
-		return nil
-	}
-	var out []agents.Deny
-	for _, r := range recs {
-		if r.Decision != decisionDeny {
-			continue
-		}
-		at, _ := time.Parse(time.RFC3339Nano, r.Time)
-		out = append(out, agents.Deny{Tool: safeName(r.Tool), Reason: capReason(r.Reason), At: at})
-	}
-	return out
-}
+func deniesFromLog(path string) []agents.Deny { return summarizeHookLog(path).denies }
 
 func capReason(s string) string {
 	var b strings.Builder

@@ -434,6 +434,7 @@ func (s *Server) runTask(ctx context.Context, task core.Task, repo core.Repo, ad
 	res, err := agents.Execute(ctx, adapter, agents.StartOptions{
 		TaskID: task.ID, Prompt: task.Prompt, Mode: task.Mode, Model: task.Model, Dir: dir, Env: env,
 		MaxSubagentDepth: maxSubagentDepth, MaxConcurrentSubagents: maxConcurrentSubagents,
+		Admitted: true, // Ask mode only: the create handler refuses any other mode
 	}, sink{s})
 	if err != nil {
 		s.log.Error("run task", "task", task.ID, "err", err)

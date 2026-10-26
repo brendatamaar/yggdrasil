@@ -100,8 +100,11 @@ type hookRecord struct {
 
 const (
 	maxHookInput = 4 << 20
-	staleLock    = 30 * time.Second
-	lockTimeout  = 10 * time.Second
+	// maxHookLog caps the hook log: past it the log is not read further and
+	// the hook refuses enforcing calls (fail closed).
+	maxHookLog  = 1 << 20
+	staleLock   = 30 * time.Second
+	lockTimeout = 10 * time.Second
 )
 
 // RunHook is hook mode. args are the arguments after "hook" (--event NAME);
@@ -310,6 +313,9 @@ func appendRecord(path string, rec hookRecord) error {
 	if err != nil {
 		return fmt.Errorf("encode its log record: %w", err)
 	}
+	if st, err := os.Stat(path); err == nil && st.Size() >= maxHookLog {
+		return errHookLogFull
+	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // the log path comes from the hook configuration
 	if err != nil {
 		return fmt.Errorf("open its log: %w", err)
@@ -324,8 +330,12 @@ func appendRecord(path string, rec hookRecord) error {
 	return nil
 }
 
+// errHookLogFull is returned for a log at or over maxHookLog bytes.
+var errHookLogFull = errors.New("its log is full, so the call is blocked")
+
 // readHookLog reads the log. A missing log is empty; unreadable lines are
-// skipped.
+// skipped. It never reads past maxHookLog bytes: for a larger log it returns
+// the records read so far with errHookLogFull, so callers fail closed.
 func readHookLog(path string) ([]hookRecord, error) {
 	f, err := os.Open(path) //nolint:gosec // the log path comes from the hook configuration
 	if errors.Is(err, fs.ErrNotExist) {
@@ -336,15 +346,21 @@ func readHookLog(path string) ([]hookRecord, error) {
 	}
 	defer f.Close()
 	var recs []hookRecord
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
+	sc := bufio.NewScanner(io.LimitReader(f, maxHookLog))
+	sc.Buffer(make([]byte, 0, 64<<10), maxHookLog)
 	for sc.Scan() {
 		var r hookRecord
 		if json.Unmarshal(sc.Bytes(), &r) == nil {
 			recs = append(recs, r)
 		}
 	}
-	return recs, sc.Err()
+	if err := sc.Err(); err != nil {
+		return recs, err
+	}
+	if st, err := f.Stat(); err == nil && st.Size() > maxHookLog {
+		return recs, errHookLogFull
+	}
+	return recs, nil
 }
 
 // lockFile serializes hook calls (the CLI may run hooks for parallel tool

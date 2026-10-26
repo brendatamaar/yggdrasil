@@ -46,7 +46,7 @@ func TestAdapterContract(t *testing.T) {
 			Options: agents.StartOptions{
 				Prompt: "Find the order routes.", Mode: core.ModeAsk, Dir: dir, Env: env,
 				MaxSubagentDepth: 2, MaxConcurrentSubagents: 4,
-				Policy: policyFor(t, core.ModeAsk, dir),
+				Policy: policyFor(t, core.ModeAsk, dir), Admitted: true,
 			},
 		}, nil
 	})
