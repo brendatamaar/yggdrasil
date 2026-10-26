@@ -13,11 +13,12 @@ import (
 
 func TestBuildArgs(t *testing.T) {
 	o := agents.StartOptions{Prompt: "-x look at the cart"}
-	args := buildArgs(`C:\tmp\settings.json`, o)
+	args := buildArgs(`C:\tmp\settings.json`, `C:\tmp\mcp.json`, o)
 	want := []string{
 		"-p", "--output-format", "stream-json", "--verbose", "--forward-subagent-text",
 		"--settings", `C:\tmp\settings.json`,
-		"--setting-sources", "project",
+		"--setting-sources", "",
+		"--strict-mcp-config", "--mcp-config", `C:\tmp\mcp.json`,
 		"--permission-mode", "dontAsk",
 		"--allowedTools", "Read,Grep,Glob",
 		"--disallowedTools", "Edit,Write,MultiEdit,NotebookEdit,Bash,PowerShell",
@@ -33,7 +34,7 @@ func TestBuildArgs(t *testing.T) {
 	}
 
 	o.Model, o.BudgetUSD, o.ResumeSessionID = "haiku", 0.25, "sess-1"
-	args = buildArgs("s.json", o)
+	args = buildArgs("s.json", "m.json", o)
 	for _, pair := range [][2]string{{"--model", "haiku"}, {"--max-budget-usd", "0.25"}, {"--resume", "sess-1"}} {
 		i := slices.Index(args, pair[0])
 		if i < 0 || args[i+1] != pair[1] {
@@ -99,6 +100,9 @@ func TestWriteConfigFiles(t *testing.T) {
 	}
 	var s settingsFile
 	data, err := os.ReadFile(settings)
+	if !strings.Contains(string(data), `"disableAllHooks": false`) {
+		t.Errorf("settings do not pin disableAllHooks to false: %s", data)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

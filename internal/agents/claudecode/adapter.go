@@ -7,7 +7,6 @@ package claudecode
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -81,7 +80,10 @@ func New(opts Options) *Adapter {
 // Name implements agents.Adapter.
 func (*Adapter) Name() string { return "claude-code" }
 
-// Capabilities implements agents.Adapter.
+// Capabilities implements agents.Adapter. SubagentLimits: the hook enforces the
+// sub-agent depth only for a cap of 1 or 2 (its input has no parent link, see
+// spawnDepth); deeper caps rest on the CLI's own depth variable. The
+// concurrency cap is enforced by both.
 func (*Adapter) Capabilities() agents.Capabilities {
 	return agents.Capabilities{
 		Resume:          true,
@@ -107,21 +109,7 @@ func (a *Adapter) Check(ctx context.Context) error {
 			Err:     err,
 		}
 	}
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	var out, errOut bytes.Buffer
-	p, err := platform.Start(ctx, platform.Spec{Argv: []string{bin, "--version"}, Env: env, Stdout: &out, Stderr: &errOut})
-	if err != nil {
-		return &UserError{Message: "Claude Code couldn't be started. Run `claude --version` in a terminal to see why.", Err: err}
-	}
-	code, err := p.Wait()
-	if err != nil || code != 0 {
-		return &UserError{
-			Message: fmt.Sprintf("Claude Code didn't start (exit code %d). Run `claude --version` in a terminal to see why, and sign in with `claude` if it asks.", code),
-			Err:     err,
-		}
-	}
-	return nil
+	return checkCLI(ctx, bin, env)
 }
 
 // Start implements agents.Adapter for Ask, Code, Project and Current-branch
@@ -137,6 +125,9 @@ func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run,
 		return nil, &UserError{Message: "Only a task over the whole project can use more than one folder."}
 	case o.MCPConfigPath != "" && (!filepath.IsAbs(o.MCPConfigPath) || strings.ContainsAny(o.MCPConfigPath, "\r\n\x00") || !exists(o.MCPConfigPath)):
 		return nil, errors.New("claudecode: the MCP config file is missing")
+	case !filepath.IsAbs(a.opts.HookExecutable) || !exists(a.opts.HookExecutable):
+		return nil, &UserError{Message: "Yggdrasil's own guard program is missing, so the agent was not started. Reinstall Yggdrasil.",
+			Err: fmt.Errorf("hook executable %q not found", a.opts.HookExecutable)}
 	case strings.TrimSpace(o.Prompt) == "":
 		return nil, &UserError{Message: "The prompt is empty. Write what the agent should look into."}
 	case o.Model != "" && !modelName.MatchString(o.Model):
@@ -171,25 +162,41 @@ func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run,
 		if err := checkFolderInPolicy(o.Policy, d); err != nil {
 			return nil, &UserError{Message: "A folder of this task isn't covered by its safety rules, so the agent was not started.", Err: err}
 		}
-		// A repo that configures Claude Code itself (settings with hooks, MCP
-		// servers, agent definitions) could run its own commands, even in Ask
-		// mode: the CLI loads project settings. No agent runs there until the
-		// user has trusted the repo (SF-09, invariant 10).
-		if f := ownAgentConfig(d, exists); f != "" && !o.ConfigTrusted {
-			return nil, &UserError{Message: fmt.Sprintf(
-				"This repo has its own Claude Code configuration (%s), which could run commands. "+
-					"Yggdrasil doesn't run agents in such a repo until you have reviewed and trusted it.", f)}
+		// A repo's own Claude Code config (settings, hooks, MCP servers,
+		// agents) is inert: --setting-sources "" and a strict MCP config keep
+		// it from loading (docs/spikes.md B5). The SF-09 trust policy stays in
+		// guard.Admit, so nothing is refused here.
+	}
+	if err := checkPolicyNotWider(o, dir); err != nil {
+		return nil, &UserError{Message: "The task's safety rules reach beyond its folders, so the agent was not started.", Err: err}
+	}
+	if o.MCPConfigPath != "" {
+		if err := checkMCPFileOutsidePolicy(o.Policy, o.MCPConfigPath); err != nil {
+			return nil, &UserError{Message: "The agent tool server's config sits where the agent can read it, so the agent was not started.", Err: err}
 		}
 	}
 	bin, err := platform.Resolve(a.opts.Binary, "", o.Env)
 	if err != nil {
 		return nil, &UserError{Message: "Claude Code isn't installed, or its folder isn't on the PATH. Run `ygg doctor`.", Err: err}
 	}
+	if err := checkCLI(ctx, bin, o.Env); err != nil {
+		if ctx.Err() != nil {
+			return cancelledRun(), nil //nolint:nilerr // a start cut short by cancellation is a cancelled run, not an error
+		}
+		return nil, err
+	}
 	work, err := os.MkdirTemp(a.opts.TempDir, "ygg-claude-")
 	if err != nil {
 		return nil, fmt.Errorf("create run folder: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(work) } // our own temp folder only
+	// The CLI reads this copy, in a folder no policy root covers; it holds the
+	// bearer token and goes away with the run folder.
+	mcpPath, err := prepareMCPFile(work, o.MCPConfigPath)
+	if err != nil {
+		cleanup()
+		return nil, fmt.Errorf("prepare MCP config: %w", err)
+	}
 	policy := guard.FormatPolicy(o.Policy)
 	if policy == nil {
 		cleanup()
@@ -212,7 +219,7 @@ func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run,
 	pr, pw := io.Pipe()
 	stderr := &tailBuffer{max: 8 << 10}
 	proc, err := platform.Start(ctx, platform.Spec{
-		Argv:   append([]string{bin}, buildArgs(settings, o)...),
+		Argv:   append([]string{bin}, buildArgs(settings, mcpPath, o)...),
 		Dir:    dir,
 		Env:    buildEnv(o.Env, o, hookConfig),
 		TaskID: string(o.TaskID),
@@ -232,7 +239,7 @@ func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run,
 	}
 
 	r := &run{events: make(chan agents.Event), done: make(chan struct{})}
-	go r.loop(ctx, proc, pr, pw, newParser(dir), stderr, cleanup)
+	go r.loop(ctx, proc, pr, pw, newParser(dir), stderr, filepath.Join(work, "hook.log"), cleanup)
 	return r, nil
 }
 
@@ -283,6 +290,9 @@ type run struct {
 	session atomic.Value // string
 	done    chan struct{}
 	err     error
+	// denies and toolUses are set before done is closed; read them after Wait.
+	denies   []agents.Deny
+	toolUses []string
 }
 
 func (r *run) Events() <-chan agents.Event { return r.events }
@@ -302,10 +312,15 @@ type waitResult struct {
 	err  error
 }
 
-func (r *run) loop(ctx context.Context, proc platform.Process, pr *io.PipeReader, pw *io.PipeWriter, p *parser, stderr *tailBuffer, cleanup func()) {
+func (r *run) loop(ctx context.Context, proc platform.Process, pr *io.PipeReader, pw *io.PipeWriter, p *parser, stderr *tailBuffer, hookLog string, cleanup func()) {
 	defer close(r.done)
 	defer close(r.events)
-	defer cleanup()
+	defer func() {
+		// The hook log goes with the run folder; keep what the tasks service audits.
+		r.denies = deniesFromLog(hookLog)
+		r.toolUses = p.toolUses
+		cleanup()
+	}()
 
 	waitc := make(chan waitResult, 1)
 	go func() { // waiter: ends when the process tree is gone
@@ -416,3 +431,11 @@ func (t *tailBuffer) String() string {
 	defer t.mu.Unlock()
 	return string(t.buf)
 }
+
+// Denies implements agents.DenyReporter: the tool calls the hook refused. Call
+// it after Wait.
+func (r *run) Denies() []agents.Deny { return r.denies }
+
+// SeenToolUses implements agents.ToolUseReporter: the IDs of the tool calls
+// the stream showed. Call it after Wait.
+func (r *run) SeenToolUses() []string { return r.toolUses }

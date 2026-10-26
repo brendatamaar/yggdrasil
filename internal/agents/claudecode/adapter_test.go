@@ -44,10 +44,36 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+func fakeVersion() string {
+	if v := os.Getenv("YGG_FAKE_VERSION"); v != "" {
+		return v
+	}
+	return "2.1.299 (Claude Code)"
+}
+
 func runFake(mode string) int {
+	if len(os.Args) == 2 && os.Args[1] == "--version" && os.Getenv("YGG_FAKE_VERSION_FAIL") == "" {
+		fmt.Println(fakeVersion())
+		return 0
+	}
 	switch mode {
 	case "version":
-		fmt.Println("2.1.299 (Claude Code)")
+		fmt.Println(fakeVersion())
+		return 0
+	case "denies":
+		// Stands in for the hook: records two denials and one allowed call.
+		var cfg HookConfig
+		data, _ := os.ReadFile(os.Getenv(HookConfigEnv))
+		_ = json.Unmarshal(data, &cfg)
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		for _, r := range []hookRecord{
+			{Time: now, Event: eventPreToolUse, Tool: "Bash", Decision: decisionDeny, Reason: guard.ReasonNotAllowlisted.Message()},
+			{Time: now, Event: eventPreToolUse, Tool: "Read", Decision: decisionAllow},
+			{Time: now, Event: eventPreToolUse, Tool: "Write", Decision: decisionDeny, Reason: guard.ReasonOutsideWorktree.Message()},
+		} {
+			_ = appendRecord(cfg.LogPath, r)
+		}
+		fmt.Println(`{"type":"result","subtype":"success","is_error":false,"session_id":"s","total_cost_usd":0,"num_turns":1,"duration_ms":1}`)
 		return 0
 	case "exit3":
 		fmt.Fprintln(os.Stderr, "boom: token sk-ant-api03-SECRETSECRETSECRET and C:\\Users\\someone\\x")
@@ -72,6 +98,14 @@ func runFake(mode string) int {
 		prompt, _ := io.ReadAll(os.Stdin)
 		_ = os.WriteFile(out+".stdin", prompt, 0o600)
 		_ = os.WriteFile(out+".settingspath", []byte(settings), 0o600)
+		for i, a := range os.Args {
+			if a == "--mcp-config" && i+1 < len(os.Args) {
+				_ = os.WriteFile(out+".mcppath", []byte(os.Args[i+1]), 0o600)
+				if data, err := os.ReadFile(os.Args[i+1]); err == nil {
+					_ = os.WriteFile(out+".mcp", data, 0o600)
+				}
+			}
+		}
 		if data, err := os.ReadFile(settings); err == nil {
 			_ = os.WriteFile(out+".settings", data, 0o600)
 		}
@@ -116,8 +150,18 @@ func newAdapter(t *testing.T, mode string) *Adapter {
 	exe := testExe(t)
 	return New(Options{
 		Binary: exe, HookExecutable: exe, TempDir: t.TempDir(),
-		CheckEnv: map[string]string{fakeEnv: mode},
+		CheckEnv: checkEnvFor(mode),
 	})
+}
+
+// checkEnvFor is the environment of Check against the fake: a fake that fails
+// does so for --version as well.
+func checkEnvFor(mode string) map[string]string {
+	env := map[string]string{fakeEnv: mode}
+	if mode == "exit3" {
+		env["YGG_FAKE_VERSION_FAIL"] = "1"
+	}
+	return env
 }
 
 // startOpts returns options for a fake run in mode, with the fake's own
@@ -217,45 +261,6 @@ func TestStartRefusals(t *testing.T) {
 			}
 		}
 	}
-	// A repo that configures Claude Code itself could run its own commands.
-	for _, name := range []string{".claude/settings.json", ".claude/settings.local.json", ".mcp.json", ".claude/agents"} {
-		o := ok
-		o.Dir = t.TempDir()
-		o.Policy = policyFor(t, core.ModeAsk, o.Dir)
-		path := filepath.Join(o.Dir, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		var err error
-		if strings.HasSuffix(name, "agents") {
-			err = os.Mkdir(path, 0o700)
-		} else {
-			err = os.WriteFile(path, []byte("{}"), 0o600)
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		// Untrusted: refused in every mode (SF-09), Ask included, because the
-		// CLI would load the repo's own hooks and MCP servers.
-		r, err := a.Start(context.Background(), o)
-		var ue *UserError
-		if err == nil || !errors.As(err, &ue) || !strings.Contains(ue.Message, name) || !strings.Contains(ue.Message, "own Claude Code configuration") {
-			t.Errorf("%s: err = %v", name, err)
-			if err == nil {
-				for range r.Events() { //nolint:revive // drain so the run ends
-				}
-			}
-		}
-		// Trusted: the run starts.
-		o.ConfigTrusted = true
-		r, err = a.Start(context.Background(), o)
-		if err != nil {
-			t.Errorf("%s: a trusted repo was refused: %v", name, err)
-			continue
-		}
-		for range r.Events() { //nolint:revive // drain so the run ends
-		}
-	}
 	// Model names go onto a command line.
 	for _, model := range []string{"--dangerously-skip-permissions", "a b", "x;y", "-m", strings.Repeat("a", 65)} {
 		o := ok
@@ -270,6 +275,30 @@ func TestStartRefusals(t *testing.T) {
 	bad := New(Options{Binary: testExe(t), HookExecutable: "ygg", TempDir: t.TempDir()})
 	if r, err := bad.Start(context.Background(), ok); err == nil {
 		t.Error("a relative hook executable was accepted")
+		for range r.Events() { //nolint:revive // drain so the run ends
+		}
+	}
+}
+
+// Repo config is inert (--setting-sources "" and a strict MCP config), so a
+// repo that ships it does not stop the adapter; guard.Admit holds the SF-09
+// policy (docs/spikes.md B5).
+func TestRepoAgentConfigDoesNotRefuseTheRun(t *testing.T) {
+	a := newAdapter(t, "stream")
+	for _, name := range []string{".claude/settings.json", ".mcp.json", ".claude/agents"} {
+		o := startOpts(t, "stream", nil)
+		path := filepath.Join(o.Dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(`{"disableAllHooks":true}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		r, err := a.Start(context.Background(), o)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
 		for range r.Events() { //nolint:revive // drain so the run ends
 		}
 	}

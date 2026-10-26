@@ -244,7 +244,7 @@ func decide(cfg HookConfig, event string, stdin io.Reader, now time.Time, getenv
 		Isolation string `json:"isolation"`
 	}
 	_ = json.Unmarshal(in.ToolInput, &sub)
-	rec.Subagent, rec.Isolation = true, sub.Isolation
+	rec.Subagent, rec.Isolation = true, capText32(sub.Isolation)
 	if !pre {
 		rec.Async = rec.Event == eventPostToolUse && launchedAsync(in.ToolResponse)
 		return rec
@@ -256,7 +256,7 @@ func decide(cfg HookConfig, event string, stdin io.Reader, now time.Time, getenv
 	rec.Depth, rec.Active = spawnDepth(in.AgentID), activeSubagents(prior)
 	switch {
 	case sub.Isolation != "":
-		return deny("Sub-agents with isolation (%s) are blocked inside Yggdrasil tasks; run the sub-agent without isolation.", sub.Isolation)
+		return deny("Sub-agents with isolation are blocked inside Yggdrasil tasks; run the sub-agent without isolation.")
 	case cfg.MaxDepth > 0 && rec.Depth > cfg.MaxDepth:
 		return deny("Sub-agent nesting is limited to %d levels in this task.", cfg.MaxDepth)
 	case cfg.MaxConcurrent > 0 && rec.Active >= cfg.MaxConcurrent:
@@ -371,4 +371,12 @@ func lockFile(path string) (func(), error) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// capText32 shortens an agent-chosen string before it is logged.
+func capText32(s string) string {
+	if len(s) > 32 {
+		return s[:32]
+	}
+	return s
 }

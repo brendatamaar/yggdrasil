@@ -343,3 +343,12 @@ What the core cannot do and the shell must:
 - Command words no longer allow `,` and `@`, and tail words no longer allow `=` (a `.cmd`/`.bat` wrapper splits an unquoted argument at `=`).
 - A failed scan after `Trusted` leaves `Untrusted{ConfigChanged}` even if the next complete scan has the same hash: the user re-trusts (fails safe). Core state and the stored trust disagree until the next `Scanned`; the shell should `ClearTrust` on `ScanFailed`.
 - `ConfigNameProvider.ConfigNames()` has no caller yet: the S2 trust scanner must walk the repo for those names at any depth.
+
+## Review gate 2 notes (2026-10-26, Claude Code adapter)
+
+Added to "Shell carry-ins" (the tasks service does these):
+
+7. **A `tool_use` without a hook-log record fails the task.** The adapter's run exposes `agents.ToolUseReporter.SeenToolUses()` (IDs of every tool call in the stream) and `agents.DenyReporter.Denies()` (refusals of the hook, tool name and guard reason message only, no paths). After `Wait`, the tasks service compares the stream's tool-use IDs with the enforcement log; a tool call the hook never saw means enforcement was bypassed, so the task fails and is flagged. Each deny is audited as `guard.deny`. The hook log itself is deleted with the run folder.
+8. The adapter refuses to start when the policy is wider than the folders it was given (non-project modes: write roots inside `Dir`; project mode: inside `Dir` or `ExtraDirs`; read roots inside `Dir` plus `ExtraDirs`), and when the MCP config file (bearer token) lies inside a policy root. The adapter copies the MCP file into its run folder and removes it afterwards.
+9. Repo config is inert for Claude Code (`--setting-sources ""`, `--strict-mcp-config`, `disableAllHooks:false`; `docs/spikes.md` B5), so the adapter no longer refuses untrusted repos; `Admit` keeps the SF-09 policy. `StartOptions.ConfigTrusted` is advisory.
+10. The hook enforces sub-agent depth only for `MaxDepth` 1 or 2 (its input has no parent link); deeper caps rely on the CLI's `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`.

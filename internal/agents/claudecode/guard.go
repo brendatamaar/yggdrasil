@@ -7,6 +7,7 @@ import (
 
 	"github.com/brendatamaar/yggdrasil/internal/core/guard"
 	"github.com/brendatamaar/yggdrasil/internal/platform"
+	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
 
 // This file is the boundary between Claude Code's hook input and the pure
@@ -18,9 +19,9 @@ import (
 // callBuilder holds what toCall needs from the machine.
 type callBuilder struct {
 	paths platform.PathResolver
-	// program resolves argv[0] to an executable path without searching the
-	// working directory; an error means "not found".
-	program func(name string) (string, error)
+	// env is the environment programs are looked up in (PATH, PATHEXT,
+	// SystemRoot of the hook's own environment).
+	env []string
 }
 
 // newCallBuilder returns the real builder. env is the environment the hook
@@ -37,9 +38,7 @@ func newCallBuilder(getenv func(string) string) callBuilder {
 	}
 	return callBuilder{
 		paths: platform.RealPaths{},
-		program: func(name string) (string, error) {
-			return platform.Resolve(name, "", env)
-		},
+		env:   env,
 	}
 }
 
@@ -106,7 +105,9 @@ func (b callBuilder) toCall(in hookInput) guard.Call {
 			return c
 		}
 		c.Argv = argv
-		c.Program = b.programRef(argv[0])
+		// An unresolved program comes back with OK=false, which the guard refuses.
+		ref, _ := safety.ResolveProgram(argv[0], in.Cwd, b.env)
+		c.Program = &ref
 	case "Agent", "Task":
 		c.Tool = guard.ToolSubagent
 		c.Isolation = isolationOf(f.Isolation)
@@ -135,32 +136,17 @@ func isolationOf(raw json.RawMessage) string {
 // working directory the CLI reports; with none, it can't be judged.
 func (b callBuilder) ref(cwd, raw string) guard.PathRef {
 	ref := guard.PathRef{Raw: raw}
+	// "C:foo" is relative to the current folder of drive C, which is not the
+	// working directory: left unresolved, which the core refuses.
+	if driveRelative(raw) {
+		return ref
+	}
 	p := raw
 	if !filepath.IsAbs(p) && !strings.HasPrefix(p, "/") && !strings.HasPrefix(p, `\`) &&
 		(len(p) < 2 || p[1] != ':') && filepath.IsAbs(cwd) {
 		p = filepath.Join(cwd, p)
 	}
 	canon, err := b.paths.ResolveRoot(p)
-	if err != nil {
-		return ref
-	}
-	ref.Canon, ref.OK = canon, true
-	return ref
-}
-
-// programRef resolves argv[0]. A name with a path separator is never resolved
-// (a relative one would be searched from the working directory); the allowlist
-// matches bare names only, so it is denied either way.
-func (b callBuilder) programRef(name string) *guard.PathRef {
-	ref := &guard.PathRef{Raw: name}
-	if strings.ContainsAny(name, `/\`) {
-		return ref
-	}
-	exe, err := b.program(name)
-	if err != nil {
-		return ref
-	}
-	canon, err := b.paths.ResolveRoot(exe)
 	if err != nil {
 		return ref
 	}
@@ -185,4 +171,16 @@ func ownAgentConfig(dir string, exists func(path string) bool) string {
 		}
 	}
 	return ""
+}
+
+// driveRelative reports a path of the form "X:foo": a drive letter and a colon
+// not followed by a separator.
+func driveRelative(p string) bool {
+	if len(p) < 2 || p[1] != ':' {
+		return false
+	}
+	if c := p[0] | 0x20; c < 'a' || c > 'z' {
+		return false
+	}
+	return len(p) == 2 || (p[2] != '/' && p[2] != '\\')
 }
