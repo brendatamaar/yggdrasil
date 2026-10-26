@@ -172,3 +172,31 @@ The manual checklist below was run by the human on 2026-10-15 (PowerShell and cm
 4. Repeat with `-approach perchild`.
 5. Close Notepad yourself.
 6. After `go test` in either spike, no `*.test.exe` is left in Task Manager.
+
+---
+
+## B5 — Repo settings vs our hook (`claude` 2.1.299, Haiku, 2026-10-26) · SF-06, SF-09, invariants 5, 10
+
+Run by the lead with the human's agreement in that session; 8 runs, about $0.03 in total, scratch repos under the session scratchpad, nothing run against a real project. The hook was the Phase 0 `agentstream hook` logging helper, registered through `--settings` in exec form.
+
+| # | Setup | Result |
+|---|---|---|
+| A | repo `.claude/settings.json` = `{"disableAllHooks": true}`; `--setting-sources project`; our `--settings` file without the key | **our hook did not fire** (no log). A repo can switch the guard off. |
+| B | same repo, our `--settings` file has `"disableAllHooks": false` | our hook fired. `--settings` wins over the project file for this key. |
+| C | repo with its own PreToolUse hook; `--setting-sources user` | the repo's hook did **not** run; ours did |
+| D | `--setting-sources ""` (empty) | accepted (exit 0); the repo's hook did not run; ours did |
+| control | `--setting-sources project`, repo with hook, `.mcp.json` (a command that writes a marker file), `.claude/agents/spya.md`, `.claude/commands/spyc.md` | repo hook ran, the MCP server was started (marker file written), the agent and the command appeared in the init event |
+| D, user | same repo with `""` or `user` | none of the repo hook, MCP server, agent or command loaded; the model still read the file and answered |
+| E | `--setting-sources "" --strict-mcp-config --mcp-config <empty>` | `mcp_servers` is `[]`: no repo server and none of the account's connectors |
+
+Without `--strict-mcp-config` the init event lists the account's own connectors (Docs, Figma, Gmail, Calendar, Drive: `source: claudeai`) as MCP servers. They are account data and live tools; the hook would deny them as `ToolOther`, but they should not be loaded at all.
+
+**Decisions for the adapter (from the lead):**
+1. Always pass `--setting-sources ""` so no repo, user or project settings, hooks, MCP servers, agents, skills or commands load. Repo config is then inert for Claude Code in every mode.
+2. Always put `"disableAllHooks": false` in the generated `--settings` file (defence in depth, proven by B).
+3. Always pass `--strict-mcp-config --mcp-config <file>`: our MCP file when present, otherwise an empty one in the run folder.
+4. Because repo config cannot run, the adapter no longer refuses an untrusted repo. SF-09 stays a policy in `guard.Admit` (untrusted repos run only in Ask) and the trust flow stays for adapters that cannot isolate (OpenCode). Trust remains bound to the scan hash.
+5. Minimum CLI version 2.1.295 (`onFailure: "block"`); `Check` and `Start` refuse older versions.
+6. The repo's `CLAUDE.md` text still reaches the model as prompt context (not executable).
+
+Not tested: user-level hooks under `""` (excluded by definition of the empty list), nested `CLAUDE.md`, `apiKeyHelper`/`statusLine`/`env` keys in project settings (all project settings are excluded by the empty source list).
