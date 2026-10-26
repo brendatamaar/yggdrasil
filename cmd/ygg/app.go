@@ -23,6 +23,7 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/git"
 	"github.com/brendatamaar/yggdrasil/internal/hosts"
 	"github.com/brendatamaar/yggdrasil/internal/hosts/hostclients"
+	"github.com/brendatamaar/yggdrasil/internal/mainlock"
 	"github.com/brendatamaar/yggdrasil/internal/platform"
 	"github.com/brendatamaar/yggdrasil/internal/repos"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
@@ -130,12 +131,15 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		return nil, fmt.Errorf("start repo tracking: %w", err)
 	}
 
+	// One main-checkout lock for tasks, builds and git actions (AG-11).
+	checkoutLock := &mainlock.Registry{}
 	buildsPub := &lateBuildsPublisher{}
 	buildSvc, err := builds.NewService(builds.Deps{
 		Store: builds.NewSQLiteStore(store), Start: platform.Start,
 		Locator: buildLocator{store}, Env: safety.NewEnvBuilder(),
 		Toolchains: toolchains.All(), DataDir: cfg.dataDir,
 		Redactor: redactor, Publisher: buildsPub, Status: status, Log: log,
+		MainLock: checkoutLock,
 	})
 	if err != nil {
 		_ = d.Close()
@@ -145,7 +149,7 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	batchPub := &lateBatchPublisher{}
 	actions, err := repos.NewActionsService(repos.ActionsDeps{
 		Store: store, Redactor: redactor, Git: g, Builds: buildSvc,
-		Status: status, Publisher: batchPub, Log: log,
+		Status: status, Publisher: batchPub, Log: log, MainLock: checkoutLock,
 	})
 	if err != nil {
 		_ = d.Close()
@@ -172,7 +176,7 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	}
 
 	taskHub := &api.HubAdapter{}
-	taskSvc, err := newTasks(store, adapters, g, taskHub, redactor, cfg.dataDir, log)
+	taskSvc, err := newTasks(store, adapters, g, taskHub, redactor, checkoutLock, cfg.dataDir, log)
 	if err != nil {
 		_ = d.Close()
 		return nil, err
