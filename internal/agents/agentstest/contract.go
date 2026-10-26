@@ -307,7 +307,9 @@ func (s *suite) eventOrder(t T) {
 				t.Errorf("%s: event %d (%s) has no time", k, i, e.Kind)
 			}
 			switch e.Kind {
-			case agents.EventToolCall:
+			// A tool use may be reported as a file edit, a command or a
+			// sub-agent start (all carry the call's ID); a result refers to it.
+			case agents.EventToolCall, agents.EventFileEdit, agents.EventCommand, agents.EventSubagentStart:
 				if e.ID != "" {
 					calls[e.ID] = true
 				}

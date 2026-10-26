@@ -224,6 +224,10 @@ func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run,
 		_ = pw.Close()
 		_ = pr.Close()
 		cleanup()
+		if ctx.Err() != nil {
+			// Cancelled while starting: the run ends as cancelled, not as a failure.
+			return cancelledRun(), nil
+		}
 		return nil, &UserError{Message: "Claude Code couldn't be started. Run `ygg doctor` to see what is missing.", Err: err}
 	}
 
@@ -259,6 +263,17 @@ func checkFolderInPolicy(p guard.Policy, dir string) error {
 func exists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// cancelledRun is a run that never started because its context ended first.
+func cancelledRun() *run {
+	r := &run{events: make(chan agents.Event, 2), done: make(chan struct{})}
+	now := time.Now().UTC()
+	r.events <- agents.Event{Kind: agents.EventStatus, Status: agents.RunStarted, At: now}
+	r.events <- agents.Event{Kind: agents.EventStatus, Status: agents.RunCancelled, At: now}
+	close(r.events)
+	close(r.done)
+	return r
 }
 
 // run is one Claude Code session. Two goroutines belong to it, and both end
