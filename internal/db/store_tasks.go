@@ -97,30 +97,51 @@ func taskStateFrom(ctx context.Context, q *gen.Queries, row core.Task, r gen.Tas
 // StateFromRows rejects (for example a Phase 2 queued task with no turn) are
 // an error; MarkLegacyInterrupted clears those at startup.
 func (s *Store) GetTaskState(ctx context.Context, id core.TaskID) (TaskState, error) {
-	q := s.db.reader()
-	r, err := q.GetTask(ctx, string(id))
-	if err := found("get task "+string(id), err); err != nil {
-		return TaskState{}, err
+	var out TaskState
+	err := s.snapshot(ctx, func(q *gen.Queries) error {
+		r, err := q.GetTask(ctx, string(id))
+		if err := found("get task "+string(id), err); err != nil {
+			return err
+		}
+		out, err = s.taskStateFrom(ctx, q, r)
+		return err
+	})
+	return out, err
+}
+
+// snapshot runs fn on one read snapshot: the task row, its repos and its turn
+// rows are read together, so a commit between two queries cannot show a task
+// row from before it with a turn row from after it.
+func (s *Store) snapshot(ctx context.Context, fn func(q *gen.Queries) error) error {
+	tx, err := s.db.read.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return fmt.Errorf("begin read: %w", err)
 	}
-	return s.taskStateFrom(ctx, q, r)
+	defer func() { _ = tx.Rollback() }()
+	return fn(gen.New(tx))
 }
 
 // ListActiveTaskStates returns every task whose state is not Idle or Draft:
 // the waiting and the in-flight ones, oldest first. A row that does not load
 // is an error naming the task.
 func (s *Store) ListActiveTaskStates(ctx context.Context) ([]TaskState, error) {
-	q := s.db.reader()
-	rows, err := q.ListLiveTasks(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("list active tasks: %w", err)
-	}
-	out := make([]TaskState, 0, len(rows))
-	for _, r := range rows {
-		ts, err := s.taskStateFrom(ctx, q, r)
+	out := []TaskState{}
+	err := s.snapshot(ctx, func(q *gen.Queries) error {
+		rows, err := q.ListLiveTasks(ctx)
 		if err != nil {
-			return nil, err
+			return fmt.Errorf("list active tasks: %w", err)
 		}
-		out = append(out, ts)
+		for _, r := range rows {
+			ts, err := s.taskStateFrom(ctx, q, r)
+			if err != nil {
+				return err
+			}
+			out = append(out, ts)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }
