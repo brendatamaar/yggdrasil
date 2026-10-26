@@ -293,3 +293,9 @@ archtest `coreSubpackages` forbids core domains importing each other, so `core/t
 - **S5.** `Recovered` on a `Stopping` task ends as `Idle{NeedsYou{IntegrityViolated}}` when `Task.Mode` is Ask (read-only turn) or the cause is `IntegrityViolated`; other causes keep `Failed{Interrupted}`. **Deviation:** a plain user-cancel of an Ask turn that was stopping at a crash is mislabelled needs_you on purpose (conservative; the user reviews). `Task.Mode` is the current turn's mode, so `Stopping` needed no new field. `Starting` and `Running` keep `Failed{Interrupted}`.
 - **Sub-agent reports.** `SubagentStarted` with an empty `AgentID` or `Depth < 1` counts as over the cap (fail closed).
 - **narrowCaps.** A zero `Task.Caps` returns the asked caps unchanged. **Shell carry-in:** load the previous turn's caps with the task; test it in the shell.
+
+## Gate 1 round 3 notes (2026-10-26)
+
+- `SubagentStarted` with an empty `AgentID` or `Depth < 1` counts as over the cap (fail closed).
+- `narrowCaps` with zero `Task.Caps` keeps the new caps (bounded by the maximums): the shell must load the previous turn's caps with the task and test that.
+- `Stopping.Phase` is not persisted. A cancel during `Starting` makes `Stopping{StopBeforeStart}`; if the shell reloads the task before the prepare result arrives it reads back as `StopAfterStart` and the prepare result is ignored, leaving the task stopping until the next start's `Recovered`. **S1 constraint:** keep the live `Task` in memory per task between inputs, or have the interpreter of a never-started cancel feed `RunFinished{Cancelled}` after `KillRun`; add a shell test for cancel-during-Starting.

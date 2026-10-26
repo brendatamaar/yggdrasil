@@ -164,7 +164,7 @@ func ruleMatches(r CommandRule, argv, readRoots []string, fold bool) bool {
 // Anything that starts with "-" (a flag), "@" (a response file) or "~" is
 // refused.
 func tailArgOK(a string, readRoots []string, fold bool) bool {
-	if a == "" || !wordAllowed(a) || strings.ContainsAny(a[:1], "-@~") {
+	if a == "" || !wordAllowed(a) || strings.ContainsAny(a[:1], "-@~") || strings.Contains(a, "=") {
 		return false
 	}
 	parts := splitPath(a, fold)

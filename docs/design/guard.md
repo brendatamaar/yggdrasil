@@ -337,3 +337,9 @@ What the core cannot do and the shell must:
 4. Call `platform.HasShortNameSegment` on proposal paths and refuse `~N` segments from volumes where short names are not expanded.
 5. `Request.Trust` must contain one view per repo the mode touches; the core cannot check coverage.
 6. Scan the repo for `ConfigNames` at any depth, besides `ConfigPaths`.
+
+## Gate 1 round 3 notes (2026-10-26)
+
+- Command words no longer allow `,` and `@`, and tail words no longer allow `=` (a `.cmd`/`.bat` wrapper splits an unquoted argument at `=`).
+- A failed scan after `Trusted` leaves `Untrusted{ConfigChanged}` even if the next complete scan has the same hash: the user re-trusts (fails safe). Core state and the stored trust disagree until the next `Scanned`; the shell should `ClearTrust` on `ScanFailed`.
+- `ConfigNameProvider.ConfigNames()` has no caller yet: the S2 trust scanner must walk the repo for those names at any depth.
