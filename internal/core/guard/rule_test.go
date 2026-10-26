@@ -132,7 +132,7 @@ func TestPolicyNeverHoldsListedRule(t *testing.T) {
 		if contains(interpreterNames, base) && (len(rule.Args) == 0 || rule.Tail != guard.TailNone) {
 			t.Fatalf("accepted %+v", rule)
 		}
-		if contains(pkgTools, base) && (len(rule.Args) == 0 || contains(badSub, rule.Args[0])) {
+		if contains(pkgTools, base) && (len(rule.Args) == 0 || contains(badSub, rule.Args[0]) && !namedScriptRun(base, rule.Args)) {
 			t.Fatalf("accepted %+v", rule)
 		}
 		got, err := guard.ParsePolicy(guard.FormatPolicy(p))
@@ -149,4 +149,36 @@ func contains(l []string, s string) bool {
 		}
 	}
 	return false
+}
+
+func TestScriptRunnersMayRunANamedScript(t *testing.T) {
+	ok := []guard.CommandRule{
+		{Program: "npm", Args: []string{"run", "test"}, Tail: guard.TailNone},
+		{Program: "pnpm", Args: []string{"run", "build"}, Tail: guard.TailPaths},
+		{Program: "yarn", Args: []string{"run", "lint"}, Tail: guard.TailNone},
+	}
+	for _, r := range ok {
+		if err := r.Validate(); err != nil {
+			t.Errorf("%s %v refused: %v", r.Program, r.Args, err)
+		}
+	}
+	bad := []guard.CommandRule{
+		{Program: "npm", Args: []string{"run"}, Tail: guard.TailNone},
+		{Program: "npm", Args: []string{"run", "--silent"}, Tail: guard.TailNone},
+		{Program: "go", Args: []string{"run", "./cmd/x"}, Tail: guard.TailNone},
+		{Program: "cargo", Args: []string{"run"}, Tail: guard.TailNone},
+		{Program: "uv", Args: []string{"run", "x"}, Tail: guard.TailNone},
+		{Program: "npm", Args: []string{"exec", "x"}, Tail: guard.TailNone},
+		{Program: "npm", Args: []string{"install"}, Tail: guard.TailNone},
+	}
+	for _, r := range bad {
+		if err := r.Validate(); err == nil {
+			t.Errorf("%s %v accepted", r.Program, r.Args)
+		}
+	}
+}
+
+// namedScriptRun is the one allowed use of "run": npm, pnpm and yarn with a named script.
+func namedScriptRun(base string, args []string) bool {
+	return (base == "npm" || base == "pnpm" || base == "yarn") && len(args) >= 2 && args[0] == "run" && !strings.HasPrefix(args[1], "-")
 }

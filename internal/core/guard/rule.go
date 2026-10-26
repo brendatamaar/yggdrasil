@@ -37,6 +37,7 @@ var (
 	wrappers = nameSet("mvnw", "gradlew")
 	// packageTools need a fixed subcommand, and not one that installs,
 	// publishes or runs arbitrary code.
+	scriptRunners  = nameSet("npm", "pnpm", "yarn")
 	packageTools   = nameSet("npm", "pnpm", "yarn", "pip", "pip3", "uv", "cargo", "go", "dotnet", "mvn", "gradle")
 	badSubcommands = nameSet("install", "add", "i", "publish", "exec", "dlx", "x", "remove", "uninstall", "update", "upgrade",
 		"ci", "get", "run", "generate", "restore", "fetch", "tool", "rebuild", "link", "login", "config", "download", "sync")
@@ -95,9 +96,21 @@ func validateRule(r CommandRule) error {
 		if len(r.Args) == 0 {
 			return fmt.Errorf("allowlist program %q needs a fixed first argument such as test or build", clip(r.Program))
 		}
-		if _, bad := badSubcommands[strings.ToLower(r.Args[0])]; bad {
+		if sub := strings.ToLower(r.Args[0]); sub == "run" && isScriptRunner(base) {
+			// npm/pnpm/yarn run <script>: the canonical test and build command.
+			// It needs a named script; what the script does is the repo's own
+			// (docs/design/guard.md decision 4, threat model).
+			if len(r.Args) < 2 || strings.HasPrefix(r.Args[1], "-") {
+				return fmt.Errorf("allowlist rule %q run needs a script name such as test or build", clip(r.Program))
+			}
+		} else if _, bad := badSubcommands[sub]; bad {
 			return fmt.Errorf("allowlist rule %q %q can't be allowed: it installs, publishes or runs arbitrary code; use a proposal instead", clip(r.Program), clip(r.Args[0]))
 		}
 	}
 	return nil
+}
+
+func isScriptRunner(base string) bool {
+	_, ok := scriptRunners[base]
+	return ok
 }
