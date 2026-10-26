@@ -39,9 +39,91 @@ func (f FakeScanner) Scan(ctx context.Context, _ string, paths, names []string) 
 		if len(f.Files[k]) > safety.MaxConfigFileSize {
 			return guard.Scan{}, fmt.Errorf("%w: %s is larger than 1 MiB", safety.ErrScan, k)
 		}
+		if len(in) >= safety.MaxConfigFiles {
+			return guard.Scan{}, fmt.Errorf("%w: more than %d configuration files", safety.ErrScan, safety.MaxConfigFiles)
+		}
 		in = append(in, safety.ScanInput{Path: k, Content: []byte(f.Files[k])})
 	}
 	return safety.BuildScan(in), nil
+}
+
+// FakeEnvScanner is FakeScanner plus links and unreadable files, with the
+// failure rules of the real scanner.
+type FakeEnvScanner struct {
+	Env ScannerEnv
+}
+
+// Scan implements safety.ConfigScanner; dir is ignored.
+func (f FakeEnvScanner) Scan(ctx context.Context, dir string, paths, names []string) (guard.Scan, error) {
+	for _, l := range f.Env.Links {
+		if safety.LinkBlocksConfig(l, paths, names) {
+			return guard.Scan{}, fmt.Errorf("%w: %s is a link", safety.ErrScan, l)
+		}
+	}
+	for _, u := range f.Env.Unreadable {
+		if safety.SelectConfig(u, paths, names) {
+			return guard.Scan{}, fmt.Errorf("%w: %s can't be read", safety.ErrScan, u)
+		}
+	}
+	return FakeScanner{Files: f.Env.Files}.Scan(ctx, dir, paths, names)
+}
+
+// ScannerEnv describes a repo for the link contract: Files are plain files,
+// Links are folders (repo-relative) that are links or junctions to a folder
+// holding agent settings, Unreadable are files that can't be opened.
+type ScannerEnv struct {
+	Files      map[string]string
+	Links      []string
+	Unreadable []string
+}
+
+// EnvFactory builds a scanner and its repo directory for env.
+type EnvFactory func(t *testing.T, env ScannerEnv) (safety.ConfigScanner, string)
+
+// FakeLinkScannerFactory is the EnvFactory of FakeEnvScanner.
+func FakeLinkScannerFactory(_ *testing.T, env ScannerEnv) (safety.ConfigScanner, string) {
+	return FakeEnvScanner{Env: env}, "repo"
+}
+
+// LinkScannerContract checks the fail-closed rules for links, junctions and
+// unreadable files. It is run against the fake and the real scanner.
+func LinkScannerContract(t *testing.T, mk EnvFactory) {
+	paths := []string{".claude/settings.json", ".mcp.json", ".claude/agents", ".claude/skills"}
+	names := []string{"CLAUDE.md"}
+	scan := func(env ScannerEnv) error {
+		t.Helper()
+		s, dir := mk(t, env)
+		_, err := s.Scan(context.Background(), dir, paths, names)
+		return err
+	}
+	refused := func(name string, env ScannerEnv, want string) {
+		t.Run(name, func(t *testing.T) {
+			err := scan(env)
+			if err == nil || !errors.Is(err, safety.ErrScan) || !strings.Contains(err.Error(), want) {
+				t.Fatalf("err = %v, want ErrScan naming %q", err, want)
+			}
+			if strings.Contains(err.Error(), `\`) || strings.Contains(err.Error(), "Temp") {
+				t.Fatalf("error leaks a path: %v", err)
+			}
+		})
+	}
+	other := map[string]string{"src/main.go": "x"}
+	refused("linked .claude folder", ScannerEnv{Files: other, Links: []string{".claude"}}, ".claude")
+	refused("linked .claude folder, other case", ScannerEnv{Files: other, Links: []string{".CLAUDE"}}, ".CLAUDE")
+	refused("linked .claude/agents", ScannerEnv{Files: map[string]string{".claude/settings.json": "{}"}, Links: []string{".claude/agents"}}, ".claude/agents")
+	refused("linked skills folder", ScannerEnv{Files: map[string]string{".claude/x.md": "x"}, Links: []string{".claude/skills"}}, ".claude/skills")
+	refused("linked folder named like a config name", ScannerEnv{Files: other, Links: []string{"sub/CLAUDE.md"}}, "sub/CLAUDE.md")
+	refused("unreadable config file", ScannerEnv{Files: map[string]string{".mcp.json": "{}", "CLAUDE.md": "x"}, Unreadable: []string{".mcp.json"}}, ".mcp.json")
+	t.Run("unrelated link is fine", func(t *testing.T) {
+		if err := scan(ScannerEnv{Files: other, Links: []string{"vendor-link"}}); err != nil {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("unreadable unrelated file is fine", func(t *testing.T) {
+		if err := scan(ScannerEnv{Files: map[string]string{"src/a.go": "x"}, Unreadable: []string{"src/a.go"}}); err != nil {
+			t.Fatalf("err = %v", err)
+		}
+	})
 }
 
 // ScannerFactory returns a scanner and the repo directory holding files (paths
@@ -139,6 +221,33 @@ func ScannerContract(t *testing.T, mk ScannerFactory) {
 		}
 		if strings.Contains(err.Error(), `\`) || strings.Contains(err.Error(), "Temp") {
 			t.Fatalf("error leaks a path: %v", err)
+		}
+	})
+	t.Run("nothing inside .git is read", func(t *testing.T) {
+		f := base()
+		f[".git/CLAUDE.md"] = "x"
+		f[".git/hooks/pre-commit"] = "x"
+		f[".GIT/CLAUDE.md"] = "x"
+		if must(t, f).Hash != must(t, base()).Hash {
+			t.Fatal(".git content changed the hash")
+		}
+	})
+	t.Run("names and paths fold case", func(t *testing.T) {
+		sc := must(t, map[string]string{"sub/claude.MD": "y", ".CLAUDE/Agents/x.md": "z"})
+		if len(sc.Files) != 2 {
+			t.Fatalf("scan = %+v", sc)
+		}
+	})
+	t.Run("too many matching files is an error", func(t *testing.T) {
+		old := safety.MaxConfigFiles
+		safety.MaxConfigFiles = 20
+		t.Cleanup(func() { safety.MaxConfigFiles = old })
+		f := base()
+		for i := 0; i <= safety.MaxConfigFiles; i++ {
+			f[fmt.Sprintf(".claude/agents/a%05d.md", i)] = "x"
+		}
+		if _, err := scan(t, f); err == nil || !errors.Is(err, safety.ErrScan) {
+			t.Fatalf("err = %v", err)
 		}
 	})
 	t.Run("hooks and servers are summarised", func(t *testing.T) {
