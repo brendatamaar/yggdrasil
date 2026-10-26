@@ -29,13 +29,6 @@ type verdict struct {
 
 func (v verdict) violated() bool { return v.stop || v.flag }
 
-func (v *verdict) merge(o verdict) {
-	v.stop = v.stop || o.stop
-	v.flag = v.flag || o.flag
-	v.aborted = v.aborted || o.aborted
-	v.audits = append(v.audits, o.audits...)
-}
-
 const maxAuditedChanges = 50
 
 // integrityStep feeds one input to the checker and interprets the commands:

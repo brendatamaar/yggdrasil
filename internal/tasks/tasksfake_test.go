@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -53,11 +52,10 @@ type scriptAdapter struct {
 	checkErr   error
 	configs    []string
 
-	mu       sync.Mutex
-	started  []agents.StartOptions
-	live     atomic.Int32
-	maxLive  atomic.Int32
-	starting atomic.Int32
+	mu      sync.Mutex
+	started []agents.StartOptions
+	live    atomic.Int32
+	maxLive atomic.Int32
 }
 
 func newScriptAdapter() *scriptAdapter {
@@ -403,6 +401,8 @@ type harness struct {
 	// afterCommit is the crash hook of the service: returning true skips the
 	// interpretation of the commands, as if the process died after the commit.
 	afterCommit func(id core.TaskID, cmds []coretasks.Command) bool
+	// tune changes the Config before the service is built.
+	tune func(*Config)
 }
 
 // restart closes the service and starts a new one on the same database, as
@@ -464,6 +464,9 @@ func (h *harness) start() *Service {
 		Hub: h.hub, Machine: fakeMachine{cpus: 16, mem: 32768}, Killer: h.killer.Kill,
 		Now: func() time.Time { return time.Now().UTC() }, NewID: db.NewID,
 		UsageEvery: time.Millisecond, SnapshotTimeout: 2 * time.Second, SnapshotRetry: time.Millisecond, LockRetry: 20 * time.Millisecond,
+	}
+	if h.tune != nil {
+		h.tune(&h.cfg)
 	}
 	svc, err := New(h.cfg)
 	if err != nil {
@@ -547,16 +550,6 @@ func waitFor(t *testing.T, d time.Duration, cond func() bool, format string, arg
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for "+format, args...)
-}
-
-func hasSuffixCount(ss []string, suffix string) int {
-	n := 0
-	for _, s := range ss {
-		if strings.HasSuffix(s, suffix) {
-			n++
-		}
-	}
-	return n
 }
 
 var errBoom = errors.New("boom")

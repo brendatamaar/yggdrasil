@@ -26,9 +26,6 @@ func touchedRepos(mode core.TaskMode, repos []core.Repo) []core.Repo {
 // view per repo the mode touches from a fresh scan of the repo's agent config
 // (SF-09). Whatever the scan says, a failure makes the view untrusted.
 func (s *Service) admit(ctx context.Context, adapter agents.Adapter, mode core.TaskMode, prev *core.TaskMode, optIn bool, repos []core.Repo) (guard.Admission, error) {
-	if err := mode.Validate(); err != nil {
-		return guard.Admission{Refusal: guard.ReasonModeUnavailable}, nil
-	}
 	var views []guard.TrustView
 	for _, r := range touchedRepos(mode, repos) {
 		v, err := s.trustView(ctx, adapter, r)

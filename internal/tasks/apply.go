@@ -312,30 +312,6 @@ func (s *Service) auditEntry(actor, action string, task core.TaskID, detail map[
 	return e, nil
 }
 
-// recordAudits commits audit entries that have no state of their own (denies,
-// integrity verdicts of a clean run).
-func (s *Service) recordAudits(ctx context.Context, task core.TaskID, specs []auditSpec) error {
-	if len(specs) == 0 {
-		return nil
-	}
-	entries := make([]core.AuditEntry, 0, len(specs))
-	for _, x := range specs {
-		e, err := s.auditEntry("system", x.Action, task, x.Detail)
-		if err != nil {
-			return err
-		}
-		entries = append(entries, e)
-	}
-	return s.c.Store.Commit(ctx, func(tx *db.Tx) error {
-		for _, e := range entries {
-			if err := tx.AppendAudit(ctx, e); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
 // clearTrust forgets the stored trust of a repo with its audit entry (SF-09:
 // a scan that could not read the config completely, or a changed config).
 func (s *Service) clearTrust(ctx context.Context, repo core.RepoID, outcome string) error {
