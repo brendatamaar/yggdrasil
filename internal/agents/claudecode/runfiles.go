@@ -30,7 +30,7 @@ func prepareMCPFile(work, src string) (string, error) {
 		data = b
 	}
 	path := filepath.Join(work, "mcp.json")
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil { //nolint:gosec // path is a fixed name in our own run folder
 		return "", errors.New("the MCP config file can't be written")
 	}
 	return path, nil
