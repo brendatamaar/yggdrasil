@@ -22,7 +22,7 @@ func (s *Service) startRun(id core.TaskID, cmd coretasks.StartRun) {
 	if at == nil {
 		at = s.newAttempt(id, cmd.Turn, cmd.Attempt)
 	}
-	if !s.spawn(func() { s.runTurn(id, at, cmd) }) {
+	if !s.spawn(s.guarded(id, "run", func() { s.runTurn(id, at, cmd) })) {
 		at.cancel()
 	}
 }
@@ -97,11 +97,18 @@ func (c *capture) started() agents.Run {
 
 func (s *Service) execute(id core.TaskID, at *attempt, cmd coretasks.StartRun) report {
 	bg := s.bgCtx()
+	// rep collects the audit entries gathered so far; every early return keeps
+	// them (the entries of the folders checked before a later one failed).
+	var rep report
 	startFailed := func(msg string) report {
 		s.explain(bg, id, msg)
-		return report{fin: coretasks.RunFinished{Status: coretasks.RunFailed, StartFail: true}}
+		rep.fin = coretasks.RunFinished{Status: coretasks.RunFailed, StartFail: true}
+		return rep
 	}
-	cancelled := func() report { return report{fin: coretasks.RunFinished{Status: coretasks.RunCancelled}} }
+	cancelled := func() report {
+		rep.fin = coretasks.RunFinished{Status: coretasks.RunCancelled}
+		return rep
+	}
 	if at.ctx.Err() != nil {
 		return cancelled()
 	}
@@ -158,7 +165,6 @@ func (s *Service) execute(id core.TaskID, at *attempt, cmd coretasks.StartRun) r
 
 	// Ask turns: fingerprint every folder before the run (SF-07).
 	var checks []*checker
-	var rep report
 	gturn := guard.TurnID(cmd.Turn)
 	if cmd.Mode == core.ModeAsk {
 		for _, d := range append([]string{cmd.Dir}, cmd.ExtraDirs...) {

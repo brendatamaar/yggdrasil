@@ -35,6 +35,7 @@ type Service struct {
 	prep     map[core.TaskID]*sync.Mutex
 	blocked  map[core.TaskID]string // waiting task -> holder of its main checkout
 	stuck    map[core.TaskID]bool   // tasks whose end could not be stored (recovered later)
+	failing  map[core.TaskID]bool   // tasks being marked failed (no recursion)
 
 	boardMu sync.Mutex
 	board   coretasks.Board
@@ -63,6 +64,7 @@ func New(c Config) (*Service, error) {
 		prep:     map[core.TaskID]*sync.Mutex{},
 		blocked:  map[core.TaskID]string{},
 		stuck:    map[core.TaskID]bool{},
+		failing:  map[core.TaskID]bool{},
 		board: coretasks.Board{
 			Max: c.DefaultMax, Tasks: map[core.TaskID]coretasks.Entry{}, Locks: map[core.RepoID]core.TaskID{},
 		},

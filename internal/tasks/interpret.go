@@ -76,9 +76,55 @@ func (s *Service) snapshot(ctx context.Context, id core.TaskID) (db.TaskState, e
 	return s.c.Store.GetTaskState(ctx, id)
 }
 
+// effects collects what the commands of one step ask for, so they can run in a
+// fixed order.
+type effects struct {
+	kill, release, wake bool
+	publish             *core.TaskStatus
+	spawns              []func() // prepare and run goroutines, started last
+}
+
+// dispatch records the effect of one command. It reports false for a command
+// it does not know (a new core variant the shell was not taught), which
+// interpret turns into a loud failure. The commands that only matter to the
+// storing step (PersistTurn, FinishTurn, Audit, Reject) and the scheduler's
+// Admit have nothing to do here.
+func (s *Service) dispatch(id core.TaskID, c coretasks.Command, fx *effects) bool {
+	switch v := c.(type) {
+	case coretasks.Enqueue:
+		s.boardInput(coretasks.Enqueued{Task: id, Mode: v.Mode, EditsMain: v.EditsMain, Order: s.order.Add(1)})
+		fx.wake = true
+	case coretasks.Requeue:
+		s.boardInput(coretasks.TaskChanged{Task: id, Kind: coretasks.KindWaiting})
+	case coretasks.Dequeue:
+		s.boardInput(coretasks.Removed{Task: id})
+		fx.wake = true
+	case coretasks.PrepareRun:
+		fx.spawns = append(fx.spawns, func() { s.startPrepare(id, v) })
+	case coretasks.StartRun:
+		fx.spawns = append(fx.spawns, func() { s.startRun(id, v) })
+	case coretasks.KillRun:
+		if at := s.attemptOf(id, v.Turn, v.Attempt); at != nil {
+			at.cancel()
+		}
+	case coretasks.KillTask:
+		fx.kill = true
+	case coretasks.ReleaseLocks:
+		fx.release = true
+	case coretasks.Publish:
+		p := v.Status
+		fx.publish = &p
+	case coretasks.PersistTurn, coretasks.FinishTurn, coretasks.Audit, coretasks.Reject, coretasks.Admit:
+	default:
+		return false
+	}
+	return true
+}
+
 // interpret performs the commands of a committed step. It never runs before
 // the commit (a crash between the two is recovered at the next start) and
-// never holds the task's lock, so it may feed new inputs.
+// never holds the task's lock, so it may feed new inputs. A panic or an
+// unknown command fails the task instead of leaving it running unwatched.
 func (s *Service) interpret(id core.TaskID, res applyResult) {
 	if !res.Committed {
 		return
@@ -86,51 +132,85 @@ func (s *Service) interpret(id core.TaskID, res applyResult) {
 	if s.afterCommit != nil && s.afterCommit(id, res.Cmds) {
 		return
 	}
-	var (
-		kill, release, wake bool
-		publish             *core.TaskStatus
-	)
+	defer func() {
+		if v := recover(); v != nil {
+			s.logPanic("interpret", id, v)
+			s.markFailed(id)
+		}
+	}()
+	var fx effects
+	unknown := false
 	for _, c := range res.Cmds {
-		switch v := c.(type) {
-		case coretasks.Enqueue:
-			s.boardInput(coretasks.Enqueued{Task: id, Mode: v.Mode, EditsMain: v.EditsMain, Order: s.order.Add(1)})
-			wake = true
-		case coretasks.Requeue:
-			s.boardInput(coretasks.TaskChanged{Task: id, Kind: coretasks.KindWaiting})
-		case coretasks.Dequeue:
-			s.boardInput(coretasks.Removed{Task: id})
-			wake = true
-		case coretasks.PrepareRun:
-			s.startPrepare(id, v)
-		case coretasks.StartRun:
-			s.startRun(id, v)
-		case coretasks.KillRun:
-			if at := s.attemptOf(id, v.Turn, v.Attempt); at != nil {
-				at.cancel()
-			}
-		case coretasks.KillTask:
-			kill = true
-		case coretasks.ReleaseLocks:
-			release = true
-		case coretasks.Publish:
-			p := v.Status
-			publish = &p
+		if !s.dispatch(id, c, &fx) {
+			unknown = true
+			s.c.Log.Error("unknown task command; the task is failed", "task", id, "command", fmt.Sprintf("%T", c))
 		}
 	}
 	// The processes end before the lock goes and before the new status is
 	// announced, so a client never sees a finished task with a live process.
-	if kill {
+	// Everything that ends something comes before anything that starts
+	// something, so "running" can never be published after "done".
+	if fx.kill {
 		s.killTask(id)
 	}
-	if release {
+	if fx.release {
 		s.releaseLocks(id)
-		wake = true
+		fx.wake = true
 	}
-	if publish != nil {
-		s.c.Hub.Status(StatusMessage{TaskID: id, Title: res.Row.Title, Status: *publish})
+	if fx.publish != nil {
+		s.c.Hub.Status(StatusMessage{TaskID: id, Title: res.Row.Title, Status: *fx.publish})
 	}
-	if wake {
+	for _, f := range fx.spawns {
+		f()
+	}
+	if fx.wake {
 		s.wakeLoop()
+	}
+	if unknown {
+		s.markFailed(id)
+	}
+}
+
+// markFailed stops a task the shell cannot continue (a panic, an unknown
+// command): its processes end, its slot and lock are freed, and the core marks
+// it failed through Recovered. If that cannot be stored, the task is kept for
+// the loop's retry.
+func (s *Service) markFailed(id core.TaskID) {
+	s.mu.Lock()
+	if s.failing[id] {
+		s.mu.Unlock()
+		return
+	}
+	s.failing[id] = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.failing, id)
+		s.mu.Unlock()
+		if v := recover(); v != nil {
+			s.logPanic("mark task failed", id, v)
+		}
+	}()
+	s.killTask(id)
+	s.releaseLocks(id)
+	if err := s.recoverTask(s.bgCtx(), id); err != nil {
+		s.c.Log.Error("could not mark the task failed; it is kept for recovery", "task", id, "err", err)
+		s.mu.Lock()
+		s.stuck[id] = true
+		s.mu.Unlock()
+	}
+}
+
+// guarded wraps a goroutine body so a panic fails its task and is logged.
+func (s *Service) guarded(id core.TaskID, where string, f func()) func() {
+	return func() {
+		defer func() {
+			if v := recover(); v != nil {
+				s.logPanic(where, id, v)
+				s.markFailed(id)
+			}
+		}()
+		f()
 	}
 }
 

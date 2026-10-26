@@ -46,7 +46,12 @@ func (s *Service) Start(ctx context.Context) error {
 	}
 	states, err := s.c.Store.ListActiveTaskStates(ctx)
 	if err != nil {
-		return fmt.Errorf("load active tasks: %w", err)
+		// One row that does not load must not keep every other task from
+		// starting: load them one by one and quarantine the broken ones.
+		s.c.Log.Error("an active task could not be loaded; loading the tasks one by one", "err", err)
+		if states, err = s.loadActiveOneByOne(ctx); err != nil {
+			return fmt.Errorf("load active tasks: %w", err)
+		}
 	}
 	for _, st := range states {
 		id := st.Row.ID
@@ -59,7 +64,11 @@ func (s *Service) Start(ctx context.Context) error {
 			s.boardInput(coretasks.Enqueued{Task: id, Mode: st.Task.Mode, EditsMain: edits, Order: s.order.Add(1)})
 		default:
 			if err := s.recoverTask(ctx, id); err != nil {
-				return fmt.Errorf("recover task %s: %w", id, err)
+				// Not fatal for the others: the loop retries it.
+				s.c.Log.Error("could not recover a task at start; it is kept for a retry", "task", id, "err", err)
+				s.mu.Lock()
+				s.stuck[id] = true
+				s.mu.Unlock()
 			}
 		}
 	}
@@ -68,6 +77,56 @@ func (s *Service) Start(ctx context.Context) error {
 	}
 	s.wakeLoop()
 	return nil
+}
+
+// loadActiveOneByOne is the fallback of Start when the bulk load failed. It
+// reads the live tasks of every project by status and loads each state alone.
+// A task whose rows do not load is quarantined: marked failed with an audit
+// entry (the rows are kept, nothing is deleted) and left out.
+func (s *Service) loadActiveOneByOne(ctx context.Context) ([]db.TaskState, error) {
+	projects, err := s.c.Store.ListProjects(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []db.TaskState
+	for _, p := range projects {
+		list, err := s.c.Store.ListTasks(ctx, p.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range list {
+			if t.Status != core.TaskQueued && t.Status != core.TaskRunning {
+				continue
+			}
+			st, err := s.c.Store.GetTaskState(ctx, t.ID)
+			if err != nil {
+				s.c.Log.Error("a task could not be loaded; it is marked failed", "task", t.ID, "err", err)
+				if qerr := s.quarantine(ctx, t); qerr != nil {
+					return nil, fmt.Errorf("quarantine task %s: %w", t.ID, qerr)
+				}
+				continue
+			}
+			out = append(out, st)
+		}
+	}
+	return out, nil
+}
+
+// quarantine marks a task whose rows do not load as failed (interrupted), with
+// its audit entry.
+func (s *Service) quarantine(ctx context.Context, t core.Task) error {
+	now := s.c.Now().UTC()
+	e, err := s.auditEntry("system", "task.quarantined", t.ID, map[string]any{"outcome": "failed_interrupted", "reason": "unreadable_rows"})
+	if err != nil {
+		return err
+	}
+	row := coretasks.TaskRow{Status: core.TaskFailed, IdleOutcome: coretasks.OutcomeCode(coretasks.Failed{Kind: coretasks.FailInterrupted}), IdleAt: &now}
+	return s.c.Store.Commit(ctx, func(tx *db.Tx) error {
+		if _, err := tx.SaveTask(ctx, t.ID, row, t.SessionID, t.Version, now); err != nil {
+			return err
+		}
+		return tx.AppendAudit(ctx, e)
+	})
 }
 
 // recoverTask feeds Recovered to one live task. The usage of the turn is
