@@ -66,7 +66,8 @@ func (s *Service) trustStep(ctx context.Context, repoID core.RepoID, user func(t
 	if trusted && len(hash) == 64 {
 		st = guard.Trusted{Repo: repoID, Hash: hash}
 	}
-	var cmds []guard.Command
+	var scanCmds, userCmds []guard.Command
+	readOnly := user == nil // reading the status never writes
 	scan, serr := s.c.Scanner.Scan(ctx, repo.Path, paths, names)
 	if serr != nil {
 		if ctx.Err() != nil {
@@ -76,12 +77,12 @@ func (s *Service) trustStep(ctx context.Context, repoID core.RepoID, user func(t
 		// The core clears nothing on a failed scan; the stored trust is
 		// withdrawn here as the admission path does.
 		st, _ = guard.StepTrust(st, guard.ScanFailed{Repo: repoID, Why: serr.Error()})
-		if trusted {
-			cmds = append(cmds, guard.ClearTrust{Repo: repoID},
+		if trusted && !readOnly {
+			scanCmds = append(scanCmds, guard.ClearTrust{Repo: repoID},
 				guard.Audit{Entry: guard.AuditEntry{Action: "guard.trust", Outcome: "scan_incomplete", Repo: repoID}})
 		}
 		// Nothing the user asked can be applied to a config we cannot see.
-		return st, s.persistTrust(ctx, cmds)
+		return st, s.persistTrust(ctx, scanCmds, nil)
 	}
 	// Trusted states keep the scan they were computed from, so a revoke can
 	// show what was trusted.
@@ -91,25 +92,34 @@ func (s *Service) trustStep(ctx context.Context, repoID core.RepoID, user func(t
 	}
 	var c []guard.Command
 	st, c = guard.StepTrust(st, guard.Scanned{Repo: repoID, Scan: scan, Now: now})
-	cmds = append(cmds, c...)
-	if user != nil {
-		st, c = guard.StepTrust(st, user(now))
-		cmds = append(cmds, c...)
+	scanCmds = append(scanCmds, c...)
+	if readOnly {
+		// The status is the view only; a changed config reads as Untrusted
+		// and the stored trust is cleared at admission.
+		return st, nil
 	}
-	return st, s.persistTrust(ctx, cmds)
+	st, c = guard.StepTrust(st, user(now))
+	userCmds = append(userCmds, c...)
+	return st, s.persistTrust(ctx, scanCmds, userCmds)
 }
 
 // persistTrust applies PersistTrust, ClearTrust and Audit commands in one
-// Commit. Nothing to do is not an error.
-func (s *Service) persistTrust(ctx context.Context, cmds []guard.Command) error {
+// Commit. Audit entries from scanCmds are caused by the system, those from
+// userCmds by the user's click. Nothing to do is not an error.
+func (s *Service) persistTrust(ctx context.Context, scanCmds, userCmds []guard.Command) error {
+	cmds := append(append([]guard.Command{}, scanCmds...), userCmds...)
 	if len(cmds) == 0 {
 		return nil
 	}
 	var entries []core.AuditEntry
-	for _, c := range cmds {
+	for i, c := range cmds {
 		a, ok := c.(guard.Audit)
 		if !ok {
 			continue
+		}
+		actor := "user"
+		if i < len(scanCmds) {
+			actor = "system"
 		}
 		detail := map[string]any{"outcome": a.Entry.Outcome}
 		if len(a.Entry.Files) > 0 {
@@ -119,7 +129,7 @@ func (s *Service) persistTrust(ctx context.Context, cmds []guard.Command) error 
 		if err != nil {
 			return fmt.Errorf("encode audit detail: %w", err)
 		}
-		e, err := audit.Prepare(core.AuditEntry{Actor: "user", Action: a.Entry.Action, Subject: "repo:" + string(a.Entry.Repo), Detail: raw},
+		e, err := audit.Prepare(core.AuditEntry{Actor: actor, Action: a.Entry.Action, Subject: "repo:" + string(a.Entry.Repo), Detail: raw},
 			s.c.Redactor, core.AuditID(s.c.NewID("aud")), s.c.Now())
 		if err != nil {
 			return fmt.Errorf("prepare audit entry: %w", err)

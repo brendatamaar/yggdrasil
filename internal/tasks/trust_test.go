@@ -116,8 +116,42 @@ func TestTrustLostWhenConfigChanges(t *testing.T) {
 	if u, ok := st.(guard.Untrusted); !ok || u.Why.Kind != guard.WhyConfigChanged {
 		t.Fatalf("status = %#v", st)
 	}
-	if on, _, _ := h.store.GetRepoTrust(ctx, h.repos[0].ID); on {
-		t.Fatal("changed config kept the trust")
+	// Reading the status has no side effects: the stored trust is cleared at
+	// admission, not by a GET.
+	if on, _, _ := h.store.GetRepoTrust(ctx, h.repos[0].ID); !on {
+		t.Fatal("TrustStatus cleared the stored trust")
+	}
+	list, _ := h.store.ListAudit(ctx, "repo:"+string(h.repos[0].ID), 50)
+	if len(list) != 0 {
+		t.Fatalf("TrustStatus wrote %d audit entries", len(list))
+	}
+}
+
+func TestTrustAuditActors(t *testing.T) {
+	h := trustHarness(t, claudeConfig)
+	h.trust(0, claudeConfig)
+	ctx := context.Background()
+	id := h.repos[0].ID
+	h.scanner.set(h.repos[0].Path, map[string]string{".claude/settings.json": `{"hooks":{}}`})
+	st, err := h.svc.Trust(ctx, id, "deadbeef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if isTrusted(st) {
+		t.Fatalf("stale hash trusted: %#v", st)
+	}
+	list, _ := h.store.ListAudit(ctx, "repo:"+string(id), 50)
+	var sys, user bool
+	for _, e := range list {
+		switch {
+		case contains(string(e.Detail), "trust_lost"):
+			sys = e.Actor == "system"
+		case contains(string(e.Detail), "trust_stale"):
+			user = e.Actor == "user"
+		}
+	}
+	if !sys || !user {
+		t.Fatalf("actors wrong: scan-derived system=%v, user click user=%v (%d entries)", sys, user, len(list))
 	}
 }
 
