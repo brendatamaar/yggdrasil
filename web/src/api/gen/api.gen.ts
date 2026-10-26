@@ -345,7 +345,7 @@ export interface BoardCardDTO {
   status: core.TaskStatus;
   column: string;
   repoNames: string[];
-  repoIds: core.RepoID[];
+  repoIds?: core.RepoID[];
   pendingProposals: number /* int */;
   blockedBy?: string;
   usage: UsageDTO;

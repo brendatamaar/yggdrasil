@@ -114,7 +114,6 @@ func (s *Server) taskEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, TaskEventsResponse{Events: events})
 }
 
-
 // errWriteModes is shown when a write mode is asked for while the flag is off.
 const errWriteModes = "Code mode is not enabled in this version."
 
@@ -267,7 +266,6 @@ func (s *Server) dismissTask(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, TaskResponse{Task: task})
 }
-
 
 // taskErr translates what the store reports about tasks, projects and repos
 // into an error class with a message for people. Other errors pass through

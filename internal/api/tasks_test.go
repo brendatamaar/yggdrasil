@@ -407,7 +407,7 @@ func TestBoardResponse(t *testing.T) {
 	if c := b.Cards[0]; c.TaskID != "tsk_1" || c.Column != "working" || c.Title != "Cart bug" || len(c.RepoIDs) != 1 || c.BlockedBy != "Waiting for shop-api" {
 		t.Errorf("card 0 = %+v", c)
 	}
-	if c := b.Cards[1]; c.TaskID != "tsk_3" || c.Column != "needs_you" || c.PendingProposals != 2 || c.RepoIDs == nil {
+	if c := b.Cards[1]; c.TaskID != "tsk_3" || c.Column != "needs_you" || c.PendingProposals != 2 {
 		t.Errorf("card 1 = %+v", c)
 	}
 	if strings.Contains(string(data), secretDetail) || strings.Contains(string(data), "tsk_2") {

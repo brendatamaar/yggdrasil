@@ -22,14 +22,12 @@ import (
 
 // Deps are what the server needs. Store is required.
 type Deps struct {
-	Store    *db.Store
+	Store *db.Store
 	// Adapters is unused since the tasks service owns the runs.
 	//
-	// Deprecated: remove when cmd/ygg stops setting it.
 	Adapters map[string]agents.Adapter
 	// Env is unused since the tasks service owns the runs.
 	//
-	// Deprecated: remove when cmd/ygg stops setting it.
 	Env safety.EnvBuilder
 	// Log defaults to a redacting text logger on stderr.
 	Log *slog.Logger
@@ -44,7 +42,6 @@ type Deps struct {
 	AllowedOrigins []string
 	// KillTask is unused since the tasks service owns the runs.
 	//
-	// Deprecated: remove when cmd/ygg stops setting it.
 	KillTask func(taskID string) error
 
 	// The services of the Phase 2 areas. A nil service registers no route
@@ -120,8 +117,7 @@ type Server struct {
 
 // New builds a server.
 func New(d Deps) (*Server, error) {
-	switch {
-	case d.Store == nil:
+	if d.Store == nil {
 		return nil, errors.New("api: a store is required")
 	}
 	redactor := d.Redactor

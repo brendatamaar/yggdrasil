@@ -43,7 +43,7 @@ type BoardCardDTO struct {
 	Status           core.TaskStatus `json:"status"`
 	Column           string          `json:"column"`
 	RepoNames        []string        `json:"repoNames"`
-	RepoIDs          []core.RepoID   `json:"repoIds"`
+	RepoIDs          []core.RepoID   `json:"repoIds,omitempty"`
 	PendingProposals int             `json:"pendingProposals"`
 	BlockedBy        string          `json:"blockedBy,omitempty"`
 	Usage            UsageDTO        `json:"usage"`

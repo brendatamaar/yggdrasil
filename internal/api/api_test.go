@@ -48,7 +48,7 @@ func newEnv(t *testing.T, extra ...func(*Deps)) *env {
 	store := db.NewStore(d, redactor.Redact)
 	deps := Deps{
 		Store: store, Redactor: redactor,
-		Version:  "test",
+		Version: "test",
 		Assets: fstest.MapFS{
 			"index.html":    {Data: []byte("<html>app</html>")},
 			"assets/app.js": {Data: []byte("console.log(1)")},
@@ -117,19 +117,6 @@ func (e *env) createReq() CreateTaskRequest {
 		// task (not on the tasks topic, not in the audit log).
 		Prompt: "Find the order routes in shop-api.\n" + secretDetail, Mode: core.ModeAsk, Agent: "mock",
 	}
-}
-
-func (e *env) create(t *testing.T) core.Task {
-	t.Helper()
-	resp, data := e.do(t, http.MethodPost, "/api/tasks", e.createReq())
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("create task = %d: %s", resp.StatusCode, data)
-	}
-	var tr TaskResponse
-	if err := json.Unmarshal(data, &tr); err != nil {
-		t.Fatal(err)
-	}
-	return tr.Task
 }
 
 func (e *env) dial(t *testing.T, mod ...func(*websocket.DialOptions)) *websocket.Conn {
@@ -311,16 +298,6 @@ func TestSlowClientIsDroppedWithoutBlocking(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
-
-type errString string
-
-func (e errString) Error() string { return string(e) }
-
-// userError carries a message meant for people, like claudecode.UserError.
-type userError string
-
-func (e userError) Error() string       { return string(e) }
-func (e userError) UserMessage() string { return string(e) }
 
 func TestSubscriptionsPerClientAreCapped(t *testing.T) {
 	e := newEnv(t)
