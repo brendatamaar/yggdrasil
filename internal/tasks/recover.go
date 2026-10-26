@@ -112,23 +112,6 @@ func (s *Service) loadActiveOneByOne(ctx context.Context) ([]db.TaskState, error
 	return out, nil
 }
 
-// quarantine marks a task whose rows do not load as failed (interrupted), with
-// its audit entry.
-func (s *Service) quarantine(ctx context.Context, t core.Task) error {
-	now := s.c.Now().UTC()
-	e, err := s.auditEntry("system", "task.quarantined", t.ID, map[string]any{"outcome": "failed_interrupted", "reason": "unreadable_rows"})
-	if err != nil {
-		return err
-	}
-	row := coretasks.TaskRow{Status: core.TaskFailed, IdleOutcome: coretasks.OutcomeCode(coretasks.Failed{Kind: coretasks.FailInterrupted}), IdleAt: &now}
-	return s.c.Store.Commit(ctx, func(tx *db.Tx) error {
-		if _, err := tx.SaveTask(ctx, t.ID, row, t.SessionID, t.Version, now); err != nil {
-			return err
-		}
-		return tx.AppendAudit(ctx, e)
-	})
-}
-
 // recoverTask feeds Recovered to one live task. The usage of the turn is
 // recomputed from the events the run stored before the process stopped.
 func (s *Service) recoverTask(ctx context.Context, id core.TaskID) error {

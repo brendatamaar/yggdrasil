@@ -57,7 +57,9 @@ func TestPanicInAnAskRunStillChecksTheTree(t *testing.T) {
 	h.adapter.during = func(o agents.StartOptions) {
 		_ = os.WriteFile(filepath.Join(o.Dir, "new.txt"), []byte("x"), 0o600)
 	}
-	h.tune = func(c *Config) { c.Hub = &eventPanicHub{fakeHub: h.hub, file: filepath.Join(h.repos[0].Path, "new.txt")} }
+	h.tune = func(c *Config) {
+		c.Hub = &eventPanicHub{fakeHub: h.hub, file: filepath.Join(h.repos[0].Path, "new.txt")}
+	}
 	h.start()
 	id := h.send(h.msg("ask", "look", 0)).Task.ID
 	close(h.adapter.gate)

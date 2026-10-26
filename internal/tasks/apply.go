@@ -338,6 +338,23 @@ func (s *Service) clearTrust(ctx context.Context, repo core.RepoID, outcome stri
 	})
 }
 
+// quarantine marks a task whose rows do not load as failed (interrupted), with
+// its audit entry (audit.Prepare redacts it, in auditEntry).
+func (s *Service) quarantine(ctx context.Context, t core.Task) error {
+	now := s.c.Now().UTC()
+	e, err := s.auditEntry("system", "task.quarantined", t.ID, map[string]any{"outcome": "failed_interrupted", "reason": "unreadable_rows"})
+	if err != nil {
+		return err
+	}
+	row := coretasks.TaskRow{Status: core.TaskFailed, IdleOutcome: coretasks.OutcomeCode(coretasks.Failed{Kind: coretasks.FailInterrupted}), IdleAt: &now}
+	return s.c.Store.Commit(ctx, func(tx *db.Tx) error {
+		if _, err := tx.SaveTask(ctx, t.ID, row, t.SessionID, t.Version, now); err != nil {
+			return err
+		}
+		return tx.AppendAudit(ctx, e)
+	})
+}
+
 // legacyInterrupt marks the Phase 2 rows that claim to be queued or running
 // (they have no turn) as interrupted, with one audit entry each, in one
 // Commit. It runs once at startup, before anything is loaded.

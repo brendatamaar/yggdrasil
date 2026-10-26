@@ -78,7 +78,7 @@ func (a *scriptAdapter) Check(context.Context) error {
 	}
 	return a.checkErr
 }
-func (a *scriptAdapter) ConfigPaths() []string             { return a.configs }
+func (a *scriptAdapter) ConfigPaths() []string { return a.configs }
 func (a *scriptAdapter) Starts() []agents.StartOptions {
 	a.mu.Lock()
 	defer a.mu.Unlock()
