@@ -240,6 +240,17 @@ func (l *fakeMainLock) TryAcquire(repos []core.RepoID, owner string) (Release, s
 	}, "", true
 }
 
+func (l *fakeMainLock) Held(repos []core.RepoID) (string, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, r := range repos {
+		if o, ok := l.owners[r]; ok {
+			return o, true
+		}
+	}
+	return "", false
+}
+
 func (l *fakeMainLock) held(repo core.RepoID) string {
 	l.mu.Lock()
 	defer l.mu.Unlock()

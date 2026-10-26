@@ -33,6 +33,7 @@ type Service struct {
 	attempts map[core.TaskID]*attempt
 	releases map[core.TaskID]Release
 	prep     map[core.TaskID]*sync.Mutex
+	blocked  map[core.TaskID]string // waiting task -> holder of its main checkout
 
 	boardMu sync.Mutex
 	board   coretasks.Board
@@ -57,6 +58,7 @@ func New(c Config) (*Service, error) {
 		attempts: map[core.TaskID]*attempt{},
 		releases: map[core.TaskID]Release{},
 		prep:     map[core.TaskID]*sync.Mutex{},
+		blocked:  map[core.TaskID]string{},
 		board: coretasks.Board{
 			Max: c.DefaultMax, Tasks: map[core.TaskID]coretasks.Entry{}, Locks: map[core.RepoID]core.TaskID{},
 		},
