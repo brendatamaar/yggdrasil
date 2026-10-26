@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	"github.com/brendatamaar/yggdrasil/internal/core/guard"
@@ -65,8 +66,9 @@ type StartOptions struct {
 	// a valid policy; adapters that use it call Policy.Validate first.
 	Policy guard.Policy
 	// ConfigTrusted says the user has trusted the agent config the task's repos
-	// ship (SF-09). Without it an adapter refuses to run in a repo that ships
-	// such config.
+	// ship (SF-09). Advisory: adapters that cannot make repo config inert
+	// refuse without it; the Claude Code adapter ignores repo config entirely
+	// and does not read this. guard.Admit keeps the SF-09 policy.
 	ConfigTrusted bool
 	// MCPConfigPath is the file WriteMCPConfig wrote; when set, the adapter
 	// loads that MCP server and no other.
@@ -95,4 +97,27 @@ type ConfigNameProvider interface {
 // CLI, and only that server may load.
 type MCPConfigurer interface {
 	WriteMCPConfig(dir, url, token string) (path string, err error)
+}
+
+// Deny is one tool call the adapter's enforcement refused. It carries the
+// tool's name and a guard reason message, never a path or any text of the call.
+type Deny struct {
+	Tool   string
+	Reason string
+	At     time.Time
+}
+
+// DenyReporter is optionally implemented by a Run whose adapter enforces
+// through a hook that keeps a log. Denies lists the refusals of the run; call
+// it after Wait. The tasks service audits each one as guard.deny.
+type DenyReporter interface {
+	Denies() []Deny
+}
+
+// ToolUseReporter is optionally implemented by a Run. SeenToolUses lists the
+// IDs of the tool calls the agent's stream showed, in order; call it after
+// Wait. The tasks service compares it with the enforcement log: a tool call
+// without a log record means enforcement did not see it and must fail the task.
+type ToolUseReporter interface {
+	SeenToolUses() []string
 }

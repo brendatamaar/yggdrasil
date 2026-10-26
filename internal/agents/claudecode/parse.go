@@ -73,6 +73,7 @@ type parser struct {
 	agentOf   map[string]string // sub-agent tool_use ID -> agent ID
 	startOf   map[string]string // agent ID -> its sub-agent tool_use ID
 	bad       int               // malformed lines reported so far
+	toolUses  []string          // tool_use IDs seen, in order (capped)
 
 	sawResult bool
 	resultOK  bool
@@ -87,6 +88,9 @@ func newParser(dir string) *parser {
 
 // maxBadLines caps the error events for unreadable lines.
 const maxBadLines = 20
+
+// maxToolUses caps the tool_use IDs a run keeps for SeenToolUses.
+const maxToolUses = 100000
 
 // parseLine converts one physical line. Unknown line types yield no events;
 // an unreadable line yields one plain error event.
@@ -215,6 +219,9 @@ var (
 
 func (p *parser) toolUse(ev agents.Event, b rawBlock) agents.Event {
 	ev.ID = b.ID
+	if b.ID != "" && len(p.toolUses) < maxToolUses {
+		p.toolUses = append(p.toolUses, b.ID)
+	}
 	var in struct {
 		FilePath     string `json:"file_path"`
 		NotebookPath string `json:"notebook_path"`

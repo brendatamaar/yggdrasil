@@ -55,7 +55,7 @@ const hookTimeoutSec = 30
 // enforcement (docs/AGENTS.md 6, invariant 5). The only paths on the command
 // line are the settings file, the MCP config file and the task's extra
 // folders (project mode).
-func buildArgs(settingsPath string, o agents.StartOptions) []string {
+func buildArgs(settingsPath, mcpPath string, o agents.StartOptions) []string {
 	allowed, disallowed := askTools, askDisallowed // anything but a writing mode is read-only
 	switch o.Mode {
 	case core.ModeCode, core.ModeProject, core.ModeCurrentBranch:
@@ -64,18 +64,19 @@ func buildArgs(settingsPath string, o agents.StartOptions) []string {
 	args := []string{
 		"-p", "--output-format", "stream-json", "--verbose", "--forward-subagent-text",
 		"--settings", settingsPath,
-		// Without this, the user's own hooks and settings would run as well:
-		// hook entries merge across levels.
-		"--setting-sources", "project",
+		// An empty source list loads no user, project or local settings, so
+		// no repo or user hook, MCP server, agent, skill or command runs
+		// (docs/spikes.md B5). Repo config is inert in every mode.
+		"--setting-sources", "",
+		// Only our MCP file loads: none of the repo's, none of the account's
+		// connectors. The file is empty unless the run has Yggdrasil's server.
+		"--strict-mcp-config", "--mcp-config", mcpPath,
 		"--permission-mode", "dontAsk",
 		"--allowedTools", strings.Join(allowed, ","),
 		"--disallowedTools", strings.Join(disallowed, ","),
 	}
 	for _, d := range o.ExtraDirs {
 		args = append(args, "--add-dir", d)
-	}
-	if o.MCPConfigPath != "" {
-		args = append(args, "--mcp-config", o.MCPConfigPath, "--strict-mcp-config")
 	}
 	if o.Model != "" {
 		args = append(args, "--model", o.Model)
@@ -123,7 +124,10 @@ func buildEnv(base []string, o agents.StartOptions, hookConfigPath string) []str
 }
 
 type settingsFile struct {
-	Hooks map[string][]hookMatcher `json:"hooks"`
+	// DisableAllHooks is always written, as false: a repo setting of true would
+	// otherwise switch our hook off (docs/spikes.md B5, runs A and B).
+	DisableAllHooks bool                     `json:"disableAllHooks"`
+	Hooks           map[string][]hookMatcher `json:"hooks"`
 }
 
 type hookMatcher struct {

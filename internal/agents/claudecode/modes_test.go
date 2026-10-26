@@ -19,31 +19,31 @@ func TestBuildArgsGoldenForTheWritingModes(t *testing.T) {
 	base := []string{
 		"-p", "--output-format", "stream-json", "--verbose", "--forward-subagent-text",
 		"--settings", "SETTINGS",
-		"--setting-sources", "project",
+		"--setting-sources", "",
+		"--strict-mcp-config", "--mcp-config", "MCP",
 		"--permission-mode", "dontAsk",
 		"--allowedTools", "Read,Grep,Glob,Edit,Write,MultiEdit,Bash,PowerShell,Agent",
 		"--disallowedTools", "NotebookEdit,WebFetch,WebSearch",
 	}
 	for _, mode := range []core.TaskMode{core.ModeCode, core.ModeCurrentBranch} {
-		if got := buildArgs("SETTINGS", agents.StartOptions{Mode: mode}); !slices.Equal(got, base) {
+		if got := buildArgs("SETTINGS", "MCP", agents.StartOptions{Mode: mode}); !slices.Equal(got, base) {
 			t.Errorf("%s:\n%q\nwant\n%q", mode, got, base)
 		}
 	}
 	// Project mode adds the other worktrees; resume and the MCP file add theirs.
 	o := agents.StartOptions{
 		Mode: core.ModeProject, ExtraDirs: []string{"DIR2", "DIR3"}, ResumeSessionID: "sess-1",
-		MCPConfigPath: "MCP", Model: "haiku", BudgetUSD: 1.5,
+		Model: "haiku", BudgetUSD: 1.5,
 	}
 	want := append(slices.Clone(base),
 		"--add-dir", "DIR2", "--add-dir", "DIR3",
-		"--mcp-config", "MCP", "--strict-mcp-config",
 		"--model", "haiku", "--max-budget-usd", "1.5", "--resume", "sess-1")
-	if got := buildArgs("SETTINGS", o); !slices.Equal(got, want) {
+	if got := buildArgs("SETTINGS", "MCP", o); !slices.Equal(got, want) {
 		t.Errorf("project:\n%q\nwant\n%q", got, want)
 	}
 	// A mode that is not a writing mode never gets the writing tools.
 	for _, mode := range []core.TaskMode{core.ModeAsk, ""} {
-		if got := buildArgs("SETTINGS", agents.StartOptions{Mode: mode}); !slices.Contains(got, "Read,Grep,Glob") || slices.Contains(got, base[12]) {
+		if got := buildArgs("SETTINGS", "MCP", agents.StartOptions{Mode: mode}); !slices.Contains(got, "Read,Grep,Glob") || slices.Contains(got, base[15]) {
 			t.Errorf("mode %q: args %q", mode, got)
 		}
 	}
@@ -84,7 +84,7 @@ func TestStartInTheWritingModes(t *testing.T) {
 			t.Errorf("%s: the MCP token reached the command line, stdin or settings", mode)
 		}
 		args := strings.Split(argv, "\x00")
-		if i := slices.Index(args, "--mcp-config"); i < 0 || args[i+1] != mcp || !slices.Contains(args, "--strict-mcp-config") {
+		if i := slices.Index(args, "--mcp-config"); i < 0 || args[i+1] == mcp || !strings.Contains(read(t, out+".mcp"), token) || !slices.Contains(args, "--strict-mcp-config") {
 			t.Errorf("%s: MCP flags missing in %q", mode, args)
 		}
 		if i := slices.Index(args, "--allowedTools"); i < 0 || !strings.Contains(args[i+1], "Edit") || strings.Contains(args[i+1], "WebFetch") {
