@@ -96,7 +96,7 @@ func TestValidateRuleInterpreters(t *testing.T) {
 	for _, p := range []string{"node", "python", "python3", "py", "ruby", "perl", "php", "deno", "bun", "Node.exe"} {
 		t.Run(p, func(t *testing.T) {
 			bad := []guard.CommandRule{
-				{Program: p, Tail: guard.TailNone},                           // no fixed args
+				{Program: p, Tail: guard.TailNone},                              // no fixed args
 				{Program: p, Args: []string{"build.js"}, Tail: guard.TailPaths}, // open tail
 				{Program: p, Tail: guard.TailPaths},
 			}
