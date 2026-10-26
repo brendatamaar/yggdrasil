@@ -176,7 +176,7 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	}
 
 	taskHub := &api.HubAdapter{}
-	taskSvc, err := newTasks(store, adapters, g, taskHub, redactor, checkoutLock, cfg.dataDir, log)
+	taskSvc, err := newTasks(store, adapters, g, taskHub, redactor, checkoutLock, cfg.dataDir, cfg.writeModes, log)
 	if err != nil {
 		_ = d.Close()
 		return nil, err

@@ -54,6 +54,7 @@ func boardResponse(v tasks.BoardView) BoardResponse {
 			TaskID: c.Task.ID, Title: c.Task.Title, Mode: c.Task.Mode, Agent: c.Task.Agent,
 			Status: c.Task.Status, Column: string(c.Column), RepoNames: []string{}, RepoIDs: ids,
 			PendingProposals: c.PendingProposals, BlockedBy: c.BlockedBy, UpdatedAt: c.Task.UpdatedAt,
+			Usage: UsageDTO{InputTokens: c.Usage.InputTokens, OutputTokens: c.Usage.OutputTokens, CacheWriteTokens: c.Usage.CacheWriteTokens, CacheReadTokens: c.Usage.CacheReadTokens, CostMicroUSD: c.Usage.CostMicroUSD, CostKnown: c.Usage.CostKnown, DurationMS: c.Usage.DurationMS},
 		})
 	}
 	return out

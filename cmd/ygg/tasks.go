@@ -58,7 +58,7 @@ func holderString(h mainlock.Holder) string { return string(h.Owner.Kind) + ":" 
 // newTasks builds the tasks service. lock is the one main-checkout lock that
 // builds and git actions share. hub is bound to the server after the
 // server exists.
-func newTasks(store *db.Store, adapters adapterRegistry, g *git.Git, hub *api.HubAdapter, redactor safety.Redactor, lock *mainlock.Registry, dataDir string, log *slog.Logger) (*tasks.Service, error) {
+func newTasks(store *db.Store, adapters adapterRegistry, g *git.Git, hub *api.HubAdapter, redactor safety.Redactor, lock *mainlock.Registry, dataDir string, writeModes bool, log *slog.Logger) (*tasks.Service, error) {
 	now := func() time.Time { return time.Now().UTC() }
 	ens, err := worktrees.New(worktrees.Config{
 		Git: g, Store: worktrees.DBStore{S: store}, Rand: tasks.Rand{},
@@ -71,7 +71,7 @@ func newTasks(store *db.Store, adapters adapterRegistry, g *git.Git, hub *api.Hu
 		Store: store, Adapters: adapters, Worktrees: ens, MainLock: taskLock{reg: lock},
 		Scanner: safety.FSScanner{}, Snapshotter: g, Env: safety.NewEnvBuilder(), Redactor: redactor,
 		Hub: hub, Machine: platform.Machine{}, Killer: platform.KillTask,
-		Now: now, NewID: db.NewID, Log: log,
+		Now: now, NewID: db.NewID, Log: log, WriteModes: writeModes,
 		Allowlist: newAllowlist(store, log),
 		// Proposals arrive with their service; until then none are pending.
 		PendingProposals: func(context.Context, core.TaskID) (int, error) { return 0, nil },
