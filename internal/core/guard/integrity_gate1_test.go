@@ -68,10 +68,10 @@ func TestIntegrityAbort(t *testing.T) {
 				t.Fatalf("abort emitted a StopTask: %#v", cmds)
 			}
 			if _, un := got.(Unverifiable); un && !reflect.DeepEqual(c.from, got) {
-				if len(cmds) != 1 {
-					t.Fatalf("want one audit entry, got %#v", cmds)
+				if len(cmds) != 2 && !hasStop(cmds) {
+					t.Fatalf("want an audit entry and a flag, got %#v", cmds)
 				}
-				if a, ok := cmds[0].(Audit); !ok || a.Entry.Outcome != "unverifiable" || a.Entry.Turn != turn {
+				if !hasUnverifiableAudit(cmds, turn) || !hasFlag(cmds, turn) {
 					t.Fatalf("got %#v", cmds)
 				}
 			}
@@ -104,10 +104,5 @@ func TestIntegrityRestartFromTerminalStates(t *testing.T) {
 				t.Fatalf("got %#v %#v", got, cmds)
 			}
 		})
-	}
-	// A live check is never replaced by a different turn.
-	live := Armed{Turn: "t1", Before: snapA}
-	if got, cmds := StepIntegrity(live, TurnStarts{Turn: "t2", Mode: core.ModeAsk}); !reflect.DeepEqual(got, live) || len(cmds) != 0 {
-		t.Fatalf("got %#v %#v", got, cmds)
 	}
 }

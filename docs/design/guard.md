@@ -318,3 +318,22 @@ Changes made after the first review gate (all in `internal/core/guard`, tests fi
 - **M3 trust.** New explicit starting state `Unknown{Repo}`, viewed as untrusted. Every state carries `Repo`; an input for another repo changes nothing. New input `ScanFailed{Repo, Why}` gives `Untrusted{WhyScanIncomplete}` from any state (audit `scan_incomplete`, no free text, persisted trust left for the next complete scan). `NoConfig` is only reached by a complete scan.
 - **M5 admit.** `Request.Trust` is `[]TrustView`, one per repo the mode touches; a non-Ask mode needs every view `None` or `Trusted`, and an empty list is refused.
 - **Policy and paths.** `Policy.Validate` refuses a drive root, `/`, and a UNC root without host, share and one more part. Protected names add `.codex/**`, `.gemini/**`, `.cursor/**`, `.husky/**`, `.githooks/**`, `CLAUDE.local.md`, `.gitmodules`; they are exported as `ProtectedDirNames` and `ProtectedFileNames` for the cross-check test in `core/proposals`. A glob part with a `[..]` class that can match `..` (for example `.[.]`) is refused. Read and Search of `.git/config` and anything under `.git/hooks` give `Deny ProtectedPath`.
+
+## Review gate 1, round 2
+
+- **Trust.** While `Untrusted` has `Why=ScanIncomplete`, `UserTrusts` is refused (`trust_stale` audit, no state change): only a complete `Scanned` re-arms trust. `ScanFailed` records `Why.Prior` (and `Was`); the next complete scan recomputes `Why` from it (`NeverTrusted`, `ConfigChanged{Was}`; `Revoked` stays `Revoked`).
+- **Command words.** `,` (PowerShell array operator) and `@` (splatting) are no longer allowed word characters. `=` stays.
+- **Integrity supersede (S2).** In `Arming`, `Armed` and `Checking`, `TurnStarts` for a different turn resolves the old turn as `Unverifiable` (commands: `Audit`, `FlagTask`, no `StopTask`: it is already replaced) and starts the new turn (Ask: `Arming` + `TakeSnapshot{Before}`; other modes: `Idle`). Property: every Ask turn that ran gets a `Clean`, `Violated` or `Unverifiable` verdict. A `TurnStarts` for the same turn changes nothing.
+- **Integrity ends.** `TurnEnds` in `Arming` (the run ended before the Before snapshot returned) gives `Unverifiable` with `StopTask{CannotVerify}` and `Audit`. `TurnAborted` in `Armed`/`Checking` gives `Unverifiable` with `Audit` and `FlagTask` (no `StopTask`), so the user sees "could not verify".
+- **Trust scan coverage.** Adapters may implement `agents.ConfigNameProvider{ConfigNames() []string}`: file names that configure the agent at any depth (Claude Code: `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`). `ConfigPaths` for Claude Code also lists `.claude/rules` and `.claude/output-styles`.
+
+### Shell carry-ins
+
+What the core cannot do and the shell must:
+
+1. Map `Unverifiable` and `Violated` to a user-visible `needs_you` task status.
+2. Time out a lost snapshot reply and feed `TurnAborted` (the core has no timers).
+3. Hold `RunFinished` until the After snapshot is checked.
+4. Call `platform.HasShortNameSegment` on proposal paths and refuse `~N` segments from volumes where short names are not expanded.
+5. `Request.Trust` must contain one view per repo the mode touches; the core cannot check coverage.
+6. Scan the repo for `ConfigNames` at any depth, besides `ConfigPaths`.

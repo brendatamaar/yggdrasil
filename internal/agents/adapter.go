@@ -74,6 +74,13 @@ type RepoConfigProvider interface {
 	ConfigPaths() []string
 }
 
+// ConfigNameProvider is optionally implemented next to RepoConfigProvider by an
+// adapter whose CLI also loads config files by name at any depth (for example
+// nested CLAUDE.md files). Names are bare file names, not paths.
+type ConfigNameProvider interface {
+	ConfigNames() []string
+}
+
 // MCPConfigurer is optionally implemented by an adapter that can be pointed at
 // Yggdrasil's MCP server. WriteMCPConfig writes the CLI's MCP config file into
 // dir and returns its path. The URL and the bearer token go into the file,

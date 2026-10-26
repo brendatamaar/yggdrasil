@@ -21,7 +21,7 @@ func TestParseCommandLineAccepts(t *testing.T) {
 		`go test "a" "" b`:               {"go", "test", "a", "", "b"},
 		`go test ''`:                     {"go", "test", ""},
 		"go test C:/work/repo/file.go":   {"go", "test", "C:/work/repo/file.go"},
-		"go test a=b,c:d+e@f":            {"go", "test", "a=b,c:d+e@f"},
+		"go test a=b:c+d":                {"go", "test", "a=b:c+d"},
 		"go test one%two":                {"go", "test", "one%two"},
 		`go test "-"x`:                   {"go", "test", "-x"}, // parsed; the tail rule refuses it
 	} {
@@ -50,7 +50,7 @@ func TestParseCommandLineRefuses(t *testing.T) {
 		`git commit -m "fix: a - b (c)"`,
 		// expansions, ANSI-C quotes, globs, comments, history
 		`go test $'\055x'`, `go test $"x"`, "go test ${HOME}", "go test $1", "go test *", "go test ?", "go test [a]",
-		"go test {-x,y}", "go test {1..3}", "go test #c", `go test "$HOME"`, `go test "${x}"`, `go test "a*"`,
+		"go vet ./a,../..", "go test ./a,-exec=evil.exe", "go test @args", "go test a@b", "go test {-x,y}", "go test {1..3}", "go test #c", `go test "$HOME"`, `go test "${x}"`, `go test "a*"`,
 		`go test "a\b"`, `go test "!x"`, `go test '~'`, `go test '$x'`, `go test "{a,b}"`,
 	} {
 		if argv, err := ParseCommandLine(line); err == nil {
@@ -120,7 +120,7 @@ func TestFormatCommandLineRoundTrip(t *testing.T) {
 	}
 }
 
-var wordRe = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./ -]*$`)
+var wordRe = regexp.MustCompile(`^[A-Za-z0-9_%+=:./ -]*$`)
 
 // checkArgvClean returns a problem with an accepted argv, or "".
 func checkArgvClean(argv []string) string {
