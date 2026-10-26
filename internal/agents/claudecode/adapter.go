@@ -22,6 +22,7 @@ import (
 
 	"github.com/brendatamaar/yggdrasil/internal/agents"
 	"github.com/brendatamaar/yggdrasil/internal/core"
+	"github.com/brendatamaar/yggdrasil/internal/core/guard"
 	"github.com/brendatamaar/yggdrasil/internal/platform"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
@@ -45,7 +46,7 @@ var modelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$`)
 
 // sessionID is what a resumable session ID may look like (a UUID); it goes
 // into a command line too.
-var sessionID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,63}$`)
+var sessionID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 
 // Options configure the adapter.
 type Options struct {
@@ -123,14 +124,19 @@ func (a *Adapter) Check(ctx context.Context) error {
 	return nil
 }
 
-// Start implements agents.Adapter. Only Ask mode is wired: Code mode needs
-// worktrees and the path guard, which arrive in a later phase.
+// Start implements agents.Adapter for Ask, Code, Project and Current-branch
+// runs. Every tool call of the run is judged by the hook against o.Policy
+// (core/guard); the CLI flags are a second layer.
 func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run, error) {
 	switch {
 	case o.Env == nil:
 		return nil, errors.New("claudecode: no clean environment given")
-	case o.Mode != core.ModeAsk:
-		return nil, &UserError{Message: "Claude Code can only run in Ask mode (read-only) in this version."}
+	case o.Mode.Validate() != nil:
+		return nil, &UserError{Message: "That task mode isn't known."}
+	case len(o.ExtraDirs) > 0 && o.Mode != core.ModeProject:
+		return nil, &UserError{Message: "Only a task over the whole project can use more than one folder."}
+	case o.MCPConfigPath != "" && (!filepath.IsAbs(o.MCPConfigPath) || strings.ContainsAny(o.MCPConfigPath, "\r\n\x00") || !exists(o.MCPConfigPath)):
+		return nil, errors.New("claudecode: the MCP config file is missing")
 	case strings.TrimSpace(o.Prompt) == "":
 		return nil, &UserError{Message: "The prompt is empty. Write what the agent should look into."}
 	case o.Model != "" && !modelName.MatchString(o.Model):
@@ -138,20 +144,42 @@ func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run,
 	case o.ResumeSessionID != "" && !sessionID.MatchString(o.ResumeSessionID):
 		return nil, &UserError{Message: "That session ID isn't valid."}
 	}
+	// Without a valid policy for this very mode the hook would have nothing to
+	// enforce, so no run starts (SF-06, invariant 5).
+	if err := o.Policy.Validate(); err != nil || o.Policy.Mode != o.Mode || o.Policy.Enforcement != guard.EnforcementHook {
+		return nil, &UserError{Message: "The task's safety rules are missing or don't match its mode, so the agent was not started.", Err: err}
+	}
 	dir, err := platform.LongPath(o.Dir)
 	if err != nil {
 		return nil, &UserError{Message: "The repo folder can't be used. Check that it still exists.", Err: err}
 	}
-	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
-		return nil, &UserError{Message: "The repo folder doesn't exist any more. Check the project's folder.", Err: err}
+	dirs := []string{dir}
+	extra := make([]string, len(o.ExtraDirs))
+	for i, d := range o.ExtraDirs {
+		long, err := platform.LongPath(d)
+		if err != nil {
+			return nil, &UserError{Message: "A folder of the project can't be used. Check that it still exists.", Err: err}
+		}
+		extra[i] = long
+		dirs = append(dirs, long)
 	}
-	// A repo that configures Claude Code itself (settings with hooks, MCP
-	// servers, agent definitions) could run its own commands even in Ask mode.
-	// No agent runs there until the user can trust a repo (SF-09, invariant 10).
-	if f := ownAgentConfig(dir, exists); f != "" {
-		return nil, &UserError{Message: fmt.Sprintf(
-			"This repo has its own Claude Code configuration (%s), which could run commands. "+
-				"Yggdrasil doesn't run agents in such a repo until you can trust it once, which arrives in a later version.", f)}
+	o.ExtraDirs = extra
+	for _, d := range dirs {
+		if st, err := os.Stat(d); err != nil || !st.IsDir() {
+			return nil, &UserError{Message: "A repo folder doesn't exist any more. Check the project's folder.", Err: err}
+		}
+		if err := checkFolderInPolicy(o.Policy, d); err != nil {
+			return nil, &UserError{Message: "A folder of this task isn't covered by its safety rules, so the agent was not started.", Err: err}
+		}
+		// A repo that configures Claude Code itself (settings with hooks, MCP
+		// servers, agent definitions) could run its own commands, even in Ask
+		// mode: the CLI loads project settings. No agent runs there until the
+		// user has trusted the repo (SF-09, invariant 10).
+		if f := ownAgentConfig(d, exists); f != "" && !o.ConfigTrusted {
+			return nil, &UserError{Message: fmt.Sprintf(
+				"This repo has its own Claude Code configuration (%s), which could run commands. "+
+					"Yggdrasil doesn't run agents in such a repo until you have reviewed and trusted it.", f)}
+		}
 	}
 	bin, err := platform.Resolve(a.opts.Binary, "", o.Env)
 	if err != nil {
@@ -162,9 +190,19 @@ func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run,
 		return nil, fmt.Errorf("create run folder: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(work) } // our own temp folder only
+	policy := guard.FormatPolicy(o.Policy)
+	if policy == nil {
+		cleanup()
+		return nil, errors.New("claudecode: encode the policy")
+	}
+	policyPath := filepath.Join(work, "policy.json")
+	if err := os.WriteFile(policyPath, append(policy, '\n'), 0o600); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("write policy: %w", err)
+	}
 	settings, hookConfig, err := writeConfigFiles(work, a.opts.HookExecutable, HookConfig{
 		LogPath: filepath.Join(work, "hook.log"), MaxDepth: o.MaxSubagentDepth, MaxConcurrent: o.MaxConcurrentSubagents,
-		AllowedTools: askTools, AllowedDir: dir,
+		PolicyPath: policyPath,
 	})
 	if err != nil {
 		cleanup()
@@ -192,6 +230,29 @@ func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run,
 	r := &run{events: make(chan agents.Event), done: make(chan struct{})}
 	go r.loop(ctx, proc, pr, pw, newParser(dir), stderr, cleanup)
 	return r, nil
+}
+
+// checkFolderInPolicy confirms that the policy lets the run read the folder
+// and, in a writing mode, change it. A mismatch between the folders handed to
+// Start and the policy is a bug upstream: it must not start a run whose hook
+// would deny everything, or judge another folder than the one the CLI works in.
+func checkFolderInPolicy(p guard.Policy, dir string) error {
+	canon, err := platform.ResolveRoot(dir)
+	if err != nil {
+		return err
+	}
+	ref := []guard.PathRef{{Canon: canon, OK: true}}
+	if v := guard.Decide(p, guard.Call{Tool: guard.ToolRead, Paths: ref}); !v.Allow {
+		return errors.New("folder is outside the readable folders of the policy")
+	}
+	if p.Mode == core.ModeAsk {
+		return nil
+	}
+	probe := []guard.PathRef{{Canon: filepath.Join(canon, "probe"), OK: true}}
+	if v := guard.Decide(p, guard.Call{Tool: guard.ToolWrite, Paths: probe}); !v.Allow {
+		return errors.New("folder is outside the writable folders of the policy")
+	}
+	return nil
 }
 
 // exists reports whether a file or folder exists.

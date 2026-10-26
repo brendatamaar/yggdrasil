@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/brendatamaar/yggdrasil/internal/agents"
+	"github.com/brendatamaar/yggdrasil/internal/core"
 )
 
 // Sub-agent environment variables (docs/spikes.md B4, CLI 2.1.299): depth is
@@ -24,11 +25,19 @@ const (
 )
 
 // askTools are the only tools an Ask-mode run may use: read-only. The hook
-// enforces this list too (HookConfig.AllowedTools); the flags below only ask.
+// judges every call through core/guard too; the flags below only ask.
 var askTools = []string{"Read", "Grep", "Glob"}
 
 // askDisallowed are tools named in --disallowedTools as a second request.
 var askDisallowed = []string{"Edit", "Write", "MultiEdit", "NotebookEdit", "Bash", "PowerShell"}
+
+// codeTools are the tools the guard can judge in the writing modes. Bash and
+// PowerShell are both listed: which one the CLI offers depends on the machine,
+// and the hook judges either. NotebookEdit and the web tools stay off.
+var codeTools = []string{"Read", "Grep", "Glob", "Edit", "Write", "MultiEdit", "Bash", "PowerShell", "Agent"}
+
+// codeDisallowed are named in --disallowedTools as a second request.
+var codeDisallowed = []string{"NotebookEdit", "WebFetch", "WebSearch"}
 
 // hookTimeoutSec bounds one hook call; the CLI default is 600 s.
 const hookTimeoutSec = 30
@@ -40,7 +49,18 @@ const hookTimeoutSec = 30
 // breaks in arguments and has a line length limit. Nothing left on the command
 // line comes from the person: flags, a validated model name, a session ID and
 // our own file path.
+//
+// The flags are a second layer: they ask the CLI to refuse what the hook would
+// refuse. The hook, which judges every call with core/guard, is the
+// enforcement (docs/AGENTS.md 6, invariant 5). The only paths on the command
+// line are the settings file, the MCP config file and the task's extra
+// folders (project mode).
 func buildArgs(settingsPath string, o agents.StartOptions) []string {
+	allowed, disallowed := askTools, askDisallowed // anything but a writing mode is read-only
+	switch o.Mode {
+	case core.ModeCode, core.ModeProject, core.ModeCurrentBranch:
+		allowed, disallowed = codeTools, codeDisallowed
+	}
 	args := []string{
 		"-p", "--output-format", "stream-json", "--verbose", "--forward-subagent-text",
 		"--settings", settingsPath,
@@ -48,8 +68,14 @@ func buildArgs(settingsPath string, o agents.StartOptions) []string {
 		// hook entries merge across levels.
 		"--setting-sources", "project",
 		"--permission-mode", "dontAsk",
-		"--allowedTools", strings.Join(askTools, ","),
-		"--disallowedTools", strings.Join(askDisallowed, ","),
+		"--allowedTools", strings.Join(allowed, ","),
+		"--disallowedTools", strings.Join(disallowed, ","),
+	}
+	for _, d := range o.ExtraDirs {
+		args = append(args, "--add-dir", d)
+	}
+	if o.MCPConfigPath != "" {
+		args = append(args, "--mcp-config", o.MCPConfigPath, "--strict-mcp-config")
 	}
 	if o.Model != "" {
 		args = append(args, "--model", o.Model)

@@ -17,6 +17,7 @@ import (
 
 	"github.com/brendatamaar/yggdrasil/internal/agents"
 	"github.com/brendatamaar/yggdrasil/internal/core"
+	"github.com/brendatamaar/yggdrasil/internal/core/guard"
 	"github.com/brendatamaar/yggdrasil/internal/platform"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
@@ -76,6 +77,12 @@ func runFake(mode string) int {
 		}
 		if data, err := os.ReadFile(os.Getenv(HookConfigEnv)); err == nil {
 			_ = os.WriteFile(out+".hookcfg", data, 0o600)
+			var cfg HookConfig
+			if json.Unmarshal(data, &cfg) == nil {
+				if pol, err := os.ReadFile(cfg.PolicyPath); err == nil {
+					_ = os.WriteFile(out+".policy", pol, 0o600)
+				}
+			}
 		}
 		var seen []string
 		for _, name := range fakeEnvNames {
@@ -123,9 +130,11 @@ func startOpts(t *testing.T, mode string, extra map[string]string) agents.StartO
 	if err != nil {
 		t.Fatal(err)
 	}
+	dir := t.TempDir()
 	return agents.StartOptions{
 		TaskID: "tsk_test", Prompt: "Find the order routes.", Mode: core.ModeAsk,
-		Dir: t.TempDir(), Env: env, MaxSubagentDepth: 2, MaxConcurrentSubagents: 4,
+		Dir: dir, Env: env, MaxSubagentDepth: 2, MaxConcurrentSubagents: 4,
+		Policy: policyFor(t, core.ModeAsk, dir),
 	}
 }
 
@@ -186,11 +195,18 @@ func TestStartRefusals(t *testing.T) {
 	a := newAdapter(t, "stream")
 	ok := startOpts(t, "stream", nil)
 	cases := map[string]func(*agents.StartOptions){
-		"nil env":      func(o *agents.StartOptions) { o.Env = nil },
-		"code mode":    func(o *agents.StartOptions) { o.Mode = core.ModeCode },
-		"project mode": func(o *agents.StartOptions) { o.Mode = core.ModeProject },
-		"empty prompt": func(o *agents.StartOptions) { o.Prompt = "  \n" },
-		"missing dir":  func(o *agents.StartOptions) { o.Dir = filepath.Join(o.Dir, "nope") },
+		"nil env":                 func(o *agents.StartOptions) { o.Env = nil },
+		"policy for another mode": func(o *agents.StartOptions) { o.Mode = core.ModeCode },
+		"zero policy":             func(o *agents.StartOptions) { o.Policy = guard.Policy{} },
+		"limited enforcement":     func(o *agents.StartOptions) { o.Policy.Enforcement = guard.EnforcementLimited },
+		"policy lacks the dir": func(o *agents.StartOptions) {
+			o.Policy = policyFor(t, core.ModeAsk, t.TempDir())
+		},
+		"extra dirs outside project mode": func(o *agents.StartOptions) { o.ExtraDirs = []string{t.TempDir()} },
+		"unknown mode":                    func(o *agents.StartOptions) { o.Mode = "yolo" },
+		"missing mcp config":              func(o *agents.StartOptions) { o.MCPConfigPath = filepath.Join(t.TempDir(), "none.json") },
+		"empty prompt":                    func(o *agents.StartOptions) { o.Prompt = "  \n" },
+		"missing dir":                     func(o *agents.StartOptions) { o.Dir = filepath.Join(o.Dir, "nope") },
 	}
 	for name, mutate := range cases {
 		o := ok
@@ -205,6 +221,7 @@ func TestStartRefusals(t *testing.T) {
 	for _, name := range []string{".claude/settings.json", ".claude/settings.local.json", ".mcp.json", ".claude/agents"} {
 		o := ok
 		o.Dir = t.TempDir()
+		o.Policy = policyFor(t, core.ModeAsk, o.Dir)
 		path := filepath.Join(o.Dir, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
@@ -218,6 +235,8 @@ func TestStartRefusals(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// Untrusted: refused in every mode (SF-09), Ask included, because the
+		// CLI would load the repo's own hooks and MCP servers.
 		r, err := a.Start(context.Background(), o)
 		var ue *UserError
 		if err == nil || !errors.As(err, &ue) || !strings.Contains(ue.Message, name) || !strings.Contains(ue.Message, "own Claude Code configuration") {
@@ -226,6 +245,15 @@ func TestStartRefusals(t *testing.T) {
 				for range r.Events() { //nolint:revive // drain so the run ends
 				}
 			}
+		}
+		// Trusted: the run starts.
+		o.ConfigTrusted = true
+		r, err = a.Start(context.Background(), o)
+		if err != nil {
+			t.Errorf("%s: a trusted repo was refused: %v", name, err)
+			continue
+		}
+		for range r.Events() { //nolint:revive // drain so the run ends
 		}
 	}
 	// Model names go onto a command line.
@@ -351,13 +379,16 @@ func TestRunCommandLineEnvironmentAndCleanup(t *testing.T) {
 		t.Errorf("working directory = %q, want %q", cwd, long)
 	}
 
-	// The hook was told to enforce Ask mode and the repo folder.
+	// The hook was told where its policy is, and the policy is the task's.
 	var hookCfg HookConfig
 	if err := json.Unmarshal([]byte(read(t, out+".hookcfg")), &hookCfg); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(hookCfg.AllowedTools, askTools) || !strings.EqualFold(filepath.Clean(hookCfg.AllowedDir), filepath.Clean(long)) {
+	if hookCfg.PolicyPath == "" || read(t, out+".policy") != string(guard.FormatPolicy(o.Policy))+"\n" {
 		t.Errorf("hook configuration = %+v", hookCfg)
+	}
+	if slices.Contains(argv, hookCfg.PolicyPath) {
+		t.Errorf("the policy path is on the command line")
 	}
 	if !slices.Contains(argv, "--disallowedTools") {
 		t.Errorf("--disallowedTools missing from %q", argv)
