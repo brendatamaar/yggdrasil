@@ -19,6 +19,7 @@ const notFound: Reply = { status: 404, body: { code: "not_found", message: "That
 /** What the server says when a test doesn't care: nothing running, no events. */
 function defaultReply(call: Call): Reply {
   if (call.path.startsWith("/api/tasks?")) return { body: { tasks: [] } };
+  if (call.path === "/api/board") return { body: { maxAgents: 2, active: 0, hint: { raiseTo: 0 }, cards: [] } };
   if (call.path === "/api/health") return { body: { status: "ok", version: "test" } };
   // The home widgets read these; "nothing yet" keeps unrelated tests quiet.
   if (call.path.startsWith("/api/repos?")) {
