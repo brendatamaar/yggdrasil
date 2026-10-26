@@ -291,7 +291,15 @@ func (s *Service) feed(id core.TaskID, in coretasks.Input, o applyOpts) (applyRe
 // stuck. Its stored status still says running, which the loop (and the next
 // start) recovers as interrupted.
 func (s *Service) abandon(id core.TaskID, what string) {
-	s.c.Log.Error("the end of a task step could not be stored; the task is kept for recovery", "task", id, "step", what)
+	if pv, ok := s.pendingViolation(id); ok {
+		// The verdict of a read-only turn is not stored yet. Keep the evidence
+		// in the log too: repo-relative changed paths (capped), redacted.
+		paths, reasons := pv.summary(s.c.Redactor.Redact)
+		s.c.Log.Error("the end of a task step could not be stored; the task is kept for recovery; a read-only turn changed the tree and its verdict is not stored",
+			"task", id, "step", what, "reasons", reasons, "changedPaths", paths)
+	} else {
+		s.c.Log.Error("the end of a task step could not be stored; the task is kept for recovery", "task", id, "step", what)
+	}
 	s.killTask(id)
 	s.releaseLocks(id)
 	s.mu.Lock()

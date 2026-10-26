@@ -127,6 +127,18 @@ func (s *Service) recoverTask(ctx context.Context, id core.TaskID) error {
 	if skipped > 0 {
 		s.c.Log.Warn("recovery skipped undecodable events", "task", id, "count", skipped)
 	}
+	// A read-only turn whose changed tree was seen in this process but whose
+	// verdict never reached the store: store it first, so the recovery ends in
+	// NeedsYou and not Failed (SF-07). Nothing runs for the task any more, so
+	// the commands of this step are not interpreted.
+	if pv, ok := s.pendingViolation(id); ok {
+		if _, err := s.apply(ctx, id, func(db.TaskState) coretasks.Input {
+			return coretasks.IntegrityViolated{Turn: pv.turn, Now: s.c.Now().UTC()}
+		}, applyOpts{extra: pv.audits}); err != nil {
+			return err
+		}
+		s.clearViolation(id)
+	}
 	res, err := s.apply(ctx, id, func(db.TaskState) coretasks.Input {
 		return coretasks.Recovered{Now: s.c.Now().UTC()}
 	}, applyOpts{finishUsage: &u})

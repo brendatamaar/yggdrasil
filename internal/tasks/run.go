@@ -46,8 +46,10 @@ func (s *Service) runTurn(id core.TaskID, at *attempt, cmd coretasks.StartRun) {
 	// integrity verdict goes first (SF-07, tasks.md Gate 1 fixes).
 	audits := rep.audits
 	if rep.violated {
+		s.setViolation(id, violation{turn: cmd.Turn, audits: audits})
 		if _, ok := s.feed(id, coretasks.IntegrityViolated{Turn: cmd.Turn, Now: s.c.Now().UTC()}, applyOpts{extra: audits}); ok {
 			audits = nil
+			s.clearViolation(id)
 		} else {
 			// The verdict could not be stored. The turn must never end as
 			// answered after that: it fails, and the audit entries go with it.
@@ -57,7 +59,10 @@ func (s *Service) runTurn(id core.TaskID, at *attempt, cmd coretasks.StartRun) {
 	}
 	if _, ok := s.feed(id, rep.fin, applyOpts{extra: audits}); !ok {
 		s.abandon(id, "run finished")
+		return
 	}
+	// RunFinished carried the audit entries of a verdict that was not stored.
+	s.clearViolation(id)
 }
 
 func (s *Service) safeExecute(id core.TaskID, at *attempt, cmd coretasks.StartRun) (rep report) {
