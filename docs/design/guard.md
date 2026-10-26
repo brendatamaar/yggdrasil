@@ -250,7 +250,7 @@ interpret Scan        → safetytest.FakeScanner
 | hook: tool input is not valid JSON or has an unexpected shape | | domain outcome | `Call` with `Tool=Other` → D15 deny |
 | hook: command line has shell syntax | | domain outcome | `ParseErr` → D10 deny |
 | hook: process killed / timeout | | escape hatch | the CLI's `onFailure: "block"` blocks the call |
-| `TakeSnapshot` git failure (lock, timeout) | | retry (read-only, idempotent), then domain outcome | retry once after 1 s; second failure → `SnapshotFailed` → `Unverifiable` (stops the task, fail closed) |
+| `TakeSnapshot` git failure (lock, timeout) | | retry (read-only, idempotent), then domain outcome | retry once after 1 s (not for `ErrSnapshotTooLarge`, which goes straight to `SnapshotFailed`); second failure → `SnapshotFailed` → `Unverifiable` (stops the task, fail closed) |
 | `Scan` file unreadable | | domain outcome | treated as config present with an unknown hash, repo stays `Untrusted` with `Why` set; message says which file |
 | `PersistTrust` version conflict | | retry | reload, rerun `StepTrust` (the shell loop from the builds design) |
 | `PersistTrust` other store error | | die | 500 to the API; no trust recorded |
