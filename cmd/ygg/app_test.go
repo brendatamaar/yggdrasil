@@ -14,13 +14,20 @@ import (
 	"testing"
 	"testing/fstest"
 	"time"
+
+	"github.com/brendatamaar/yggdrasil/internal/search/searchtest"
 )
 
 // startApp wires the real application on a loopback port with the demo agent
 // and no pause between events.
 func startApp(t *testing.T) (base string, cfg config, stop func() error) {
 	t.Helper()
-	cfg = config{addr: "127.0.0.1:0", dataDir: t.TempDir(), mockDelay: 0}
+	return startAppWith(t, config{addr: "127.0.0.1:0", dataDir: t.TempDir(), mockDelay: 0})
+}
+
+// startAppWith is startApp with the given settings.
+func startAppWith(t *testing.T, cfg config) (base string, _ config, stop func() error) {
+	t.Helper()
 	assets := fstest.MapFS{"index.html": {Data: []byte("<html>ygg</html>")}}
 	var logs bytes.Buffer
 	a, err := newApp(context.Background(), cfg, assets, &logs)
@@ -79,7 +86,8 @@ func TestAppRunsADemoTaskEndToEnd(t *testing.T) {
 	}
 
 	// Track a repo the way a person does today, then start a task on it.
-	repo := gitRepo(t, filepath.Join(t.TempDir(), "acme-shop"), "shop-api")
+	env := searchtest.GitEnv(t)
+	repo := searchtest.InitRepo(t, env, map[string]string{"README.md": "# shop-api\n"})
 	var out bytes.Buffer
 	if err := seed(context.Background(), &out, cfg, repo, ""); err != nil {
 		t.Fatal(err)
@@ -107,7 +115,9 @@ func TestAppRunsADemoTaskEndToEnd(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("task is %q, want done", task.Task.Status)
+			var raw map[string]any
+			getJSON(t, base+"/api/tasks/"+created.Task.ID, &raw)
+			t.Fatalf("task is %q, want done: %v", task.Task.Status, raw)
 		}
 		time.Sleep(25 * time.Millisecond)
 	}

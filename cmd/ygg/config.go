@@ -22,6 +22,9 @@ type config struct {
 	level   slog.Level
 	// mockDelay paces the demo agent so a transcript visibly streams.
 	mockDelay time.Duration
+	// writeModes allows task modes other than Ask (YGG_WRITE_MODES). Off by
+	// default.
+	writeModes bool
 }
 
 // loadConfig reads settings through getenv, so tests don't touch the real
@@ -62,7 +65,15 @@ func loadConfig(getenv func(string) string, userConfigDir func() (string, error)
 		}
 		delay = time.Duration(ms) * time.Millisecond
 	}
-	return config{addr: addr, dataDir: dataDir, level: level, mockDelay: delay}, nil
+	writeModes := false
+	switch strings.ToLower(getenv("YGG_WRITE_MODES")) {
+	case "", "0", "false":
+	case "1", "true":
+		writeModes = true
+	default:
+		return config{}, fmt.Errorf("YGG_WRITE_MODES %q must be 1, true, 0 or false", getenv("YGG_WRITE_MODES"))
+	}
+	return config{addr: addr, dataDir: dataDir, level: level, mockDelay: delay, writeModes: writeModes}, nil
 }
 
 // listenAddr returns the address to listen on. Only loopback addresses are
