@@ -17,7 +17,7 @@ func TestAllowlistRoundTrip(t *testing.T) {
 	rules := []guard.CommandRule{
 		{Program: "go", Args: []string{"vet", "./..."}, Tail: guard.TailNone},
 		{Program: "npm", Args: []string{"run", "test"}, Tail: guard.TailPaths},
-		{Program: "mvnw", Tail: guard.TailPaths},
+		{Program: "mvn", Tail: guard.TailPaths},
 		{Program: "x", Args: []string{"two words"}, Tail: guard.TailNone},
 	}
 	data := safety.FormatAllowlist(rules)
@@ -69,6 +69,55 @@ func TestAllowlistRejects(t *testing.T) {
 	}
 	if _, err := safety.ParseAllowlist([]byte("[" + strings.Join(many, ",") + "]")); err == nil {
 		t.Fatal("accepted too many rules")
+	}
+}
+
+func TestValidateRuleRefusesDangerousPrograms(t *testing.T) {
+	always := []string{"sh", "bash", "zsh", "dash", "fish", "cmd", "powershell", "pwsh", "wscript", "cscript", "mshta",
+		"git", "ssh", "scp", "curl", "wget", "nc", "ncat", "telnet", "ftp", "rm", "del", "rmdir", "format", "reg", "sc", "net", "runas"}
+	for _, p := range always {
+		for _, name := range []string{p, strings.ToUpper(p), p + ".exe", strings.ToUpper(p) + ".CMD"} {
+			t.Run(name, func(t *testing.T) {
+				for _, r := range []guard.CommandRule{
+					{Program: name, Tail: guard.TailNone},
+					{Program: name, Args: []string{"x"}, Tail: guard.TailNone},
+					{Program: name, Args: []string{"x"}, Tail: guard.TailPaths},
+				} {
+					if err := safety.ValidateRule(r); err == nil {
+						t.Fatalf("accepted %+v", r)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestValidateRuleInterpreters(t *testing.T) {
+	for _, p := range []string{"node", "python", "python3", "py", "ruby", "perl", "php", "deno", "bun", "Node.exe"} {
+		t.Run(p, func(t *testing.T) {
+			bad := []guard.CommandRule{
+				{Program: p, Tail: guard.TailNone},                           // no fixed args
+				{Program: p, Args: []string{"build.js"}, Tail: guard.TailPaths}, // open tail
+				{Program: p, Tail: guard.TailPaths},
+			}
+			for _, r := range bad {
+				if err := safety.ValidateRule(r); err == nil {
+					t.Fatalf("accepted %+v", r)
+				}
+			}
+			if err := safety.ValidateRule(guard.CommandRule{Program: p, Args: []string{"build.js"}, Tail: guard.TailNone}); err != nil {
+				t.Fatalf("refused a fixed script: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateRuleWrappersUnsupported(t *testing.T) {
+	for _, p := range []string{"mvnw", "gradlew", "MVNW.cmd", "gradlew.bat"} {
+		err := safety.ValidateRule(guard.CommandRule{Program: p, Args: []string{"verify"}, Tail: guard.TailNone})
+		if err == nil || !strings.Contains(err.Error(), "not supported yet") {
+			t.Fatalf("%s: err = %v", p, err)
+		}
 	}
 }
 
