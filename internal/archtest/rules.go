@@ -220,7 +220,7 @@ var rules = []rule{
 	corePure,
 	coreSubpackages,
 	// Leaves that everything else builds on.
-	onlyInternalImports("safety is a leaf", "internal/safety"),
+	onlyInternalImports("safety depends on core and platform only", "internal/safety", "core", "platform"),
 	onlyInternalImports("platform is a leaf", "internal/platform"),
 	// The database knows the data model and nothing above it.
 	onlyInternalImports("db depends on core only", "internal/db", "core", "db"),
