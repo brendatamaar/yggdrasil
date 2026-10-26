@@ -125,6 +125,11 @@ func (s *Service) apply(ctx context.Context, id core.TaskID, mk func(db.TaskStat
 		}
 		var version int64
 		err = s.c.Store.Commit(ctx, func(tx *db.Tx) error {
+			if s.beforeCommit != nil {
+				if err := s.beforeCommit(id, in); err != nil {
+					return err
+				}
+			}
 			expected := e.st.Row.Version
 			if creating {
 				created, err := tx.CreateTask(ctx, *o.create)

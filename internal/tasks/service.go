@@ -34,6 +34,7 @@ type Service struct {
 	releases map[core.TaskID]Release
 	prep     map[core.TaskID]*sync.Mutex
 	blocked  map[core.TaskID]string // waiting task -> holder of its main checkout
+	stuck    map[core.TaskID]bool   // tasks whose end could not be stored (recovered later)
 
 	boardMu sync.Mutex
 	board   coretasks.Board
@@ -43,6 +44,8 @@ type Service struct {
 
 	// hooks for tests; nil in production.
 	afterCommit func(id core.TaskID, cmds []coretasks.Command) (skip bool)
+	// beforeCommit lets a test make the store fail for one input.
+	beforeCommit func(id core.TaskID, in coretasks.Input) error
 }
 
 // New returns a Service. Nothing runs until Start.
@@ -59,6 +62,7 @@ func New(c Config) (*Service, error) {
 		releases: map[core.TaskID]Release{},
 		prep:     map[core.TaskID]*sync.Mutex{},
 		blocked:  map[core.TaskID]string{},
+		stuck:    map[core.TaskID]bool{},
 		board: coretasks.Board{
 			Max: c.DefaultMax, Tasks: map[core.TaskID]coretasks.Entry{}, Locks: map[core.RepoID]core.TaskID{},
 		},

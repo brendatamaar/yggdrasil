@@ -26,6 +26,7 @@ func (s *Service) prepare(id core.TaskID, at *attempt, cmd coretasks.PrepareRun)
 	in := s.safePrepare(id, at, cmd)
 	res, ok := s.feed(id, in, applyOpts{})
 	if !ok {
+		s.abandon(id, "prepare")
 		return
 	}
 	// A kill that raced the preparation: if the core did not start the run,

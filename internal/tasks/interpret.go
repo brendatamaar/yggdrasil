@@ -2,8 +2,11 @@ package tasks
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"runtime/debug"
 	"sync"
+	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	coretasks "github.com/brendatamaar/yggdrasil/internal/core/tasks"
@@ -165,15 +168,99 @@ func (s *Service) wakeLoop() {
 	}
 }
 
+// feedTries bounds the tries to store one input of the service itself.
+const feedTries = 5
+
 // feed applies an input made by the service itself (a result of an effect).
-// A failure to store it is logged: the task stays as it was and the next start
-// recovers it.
+// A store error other than a version conflict is retried a few times with a
+// growing wait (a transient error must not lose a verdict). A version conflict
+// already has its reload loop in apply. If the input still cannot be stored it
+// is logged and false is returned: the task stays as it was and the next start
+// (or the stuck-task retry of the loop) recovers it.
 func (s *Service) feed(id core.TaskID, in coretasks.Input, o applyOpts) (applyResult, bool) {
-	res, err := s.apply(s.bgCtx(), id, func(db.TaskState) coretasks.Input { return in }, o)
-	if err != nil {
-		s.c.Log.Error("store task input", "task", id, "input", fmt.Sprintf("%T", in), "err", err)
-		return res, false
+	ctx := s.bgCtx()
+	var (
+		res applyResult
+		err error
+	)
+	for try := 1; try <= feedTries; try++ {
+		res, err = s.safeApply(ctx, id, func(db.TaskState) coretasks.Input { return in }, o)
+		if err == nil {
+			s.interpret(id, res)
+			return res, true
+		}
+		if errors.Is(err, db.ErrConflict) || errors.Is(err, errPanicked) || try == feedTries {
+			break
+		}
+		s.c.Log.Warn("store task input failed, trying again", "task", id, "input", fmt.Sprintf("%T", in), "try", try, "err", err)
+		select {
+		case <-time.After(s.c.FeedRetry * time.Duration(try)):
+		case <-ctx.Done():
+		}
 	}
-	s.interpret(id, res)
-	return res, true
+	s.c.Log.Error("store task input", "task", id, "input", fmt.Sprintf("%T", in), "err", err)
+	return res, false
+}
+
+// abandon is what a final input (RunFinished, Prepared, PrepareFailed) that
+// could not be stored leaves: the slot, the lock and the processes are given
+// back in memory so nothing else waits on a dead run, and the task is marked
+// stuck. Its stored status still says running, which the loop (and the next
+// start) recovers as interrupted.
+func (s *Service) abandon(id core.TaskID, what string) {
+	s.c.Log.Error("the end of a task step could not be stored; the task is kept for recovery", "task", id, "step", what)
+	s.killTask(id)
+	s.releaseLocks(id)
+	s.mu.Lock()
+	s.stuck[id] = true
+	s.mu.Unlock()
+	s.wakeLoop()
+}
+
+func (s *Service) anyStuck() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.stuck) > 0
+}
+
+// retryStuck tries to recover the tasks abandoned by a failed store, now that
+// the store may work again. No run is alive for them (abandon killed it).
+func (s *Service) retryStuck() {
+	s.mu.Lock()
+	ids := make([]core.TaskID, 0, len(s.stuck))
+	for id := range s.stuck {
+		ids = append(ids, id)
+	}
+	s.mu.Unlock()
+	for _, id := range ids {
+		if err := s.recoverTask(s.bgCtx(), id); err != nil {
+			s.c.Log.Warn("recover stuck task", "task", id, "err", err)
+			continue
+		}
+		s.mu.Lock()
+		delete(s.stuck, id)
+		s.mu.Unlock()
+	}
+}
+
+var errPanicked = errors.New("tasks: a panic while storing a task step")
+
+// safeApply is apply with a recover: a panic becomes an error that is not
+// retried (C7).
+func (s *Service) safeApply(ctx context.Context, id core.TaskID, mk func(db.TaskState) coretasks.Input, o applyOpts) (res applyResult, err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			s.logPanic("task step", id, v)
+			res, err = applyResult{}, fmt.Errorf("%w: task %s", errPanicked, id)
+		}
+	}()
+	return s.apply(ctx, id, mk, o)
+}
+
+// logPanic logs a recovered panic. The value and the stack can hold file
+// contents or tokens, so both are redacted (invariant 4).
+func (s *Service) logPanic(where string, id core.TaskID, v any) {
+	r := s.c.Redactor
+	s.c.Log.Error("panic in the task service", "where", where, "task", id,
+		"panic", r.Redact(fmt.Sprint(v)), "stack", r.Redact(string(debug.Stack())))
 }
