@@ -247,3 +247,7 @@ All six recommendations accepted: (1) hooks disabled for proposal commits and pu
 - **MR links.** `ParsePushOutput(out, remoteHost)` accepts a link only on the remote own host (case-insensitive, port ignored); any other host is `ErrUnsafeURL`.
 - **Defence in depth.** `Action.Validate()` re-runs the `ParseAction` rules on each kind and `Step(Created)` refuses an invalid action with `RefuseBadFacts`.
 - **Redaction contract.** `Failed.Message` and `ExecFailed.Message` are free text; the shell redacts before persisting (see the `ProposalStore` row).
+
+## Review gate 1, round 2 fixes (2026-10-26)
+
+- **P11.** `Facts.TaskChangeSet` is the task's existing change set ID (empty when none). `Created` is refused with `RefuseBadFacts` when it is non-empty and differs from the header's `ChangeSet`. `TestPropCreatedNeedsGoodFacts` varies `RepoTracked`, `PathsOK`, `RemoteSupported`, `PendingForTask` (at and over the cap) and `TaskChangeSet`, and checks both ways: refused means no `Persist` and a nil `State`; persisted means every fact was good. The shell fills `TaskChangeSet` from the task row.

@@ -52,6 +52,8 @@ func TestCreatedTable(t *testing.T) {
 		{"remote unsupported", func(c *Created) { c.Facts.RemoteSupported = false }, RefuseBadFacts},
 		{"publish kind", func(c *Created) { c.Proposal.Action = fakeAction{core.ProposalPublish} }, RefuseUnsupported},
 		{"no action", func(c *Created) { c.Proposal.Action = nil }, RefuseUnsupported},
+		{"task change set matches", func(c *Created) { c.Facts.TaskChangeSet = c.Proposal.ChangeSet }, ""},
+		{"task change set differs", func(c *Created) { c.Facts.TaskChangeSet = "cs-other" }, RefuseBadFacts},
 		{"no change set", func(c *Created) { c.Proposal.ChangeSet = "" }, RefuseBadFacts},
 		{"no source", func(c *Created) { c.Proposal.Source = nil }, RefuseBadFacts},
 		{"bad id", func(c *Created) { c.Proposal.ID = "a b" }, RefuseBadFacts},

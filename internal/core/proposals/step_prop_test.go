@@ -265,3 +265,27 @@ func TestPropStaleAttemptsIgnored(t *testing.T) {
 		}
 	})
 }
+
+// P11: Created is refused (no Persist, nil State) unless every fact is good,
+// and persisted only when they all are.
+func TestPropCreatedNeedsGoodFacts(t *testing.T) {
+	forSeeds(t, func(t *testing.T, r *rand.Rand) {
+		for i := 0; i < 40; i++ {
+			h := header(r, "p1")
+			f := genAnyFacts(r, h)
+			p, cmds := Step(Proposal{}, Created{Proposal: h, Facts: f, Now: epoch})
+			persisted := false
+			for _, c := range cmds {
+				if _, ok := c.(Persist); ok {
+					persisted = true
+				}
+			}
+			if good := goodFacts(f, h); good != persisted {
+				t.Fatalf("facts %+v: good=%v persisted=%v", f, good, persisted)
+			}
+			if !persisted && p.State != nil {
+				t.Fatalf("refused but State = %T", p.State)
+			}
+		}
+	})
+}
