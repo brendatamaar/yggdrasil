@@ -121,6 +121,11 @@ func (s *Service) execute(id core.TaskID, at *attempt, cmd coretasks.StartRun) r
 	if at.ctx.Err() != nil {
 		return cancelled()
 	}
+	// A stored turn may outlive the setting that allowed it (a restart with
+	// write modes off): the flag is checked again at run time.
+	if cmd.Mode != core.ModeAsk && !s.c.WriteModes {
+		return startFailed("Write modes are turned off, so this turn was not run. Turn them on in Settings or ask a read-only question.")
+	}
 	st, err := s.snapshot(bg, id)
 	if err != nil {
 		s.c.Log.Error("run: load task", "task", id, "err", err)
