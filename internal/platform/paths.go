@@ -65,6 +65,8 @@ func isReservedName(s string) bool {
 	return false
 }
 
+// The guard shell must call HasShortNameSegment on proposal and tool paths: the pure core cannot.
+//
 // HasShortNameSegment reports whether a segment of the relative path looks
 // like an 8.3 alias: a name ending in ~digits, before an optional extension
 // (PROGRA~1, LONGDI~1.TXT). Both / and \ separate segments. Such a spelling can
