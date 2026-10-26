@@ -56,7 +56,7 @@ MCP `pull` is a direct tool, not a proposal (decision 2026-10-25): fast-forward 
 
 ## Known gaps before write modes are on by default
 
-Tracked in docs/phases/phase-3.md: builds and git actions sharing the main-checkout lock (in progress), the per-agent trust scan for a second real adapter, OpenCode's enforcement level (needs its own spike; until then it is "limited" and restricted to worktree-only Code mode), process-level isolation of allowlisted commands (not planned for v1).
+Tracked in docs/phases/phase-3.md: the per-agent trust scan for a second real adapter, OpenCode's enforcement level (needs its own spike; until then it is "limited" and restricted to worktree-only Code mode), process-level isolation of allowlisted commands (not planned for v1).
 
 ## Reporting
 
