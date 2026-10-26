@@ -55,9 +55,10 @@ func (l taskLock) Held(repos []core.RepoID) (string, bool) {
 
 func holderString(h mainlock.Holder) string { return string(h.Owner.Kind) + ":" + h.Owner.ID }
 
-// newTasks builds the tasks service. hub is bound to the server after the
+// newTasks builds the tasks service. lock is the one main-checkout lock that
+// builds and git actions share. hub is bound to the server after the
 // server exists.
-func newTasks(store *db.Store, adapters adapterRegistry, g *git.Git, hub *api.HubAdapter, redactor safety.Redactor, dataDir string, log *slog.Logger) (*tasks.Service, error) {
+func newTasks(store *db.Store, adapters adapterRegistry, g *git.Git, hub *api.HubAdapter, redactor safety.Redactor, lock *mainlock.Registry, dataDir string, log *slog.Logger) (*tasks.Service, error) {
 	now := func() time.Time { return time.Now().UTC() }
 	ens, err := worktrees.New(worktrees.Config{
 		Git: g, Store: worktrees.DBStore{S: store}, Rand: tasks.Rand{},
@@ -67,7 +68,7 @@ func newTasks(store *db.Store, adapters adapterRegistry, g *git.Git, hub *api.Hu
 		return nil, fmt.Errorf("prepare worktrees: %w", err)
 	}
 	svc, err := tasks.New(tasks.Config{
-		Store: store, Adapters: adapters, Worktrees: ens, MainLock: taskLock{reg: &mainlock.Registry{}},
+		Store: store, Adapters: adapters, Worktrees: ens, MainLock: taskLock{reg: lock},
 		Scanner: safety.FSScanner{}, Snapshotter: g, Env: safety.NewEnvBuilder(), Redactor: redactor,
 		Hub: hub, Machine: platform.Machine{}, Killer: platform.KillTask,
 		Now: now, NewID: db.NewID, Log: log,
