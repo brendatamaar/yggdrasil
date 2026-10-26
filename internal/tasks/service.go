@@ -156,14 +156,18 @@ func (s *Service) Message(ctx context.Context, req MessageRequest) (MessageResul
 		existing = &st
 		req.ProjectID, req.Agent, req.Model = st.Row.ProjectID, st.Row.Agent, st.Row.Model
 		req.Scope = string(st.Row.Scope)
-		req.Repos = repoStrings(st.Row.RepoIDs)
+		// A whole-project task covers every repo; the parser rejects a list.
+		req.Repos = nil
+		if st.Row.Scope != core.ScopeProject {
+			req.Repos = repoStrings(st.Row.RepoIDs)
+		}
 	}
 	raw := coretasks.RawMessage{Prompt: req.Prompt, Mode: req.Mode, Scope: req.Scope, Agent: req.Agent, Model: req.Model, Repos: req.Repos, Title: req.Title}
 	check := raw
 	if existing != nil && existing.Row.Scope == core.ScopeProject && req.Mode == string(core.ModeAsk) {
 		// An Ask turn in a whole-project task reads the task's scope; the
 		// scope/mode pairing rule is for the first message.
-		check.Scope, check.Repos = string(core.ScopeRepo), req.Repos[:min(1, len(req.Repos))]
+		check.Scope, check.Repos = string(core.ScopeRepo), repoStrings(existing.Row.RepoIDs[:min(1, len(existing.Row.RepoIDs))])
 	}
 	pm, err := coretasks.ParseMessage(check)
 	if err != nil {
