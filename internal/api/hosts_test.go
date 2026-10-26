@@ -61,7 +61,7 @@ func (f *fakeHosts) FailedPipelines(context.Context) (map[core.RepoID]struct{}, 
 }
 
 func hostsEnv(t *testing.T, f *fakeHosts) *env {
-	return newEnv(t, "plain", 0, func(d *Deps) { d.Hosts = f })
+	return newEnv(t, func(d *Deps) { d.Hosts = f })
 }
 
 func TestGetHostsReportsTokenFlagOnly(t *testing.T) {

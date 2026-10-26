@@ -73,7 +73,7 @@ func (f *fakeActions) SetEditor(_ context.Context, e repos.Editor, _ corerepos.A
 
 func newActionsEnv(t *testing.T, f *fakeActions) *env {
 	t.Helper()
-	return newEnv(t, "plain", 0, func(d *Deps) { d.GitActions = f })
+	return newEnv(t, func(d *Deps) { d.GitActions = f })
 }
 
 func TestGitBatchStartGetCancel(t *testing.T) {
@@ -201,7 +201,7 @@ func TestEditorSetting(t *testing.T) {
 }
 
 func TestGitActionsNotRoutedWithoutService(t *testing.T) {
-	e := newEnv(t, "plain", 0)
+	e := newEnv(t)
 	for _, p := range []string{"/api/git/batches/x", "/api/settings/editor"} {
 		if resp, _ := e.do(t, http.MethodGet, p, nil); resp.StatusCode != http.StatusNotFound {
 			t.Errorf("%s: %d", p, resp.StatusCode)

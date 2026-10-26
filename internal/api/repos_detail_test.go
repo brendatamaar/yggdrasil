@@ -54,7 +54,7 @@ func (f *fakeDetail) Branches(context.Context, core.RepoID) ([]git.Branch, error
 
 func newDetailEnv(t *testing.T, f *fakeDetail) *env {
 	t.Helper()
-	return newEnv(t, "plain", 0, func(d *Deps) { d.RepoDetail = f })
+	return newEnv(t, func(d *Deps) { d.RepoDetail = f })
 }
 
 func TestRepoDetailHappyPaths(t *testing.T) {
@@ -134,7 +134,7 @@ func TestRepoDetailMapsErrors(t *testing.T) {
 }
 
 func TestRepoDetailNotRoutedWithoutService(t *testing.T) {
-	e := newEnv(t, "plain", 0)
+	e := newEnv(t)
 	if resp, _ := e.do(t, http.MethodGet, "/api/repos/r1/changes", nil); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status %d", resp.StatusCode)
 	}

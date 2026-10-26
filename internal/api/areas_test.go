@@ -13,7 +13,7 @@ import (
 // per-area services may all be nil, and the new topics work end to end.
 
 func TestClockAndIDsDefaults(t *testing.T) {
-	e := newEnv(t, "plain", 0)
+	e := newEnv(t)
 	now := e.srv.clock()
 	if now.Location() != time.UTC || time.Since(now) > time.Minute || time.Since(now) < -time.Minute {
 		t.Errorf("default clock = %v, want about now in UTC", now)
@@ -26,7 +26,7 @@ func TestClockAndIDsDefaults(t *testing.T) {
 
 func TestClockAndIDsFromDeps(t *testing.T) {
 	fixed := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	e := newEnv(t, "plain", 0, func(d *Deps) {
+	e := newEnv(t, func(d *Deps) {
 		d.Clock = func() time.Time { return fixed }
 		d.IDs = func(prefix string) string { return prefix + "_fixed" }
 	})
@@ -41,7 +41,7 @@ func TestClockAndIDsFromDeps(t *testing.T) {
 // With no service wired, the area routes register nothing: the catch-all
 // answers with the usual JSON 404.
 func TestUnwiredAreasRegisterNoRoutes(t *testing.T) {
-	e := newEnv(t, "plain", 0)
+	e := newEnv(t)
 	for _, path := range []string{"/api/repos", "/api/builds", "/api/hosts", "/api/mrs", "/api/search", "/api/fs/dirs"} {
 		resp, data := e.do(t, http.MethodGet, path, nil)
 		var body ErrorBody
@@ -52,7 +52,7 @@ func TestUnwiredAreasRegisterNoRoutes(t *testing.T) {
 }
 
 func TestNewTopicsDeliverMessages(t *testing.T) {
-	e := newEnv(t, "plain", 0)
+	e := newEnv(t)
 	ws := e.dial(t)
 	cases := []struct {
 		topic wsTopic

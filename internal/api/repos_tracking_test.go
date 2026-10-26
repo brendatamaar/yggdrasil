@@ -74,7 +74,7 @@ func (f *fakeTracking) RenameProject(_ context.Context, project core.ProjectID, 
 func trackingEnv(t *testing.T) (*env, *fakeTracking) {
 	t.Helper()
 	f := &fakeTracking{}
-	return newEnv(t, "plain", 0, func(d *Deps) { d.Tracking = f }), f
+	return newEnv(t, func(d *Deps) { d.Tracking = f }), f
 }
 
 func errCode(t *testing.T, data []byte) ErrorCode {
@@ -263,15 +263,14 @@ func TestTrackingPublishesOnTheReposTopic(t *testing.T) {
 // Untracking a repo while an agent task runs in it is refused (invariant 6:
 // the task's worktree must not lose its tracked repo underneath it).
 func TestUntrackRefusedWhileATaskRuns(t *testing.T) {
-	e := newEnv(t, "subagents", 300*time.Millisecond, func(d *Deps) {
+	e := newEnv(t, func(d *Deps) {
 		svc, err := repos.NewTrackingService(repos.Deps{Store: d.Store, Redactor: d.Redactor})
 		if err != nil {
 			t.Fatal(err)
 		}
 		d.Tracking = svc
 	})
-	task := e.create(t)
-	e.waitStatus(t, task.ID, core.TaskRunning)
+	task := e.seedTask(t, core.TaskRunning)
 
 	resp, data := e.do(t, http.MethodPost, "/api/repos/"+string(e.repo.ID)+"/untrack", nil)
 	if resp.StatusCode != http.StatusConflict || errCode(t, data) != ErrConflict {
@@ -286,8 +285,7 @@ func TestUntrackRefusedWhileATaskRuns(t *testing.T) {
 	}
 
 	// Once the task is over the repo can go.
-	e.do(t, http.MethodPost, "/api/tasks/"+string(task.ID)+"/cancel", nil)
-	e.waitStatus(t, task.ID, core.TaskCancelled)
+	e.setStatus(t, task, core.TaskCancelled)
 	resp, data = e.do(t, http.MethodPost, "/api/repos/"+string(e.repo.ID)+"/untrack", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("untrack after the task ended = %d %s", resp.StatusCode, data)
@@ -296,7 +294,7 @@ func TestUntrackRefusedWhileATaskRuns(t *testing.T) {
 
 // Untracked repos and projects are invisible to tasks (invariant 6).
 func TestTasksRefuseUntrackedRepoAndProject(t *testing.T) {
-	e := newEnv(t, "plain", 0, func(d *Deps) {
+	e := newEnv(t, func(d *Deps) {
 		svc, err := repos.NewTrackingService(repos.Deps{Store: d.Store, Redactor: d.Redactor})
 		if err != nil {
 			t.Fatal(err)
@@ -306,14 +304,10 @@ func TestTasksRefuseUntrackedRepoAndProject(t *testing.T) {
 	if resp, data := e.do(t, http.MethodPost, "/api/repos/"+string(e.repo.ID)+"/untrack", nil); resp.StatusCode != http.StatusOK {
 		t.Fatalf("untrack repo = %d %s", resp.StatusCode, data)
 	}
-	if resp, data := e.do(t, http.MethodPost, "/api/tasks", e.createReq()); resp.StatusCode != http.StatusNotFound {
-		t.Errorf("task in an untracked repo = %d %s, want 404", resp.StatusCode, data)
-	}
+	// (Creating a task in an untracked repo or project is refused by the task
+	// service, tested with the service itself.)
 	if resp, data := e.do(t, http.MethodPost, "/api/projects/"+string(e.project.ID)+"/untrack", nil); resp.StatusCode != http.StatusOK {
 		t.Fatalf("untrack project = %d %s", resp.StatusCode, data)
-	}
-	if resp, data := e.do(t, http.MethodPost, "/api/tasks", e.createReq()); resp.StatusCode != http.StatusNotFound {
-		t.Errorf("task in an untracked project = %d %s, want 404", resp.StatusCode, data)
 	}
 	if resp, data := e.do(t, http.MethodGet, "/api/tasks?project="+string(e.project.ID), nil); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("task list of an untracked project = %d %s, want 404", resp.StatusCode, data)

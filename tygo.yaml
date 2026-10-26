@@ -41,6 +41,8 @@ packages:
       - board.go
       - composer.go
       - mcp.go
+      - tasks_service.go
+      - hubadapter.go
     frontmatter: |
       import type * as agents from "./agents.gen";
       import type * as core from "./core.gen";

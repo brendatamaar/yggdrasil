@@ -43,11 +43,10 @@ import type * as core from "./core.gen";
 // source: tasks.go
 
 /**
- * maxTitleRunes bounds a task title.
+ * errWriteModes is shown when a write mode is asked for while the flag is off.
  */
 /**
- * sink persists every event and then publishes it, in that order, so a client
- * that backfills over REST never misses an event it was not sent live.
+ * writeModesHint is the hint that goes with errWriteModes.
  */
 
 //////////
@@ -153,11 +152,17 @@ export interface WSMessage {
   data?: unknown;
 }
 /**
- * CreateTaskRequest is the body of POST /api/tasks.
+ * CreateTaskRequest is the body of POST /api/tasks. Mode is "ask", "code",
+ * "current_branch" or "project". Scope is "repo" or "project"; empty means
+ * "project" for the project mode and "repo" otherwise. RepoIDs holds exactly
+ * one repo for a repo scope and none for the project scope. OptIn is the
+ * person's explicit consent to a mode that edits main checkouts.
  */
 export interface CreateTaskRequest {
   projectId: core.ProjectID;
   repoIds: core.RepoID[];
+  scope?: string;
+  optIn?: boolean;
   /**
    * Title is the task's name, shown in lists and notifications. It is never
    * made from the prompt, which can hold code or paths (docs/AGENTS.md 5.9).
@@ -167,6 +172,16 @@ export interface CreateTaskRequest {
   prompt: string;
   mode: core.TaskMode;
   agent: string;
+  model?: string;
+}
+/**
+ * MessageRequest is the body of POST /api/tasks/{id}/messages: another turn of
+ * an idle task. The task keeps its project, scope, repos and agent.
+ */
+export interface MessageRequest {
+  mode: core.TaskMode;
+  prompt: string;
+  optIn?: boolean;
   model?: string;
 }
 /**
@@ -180,6 +195,11 @@ export interface TaskListResponse {
  */
 export interface TaskResponse {
   task: core.Task;
+  /**
+   * Warning is "edits_main_checkout" or "edits_all_repos" when the task edits
+   * main checkouts; empty otherwise.
+   */
+  warning?: string;
 }
 /**
  * TaskEventsResponse is the body of GET /api/tasks/{id}/events: the events
@@ -325,6 +345,7 @@ export interface BoardCardDTO {
   status: core.TaskStatus;
   column: string;
   repoNames: string[];
+  repoIds?: core.RepoID[];
   pendingProposals: number /* int */;
   blockedBy?: string;
   usage: UsageDTO;
@@ -345,6 +366,17 @@ export interface BoardResponse {
   active: number /* int */;
   hint: RoomHintDTO;
   cards: BoardCardDTO[];
+}
+/**
+ * MaxAgentsResponse is the body of GET and PUT /api/board/max-agents. Min and
+ * Max are the bounds of the setting; Hint suggests a higher value when every
+ * slot is busy and the machine has room.
+ */
+export interface MaxAgentsResponse {
+  maxAgents: number /* int */;
+  min: number /* int */;
+  max: number /* int */;
+  hint: RoomHintDTO;
 }
 /**
  * SetMaxAgentsRequest is the body of PUT /api/board/max-agents (1 to 16).
@@ -1316,8 +1348,8 @@ export interface TrustRequest {
 // source: types_worktrees.go
 
 /**
- * WorktreeDTO is one worktree of a task. Path is the folder on disk, shown so
- * the user can open it; it is never sent to agents or MCP.
+ * WorktreeDTO is one worktree of a task. Path is not sent (it stays empty): the
+ * folder on disk is never exposed through the API.
  */
 export interface WorktreeDTO {
   id: core.WorktreeID;
@@ -1327,7 +1359,7 @@ export interface WorktreeDTO {
   name: string;
   branch: string;
   baseCommit: string;
-  path: string;
+  path?: string;
   status: core.WorktreeStatus;
   createdAt: string;
 }
