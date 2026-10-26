@@ -25,7 +25,7 @@ func codePolicy() Policy {
 		Allow: []CommandRule{
 			{Program: "go", Args: []string{"vet", "./..."}, Tail: TailNone},
 			{Program: "go", Args: []string{"test"}, Tail: TailPaths},
-			{Program: "mvnw", Args: []string{"verify"}, Tail: TailNone},
+			{Program: "mvn", Args: []string{"verify"}, Tail: TailNone},
 		},
 	}
 }

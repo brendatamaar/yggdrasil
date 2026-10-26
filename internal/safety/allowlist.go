@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/brendatamaar/yggdrasil/internal/core/guard"
 )
@@ -25,80 +24,11 @@ type ruleWire struct {
 	Tail    string   `json:"tail"`
 }
 
-// ValidateRule checks one stored allowlist rule beyond guard.CommandRule's own
-// Validate: the program is a bare, plain command name (no separators, no
-// shell characters, not an option), every fixed argument is a single word
-// the command-line parser would judge as itself, and the tail is none or
-// paths. Messages are plain language and never echo the rule at length.
-func ValidateRule(r guard.CommandRule) error {
-	if err := r.Validate(); err != nil {
-		return err
-	}
-	if !plainWord(r.Program) || strings.ContainsAny(r.Program, " :=%+") || strings.HasPrefix(r.Program, "-") ||
-		r.Program == "." || r.Program == ".." {
-		return fmt.Errorf("allowlist program %q must be a plain command name such as go or npm", clip(r.Program))
-	}
-	for _, a := range r.Args {
-		if a == "" || !plainWord(a) {
-			return fmt.Errorf("allowlist argument %q for %s holds a character that is not allowed", clip(a), r.Program)
-		}
-	}
-	base := programBase(r.Program)
-	if _, bad := neverAllowed[base]; bad {
-		return fmt.Errorf("allowlist program %q can't be allowed: it can run anything or change files and remotes; use a proposal instead", clip(r.Program))
-	}
-	if _, wrapper := wrappers[base]; wrapper {
-		return fmt.Errorf("allowlist program %q: build wrappers are not supported yet; allow the tool itself (for example mvn or gradle)", clip(r.Program))
-	}
-	if _, interp := interpreters[base]; interp && (len(r.Args) == 0 || r.Tail != guard.TailNone) {
-		return fmt.Errorf("allowlist program %q runs any script it is given; allow it only with fixed arguments and no extra arguments", clip(r.Program))
-	}
-	return nil
-}
+// ValidateRule checks one stored allowlist rule. The rules live in the pure
+// core (guard.CommandRule.Validate), so the hook's policy parser applies the
+// same ones; this wrapper keeps the settings-side name.
+func ValidateRule(r guard.CommandRule) error { return r.Validate() }
 
-// programBase is the lower-case name of a program without any extension
-// (node.exe and Node.CMD are node).
-func programBase(p string) string {
-	p = strings.ToLower(p)
-	if i := strings.IndexByte(p, '.'); i > 0 {
-		p = p[:i]
-	}
-	return p
-}
-
-func set(names ...string) map[string]struct{} {
-	m := make(map[string]struct{}, len(names))
-	for _, n := range names {
-		m[n] = struct{}{}
-	}
-	return m
-}
-
-var (
-	// neverAllowed: shells and script hosts, git (every mutation is a
-	// proposal), network clients and destructive system tools.
-	neverAllowed = set("sh", "bash", "zsh", "dash", "fish", "cmd", "powershell", "pwsh", "wscript", "cscript", "mshta",
-		"git", "ssh", "scp", "curl", "wget", "nc", "ncat", "telnet", "ftp",
-		"rm", "del", "rmdir", "format", "reg", "sc", "net", "runas")
-	// interpreters run whatever script they get, so only a fixed script is allowed.
-	interpreters = set("node", "python", "python3", "py", "ruby", "perl", "php", "deno", "bun")
-	// wrappers live inside the repo, which the guard refuses to run from (D11).
-	wrappers = set("mvnw", "gradlew")
-)
-
-// plainWord is true when guard's command-line rules read s as exactly one word
-// equal to s.
-func plainWord(s string) bool {
-	argv, err := guard.ParseCommandLine(guard.FormatCommandLine([]string{s}))
-	return err == nil && len(argv) == 1 && argv[0] == s
-}
-
-func clip(s string) string {
-	if len(s) > 40 {
-		return s[:40] + "..."
-	}
-	return s
-}
 
 // ParseAllowlist reads the JSON stored in the settings table: an array of
 // {"program","args","tail"}. It refuses unknown fields, trailing data, more

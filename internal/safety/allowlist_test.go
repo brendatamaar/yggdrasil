@@ -17,7 +17,7 @@ func TestAllowlistRoundTrip(t *testing.T) {
 	rules := []guard.CommandRule{
 		{Program: "go", Args: []string{"vet", "./..."}, Tail: guard.TailNone},
 		{Program: "npm", Args: []string{"run", "test"}, Tail: guard.TailPaths},
-		{Program: "mvn", Tail: guard.TailPaths},
+		{Program: "mvn", Args: []string{"verify"}, Tail: guard.TailPaths},
 		{Program: "x", Args: []string{"two words"}, Tail: guard.TailNone},
 	}
 	data := safety.FormatAllowlist(rules)
@@ -73,7 +73,7 @@ func TestAllowlistRejects(t *testing.T) {
 }
 
 func TestValidateRuleRefusesDangerousPrograms(t *testing.T) {
-	always := []string{"sh", "bash", "zsh", "dash", "fish", "cmd", "powershell", "pwsh", "wscript", "cscript", "mshta",
+	always := []string{"sh", "bash", "zsh", "dash", "fish", "cmd", "powershell", "pwsh", "wscript", "cscript", "mshta", "wsl", "env", "xargs", "find", "start", "explorer", "powershell_ise", "gh", "glab", "docker", "erase", "mklink", "icacls", "takeown", "msiexec", "rundll32", "regsvr32", "certutil", "bitsadmin", "schtasks", "wmic", "robocopy", "xcopy", "move", "copy", "tar", "7z",
 		"git", "ssh", "scp", "curl", "wget", "nc", "ncat", "telnet", "ftp", "rm", "del", "rmdir", "format", "reg", "sc", "net", "runas"}
 	for _, p := range always {
 		for _, name := range []string{p, strings.ToUpper(p), p + ".exe", strings.ToUpper(p) + ".CMD"} {
@@ -93,7 +93,7 @@ func TestValidateRuleRefusesDangerousPrograms(t *testing.T) {
 }
 
 func TestValidateRuleInterpreters(t *testing.T) {
-	for _, p := range []string{"node", "python", "python3", "py", "ruby", "perl", "php", "deno", "bun", "Node.exe"} {
+	for _, p := range []string{"node", "npx", "tsx", "ts-node", "pythonw", "python", "python3", "py", "ruby", "perl", "php", "deno", "bun", "Node.exe"} {
 		t.Run(p, func(t *testing.T) {
 			bad := []guard.CommandRule{
 				{Program: p, Tail: guard.TailNone},                              // no fixed args
