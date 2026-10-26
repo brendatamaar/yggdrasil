@@ -12,7 +12,23 @@ var _ agents.RepoConfigProvider = (*Adapter)(nil)
 // scannedOnly are paths the trust scan hashes although ownAgentConfig does
 // not refuse them (they can still change what Claude Code runs).
 var scannedOnly = []string{
-	".claude/skills", ".claude/commands", ".claude/hooks", "CLAUDE.md", "CLAUDE.local.md",
+	".claude/skills", ".claude/commands", ".claude/hooks", ".claude/rules", ".claude/output-styles", "CLAUDE.md", "CLAUDE.local.md",
+}
+
+var _ agents.ConfigNameProvider = (*Adapter)(nil)
+
+// Claude Code loads nested CLAUDE.md files, so the scan must find them at any depth.
+func TestConfigNames(t *testing.T) {
+	got := New(Options{}).ConfigNames()
+	want := map[string]bool{"CLAUDE.md": true, "CLAUDE.local.md": true, "AGENTS.md": true}
+	if len(got) != len(want) {
+		t.Fatalf("got %v", got)
+	}
+	for _, n := range got {
+		if !want[n] {
+			t.Errorf("unexpected %q", n)
+		}
+	}
 }
 
 // Every file ownAgentConfig refuses must be in ConfigPaths, or the trust scan

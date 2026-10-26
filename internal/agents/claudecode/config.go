@@ -14,7 +14,15 @@ func (*Adapter) ConfigPaths() []string {
 		".claude/skills",
 		".claude/commands",
 		".claude/hooks",
+		".claude/rules",
+		".claude/output-styles",
 		"CLAUDE.md",
 		"CLAUDE.local.md",
 	}
+}
+
+// ConfigNames implements agents.ConfigNameProvider: Claude Code also loads
+// these files from nested folders.
+func (*Adapter) ConfigNames() []string {
+	return []string{"CLAUDE.md", "CLAUDE.local.md", "AGENTS.md"}
 }
