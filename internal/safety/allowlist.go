@@ -29,7 +29,6 @@ type ruleWire struct {
 // same ones; this wrapper keeps the settings-side name.
 func ValidateRule(r guard.CommandRule) error { return r.Validate() }
 
-
 // ParseAllowlist reads the JSON stored in the settings table: an array of
 // {"program","args","tail"}. It refuses unknown fields, trailing data, more
 // than MaxAllowlistRules rules, and any rule ValidateRule refuses.

@@ -61,7 +61,7 @@ func (f FakeEnvScanner) Scan(ctx context.Context, dir string, paths, names []str
 		}
 	}
 	for _, u := range f.Env.Unreadable {
-		if safety.SelectConfig(u, paths, names) {
+		if safety.LinkBlocksConfig(u, paths, names) {
 			return guard.Scan{}, fmt.Errorf("%w: %s can't be read", safety.ErrScan, u)
 		}
 	}
