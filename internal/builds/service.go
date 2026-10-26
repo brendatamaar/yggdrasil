@@ -120,6 +120,8 @@ type Service struct {
 	started map[stepKey]struct{}
 	subs    []func(BuildStarted)
 	locks   map[core.BuildID]func() // release funcs of builds holding main checkouts
+
+	panicHook func(corebuilds.Input) // tests only: called before each input is handled
 }
 
 type stepKey struct {
@@ -292,8 +294,20 @@ func (s *Service) safeHandle(ctx context.Context, m msg) (res result, follow []m
 			s.d.Log.Error("builds: invariant broken, input dropped", "build", m.id, "input", fmt.Sprintf("%T", m.in), "panic", r)
 			res = result{err: errors.New("builds: internal error")}
 			follow = nil
+			// The input is lost, so the build may never reach Finished and
+			// release its main checkouts. Stop its processes, give the lock back
+			// (idempotent) and let the core end the build as interrupted.
+			s.killBuild(m.id)
+			s.unlock(m.id)
+			if _, again := m.in.(corebuilds.ProcessLost); !again {
+				follow = []msg{{id: m.id, in: corebuilds.ProcessLost{Now: s.d.Clock()}}}
+			}
+			s.signalWake()
 		}
 	}()
+	if s.panicHook != nil {
+		s.panicHook(m.in)
+	}
 	return s.handle(ctx, m)
 }
 

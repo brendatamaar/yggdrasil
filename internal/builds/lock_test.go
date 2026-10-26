@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -56,6 +57,34 @@ func TestMainBuildHoldsEveryRepoLockUntilTerminal(t *testing.T) {
 	}
 	h.finished(id)
 	waitReleased(t, reg, "rep_a", "rep_b")
+}
+
+// A panic in the handling of an input of a running main-checkout build must
+// not keep its repo locked: a task or a pull can take the checkout afterwards.
+func TestPanicBeforeFinishedReleasesTheMainLock(t *testing.T) {
+	reg := &mainlock.Registry{}
+	h := newHarness(t, func(d *builds.Deps) { d.MainLock = reg; d.LockRetry = 10 * time.Millisecond })
+	var once atomic.Bool
+	h.svc.SetPanicHook(func(in corebuilds.Input) {
+		if _, ok := in.(corebuilds.StepExited); ok && once.CompareAndSwap(false, true) {
+			panic("scripted panic")
+		}
+	})
+	h.start()
+	h.enqueue(steps(exit(0)))
+	deadline := time.Now().Add(3 * time.Second)
+	for !once.Load() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !once.Load() {
+		t.Fatal("the hook never fired")
+	}
+	waitReleased(t, reg, "rep_a")
+	rel, _, ok := reg.TryAcquire([]core.RepoID{"rep_a"}, mainlock.Owner{Kind: mainlock.KindTask, ID: "tsk_1"})
+	if !ok {
+		t.Fatal("a task could not take the checkout after the panic")
+	}
+	rel()
 }
 
 func TestBuildWaitsWhileATaskEditsTheCheckout(t *testing.T) {
