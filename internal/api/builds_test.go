@@ -85,7 +85,7 @@ func buildsEnv(t *testing.T) (*env, *fakeBuilds) {
 	t.Helper()
 	f := &fakeBuilds{preset: corebuilds.Preset{ID: "pre_1", ProjectID: "prj_1", Name: "verify",
 		Steps: []corebuilds.StepSpec{{RepoID: "rep_a", Name: "t", Argv: []string{"npm", "test"}}}}}
-	return newEnv(t, "plain", 0, func(d *Deps) { d.Builds = f }), f
+	return newEnv(t, func(d *Deps) { d.Builds = f }), f
 }
 
 var bt0 = time.Date(2025, 3, 1, 10, 0, 0, 0, time.UTC)

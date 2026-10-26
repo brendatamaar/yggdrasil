@@ -58,7 +58,7 @@ var statusAt = time.Date(2026, 7, 8, 9, 10, 11, 0, time.UTC)
 
 func newStatusEnv(t *testing.T, st *fakeStatus, hosts HostsService) *env {
 	t.Helper()
-	return newEnv(t, "plain", 0, func(d *Deps) {
+	return newEnv(t, func(d *Deps) {
 		d.Status = st
 		d.Hosts = hosts
 	})
@@ -218,7 +218,7 @@ func TestRefreshRepos(t *testing.T) {
 }
 
 func TestStatusRoutesNeedTheService(t *testing.T) {
-	e := newEnv(t, "plain", 0)
+	e := newEnv(t)
 	if resp, _ := e.do(t, http.MethodPost, "/api/repos/refresh", RefreshReposRequest{}); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("unwired refresh = %d, want 404", resp.StatusCode)
 	}

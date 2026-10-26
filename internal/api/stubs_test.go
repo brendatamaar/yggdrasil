@@ -8,7 +8,7 @@ import (
 // Every Phase 3 route exists and answers 501 with a plain message until the
 // owning task replaces its stub.
 func TestPhase3StubsAnswer501(t *testing.T) {
-	e := newEnv(t, "plain", 0)
+	e := newEnv(t)
 	for _, c := range []struct{ method, path string }{
 		{"GET", "/api/tasks/tsk_1/worktrees"},
 		{"GET", "/api/proposals"},

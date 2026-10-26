@@ -15,20 +15,21 @@ import (
 	"sync/atomic"
 	"time"
 
-	"golang.org/x/sync/errgroup"
-
 	"github.com/brendatamaar/yggdrasil/internal/agents"
-	"github.com/brendatamaar/yggdrasil/internal/core"
 	"github.com/brendatamaar/yggdrasil/internal/db"
-	"github.com/brendatamaar/yggdrasil/internal/platform"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
 
-// Deps are what the server needs. Store and Env are required.
+// Deps are what the server needs. Store is required.
 type Deps struct {
 	Store    *db.Store
+	// Adapters is unused since the tasks service owns the runs.
+	//
+	// Deprecated: remove when cmd/ygg stops setting it.
 	Adapters map[string]agents.Adapter
-	// Env builds the clean environment of every agent run (SF-04).
+	// Env is unused since the tasks service owns the runs.
+	//
+	// Deprecated: remove when cmd/ygg stops setting it.
 	Env safety.EnvBuilder
 	// Log defaults to a redacting text logger on stderr.
 	Log *slog.Logger
@@ -41,8 +42,9 @@ type Deps struct {
 	// AllowedOrigins are extra browser origins that may call the API, such as
 	// the Vite dev server (http://localhost:5173).
 	AllowedOrigins []string
-	// KillTask stops every process still running for a task ID (agent
-	// helpers, anything the task started). Default: platform.KillTask.
+	// KillTask is unused since the tasks service owns the runs.
+	//
+	// Deprecated: remove when cmd/ygg stops setting it.
 	KillTask func(taskID string) error
 
 	// The services of the Phase 2 areas. A nil service registers no route
@@ -63,10 +65,14 @@ type Deps struct {
 	// stub handler it answers 501 with a plain message.
 	Worktrees WorktreeService
 	Proposals ProposalService
-	Trust     TrustService
-	Board     BoardService
 	Composer  ComposerService
 	MCP       MCPService
+	// Tasks runs tasks, the board and repo trust (TaskService). Without it the
+	// task, board and trust endpoints answer 501.
+	Tasks TaskService
+	// WriteModes allows modes other than Ask in POST /api/tasks and /messages.
+	// Default false: the lead flips the default after review gate 3.
+	WriteModes bool
 
 	// Clock and IDs are the shell's time and randomness for handlers that
 	// make core inputs (docs/AGENTS.md 5.11). Defaults: time.Now().UTC() and
@@ -79,8 +85,6 @@ type Deps struct {
 // in tests) and stop it with Close.
 type Server struct {
 	store    *db.Store
-	adapters map[string]agents.Adapter
-	env      safety.EnvBuilder
 	log      *slog.Logger
 	redactor safety.Redactor
 	version  string
@@ -91,10 +95,6 @@ type Server struct {
 
 	hub *hub
 
-	// killTask stops what is left of a task's processes before its final
-	// status is stored, so no client sees done or cancelled while they live.
-	killTask func(taskID string) error
-
 	tracking   TrackingService
 	status     StatusService
 	builds     BuildService
@@ -104,22 +104,16 @@ type Server struct {
 	gitActions GitActionsService
 	worktrees  WorktreeService
 	proposals  ProposalService
-	trust      TrustService
-	board      BoardService
+	tasks      TaskService
+	writeModes bool
 	composer   ComposerService
 	mcp        MCPService
 	clock      func() time.Time
 	ids        func(prefix string) string
 
-	// newTaskID makes the ID of a new task: randomness stays in the shell.
-	newTaskID func() core.TaskID
-
-	// ctx is the parent of every task run; Close cancels it.
-	ctx    context.Context
-	stop   context.CancelFunc
-	group  errgroup.Group
-	mu     sync.Mutex
-	cancel map[core.TaskID]context.CancelFunc
+	// ctx is the parent of background work of the handlers; Close cancels it.
+	ctx  context.Context
+	stop context.CancelFunc
 
 	closeOnce sync.Once
 }
@@ -129,8 +123,6 @@ func New(d Deps) (*Server, error) {
 	switch {
 	case d.Store == nil:
 		return nil, errors.New("api: a store is required")
-	case d.Env == nil:
-		return nil, errors.New("api: an environment builder is required")
 	}
 	redactor := d.Redactor
 	if redactor == nil {
@@ -146,28 +138,21 @@ func New(d Deps) (*Server, error) {
 	}
 	ctx, stop := context.WithCancel(context.Background())
 	s := &Server{
-		store: d.Store, adapters: d.Adapters, env: d.Env, log: log, redactor: redactor,
+		store: d.Store, log: log, redactor: redactor,
 		version: d.Version, assets: as, allowedOrigins: d.AllowedOrigins,
-		hub: newHub(log), ctx: ctx, stop: stop, cancel: map[core.TaskID]context.CancelFunc{},
+		hub: newHub(log), ctx: ctx, stop: stop,
 	}
 	s.tracking, s.status, s.builds, s.hosts, s.search = d.Tracking, d.Status, d.Builds, d.Hosts, d.Search
 	s.repoDetail = d.RepoDetail
 	s.gitActions = d.GitActions
-	s.worktrees, s.proposals, s.trust, s.board, s.composer, s.mcp = d.Worktrees, d.Proposals, d.Trust, d.Board, d.Composer, d.MCP
+	s.worktrees, s.proposals, s.composer, s.mcp = d.Worktrees, d.Proposals, d.Composer, d.MCP
+	s.tasks, s.writeModes = d.Tasks, d.WriteModes
 	s.clock, s.ids = d.Clock, d.IDs
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }
 	}
 	if s.ids == nil {
 		s.ids = db.NewID
-	}
-	s.newTaskID = func() core.TaskID { return core.TaskID(db.NewID("tsk")) }
-	s.killTask = d.KillTask
-	if s.killTask == nil {
-		s.killTask = platform.KillTask
-	}
-	if s.adapters == nil {
-		s.adapters = map[string]agents.Adapter{}
 	}
 	return s, nil
 }
@@ -179,6 +164,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/health", s.health)
 	mux.HandleFunc("GET /api/tasks", s.listTasks)
 	mux.HandleFunc("POST /api/tasks", s.createTask)
+	mux.HandleFunc("POST /api/tasks/{id}/messages", s.messageTask)
+	mux.HandleFunc("POST /api/tasks/{id}/dismiss", s.dismissTask)
 	mux.HandleFunc("GET /api/tasks/{id}", s.getTask)
 	mux.HandleFunc("GET /api/tasks/{id}/events", s.taskEvents)
 	mux.HandleFunc("POST /api/tasks/{id}/cancel", s.cancelTask)
@@ -241,13 +228,8 @@ func (s *Server) Run(ctx context.Context, ln net.Listener) error {
 // It is safe to call more than once.
 func (s *Server) Close() {
 	s.closeOnce.Do(func() {
-		// Under s.mu, so start() either sees the stop or has already added its
-		// task to the group before Wait begins.
-		s.mu.Lock()
 		s.stop()
-		s.mu.Unlock()
 		s.hub.closeAll()
-		_ = s.group.Wait()
 		s.hub.wait()
 	})
 }

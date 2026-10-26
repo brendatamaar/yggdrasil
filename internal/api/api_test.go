@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -19,8 +18,6 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/brendatamaar/yggdrasil/internal/agents"
-	"github.com/brendatamaar/yggdrasil/internal/agents/mock"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/db/dbtest"
@@ -37,9 +34,9 @@ type env struct {
 	repo    core.Repo
 }
 
-// newEnv starts a server on a temp database with the mock adapter. delay
-// paces the replay so a test can subscribe or cancel while it runs.
-func newEnv(t *testing.T, fixture string, delay time.Duration, extra ...func(*Deps)) *env {
+// newEnv starts a server on a temp database. Tests that need the task service
+// set Deps.Tasks (a fake) in extra.
+func newEnv(t *testing.T, extra ...func(*Deps)) *env {
 	t.Helper()
 	ctx := context.Background()
 	d, err := db.Open(ctx, filepath.Join(t.TempDir(), "ygg.db"))
@@ -50,8 +47,7 @@ func newEnv(t *testing.T, fixture string, delay time.Duration, extra ...func(*De
 	redactor := safety.NewRedactor()
 	store := db.NewStore(d, redactor.Redact)
 	deps := Deps{
-		Store: store, Redactor: redactor, Env: safety.NewEnvBuilder(),
-		Adapters: map[string]agents.Adapter{"mock": mock.New(mock.Options{Fixture: fixture, Delay: delay})},
+		Store: store, Redactor: redactor,
 		Version:  "test",
 		Assets: fstest.MapFS{
 			"index.html":    {Data: []byte("<html>app</html>")},
@@ -136,24 +132,6 @@ func (e *env) create(t *testing.T) core.Task {
 	return tr.Task
 }
 
-func (e *env) waitStatus(t *testing.T, id core.TaskID, want core.TaskStatus) core.Task {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		task, err := e.store.GetTask(context.Background(), id)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if task.Status == want {
-			return task
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("task %s is %s, want %s", id, task.Status, want)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-}
-
 func (e *env) dial(t *testing.T, mod ...func(*websocket.DialOptions)) *websocket.Conn {
 	t.Helper()
 	opts := &websocket.DialOptions{}
@@ -197,7 +175,7 @@ func readMsg(t *testing.T, c *websocket.Conn, timeout time.Duration) (WSMessage,
 }
 
 func TestHealth(t *testing.T) {
-	e := newEnv(t, "plain", 0)
+	e := newEnv(t)
 	resp, data := e.do(t, http.MethodGet, "/api/health", nil)
 	var h HealthResponse
 	if resp.StatusCode != 200 || json.Unmarshal(data, &h) != nil || h.Status != "ok" || h.Version != "test" {
@@ -206,7 +184,7 @@ func TestHealth(t *testing.T) {
 }
 
 func TestHostAndOriginChecks(t *testing.T) {
-	e := newEnv(t, "plain", 0)
+	e := newEnv(t)
 	e.srv.port.Store(int32(e.ts.Listener.Addr().(*net.TCPAddr).Port)) //nolint:gosec // test port
 	port := e.ts.Listener.Addr().(*net.TCPAddr).Port
 	same := e.ts.URL
@@ -253,7 +231,7 @@ func TestHostAndOriginChecks(t *testing.T) {
 }
 
 func TestWebSocketRefusesForeignOrigin(t *testing.T) {
-	e := newEnv(t, "plain", 0)
+	e := newEnv(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, resp, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(e.ts.URL, "http")+"/ws", &websocket.DialOptions{
@@ -271,7 +249,7 @@ func TestWebSocketRefusesForeignOrigin(t *testing.T) {
 }
 
 func TestErrorFormat(t *testing.T) {
-	e := newEnv(t, "plain", 0)
+	e := newEnv(t)
 	for _, c := range []struct {
 		method, path string
 		body         any
@@ -282,7 +260,6 @@ func TestErrorFormat(t *testing.T) {
 		{"GET", "/api/nope", nil, 404, ErrNotFound},
 		{"GET", "/api/tasks/a%20b", nil, 400, ErrBadRequest},
 		{"GET", "/api/tasks?status=bogus", nil, 400, ErrBadRequest},
-		{"POST", "/api/tasks", map[string]any{"bogusField": 1}, 400, ErrBadRequest},
 	} {
 		resp, data := e.do(t, c.method, c.path, c.body)
 		var b ErrorBody
@@ -292,164 +269,8 @@ func TestErrorFormat(t *testing.T) {
 	}
 }
 
-func TestCreateTaskRefusals(t *testing.T) {
-	e := newEnv(t, "plain", 0)
-	other := dbtest.Project(t, e.store, core.Project{Name: "other", Path: t.TempDir()})
-	otherRepo := dbtest.Repo(t, e.store, core.Repo{ProjectID: other.ID, Name: "x", Path: t.TempDir()})
-	mutate := map[string]func(*CreateTaskRequest){
-		"code mode":         func(r *CreateTaskRequest) { r.Mode = core.ModeCode },
-		"current branch":    func(r *CreateTaskRequest) { r.Mode = core.ModeCurrentBranch },
-		"project mode":      func(r *CreateTaskRequest) { r.Mode = core.ModeProject },
-		"empty prompt":      func(r *CreateTaskRequest) { r.Prompt = "  " },
-		"unknown agent":     func(r *CreateTaskRequest) { r.Agent = "nope" },
-		"two repos":         func(r *CreateTaskRequest) { r.RepoIDs = append(r.RepoIDs, otherRepo.ID) },
-		"no repos":          func(r *CreateTaskRequest) { r.RepoIDs = nil },
-		"repo of a project": func(r *CreateTaskRequest) { r.RepoIDs = []core.RepoID{otherRepo.ID} },
-	}
-	for name, m := range mutate {
-		req := e.createReq()
-		m(&req)
-		resp, data := e.do(t, http.MethodPost, "/api/tasks", req)
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("%s: status = %d (%s), want 400", name, resp.StatusCode, data)
-		}
-	}
-	// Nothing was created, and nothing was audited for a refused request.
-	tasks, _ := e.store.ListTasks(context.Background(), e.project.ID)
-	if len(tasks) != 0 {
-		t.Errorf("refused requests created %d tasks", len(tasks))
-	}
-}
-
-// A repo that is not tracked in the project is never reachable (invariant 6).
-func TestCreateTaskUnknownRepoAndProject(t *testing.T) {
-	e := newEnv(t, "plain", 0)
-	req := e.createReq()
-	req.RepoIDs = []core.RepoID{"repo_missing"}
-	if resp, _ := e.do(t, http.MethodPost, "/api/tasks", req); resp.StatusCode != http.StatusNotFound {
-		t.Errorf("unknown repo = %d, want 404", resp.StatusCode)
-	}
-	req = e.createReq()
-	req.ProjectID = "prj_missing"
-	if resp, _ := e.do(t, http.MethodPost, "/api/tasks", req); resp.StatusCode != http.StatusNotFound {
-		t.Errorf("unknown project = %d, want 404", resp.StatusCode)
-	}
-}
-
-func TestTaskRunsAndEventsAreStoredInOrder(t *testing.T) {
-	e := newEnv(t, "subagents", 0)
-	ws := e.dial(t)
-	subscribe(t, ws, TopicTasks)
-	time.Sleep(100 * time.Millisecond) // let the subscription register
-
-	task := e.create(t)
-	done := e.waitStatus(t, task.ID, core.TaskDone)
-	if done.FinishedAt == nil {
-		t.Error("finished task has no finish time")
-	}
-
-	// The "tasks" topic carried the status changes: no prompt, no output.
-	var seen []core.TaskStatus
-	for len(seen) < 2 {
-		m, err := readMsg(t, ws, 5*time.Second)
-		if err != nil {
-			t.Fatalf("read tasks topic: %v (seen %v)", err, seen)
-		}
-		var sm TaskStatusMessage
-		if err := json.Unmarshal(m.Data, &sm); err != nil || sm.TaskID != task.ID {
-			t.Fatalf("bad tasks message %s", m.Data)
-		}
-		// Neither the secret line nor the first line of the prompt: the title is
-		// what the person named the task, or "Task <id>".
-		if strings.Contains(string(m.Data), secretDetail) || strings.Contains(string(m.Data), "order routes") {
-			t.Errorf("tasks topic leaks the prompt: %s", m.Data)
-		}
-		if !strings.Contains(string(m.Data), `"title":"Task `) {
-			t.Errorf("tasks topic title = %s, want a generic title", m.Data)
-		}
-		seen = append(seen, sm.Status)
-	}
-	if seen[0] != core.TaskRunning || seen[1] != core.TaskDone {
-		t.Errorf("status messages = %v, want running then done", seen)
-	}
-
-	resp, data := e.do(t, http.MethodGet, "/api/tasks/"+string(task.ID)+"/events?after=0", nil)
-	var er TaskEventsResponse
-	if resp.StatusCode != 200 || json.Unmarshal(data, &er) != nil || len(er.Events) < 5 {
-		t.Fatalf("events = %d %s", resp.StatusCode, data)
-	}
-	parents := 0
-	for i, ev := range er.Events {
-		if ev.Seq != int64(i+1) {
-			t.Fatalf("event %d has seq %d: gap or reorder", i, ev.Seq)
-		}
-		if ev.ParentID != "" {
-			parents++
-		}
-	}
-	if parents == 0 {
-		t.Error("nested events lost their ParentID")
-	}
-
-	// Backfill after a point returns only the later events.
-	_, data = e.do(t, http.MethodGet, "/api/tasks/"+string(task.ID)+"/events?after=3", nil)
-	var tail TaskEventsResponse
-	if err := json.Unmarshal(data, &tail); err != nil || len(tail.Events) != len(er.Events)-3 || tail.Events[0].Seq != 4 {
-		t.Errorf("events after 3 = %s", data)
-	}
-	if resp, _ := e.do(t, http.MethodGet, "/api/tasks/"+string(task.ID)+"/events?after=-1", nil); resp.StatusCode != 400 {
-		t.Errorf("after=-1 gave %d, want 400", resp.StatusCode)
-	}
-
-	// The list endpoint filters by status.
-	_, data = e.do(t, http.MethodGet, "/api/tasks?status=done", nil)
-	var list TaskListResponse
-	if err := json.Unmarshal(data, &list); err != nil || len(list.Tasks) != 1 || list.Tasks[0].ID != task.ID {
-		t.Errorf("done list = %s", data)
-	}
-	_, data = e.do(t, http.MethodGet, "/api/tasks?status=running", nil)
-	if err := json.Unmarshal(data, &list); err != nil || len(list.Tasks) != 0 {
-		t.Errorf("running list = %s", data)
-	}
-}
-
-func TestLiveEventsOverWebSocket(t *testing.T) {
-	e := newEnv(t, "subagents", 40*time.Millisecond)
-	task := e.create(t)
-	ws := e.dial(t)
-	subscribe(t, ws, TopicTaskPrefix+string(task.ID))
-
-	var last int64
-	got := 0
-	for {
-		m, err := readMsg(t, ws, 5*time.Second)
-		if err != nil {
-			break
-		}
-		if m.Type != MsgEvent || m.Topic != TopicTaskPrefix+string(task.ID) {
-			t.Fatalf("unexpected message %+v", m)
-		}
-		var ev agents.Event
-		if err := json.Unmarshal(m.Data, &ev); err != nil || ev.Seq != m.Seq {
-			t.Fatalf("event data %s (seq %d)", m.Data, m.Seq)
-		}
-		if last != 0 && m.Seq != last+1 {
-			t.Fatalf("seq jumped from %d to %d", last, m.Seq)
-		}
-		last = m.Seq
-		got++
-		if ev.Kind == agents.EventStatus && ev.Status == agents.RunCompleted {
-			break
-		}
-	}
-	if got < 3 {
-		t.Fatalf("only %d live events", got)
-	}
-	e.waitStatus(t, task.ID, core.TaskDone)
-}
-
 func TestWebSocketRejectsBadMessages(t *testing.T) {
-	e := newEnv(t, "plain", 0)
+	e := newEnv(t)
 	ws := e.dial(t)
 	for _, raw := range []string{`not json`, `{"type":"subscribe","topic":"task:a b"}`, `{"type":"subscribe","topic":"nope"}`, `{"type":"zzz"}`} {
 		if err := ws.Write(context.Background(), websocket.MessageText, []byte(raw)); err != nil {
@@ -463,7 +284,7 @@ func TestWebSocketRejectsBadMessages(t *testing.T) {
 }
 
 func TestSlowClientIsDroppedWithoutBlocking(t *testing.T) {
-	e := newEnv(t, "plain", 0)
+	e := newEnv(t)
 	ws := e.dial(t)
 	subscribe(t, ws, TopicTasks)
 	time.Sleep(100 * time.Millisecond)
@@ -491,75 +312,6 @@ func TestSlowClientIsDroppedWithoutBlocking(t *testing.T) {
 	}
 }
 
-func TestCancelEndsTheTaskAndIsAudited(t *testing.T) {
-	e := newEnv(t, "subagents", 300*time.Millisecond)
-	task := e.create(t)
-	e.waitStatus(t, task.ID, core.TaskRunning)
-
-	for range 2 { // idempotent
-		resp, data := e.do(t, http.MethodPost, "/api/tasks/"+string(task.ID)+"/cancel", nil)
-		if resp.StatusCode != http.StatusAccepted {
-			t.Fatalf("cancel = %d %s", resp.StatusCode, data)
-		}
-	}
-	e.waitStatus(t, task.ID, core.TaskCancelled)
-
-	rows, err := e.store.ListAudit(context.Background(), "task:"+string(task.ID), 50)
-	if err != nil {
-		t.Fatal(err)
-	}
-	actions := map[string]bool{}
-	for _, r := range rows {
-		actions[r.Action] = true
-		if strings.Contains(string(r.Detail), secretDetail) || strings.Contains(string(r.Detail), "order routes") {
-			t.Errorf("audit detail holds the prompt: %s", r.Detail)
-		}
-	}
-	for _, want := range []string{"task.create", "task.start", "task.cancel", "task.finish"} {
-		if !actions[want] {
-			t.Errorf("no audit entry %q (have %v)", want, actions)
-		}
-	}
-	// The cancelled run still stored its final event.
-	_, data := e.do(t, http.MethodGet, "/api/tasks/"+string(task.ID)+"/events", nil)
-	var er TaskEventsResponse
-	if err := json.Unmarshal(data, &er); err != nil || len(er.Events) == 0 {
-		t.Fatalf("events after cancel = %s", data)
-	}
-	if last := er.Events[len(er.Events)-1]; last.Kind != agents.EventStatus || last.Status != agents.RunCancelled {
-		t.Errorf("last event = %+v, want a cancelled status", last)
-	}
-}
-
-func TestUnavailableAgentIsRefused(t *testing.T) {
-	e := newEnv(t, "plain", 0, func(d *Deps) {
-		d.Adapters["broken"] = brokenAdapter{mock.New(mock.Options{}), userError("The agent is not signed in. Sign in with its own app first.")}
-		d.Adapters["leaky"] = brokenAdapter{mock.New(mock.Options{}), errString(`open C:\Users\someone\secret.db: access denied`)}
-	})
-	req := e.createReq()
-	req.Agent = "broken"
-	resp, data := e.do(t, http.MethodPost, "/api/tasks", req)
-	var b ErrorBody
-	if resp.StatusCode != 503 || json.Unmarshal(data, &b) != nil || b.Code != ErrUnavailable || !strings.Contains(b.Message, "not signed in") {
-		t.Errorf("broken agent = %d %s", resp.StatusCode, data)
-	}
-
-	// An error without a message meant for people is never shown.
-	req.Agent = "leaky"
-	resp, data = e.do(t, http.MethodPost, "/api/tasks", req)
-	if resp.StatusCode != 503 || strings.Contains(string(data), "someone") || strings.Contains(string(data), "secret.db") {
-		t.Errorf("internal error leaked: %d %s", resp.StatusCode, data)
-	}
-}
-
-type brokenAdapter struct {
-	*mock.Adapter
-	err error
-}
-
-func (brokenAdapter) Name() string                  { return "broken" }
-func (b brokenAdapter) Check(context.Context) error { return b.err }
-
 type errString string
 
 func (e errString) Error() string { return string(e) }
@@ -570,267 +322,8 @@ type userError string
 func (e userError) Error() string       { return string(e) }
 func (e userError) UserMessage() string { return string(e) }
 
-func TestTaskTitleComesFromTheRequestNeverThePrompt(t *testing.T) {
-	e := newEnv(t, "plain", 0)
-	req := e.createReq()
-	resp, data := e.do(t, http.MethodPost, "/api/tasks", req)
-	var tr TaskResponse
-	if resp.StatusCode != 201 || json.Unmarshal(data, &tr) != nil {
-		t.Fatalf("create = %d %s", resp.StatusCode, data)
-	}
-	short := string(tr.Task.ID)[len(tr.Task.ID)-6:]
-	if tr.Task.Title != "Task "+short {
-		t.Errorf("default title = %q, want %q", tr.Task.Title, "Task "+short)
-	}
-
-	req.Title = "  Cart\tbug\nreview  "
-	_, data = e.do(t, http.MethodPost, "/api/tasks", req)
-	if err := json.Unmarshal(data, &tr); err != nil || tr.Task.Title != "Cart bug review" {
-		t.Errorf("a given title = %q (%s)", tr.Task.Title, data)
-	}
-
-	req.Title = strings.Repeat("é", 200)
-	_, data = e.do(t, http.MethodPost, "/api/tasks", req)
-	if err := json.Unmarshal(data, &tr); err != nil || len([]rune(tr.Task.Title)) != maxTitleRunes+1 || !strings.HasSuffix(tr.Task.Title, "…") {
-		t.Errorf("a long title = %d runes (%s)", len([]rune(tr.Task.Title)), data)
-	}
-}
-
-func TestModelNameIsValidated(t *testing.T) {
-	e := newEnv(t, "plain", 0)
-	for _, model := range []string{"--dangerously-skip-permissions", "a b", "x;y", "-m", strings.Repeat("a", 65)} {
-		req := e.createReq()
-		req.Model = model
-		if resp, data := e.do(t, http.MethodPost, "/api/tasks", req); resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("model %q = %d %s, want 400", model, resp.StatusCode, data)
-		}
-	}
-	req := e.createReq()
-	req.Model = "claude-haiku-5-5"
-	if resp, data := e.do(t, http.MethodPost, "/api/tasks", req); resp.StatusCode != http.StatusCreated {
-		t.Errorf("a valid model = %d %s", resp.StatusCode, data)
-	}
-}
-
-// What an agent reads can hold secrets; known token shapes never reach the
-// database or a client.
-func TestEventsAreRedactedBeforeTheyAreStored(t *testing.T) {
-	const token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789"
-	e := newEnv(t, "plain", 0, func(d *Deps) {
-		d.Adapters["leaky"] = emitAdapter{mock.New(mock.Options{}), []agents.Event{
-			{Kind: agents.EventMessage, Role: agents.RoleAssistant, Text: "the key is " + token},
-			{Kind: agents.EventToolCall, Tool: &agents.ToolCall{Name: "Read", Input: json.RawMessage(`{"note":"Bearer abc123def456ghi789"}`)}},
-			{Kind: agents.EventToolResult, Text: "GITHUB_TOKEN=" + token},
-			{Kind: agents.EventFileEdit, File: &agents.FileEdit{Path: "a.env", Op: "modify", Diff: "+TOKEN=" + token}},
-			{Kind: agents.EventCommand, Command: &agents.CommandRun{Line: "curl -H 'Authorization: Bearer abcdefgh12345678'", Output: token}},
-			{Kind: agents.EventError, Error: "failed with " + token},
-		}}
-	})
-	req := e.createReq()
-	req.Agent = "leaky"
-	task := func() core.Task {
-		resp, data := e.do(t, http.MethodPost, "/api/tasks", req)
-		var tr TaskResponse
-		if resp.StatusCode != 201 || json.Unmarshal(data, &tr) != nil {
-			t.Fatalf("create = %d %s", resp.StatusCode, data)
-		}
-		return tr.Task
-	}()
-	e.waitStatus(t, task.ID, core.TaskDone)
-
-	_, data := e.do(t, http.MethodGet, "/api/tasks/"+string(task.ID)+"/events", nil)
-	for _, leak := range []string{token, "abc123def456ghi789", "abcdefgh12345678"} {
-		if strings.Contains(string(data), leak) {
-			t.Errorf("stored events contain %q: %s", leak, data)
-		}
-	}
-	if !strings.Contains(string(data), "[REDACTED]") {
-		t.Errorf("nothing was redacted: %s", data)
-	}
-	// The database holds the same, not only the REST view.
-	rows, err := e.store.ListTaskEvents(context.Background(), task.ID, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, row := range rows {
-		if strings.Contains(string(row.Data), token) {
-			t.Errorf("database row %d holds the token: %s", row.Seq, row.Data)
-		}
-	}
-}
-
-// emitAdapter replays the events it is given.
-type emitAdapter struct {
-	*mock.Adapter
-	events []agents.Event
-}
-
-func (emitAdapter) Name() string { return "leaky" }
-func (a emitAdapter) Start(context.Context, agents.StartOptions) (agents.Run, error) {
-	ch := make(chan agents.Event, len(a.events)+2)
-	ch <- agents.Event{Kind: agents.EventStatus, Status: agents.RunStarted}
-	for _, e := range a.events {
-		ch <- e
-	}
-	ch <- agents.Event{Kind: agents.EventStatus, Status: agents.RunCompleted}
-	close(ch)
-	return stubRun{ch}, nil
-}
-
-type stubRun struct{ ch chan agents.Event }
-
-func (r stubRun) Events() <-chan agents.Event { return r.ch }
-func (stubRun) SessionID() string             { return "" }
-func (stubRun) Wait() error                   { return nil }
-
-// A run that cannot start says why on the page, not only in the log. A message
-// meant for people is shown as it is; anything else becomes a generic line.
-func TestStartFailureIsExplainedInTheTranscript(t *testing.T) {
-	e := newEnv(t, "plain", 0, func(d *Deps) {
-		d.Adapters["refuses"] = startFailAdapter{mock.New(mock.Options{}), userError("This repo has its own Claude Code configuration (.claude/settings.local.json).")}
-		d.Adapters["breaks"] = startFailAdapter{mock.New(mock.Options{}), errString(`open C:\Users\someone\secret.db: access denied`)}
-	})
-	for agent, want := range map[string]string{"refuses": "own Claude Code configuration", "breaks": "could not be started"} {
-		req := e.createReq()
-		req.Agent = agent
-		resp, data := e.do(t, http.MethodPost, "/api/tasks", req)
-		var tr TaskResponse
-		if resp.StatusCode != 201 || json.Unmarshal(data, &tr) != nil {
-			t.Fatalf("%s: create = %d %s", agent, resp.StatusCode, data)
-		}
-		e.waitStatus(t, tr.Task.ID, core.TaskFailed)
-
-		var er TaskEventsResponse
-		deadline := time.Now().Add(5 * time.Second)
-		for len(er.Events) < 2 && time.Now().Before(deadline) {
-			_, data = e.do(t, http.MethodGet, "/api/tasks/"+string(tr.Task.ID)+"/events", nil)
-			if err := json.Unmarshal(data, &er); err != nil {
-				t.Fatal(err)
-			}
-			time.Sleep(20 * time.Millisecond)
-		}
-		if len(er.Events) != 2 || er.Events[0].Kind != agents.EventError || !strings.Contains(er.Events[0].Error, want) ||
-			er.Events[1].Kind != agents.EventStatus || er.Events[1].Status != agents.RunFailed {
-			t.Fatalf("%s: events = %+v", agent, er.Events)
-		}
-		if strings.Contains(string(data), "someone") || strings.Contains(string(data), "secret.db") {
-			t.Errorf("%s: an internal error reached the transcript: %s", agent, data)
-		}
-	}
-}
-
-// When a run ends without a result, the cause behind the plain message (the
-// CLI's redacted stderr) is in the log, so the person can find out why.
-func TestRunFailureCauseIsLoggedNotShown(t *testing.T) {
-	var logs bytes.Buffer
-	e := newEnv(t, "plain", 0, func(d *Deps) {
-		d.Log = slog.New(slog.NewTextHandler(&logs, nil))
-		d.Adapters["fails"] = failedRunAdapter{mock.New(mock.Options{}), userCause{"Claude Code stopped before it finished (exit code 1).", errString("claude stderr: error: unknown option '--frobnicate'")}}
-	})
-	req := e.createReq()
-	req.Agent = "fails"
-	resp, data := e.do(t, http.MethodPost, "/api/tasks", req)
-	var tr TaskResponse
-	if resp.StatusCode != 201 || json.Unmarshal(data, &tr) != nil {
-		t.Fatalf("create = %d %s", resp.StatusCode, data)
-	}
-	e.waitStatus(t, tr.Task.ID, core.TaskFailed)
-	// The task is marked failed after the warning is logged.
-	if out := logs.String(); !strings.Contains(out, "agent run failed") || !strings.Contains(out, "unknown option") {
-		t.Errorf("the log lacks the cause:\n%s", out)
-	}
-	_, data = e.do(t, http.MethodGet, "/api/tasks/"+string(tr.Task.ID)+"/events", nil)
-	if strings.Contains(string(data), "unknown option") {
-		t.Errorf("the CLI's stderr reached the page: %s", data)
-	}
-}
-
-type userCause struct {
-	msg   string
-	cause error
-}
-
-func (e userCause) Error() string       { return e.msg }
-func (e userCause) Unwrap() error       { return e.cause }
-func (e userCause) UserMessage() string { return e.msg }
-
-// failedRunAdapter ends a run as failed with the given error.
-type failedRunAdapter struct {
-	*mock.Adapter
-	err error
-}
-
-func (failedRunAdapter) Name() string { return "fails" }
-func (a failedRunAdapter) Start(context.Context, agents.StartOptions) (agents.Run, error) {
-	ch := make(chan agents.Event, 2)
-	ch <- agents.Event{Kind: agents.EventStatus, Status: agents.RunStarted}
-	ch <- agents.Event{Kind: agents.EventStatus, Status: agents.RunFailed}
-	close(ch)
-	return failedRun{ch, a.err}, nil
-}
-
-type failedRun struct {
-	ch  chan agents.Event
-	err error
-}
-
-func (r failedRun) Events() <-chan agents.Event { return r.ch }
-func (failedRun) SessionID() string             { return "" }
-func (r failedRun) Wait() error                 { return r.err }
-
-type startFailAdapter struct {
-	*mock.Adapter
-	err error
-}
-
-func (startFailAdapter) Name() string { return "refuses" }
-func (a startFailAdapter) Start(context.Context, agents.StartOptions) (agents.Run, error) {
-	return nil, a.err
-}
-
-// A panic inside a run fails that task; it doesn't take the server down.
-func TestPanicInARunFailsOnlyThatTask(t *testing.T) {
-	e := newEnv(t, "plain", 0, func(d *Deps) { d.Adapters["panics"] = panicAdapter{mock.New(mock.Options{})} })
-	req := e.createReq()
-	req.Agent = "panics"
-	resp, data := e.do(t, http.MethodPost, "/api/tasks", req)
-	var tr TaskResponse
-	if resp.StatusCode != 201 || json.Unmarshal(data, &tr) != nil {
-		t.Fatalf("create = %d %s", resp.StatusCode, data)
-	}
-	e.waitStatus(t, tr.Task.ID, core.TaskFailed)
-	if resp, _ := e.do(t, http.MethodGet, "/api/health", nil); resp.StatusCode != 200 {
-		t.Errorf("the server stopped answering after a panic: %d", resp.StatusCode)
-	}
-	// And the next task still runs.
-	if _, data := e.do(t, http.MethodPost, "/api/tasks", e.createReq()); !strings.Contains(string(data), `"task"`) {
-		t.Errorf("the next task: %s", data)
-	}
-}
-
-type panicAdapter struct{ *mock.Adapter }
-
-func (panicAdapter) Name() string { return "panics" }
-func (panicAdapter) Start(context.Context, agents.StartOptions) (agents.Run, error) {
-	panic("boom")
-}
-
-func TestNoTaskStartsWhileTheServerIsStopping(t *testing.T) {
-	e := newEnv(t, "plain", 0)
-	e.srv.Close()
-	resp, data := e.do(t, http.MethodPost, "/api/tasks", e.createReq())
-	var b ErrorBody
-	if resp.StatusCode != http.StatusServiceUnavailable || json.Unmarshal(data, &b) != nil || b.Code != ErrUnavailable {
-		t.Errorf("create during shutdown = %d %s", resp.StatusCode, data)
-	}
-	tasks, _ := e.store.ListTasks(context.Background(), e.project.ID)
-	if len(tasks) != 0 {
-		t.Errorf("a task was created during shutdown: %+v", tasks)
-	}
-}
-
 func TestSubscriptionsPerClientAreCapped(t *testing.T) {
-	e := newEnv(t, "plain", 0)
+	e := newEnv(t)
 	ws := e.dial(t)
 	for i := range maxTopicsPerClient {
 		subscribe(t, ws, TopicTaskPrefix+"t"+strconv.Itoa(i))
@@ -854,7 +347,7 @@ func TestSubscriptionsPerClientAreCapped(t *testing.T) {
 }
 
 func TestContentSecurityPolicy(t *testing.T) {
-	e := newEnv(t, "plain", 0)
+	e := newEnv(t)
 	resp, _ := e.do(t, http.MethodGet, "/", nil)
 	csp := resp.Header.Get("Content-Security-Policy")
 	for _, want := range []string{"default-src 'self'", "frame-ancestors 'none'", "object-src 'none'", "base-uri 'none'"} {
@@ -868,7 +361,7 @@ func TestContentSecurityPolicy(t *testing.T) {
 }
 
 func TestStaticAssets(t *testing.T) {
-	e := newEnv(t, "plain", 0)
+	e := newEnv(t)
 	for _, c := range []struct {
 		path   string
 		status int
@@ -907,7 +400,7 @@ func TestStaticAssets(t *testing.T) {
 }
 
 func TestStaticWithoutBuild(t *testing.T) {
-	e := newEnv(t, "plain", 0, func(d *Deps) { d.Assets = fstest.MapFS{} })
+	e := newEnv(t, func(d *Deps) { d.Assets = fstest.MapFS{} })
 	resp, data := e.do(t, http.MethodGet, "/", nil)
 	if resp.StatusCode != 200 || !strings.Contains(string(data), "task build") {
 		t.Errorf("not-built page = %d %s", resp.StatusCode, data)
@@ -932,7 +425,7 @@ type fakeListener struct{ net.Listener }
 func (fakeListener) Addr() net.Addr { return &net.TCPAddr{IP: net.IPv4zero, Port: 4747} }
 
 func TestRunRefusesNonLoopbackListener(t *testing.T) {
-	e := newEnv(t, "plain", 0)
+	e := newEnv(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -941,67 +434,6 @@ func TestRunRefusesNonLoopbackListener(t *testing.T) {
 	err = e.srv.Run(context.Background(), fakeListener{ln})
 	if err == nil || !strings.Contains(err.Error(), "loopback") {
 		t.Fatalf("Run on 0.0.0.0 = %v, want a loopback refusal", err)
-	}
-}
-
-func TestRunServesAndStopsCleanly(t *testing.T) {
-	e := newEnv(t, "subagents", 200*time.Millisecond)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- e.srv.Run(ctx, ln) }()
-
-	base := "http://" + ln.Addr().String()
-	var resp *http.Response
-	for range 50 {
-		if resp, err = http.Get(base + "/api/health"); err == nil {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if err != nil || resp.StatusCode != 200 {
-		t.Fatalf("health on the real listener: %v %v", resp, err)
-	}
-	resp.Body.Close()
-
-	// Wrong port in the Host header is refused once the port is known.
-	req, _ := http.NewRequest(http.MethodGet, base+"/api/health", nil)
-	req.Host = "127.0.0.1:1"
-	if resp, err := http.DefaultClient.Do(req); err != nil || resp.StatusCode != 403 {
-		t.Errorf("wrong Host port: %v %v", resp, err)
-	} else {
-		resp.Body.Close()
-	}
-
-	// A task is running when the server stops: it must be cancelled, and Run
-	// must return.
-	body, _ := json.Marshal(e.createReq())
-	resp, err = http.Post(base+"/api/tasks", "application/json", bytes.NewReader(body))
-	if err != nil || resp.StatusCode != 201 {
-		t.Fatalf("create on the real listener: %v %v", resp, err)
-	}
-	resp.Body.Close()
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Run = %v", err)
-		}
-	case <-time.After(15 * time.Second):
-		t.Fatal("Run did not return after cancel")
-	}
-	tasks, _ := e.store.ListTasks(context.Background(), e.project.ID)
-	if len(tasks) != 1 || tasks[0].Status != core.TaskCancelled {
-		t.Errorf("after shutdown: %+v, want one cancelled task", tasks)
-	}
-}
-
-func TestNewRequiresDeps(t *testing.T) {
-	if _, err := New(Deps{}); err == nil {
-		t.Error("New accepted empty deps")
 	}
 }
 

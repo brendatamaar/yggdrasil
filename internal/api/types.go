@@ -96,10 +96,16 @@ type WSMessage struct {
 	Data  json.RawMessage `json:"data,omitempty"`
 }
 
-// CreateTaskRequest is the body of POST /api/tasks.
+// CreateTaskRequest is the body of POST /api/tasks. Mode is "ask", "code",
+// "current_branch" or "project". Scope is "repo" or "project"; empty means
+// "project" for the project mode and "repo" otherwise. RepoIDs holds exactly
+// one repo for a repo scope and none for the project scope. OptIn is the
+// person's explicit consent to a mode that edits main checkouts.
 type CreateTaskRequest struct {
 	ProjectID core.ProjectID `json:"projectId"`
 	RepoIDs   []core.RepoID  `json:"repoIds"`
+	Scope     string         `json:"scope,omitempty"`
+	OptIn     bool           `json:"optIn,omitempty"`
 	// Title is the task's name, shown in lists and notifications. It is never
 	// made from the prompt, which can hold code or paths (docs/AGENTS.md 5.9).
 	// Empty gives "Task <short id>".
@@ -107,6 +113,15 @@ type CreateTaskRequest struct {
 	Prompt string        `json:"prompt"`
 	Mode   core.TaskMode `json:"mode"`
 	Agent  string        `json:"agent"`
+	Model  string        `json:"model,omitempty"`
+}
+
+// MessageRequest is the body of POST /api/tasks/{id}/messages: another turn of
+// an idle task. The task keeps its project, scope, repos and agent.
+type MessageRequest struct {
+	Mode   core.TaskMode `json:"mode"`
+	Prompt string        `json:"prompt"`
+	OptIn  bool          `json:"optIn,omitempty"`
 	Model  string        `json:"model,omitempty"`
 }
 
@@ -118,6 +133,9 @@ type TaskListResponse struct {
 // TaskResponse is the body of task endpoints.
 type TaskResponse struct {
 	Task core.Task `json:"task"`
+	// Warning is "edits_main_checkout" or "edits_all_repos" when the task edits
+	// main checkouts; empty otherwise.
+	Warning string `json:"warning,omitempty"`
 }
 
 // TaskEventsResponse is the body of GET /api/tasks/{id}/events: the events

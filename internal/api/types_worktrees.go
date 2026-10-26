@@ -8,8 +8,8 @@ import (
 
 // DTOs of task worktrees (AG-07, WE-04): GET /api/tasks/{id}/worktrees.
 
-// WorktreeDTO is one worktree of a task. Path is the folder on disk, shown so
-// the user can open it; it is never sent to agents or MCP.
+// WorktreeDTO is one worktree of a task. Path is not sent (it stays empty): the
+// folder on disk is never exposed through the API.
 type WorktreeDTO struct {
 	ID         core.WorktreeID     `json:"id"`
 	RepoID     core.RepoID         `json:"repoId"`
@@ -18,7 +18,7 @@ type WorktreeDTO struct {
 	Name       string              `json:"name"`
 	Branch     string              `json:"branch"`
 	BaseCommit string              `json:"baseCommit"`
-	Path       string              `json:"path"`
+	Path       string              `json:"path,omitempty"`
 	Status     core.WorktreeStatus `json:"status"`
 	CreatedAt  time.Time           `json:"createdAt"`
 }

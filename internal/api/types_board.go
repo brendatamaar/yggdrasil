@@ -43,6 +43,7 @@ type BoardCardDTO struct {
 	Status           core.TaskStatus `json:"status"`
 	Column           string          `json:"column"`
 	RepoNames        []string        `json:"repoNames"`
+	RepoIDs          []core.RepoID   `json:"repoIds"`
 	PendingProposals int             `json:"pendingProposals"`
 	BlockedBy        string          `json:"blockedBy,omitempty"`
 	Usage            UsageDTO        `json:"usage"`
@@ -61,6 +62,16 @@ type BoardResponse struct {
 	Active    int            `json:"active"`
 	Hint      RoomHintDTO    `json:"hint"`
 	Cards     []BoardCardDTO `json:"cards"`
+}
+
+// MaxAgentsResponse is the body of GET and PUT /api/board/max-agents. Min and
+// Max are the bounds of the setting; Hint suggests a higher value when every
+// slot is busy and the machine has room.
+type MaxAgentsResponse struct {
+	MaxAgents int         `json:"maxAgents"`
+	Min       int         `json:"min"`
+	Max       int         `json:"max"`
+	Hint      RoomHintDTO `json:"hint"`
 }
 
 // SetMaxAgentsRequest is the body of PUT /api/board/max-agents (1 to 16).

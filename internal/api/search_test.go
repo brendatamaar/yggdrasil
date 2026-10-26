@@ -46,7 +46,7 @@ func searchState(repoDir string) coresearch.Search {
 func TestSearchEndpoint(t *testing.T) {
 	dir := t.TempDir()
 	f := &fakeSearch{state: searchState(dir), editor: coresearch.EditorVSCode}
-	e := newEnv(t, "plain", 0, func(d *Deps) { d.Search = f })
+	e := newEnv(t, func(d *Deps) { d.Search = f })
 
 	resp, data := e.do(t, http.MethodPost, "/api/search", SearchRequest{Pattern: "needle", Paths: []string{"*.java"}})
 	var body SearchResponse
@@ -86,7 +86,7 @@ func TestSearchEndpoint(t *testing.T) {
 
 func TestSearchEndpointRejectsBadRequests(t *testing.T) {
 	f := &fakeSearch{}
-	e := newEnv(t, "plain", 0, func(d *Deps) { d.Search = f })
+	e := newEnv(t, func(d *Deps) { d.Search = f })
 	for name, body := range map[string]any{
 		"empty":         SearchRequest{},
 		"bad regex":     SearchRequest{Pattern: "(a", Mode: "regex"},
@@ -106,7 +106,7 @@ func TestSearchEndpointRejectsBadRequests(t *testing.T) {
 
 func TestSearchEndpointMapsServiceErrors(t *testing.T) {
 	f := &fakeSearch{err: apperr.New(apperr.Invalid, "One of the selected repos is not tracked.", nil)}
-	e := newEnv(t, "plain", 0, func(d *Deps) { d.Search = f })
+	e := newEnv(t, func(d *Deps) { d.Search = f })
 	resp, data := e.do(t, http.MethodPost, "/api/search", SearchRequest{Pattern: "a", Repos: []core.RepoID{"rep_x"}})
 	if resp.StatusCode != 400 || !strings.Contains(string(data), "not tracked") {
 		t.Fatalf("status %d, %s", resp.StatusCode, data)
@@ -114,7 +114,7 @@ func TestSearchEndpointMapsServiceErrors(t *testing.T) {
 }
 
 func TestSearchRouteIsAbsentWithoutService(t *testing.T) {
-	e := newEnv(t, "plain", 0)
+	e := newEnv(t)
 	resp, _ := e.do(t, http.MethodPost, "/api/search", SearchRequest{Pattern: "a"})
 	if resp.StatusCode != 404 {
 		t.Fatalf("status %d", resp.StatusCode)

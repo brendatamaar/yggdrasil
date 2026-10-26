@@ -1,32 +1,23 @@
 package api
 
 import (
-	"context"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strconv"
-	"strings"
-	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/brendatamaar/yggdrasil/internal/agents"
 	"github.com/brendatamaar/yggdrasil/internal/apperr"
-	"github.com/brendatamaar/yggdrasil/internal/audit"
 	"github.com/brendatamaar/yggdrasil/internal/core"
+	coretasks "github.com/brendatamaar/yggdrasil/internal/core/tasks"
 	"github.com/brendatamaar/yggdrasil/internal/db"
-	"github.com/brendatamaar/yggdrasil/internal/platform"
-	"github.com/brendatamaar/yggdrasil/internal/safety"
+	"github.com/brendatamaar/yggdrasil/internal/tasks"
 )
 
-// Sub-agent caps applied to every run (AG-22 defaults).
-const (
-	maxSubagentDepth       = 2
-	maxConcurrentSubagents = 4
-)
+// The runs themselves belong to internal/tasks (docs/design/tasks.md); these
+// handlers parse the request, call the TaskService and translate its errors.
 
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
@@ -123,108 +114,160 @@ func (s *Server) taskEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, TaskEventsResponse{Events: events})
 }
 
-func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
+
+// errWriteModes is shown when a write mode is asked for while the flag is off.
+const errWriteModes = "Code mode is not enabled in this version."
+
+// writeModesHint is the hint that goes with errWriteModes.
+const writeModesHint = "Use Ask mode (read-only) for now."
+
+// parseCreate turns the body of POST /api/tasks into a service request. It
+// applies only the shape rules of the API (JSON, known fields, the scope
+// default) and leaves every message rule to coretasks.ParseMessage, which it
+// calls so a bad request is a 400 before the service is touched. The returned
+// error is always a *coretasks.UserError.
+func parseCreate(body []byte) (tasks.MessageRequest, error) {
 	var req CreateTaskRequest
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		return tasks.MessageRequest{}, &coretasks.UserError{Message: "The request body isn't valid. Send a JSON object with the documented fields."}
+	}
+	scope := req.Scope
+	if scope == "" {
+		scope = string(core.ScopeRepo)
+		if req.Mode == core.ModeProject {
+			scope = string(core.ScopeProject)
+		}
+	}
+	repos := make([]string, len(req.RepoIDs))
+	for i, id := range req.RepoIDs {
+		repos[i] = string(id)
+	}
+	raw := coretasks.RawMessage{
+		Prompt: req.Prompt, Mode: string(req.Mode), Scope: scope, Agent: req.Agent,
+		Model: req.Model, Repos: repos, Title: req.Title,
+	}
+	pm, err := coretasks.ParseMessage(raw)
+	if err != nil {
+		return tasks.MessageRequest{}, err
+	}
+	if err := req.ProjectID.Validate(); err != nil {
+		return tasks.MessageRequest{}, &coretasks.UserError{Message: "Choose a project for the task."}
+	}
+	// The service parses again; it gets the raw strings so both read the same.
+	return tasks.MessageRequest{
+		ProjectID: req.ProjectID, Prompt: req.Prompt, Mode: string(pm.Mode), Scope: string(pm.Scope),
+		Repos: repos, Agent: pm.Agent, Model: pm.Model, Title: req.Title, OptIn: req.OptIn,
+	}, nil
+}
+
+// writeModeAllowed reports whether the mode may be used in this version.
+func (s *Server) writeModeAllowed(mode string) bool {
+	return s.writeModes || mode == string(core.ModeAsk)
+}
+
+// service returns the task service, or answers 501 when none is wired.
+func (s *Server) service(w http.ResponseWriter, what string) (TaskService, bool) {
+	if s.tasks == nil {
+		notReady(w, what)
+		return nil, false
+	}
+	return s.tasks, true
+}
+
+func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
+	svc, ok := s.service(w, "Creating tasks")
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(r.Body); err != nil {
+		badRequest(w, "The request body isn't valid.", "Send a JSON object with the documented fields.")
+		return
+	}
+	req, err := parseCreate(buf.Bytes())
+	if err != nil {
+		s.serviceErr(w, r, err)
+		return
+	}
+	if !s.writeModeAllowed(req.Mode) {
+		badRequest(w, errWriteModes, writeModesHint)
+		return
+	}
+	res, err := svc.Message(r.Context(), req)
+	if err != nil {
+		s.serviceErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, TaskResponse{Task: res.Task, Warning: res.Warning})
+}
+
+func (s *Server) messageTask(w http.ResponseWriter, r *http.Request) {
+	svc, ok := s.service(w, "Sending messages")
+	if !ok {
+		return
+	}
+	id := core.TaskID(r.PathValue("id"))
+	if id.Validate() != nil {
+		badRequest(w, "That task ID isn't valid.", "")
+		return
+	}
+	var req MessageRequest
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	prompt := strings.TrimSpace(req.Prompt)
-	if prompt == "" {
-		badRequest(w, "The prompt is empty.", "Write what the agent should look into.")
+	if !s.writeModeAllowed(string(req.Mode)) {
+		badRequest(w, errWriteModes, writeModesHint)
 		return
 	}
-	// Safety decision: only Ask mode until worktrees, the path guard and the
-	// command allowlist exist (SF-06). Do not relax this in the API.
-	if req.Mode != core.ModeAsk {
-		badRequest(w, "Only Ask mode (read-only) is available in this version.",
-			"Code mode needs isolated worktrees and enforced limits, which arrive in a later version.")
-		return
-	}
-	if s.ctx.Err() != nil {
-		writeError(w, http.StatusServiceUnavailable, ErrUnavailable, "Yggdrasil is shutting down.", "Start it again, then retry.")
-		return
-	}
-	adapter, ok := s.adapters[req.Agent]
-	if !ok {
-		badRequest(w, fmt.Sprintf("The agent %q isn't available.", req.Agent), "Pick one of the agents listed in Settings.")
-		return
-	}
-	// The model name ends up on a command line: only plain names.
-	if req.Model != "" && !modelName.MatchString(req.Model) {
-		badRequest(w, "That model name isn't valid.", "Use letters, digits, dots, dashes and colons, up to 64 characters.")
-		return
-	}
-	if len(req.RepoIDs) != 1 {
-		badRequest(w, "Choose exactly one repo for now.", "Tasks across several repos arrive in a later version.")
-		return
-	}
-	ctx := r.Context()
-	project, err := s.store.GetProject(ctx, req.ProjectID)
-	if err != nil {
-		s.fail(w, r, taskErr(err))
-		return
-	}
-	repo, err := s.store.GetRepo(ctx, req.RepoIDs[0])
-	if err != nil {
-		s.fail(w, r, taskErr(err))
-		return
-	}
-	// Only tracked repos of this project are visible to agents (invariant 6).
-	if repo.ProjectID != project.ID {
-		badRequest(w, "That repo isn't part of the project.", "Choose a repo that the project tracks.")
-		return
-	}
-	if err := adapter.Check(ctx); err != nil {
-		// Only an error that carries its own plain-language message is shown;
-		// anything else could hold internal detail.
-		msg := "The agent can't be used right now."
-		var um interface{ UserMessage() string }
-		if errors.As(err, &um) {
-			msg = um.UserMessage()
-		} else {
-			s.log.Warn("agent check failed", "agent", req.Agent, "err", err)
-		}
-		writeError(w, http.StatusServiceUnavailable, ErrUnavailable, msg, "Run `ygg doctor` to see what is missing.")
-		return
-	}
-
-	id := s.newTaskID()
-	created := time.Now().UTC()
-	newTask := core.Task{
-		ID: id, ProjectID: project.ID, Title: taskTitle(req.Title, id), Prompt: prompt, Scope: core.ScopeRepo,
-		RepoIDs: []core.RepoID{repo.ID}, Mode: core.ModeAsk, Agent: req.Agent, Model: req.Model, Status: core.TaskQueued,
-		CreatedAt: created, UpdatedAt: created,
-	}
-	// The request passed every check above; a task the core still calls
-	// invalid is the caller's input, not a server fault.
-	if err := newTask.Validate(); err != nil {
-		s.fail(w, r, apperr.New(apperr.Invalid, "That task can't be created. Check the project, repo and mode and try again.", err))
-		return
-	}
-	entry, err := s.entry("user", "task.create", id, map[string]any{
-		"agent": req.Agent, "mode": core.ModeAsk, "repo": repo.ID, "promptChars": utf8.RuneCountInString(prompt),
+	res, err := svc.Message(r.Context(), tasks.MessageRequest{
+		TaskID: id, Prompt: req.Prompt, Mode: string(req.Mode), Model: req.Model, OptIn: req.OptIn,
 	})
 	if err != nil {
-		s.fail(w, r, taskErr(err))
+		s.serviceErr(w, r, err)
 		return
 	}
-	// The task and its audit entry are one commit: no task without an entry.
-	var task core.Task
-	err = s.store.Commit(ctx, func(tx *db.Tx) error {
-		t, err := tx.CreateTask(ctx, newTask)
-		if err != nil {
-			return err
-		}
-		task = t
-		return tx.AppendAudit(ctx, entry)
-	})
-	if err != nil {
-		s.fail(w, r, taskErr(err))
-		return
-	}
-	s.start(task, repo, adapter)
-	writeJSON(w, http.StatusCreated, TaskResponse{Task: task})
+	writeJSON(w, http.StatusAccepted, TaskResponse{Task: res.Task, Warning: res.Warning})
 }
+
+func (s *Server) cancelTask(w http.ResponseWriter, r *http.Request) {
+	svc, ok := s.service(w, "Cancelling tasks")
+	if !ok {
+		return
+	}
+	id := core.TaskID(r.PathValue("id"))
+	if id.Validate() != nil {
+		badRequest(w, "That task ID isn't valid.", "")
+		return
+	}
+	task, err := svc.Cancel(r.Context(), id)
+	if err != nil {
+		s.serviceErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, TaskResponse{Task: task})
+}
+
+func (s *Server) dismissTask(w http.ResponseWriter, r *http.Request) {
+	svc, ok := s.service(w, "Marking tasks done")
+	if !ok {
+		return
+	}
+	id := core.TaskID(r.PathValue("id"))
+	if id.Validate() != nil {
+		badRequest(w, "That task ID isn't valid.", "")
+		return
+	}
+	task, err := svc.Dismiss(r.Context(), id)
+	if err != nil {
+		s.serviceErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, TaskResponse{Task: task})
+}
+
 
 // taskErr translates what the store reports about tasks, projects and repos
 // into an error class with a message for people. Other errors pass through
@@ -239,322 +282,4 @@ func taskErr(err error) error {
 		return apperr.New(apperr.Conflict, "That item changed in the meantime.", err)
 	}
 	return err
-}
-
-// modelName is what a model name may look like: it goes into a command line.
-var modelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$`)
-
-// maxTitleRunes bounds a task title.
-const maxTitleRunes = 80
-
-// taskTitle is the name shown in lists and notifications (docs/AGENTS.md 5.9:
-// task name and status only). It is what the person typed, on one line, and
-// never taken from the prompt, which can hold code, paths or secrets. Without
-// one the task is "Task <short id>".
-func taskTitle(given string, id core.TaskID) string {
-	var b strings.Builder
-	for _, r := range strings.TrimSpace(given) {
-		if unicode.IsControl(r) {
-			r = ' ' // one line: a newline or tab becomes a space
-		}
-		b.WriteRune(r)
-	}
-	title := strings.Join(strings.Fields(b.String()), " ")
-	if title == "" {
-		short := string(id)
-		if len(short) > 6 {
-			short = short[len(short)-6:]
-		}
-		return "Task " + short
-	}
-	if utf8.RuneCountInString(title) > maxTitleRunes {
-		title = string([]rune(title)[:maxTitleRunes]) + "…"
-	}
-	return title
-}
-
-func (s *Server) cancelTask(w http.ResponseWriter, r *http.Request) {
-	task, ok := s.lookupTask(w, r)
-	if !ok {
-		return
-	}
-	s.mu.Lock()
-	cancel, running := s.cancel[task.ID]
-	s.mu.Unlock()
-	if running {
-		if err := s.record(r.Context(), "user", "task.cancel", task.ID, nil); err != nil {
-			s.fail(w, r, taskErr(err))
-			return
-		}
-		cancel()
-	}
-	writeJSON(w, http.StatusAccepted, TaskResponse{Task: task})
-}
-
-// entry prepares an audit entry about a task (SF-05): pure, with the ID and
-// time chosen here, in the shell. Detail never holds the prompt, only its
-// length, and Prepare redacts it anyway (invariant 4).
-func (s *Server) entry(actor, action string, task core.TaskID, detail map[string]any) (core.AuditEntry, error) {
-	raw := json.RawMessage("{}")
-	if detail != nil {
-		b, err := json.Marshal(detail)
-		if err != nil {
-			return core.AuditEntry{}, fmt.Errorf("encode audit detail: %w", err)
-		}
-		raw = b
-	}
-	e, err := audit.Prepare(core.AuditEntry{Actor: actor, Action: action, Subject: "task:" + string(task), Detail: raw},
-		s.redactor, core.AuditID(db.NewID("aud")), time.Now())
-	if err != nil {
-		return core.AuditEntry{}, fmt.Errorf("prepare audit entry %s: %w", action, err)
-	}
-	return e, nil
-}
-
-// record commits an audit entry that has no state of its own, such as the
-// request to cancel a task.
-func (s *Server) record(ctx context.Context, actor, action string, task core.TaskID, detail map[string]any) error {
-	e, err := s.entry(actor, action, task, detail)
-	if err != nil {
-		return err
-	}
-	if err := s.store.Commit(ctx, func(tx *db.Tx) error { return tx.AppendAudit(ctx, e) }); err != nil {
-		return fmt.Errorf("write audit entry %s: %w", action, err)
-	}
-	return nil
-}
-
-// transition commits a status change together with its audit entry (one
-// transaction, invariant 8), then tells the clients (the "tasks" topic holds
-// only the ID, title and status). Nothing is published if the commit fails.
-func (s *Server) transition(ctx context.Context, task *core.Task, status core.TaskStatus, actor, action string, detail map[string]any) error {
-	e, err := s.entry(actor, action, task.ID, detail)
-	if err != nil {
-		return err
-	}
-	var version int64
-	err = s.store.Commit(ctx, func(tx *db.Tx) error {
-		v, err := tx.UpdateTaskStatus(ctx, task.ID, status, task.Version, time.Now().UTC())
-		if err != nil {
-			return err
-		}
-		version = v
-		return tx.AppendAudit(ctx, e)
-	})
-	if err != nil {
-		return fmt.Errorf("%s: %w", action, err)
-	}
-	task.Version = version
-	s.hub.publishNext(tasksTopic{}, TaskStatusMessage{TaskID: task.ID, Title: task.Title, Status: status})
-	return nil
-}
-
-// failTask marks a task failed after something went wrong outside its run.
-func (s *Server) failTask(id core.TaskID, cause error) {
-	s.log.Error("task failed", "task", id, "err", cause)
-	bg := context.WithoutCancel(s.ctx)
-	task, err := s.store.GetTask(bg, id)
-	if err != nil {
-		s.log.Error("load failed task", "task", id, "err", err)
-		return
-	}
-	if err := s.transition(bg, &task, core.TaskFailed, "system", "task.fail", nil); err != nil {
-		s.log.Error("store task failure", "task", id, "err", err)
-	}
-}
-
-// start runs the task in a goroutine owned by the server's group. Cancelling
-// the task's context (or closing the server) stops the agent and every
-// process it started. The check and the Go call share s.mu with Close, so a
-// task can never be added to the group after Close started waiting for it.
-func (s *Server) start(task core.Task, repo core.Repo, adapter agents.Adapter) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.ctx.Err() != nil {
-		s.failTask(task.ID, errors.New("the server was shutting down"))
-		return
-	}
-	ctx, cancel := context.WithCancel(s.ctx)
-	s.cancel[task.ID] = cancel
-	s.group.Go(func() error {
-		defer func() {
-			cancel()
-			s.mu.Lock()
-			delete(s.cancel, task.ID)
-			s.mu.Unlock()
-		}()
-		// A panic in a run must fail that task, not crash the whole process.
-		defer func() {
-			if v := recover(); v != nil {
-				s.log.Error("task goroutine panic", "task", task.ID, "panic", v)
-				s.failTask(task.ID, fmt.Errorf("panic: %v", v))
-			}
-		}()
-		s.runTask(ctx, task, repo, adapter)
-		return nil
-	})
-}
-
-func (s *Server) runTask(ctx context.Context, task core.Task, repo core.Repo, adapter agents.Adapter) {
-	bg := context.WithoutCancel(ctx) // final writes must survive a cancel
-	final := core.TaskFailed
-	defer func() {
-		// Cancelling ctx stops only the agent's own process tree; the task
-		// job may still hold other processes the task started. They end
-		// before the final status is stored, so a client never sees done or
-		// cancelled while a process of the task lives.
-		if err := s.killTask(string(task.ID)); err != nil {
-			s.log.Error("kill task processes", "task", task.ID, "err", err)
-		}
-		// The status and its audit entry are one commit.
-		if err := s.transition(bg, &task, final, "system", "task.finish", map[string]any{"status": final}); err != nil {
-			s.log.Error("store final task status", "task", task.ID, "err", err)
-		}
-	}()
-
-	// These writes use bg: a cancel or a shutdown must not stop them half way.
-	if err := s.transition(bg, &task, core.TaskRunning, "system", "task.start", map[string]any{"agent": task.Agent}); err != nil {
-		s.log.Error("set task running", "task", task.ID, "err", err)
-		return
-	}
-	if ctx.Err() != nil { // cancelled before the agent started
-		final = core.TaskCancelled
-		return
-	}
-	env, err := s.env.Build(safety.EnvOptions{})
-	if err != nil {
-		s.log.Error("build clean environment", "task", task.ID, "err", err)
-		return
-	}
-	dir, err := platform.LongPath(repo.Path)
-	if err != nil {
-		s.log.Error("expand repo path", "task", task.ID, "err", err)
-		return
-	}
-	res, err := agents.Execute(ctx, adapter, agents.StartOptions{
-		TaskID: task.ID, Prompt: task.Prompt, Mode: task.Mode, Model: task.Model, Dir: dir, Env: env,
-		MaxSubagentDepth: maxSubagentDepth, MaxConcurrentSubagents: maxConcurrentSubagents,
-		Admitted: true, // Ask mode only: the create handler refuses any other mode
-	}, sink{s})
-	if err != nil {
-		s.log.Error("run task", "task", task.ID, "err", err)
-		s.explainFailure(bg, task.ID, err)
-		return
-	}
-	if res.SessionID != "" {
-		if err := s.setSession(bg, &task, res.SessionID); err != nil {
-			s.log.Error("store task session", "task", task.ID, "err", err)
-		}
-	}
-	switch res.Status {
-	case agents.RunCompleted:
-		final = core.TaskDone
-	case agents.RunCancelled:
-		final = core.TaskCancelled
-	default:
-		if res.Err != nil {
-			// The cause behind the plain message (an adapter keeps the
-			// redacted stderr of its CLI there) goes to the log only.
-			s.log.Warn("agent run failed", "task", task.ID, "err", res.Err, "detail", errors.Unwrap(res.Err))
-		}
-	}
-}
-
-// setSession stores the agent's session ID and its audit entry in one commit.
-// The ID itself is not audited.
-func (s *Server) setSession(ctx context.Context, task *core.Task, session string) error {
-	e, err := s.entry("system", "task.session", task.ID, nil)
-	if err != nil {
-		return err
-	}
-	var version int64
-	err = s.store.Commit(ctx, func(tx *db.Tx) error {
-		v, err := tx.SetTaskSession(ctx, task.ID, session, task.Version, time.Now().UTC())
-		if err != nil {
-			return err
-		}
-		version = v
-		return tx.AppendAudit(ctx, e)
-	})
-	if err != nil {
-		return err
-	}
-	task.Version = version
-	return nil
-}
-
-// explainFailure puts the reason a run could not start into the task's
-// transcript, so the person sees it on the page and not only in the log. Only
-// a message meant for people is shown (an adapter's UserMessage); anything else
-// becomes a generic line. It does nothing once the run has produced events:
-// the transcript then already says what happened.
-func (s *Server) explainFailure(ctx context.Context, id core.TaskID, cause error) {
-	msg := "The agent could not be started. The Yggdrasil log has the details."
-	var um interface{ UserMessage() string }
-	if errors.As(cause, &um) {
-		msg = um.UserMessage()
-	}
-	existing, err := s.store.ListTaskEvents(ctx, id, 0)
-	if err != nil || len(existing) > 0 {
-		return
-	}
-	now := time.Now().UTC()
-	for _, e := range []agents.Event{
-		{Seq: 1, Kind: agents.EventError, At: now, IsError: true, Error: msg},
-		{Seq: 2, Kind: agents.EventStatus, At: now, Status: agents.RunFailed},
-	} {
-		if err := (sink{s}).Append(ctx, id, e); err != nil {
-			s.log.Error("store failure explanation", "task", id, "err", err)
-			return
-		}
-	}
-}
-
-// redactEvent masks tokens in every free-text field of an event. The event is
-// copied first: the runner's value is not modified.
-func (s *Server) redactEvent(e agents.Event) agents.Event {
-	r := s.redactor
-	e.Text, e.Error = r.Redact(e.Text), r.Redact(e.Error)
-	if e.Tool != nil {
-		t := *e.Tool
-		if len(t.Input) > 0 {
-			red := r.Redact(string(t.Input))
-			if json.Valid([]byte(red)) {
-				t.Input = json.RawMessage(red)
-			} else {
-				t.Input = json.RawMessage(`{"redacted":true}`)
-			}
-		}
-		e.Tool = &t
-	}
-	if e.File != nil {
-		f := *e.File
-		f.Path, f.Diff = r.Redact(f.Path), r.Redact(f.Diff)
-		e.File = &f
-	}
-	if e.Command != nil {
-		c := *e.Command
-		c.Line, c.Output = r.Redact(c.Line), r.Redact(c.Output)
-		e.Command = &c
-	}
-	return e
-}
-
-// sink persists every event and then publishes it, in that order, so a client
-// that backfills over REST never misses an event it was not sent live.
-type sink struct{ s *Server }
-
-func (k sink) Append(ctx context.Context, id core.TaskID, e agents.Event) error {
-	// What an agent reads can hold secrets (an .env file in the repo): known
-	// token shapes are masked before the event is stored or sent anywhere.
-	e = k.s.redactEvent(e)
-	data, err := json.Marshal(e)
-	if err != nil {
-		return fmt.Errorf("encode event: %w", err)
-	}
-	if err := k.s.store.AppendTaskEvent(ctx, db.TaskEvent{TaskID: id, Seq: e.Seq, Kind: string(e.Kind), At: e.At, Data: data}); err != nil {
-		return err
-	}
-	k.s.hub.publishSeq(taskTopic{ID: id}, e.Seq, e)
-	return nil
 }
