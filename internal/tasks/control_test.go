@@ -136,6 +136,57 @@ func TestBuildHoldingTheMainCheckoutKeepsATaskWaiting(t *testing.T) {
 	h.waitStatus(id, core.TaskReview)
 }
 
+func TestBlockedTaskNeverLeavesQueuedAndWritesNoAudit(t *testing.T) {
+	h := newHarness(t, []string{"shop-api"})
+	h.adapter.caps.Enforcement = agents.EnforcementHook
+	h.start()
+	rel, _, ok := h.lock.TryAcquire([]core.RepoID{h.repos[0].ID}, "build:1")
+	if !ok {
+		t.Fatal("could not take the lock")
+	}
+	id := h.send(h.msg("current_branch", "edit", 0)).Task.ID
+	time.Sleep(60 * time.Millisecond)
+	auditsBefore := len(h.audits(id))
+	statusesBefore := len(h.hub.statusesOf(id))
+	time.Sleep(300 * time.Millisecond) // many LockRetry ticks (20 ms)
+	if n := len(h.audits(id)); n != auditsBefore {
+		t.Errorf("retry loop wrote %d audit entries", n-auditsBefore)
+	}
+	statuses := h.hub.statusesOf(id)
+	if len(statuses) != statusesBefore {
+		t.Errorf("retry loop published %d statuses", len(statuses)-statusesBefore)
+	}
+	for _, s := range statuses {
+		if s == core.TaskRunning {
+			t.Errorf("blocked task flapped to running: %v", statuses)
+			break
+		}
+	}
+	if st := h.state(id); st.Row.Status != core.TaskQueued {
+		t.Errorf("status = %s, want queued", st.Row.Status)
+	}
+	if card := h.boardCard(t, id); card.BlockedBy != "Waiting: main checkout held by build" {
+		t.Errorf("BlockedBy = %q", card.BlockedBy)
+	}
+	rel()
+	h.waitStatus(id, core.TaskReview)
+}
+
+func (h *harness) boardCard(t *testing.T, id core.TaskID) BoardCard {
+	t.Helper()
+	v, err := h.svc.Board(context.Background(), h.project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range v.Cards {
+		if c.Task.ID == id {
+			return c
+		}
+	}
+	t.Fatalf("no card for %s", id)
+	return BoardCard{}
+}
+
 func TestCancelWhileWaiting(t *testing.T) {
 	h := newHarness(t, []string{"shop-api", "shop-web"})
 	h.adapter.gate = make(chan struct{})

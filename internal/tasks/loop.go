@@ -61,6 +61,15 @@ func (s *Service) scheduleOnce() {
 }
 
 func (s *Service) admitTask(id core.TaskID) {
+	// A task that edits a main checkout somebody else holds stays Waiting: no
+	// commit, no audit, no publish. The LockRetry tick or a release wake asks
+	// again.
+	if holder, blocked := s.mainBlocker(id); blocked {
+		s.setBlocked(id, holder)
+		s.boardInput(coretasks.TaskChanged{Task: id, Kind: coretasks.KindWaiting})
+		return
+	}
+	s.setBlocked(id, "")
 	res, err := s.apply(s.bgCtx(), id, func(st db.TaskState) coretasks.Input {
 		if w, ok := st.Task.State.(coretasks.Waiting); ok {
 			return coretasks.Admitted{Turn: w.Turn, Now: s.c.Now().UTC()}
