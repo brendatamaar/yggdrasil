@@ -226,7 +226,7 @@ func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run,
 		cleanup()
 		if ctx.Err() != nil {
 			// Cancelled while starting: the run ends as cancelled, not as a failure.
-			return cancelledRun(), nil
+			return cancelledRun(), nil //nolint:nilerr // a start cut short by cancellation is a cancelled run, not an error
 		}
 		return nil, &UserError{Message: "Claude Code couldn't be started. Run `ygg doctor` to see what is missing.", Err: err}
 	}

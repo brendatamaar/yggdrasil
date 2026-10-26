@@ -137,7 +137,7 @@ func (b callBuilder) ref(cwd, raw string) guard.PathRef {
 	ref := guard.PathRef{Raw: raw}
 	p := raw
 	if !filepath.IsAbs(p) && !strings.HasPrefix(p, "/") && !strings.HasPrefix(p, `\`) &&
-		!(len(p) >= 2 && p[1] == ':') && filepath.IsAbs(cwd) {
+		(len(p) < 2 || p[1] != ':') && filepath.IsAbs(cwd) {
 		p = filepath.Join(cwd, p)
 	}
 	canon, err := b.paths.ResolveRoot(p)
