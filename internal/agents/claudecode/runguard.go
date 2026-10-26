@@ -83,6 +83,20 @@ func unhooked(seen, hooked []string) []string {
 	return out
 }
 
+// seenListFull is the sentinel reported when the parser's list of seen tool
+// uses overflowed: some calls can no longer be checked against the hook log,
+// so the run counts as unhooked.
+const seenListFull = "<seen-list-full>"
+
+// unhookedToolUses lists the seen IDs without a hook record.
+func (p *parser) unhookedToolUses(hooked []string) []string {
+	out := unhooked(p.toolUses, hooked)
+	if p.seenFull {
+		out = append(out, seenListFull)
+	}
+	return out
+}
+
 // fileHashes remembers the SHA-256 of Yggdrasil's own run files.
 type fileHashes map[string][sha256.Size]byte
 
@@ -108,6 +122,17 @@ func (h fileHashes) changed() bool {
 		}
 	}
 	return false
+}
+
+// makeReadOnly marks the files read-only (0400; the read-only attribute on
+// Windows). A failure is not fatal: the hash checks still apply. It is logged
+// without the path.
+func makeReadOnly(paths ...string) {
+	for _, p := range paths {
+		if err := os.Chmod(p, 0o400); err != nil {
+			slog.Warn("claudecode: a run file could not be made read-only", "file", filepath.Base(p))
+		}
+	}
 }
 
 // removeRunFolder deletes the run folder. A failure (a locked file, antivirus)

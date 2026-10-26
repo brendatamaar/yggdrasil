@@ -74,6 +74,8 @@ type parser struct {
 	startOf   map[string]string // agent ID -> its sub-agent tool_use ID
 	bad       int               // malformed lines reported so far
 	toolUses  []string          // tool_use IDs seen, in order (capped)
+	maxSeen   int               // cap on toolUses; maxToolUses unless a test lowers it
+	seenFull  bool              // a tool_use ID was dropped because toolUses was full
 
 	sawResult bool
 	resultOK  bool
@@ -81,7 +83,7 @@ type parser struct {
 
 func newParser(dir string) *parser {
 	return &parser{
-		dir: dir, now: time.Now,
+		dir: dir, now: time.Now, maxSeen: maxToolUses,
 		seenMsg: map[string]bool{}, subagents: map[string]bool{}, agentOf: map[string]string{}, startOf: map[string]string{},
 	}
 }
@@ -219,8 +221,12 @@ var (
 
 func (p *parser) toolUse(ev agents.Event, b rawBlock) agents.Event {
 	ev.ID = b.ID
-	if b.ID != "" && len(p.toolUses) < maxToolUses {
-		p.toolUses = append(p.toolUses, b.ID)
+	if b.ID != "" {
+		if len(p.toolUses) < p.maxSeen {
+			p.toolUses = append(p.toolUses, b.ID)
+		} else {
+			p.seenFull = true
+		}
 	}
 	var in struct {
 		FilePath     string `json:"file_path"`

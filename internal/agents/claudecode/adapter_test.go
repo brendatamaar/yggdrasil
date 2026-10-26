@@ -144,6 +144,7 @@ func runFake(mode string) int {
 			}
 		}
 		if os.Getenv("YGG_FAKE_TAMPER") != "" {
+			_ = os.Chmod(cfg.PolicyPath, 0o600) // an agent can lift the read-only mark too
 			_ = os.WriteFile(cfg.PolicyPath, []byte("{}\n"), 0o600)
 		}
 		out, _ := os.ReadFile(os.Getenv(fakeStream))

@@ -2,6 +2,8 @@ package claudecode
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,6 +41,28 @@ type HookConfig struct {
 	// call is judged against (SF-06, invariants 5 and 6). Without a readable,
 	// valid policy every enforcing call is denied.
 	PolicyPath string `json:"policyPath,omitempty"`
+	// PolicySHA256 is the hex SHA-256 of the policy file as Start wrote it. The
+	// hook recomputes it on every call and denies on any difference, so a
+	// rewrite mid-run (even one restored later) cannot go unnoticed. It lives
+	// here, not in the policy file and not on a command line.
+	PolicySHA256 string `json:"policySha256,omitempty"`
+	// SelfCheck is the SHA-256 of PolicyPath and PolicySHA256 together: a hook
+	// config edited in part is refused. A full rewrite of the config is caught
+	// by the end-of-run hash.
+	SelfCheck string `json:"selfCheck,omitempty"`
+}
+
+// selfCheckOf computes HookConfig.SelfCheck.
+func selfCheckOf(policyPath, policySHA string) string {
+	sum := sha256.Sum256([]byte(policyPath + "\n" + policySHA))
+	return hex.EncodeToString(sum[:])
+}
+
+// Seal records the hash of the policy bytes in the configuration.
+func (c *HookConfig) Seal(policy []byte) {
+	sum := sha256.Sum256(policy)
+	c.PolicySHA256 = hex.EncodeToString(sum[:])
+	c.SelfCheck = selfCheckOf(c.PolicyPath, c.PolicySHA256)
 }
 
 // Hook event names (Claude Code hooks documentation).
@@ -157,7 +181,7 @@ func RunHook(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv fu
 // "" to let it through. Every failure refuses (fail closed). The reason holds
 // no path and none of the call's text, since the model sees it.
 func judge(cfg HookConfig, in hookInput, getenv func(string) string) string {
-	pol, err := loadPolicy(cfg.PolicyPath)
+	pol, err := loadPolicy(cfg)
 	if err != nil {
 		return guard.ReasonPolicyUnavailable.Message()
 	}
@@ -170,13 +194,20 @@ func judge(cfg HookConfig, in hookInput, getenv func(string) string) string {
 	return ""
 }
 
-func loadPolicy(path string) (guard.Policy, error) {
-	if path == "" {
-		return guard.Policy{}, errors.New("no policy")
+// loadPolicy reads the policy file and refuses it unless it matches the hash
+// Start recorded in the hook configuration. The bytes that were hashed are the
+// bytes parsed, so there is no gap between the check and the use.
+func loadPolicy(cfg HookConfig) (guard.Policy, error) {
+	if cfg.PolicyPath == "" || cfg.PolicySHA256 == "" || cfg.SelfCheck != selfCheckOf(cfg.PolicyPath, cfg.PolicySHA256) {
+		return guard.Policy{}, errors.New("no sealed policy")
 	}
-	data, err := os.ReadFile(path) //nolint:gosec // the path is Yggdrasil's own policy file, named in its hook configuration
+	data, err := os.ReadFile(cfg.PolicyPath) //nolint:gosec // the path is Yggdrasil's own policy file, named in its hook configuration
 	if err != nil {
 		return guard.Policy{}, err
+	}
+	sum := sha256.Sum256(data)
+	if hex.EncodeToString(sum[:]) != cfg.PolicySHA256 {
+		return guard.Policy{}, errors.New("policy changed")
 	}
 	return guard.ParsePolicy(data)
 }
