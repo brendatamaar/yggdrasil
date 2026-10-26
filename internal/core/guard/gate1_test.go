@@ -74,7 +74,7 @@ func TestPropProgramInWriteRootDenied(t *testing.T) {
 			if p.FoldCase && r.Intn(2) == 0 {
 				prog = strings.ToUpper(prog)
 			}
-			p.Allow = append(p.Allow, CommandRule{Program: "go", Tail: TailPaths})
+			p.Allow = append(p.Allow, CommandRule{Program: "go", Args: []string{"x"}, Tail: TailPaths})
 			c := Call{Tool: ToolExec, Argv: []string{"go", "x"}, Program: &PathRef{Canon: prog, OK: true}}
 			if Decide(p, c).Allow {
 				t.Fatalf("allowed program %q inside write root %q", prog, root)

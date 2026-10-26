@@ -113,7 +113,10 @@ func (r CommandRule) Validate() error {
 	if r.Program == "" || strings.ContainsAny(r.Program, `/\`) || strings.ContainsRune(r.Program, 0) {
 		return fmt.Errorf("allowlist rule %q needs a program name without a path", r.Program)
 	}
-	return r.Tail.Validate()
+	if err := r.Tail.Validate(); err != nil {
+		return err
+	}
+	return validateRule(r)
 }
 
 // Policy is what the tasks service computes for a run and writes to the

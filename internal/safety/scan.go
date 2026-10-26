@@ -121,13 +121,17 @@ func isAboveConfigPath(rel string, paths []string) bool {
 	return false
 }
 
-// skippedFolders are dependency and build folders the walk does not enter
+// skippedFolders are dependency and build folders the walk does not enter at
+// the repo root level (nested ones are scanned, S7)
 // unless a config path runs through them, so a big repo does not exceed the
 // walk cap for ever. Config files that are only matched by name inside them
 // are not seen: they are third-party code, not the repo's own agent setup.
 var skippedFolders = []string{"node_modules", "target", "build", "dist", ".venv", "vendor"}
 
 func skippable(rel, name string, paths []string) bool {
+	if strings.Contains(rel, "/") {
+		return false // only the repo root level is skipped (S7)
+	}
 	for _, s := range skippedFolders {
 		if strings.EqualFold(name, s) {
 			return !isAboveConfigPath(rel, paths) && !SelectConfig(rel, paths, nil)
@@ -171,7 +175,7 @@ func Scan(ctx context.Context, dir string, paths, names []string) (guard.Scan, e
 			return nil
 		}
 		if werr != nil {
-			if SelectConfig(rel, paths, names) {
+			if LinkBlocksConfig(rel, paths, names) {
 				return fmt.Errorf("%w: %s can't be read", ErrScan, rel)
 			}
 			return nil
