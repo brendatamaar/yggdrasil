@@ -70,10 +70,10 @@ type ActionsDeps struct {
 	Status    StatusRefresher
 	Publisher BatchPublisher
 	// MainLock is the shared main-checkout lock. Nil means no locking.
-	MainLock  mainlock.MainLock
-	Log       *slog.Logger
-	Clock     func() time.Time
-	IDs       func(prefix string) string
+	MainLock mainlock.MainLock
+	Log      *slog.Logger
+	Clock    func() time.Time
+	IDs      func(prefix string) string
 	// Max is the number of concurrent items; default 4.
 	Max int
 }
