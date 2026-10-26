@@ -47,6 +47,10 @@ var modelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$`)
 // into a command line too.
 var sessionID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 
+// batchArgMessage is the user message when a folder name can't be passed to a
+// .cmd shim of the CLI. It names the kind of folder, never the path.
+const batchArgMessage = "Claude Code couldn't be started because a folder name holds a character a Windows .cmd file can't take safely (such as & % ^ or a quote). Move the project folder, or your user profile folder or temp folder, to a name without those characters."
+
 // Options configure the adapter.
 type Options struct {
 	// Binary is the claude executable name or path. Default "claude".
@@ -125,6 +129,8 @@ func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run,
 		return nil, &UserError{Message: "Only a task over the whole project can use more than one folder."}
 	case o.MCPConfigPath != "" && (!filepath.IsAbs(o.MCPConfigPath) || strings.ContainsAny(o.MCPConfigPath, "\r\n\x00") || !exists(o.MCPConfigPath)):
 		return nil, errors.New("claudecode: the MCP config file is missing")
+	case !o.Admitted:
+		return nil, &UserError{Message: "The task was not cleared by Yggdrasil's safety check, so the agent was not started."}
 	case !filepath.IsAbs(a.opts.HookExecutable) || !exists(a.opts.HookExecutable):
 		return nil, &UserError{Message: "Yggdrasil's own guard program is missing, so the agent was not started. Reinstall Yggdrasil.",
 			Err: fmt.Errorf("hook executable %q not found", a.opts.HookExecutable)}
@@ -170,6 +176,11 @@ func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run,
 	if err := checkPolicyNotWider(o, dir); err != nil {
 		return nil, &UserError{Message: "The task's safety rules reach beyond its folders, so the agent was not started.", Err: err}
 	}
+	// The program the agent's tool calls trigger must not sit where the agent
+	// can overwrite it (or read its way to it).
+	if err := checkOutsidePolicy(o.Policy, a.opts.HookExecutable, "the guard program"); err != nil {
+		return nil, &UserError{Message: "Yggdrasil's guard program sits inside a folder the agent can reach, so the agent was not started. Install Yggdrasil elsewhere.", Err: err}
+	}
 	if o.MCPConfigPath != "" {
 		if err := checkMCPFileOutsidePolicy(o.Policy, o.MCPConfigPath); err != nil {
 			return nil, &UserError{Message: "The agent tool server's config sits where the agent can read it, so the agent was not started.", Err: err}
@@ -178,6 +189,9 @@ func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run,
 	bin, err := platform.Resolve(a.opts.Binary, "", o.Env)
 	if err != nil {
 		return nil, &UserError{Message: "Claude Code isn't installed, or its folder isn't on the PATH. Run `ygg doctor`.", Err: err}
+	}
+	if err := checkOutsidePolicy(o.Policy, bin, "the claude program"); err != nil {
+		return nil, &UserError{Message: "The Claude Code program sits inside a folder the agent can reach, so the agent was not started. Install it elsewhere.", Err: err}
 	}
 	if err := checkCLI(ctx, bin, o.Env); err != nil {
 		if ctx.Err() != nil {
@@ -189,7 +203,13 @@ func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run,
 	if err != nil {
 		return nil, fmt.Errorf("create run folder: %w", err)
 	}
-	cleanup := func() { _ = os.RemoveAll(work) } // our own temp folder only
+	cleanup := func() { removeRunFolder(work, os.RemoveAll, 200*time.Millisecond) } // our own temp folder only
+	// The run folder holds the policy, hook config and token: no folder the
+	// agent can reach may contain it.
+	if err := checkOutsidePolicy(o.Policy, work, "the run folder"); err != nil {
+		cleanup()
+		return nil, &UserError{Message: "The folder for temporary files sits inside a folder the agent can reach, so the agent was not started. Change the temporary folder.", Err: err}
+	}
 	// The CLI reads this copy, in a folder no policy root covers; it holds the
 	// bearer token and goes away with the run folder.
 	mcpPath, err := prepareMCPFile(work, o.MCPConfigPath)
@@ -216,6 +236,14 @@ func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run,
 		return nil, fmt.Errorf("prepare run: %w", err)
 	}
 
+	// Remember the files the guard depends on; the loop compares them when the
+	// process has ended.
+	hashes, err := hashFiles(policyPath, settings, hookConfig, mcpPath)
+	if err != nil {
+		cleanup()
+		return nil, fmt.Errorf("prepare run: %w", err)
+	}
+
 	pr, pw := io.Pipe()
 	stderr := &tailBuffer{max: 8 << 10}
 	proc, err := platform.Start(ctx, platform.Spec{
@@ -235,10 +263,13 @@ func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run,
 			// Cancelled while starting: the run ends as cancelled, not as a failure.
 			return cancelledRun(), nil //nolint:nilerr // a start cut short by cancellation is a cancelled run, not an error
 		}
+		if errors.Is(err, platform.ErrBatchArg) {
+			return nil, &UserError{Message: batchArgMessage, Err: err}
+		}
 		return nil, &UserError{Message: "Claude Code couldn't be started. Run `ygg doctor` to see what is missing.", Err: err}
 	}
 
-	r := &run{events: make(chan agents.Event), done: make(chan struct{})}
+	r := &run{events: make(chan agents.Event), done: make(chan struct{}), hashes: hashes}
 	go r.loop(ctx, proc, pr, pw, newParser(dir), stderr, filepath.Join(work, "hook.log"), cleanup)
 	return r, nil
 }
@@ -291,8 +322,15 @@ type run struct {
 	done    chan struct{}
 	err     error
 	// denies and toolUses are set before done is closed; read them after Wait.
-	denies   []agents.Deny
-	toolUses []string
+	denies    []agents.Deny
+	denyCount int
+	toolUses  []string
+	hooked    []string
+	unhooked  []string
+	// hashes are the run files as written at Start; tampered is set by the
+	// loop when the process has ended and any of them changed.
+	hashes   fileHashes
+	tampered bool
 }
 
 func (r *run) Events() <-chan agents.Event { return r.events }
@@ -317,8 +355,10 @@ func (r *run) loop(ctx context.Context, proc platform.Process, pr *io.PipeReader
 	defer close(r.events)
 	defer func() {
 		// The hook log goes with the run folder; keep what the tasks service audits.
-		r.denies = deniesFromLog(hookLog)
+		sum := summarizeHookLog(hookLog)
+		r.denies, r.denyCount, r.hooked = sum.denies, sum.denyCount, sum.hooked
 		r.toolUses = p.toolUses
+		r.unhooked = unhooked(p.toolUses, sum.hooked)
 		cleanup()
 	}()
 
@@ -362,6 +402,16 @@ func (r *run) loop(ctx context.Context, proc platform.Process, pr *io.PipeReader
 // Events until it is closed (agents.Execute does).
 func (r *run) finish(ctx context.Context, p *parser, res waitResult, stderr *tailBuffer) {
 	status := agents.RunFailed
+	// The process is gone, so the files can't change any more. A run that
+	// altered the guard's files can't be trusted, whatever it reported.
+	if r.hashes.changed() {
+		r.tampered = true
+		msg := tamperMessage
+		r.events <- agents.Event{Kind: agents.EventError, At: time.Now().UTC(), IsError: true, Error: msg}
+		r.err = &UserError{Message: msg}
+		r.events <- agents.Event{Kind: agents.EventStatus, Status: agents.RunFailed, At: time.Now().UTC()}
+		return
+	}
 	switch {
 	case ctx.Err() != nil:
 		status = agents.RunCancelled
@@ -439,3 +489,17 @@ func (r *run) Denies() []agents.Deny { return r.denies }
 // SeenToolUses implements agents.ToolUseReporter: the IDs of the tool calls
 // the stream showed. Call it after Wait.
 func (r *run) SeenToolUses() []string { return r.toolUses }
+
+// DenyCount implements agents.DenyCountReporter: the true number of refusals,
+// of which Denies keeps the first 100.
+func (r *run) DenyCount() int { return r.denyCount }
+
+// HookedToolUses implements agents.HookCoverageReporter.
+func (r *run) HookedToolUses() []string { return r.hooked }
+
+// UnhookedToolUses implements agents.HookCoverageReporter: stream tool_use IDs
+// with no hook record. Computed before the hook log is deleted.
+func (r *run) UnhookedToolUses() []string { return r.unhooked }
+
+// Tampered implements agents.TamperReporter.
+func (r *run) Tampered() bool { return r.tampered }

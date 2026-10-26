@@ -73,6 +73,10 @@ type StartOptions struct {
 	// MCPConfigPath is the file WriteMCPConfig wrote; when set, the adapter
 	// loads that MCP server and no other.
 	MCPConfigPath string
+	// Admitted is set by the tasks service after guard.Admit allowed this run,
+	// and only from that result. Adapters that enforce refuse to start without
+	// it; the mock ignores it.
+	Admitted bool
 }
 
 // RepoConfigProvider is optionally implemented by an adapter whose CLI reads
@@ -120,4 +124,29 @@ type DenyReporter interface {
 // without a log record means enforcement did not see it and must fail the task.
 type ToolUseReporter interface {
 	SeenToolUses() []string
+}
+
+// HookCoverageReporter is optionally implemented by a Run whose adapter
+// enforces through a hook that logs every call it judges. HookedToolUses lists
+// the tool_use IDs the hook judged (allowed or denied), bounded to 100000.
+// UnhookedToolUses lists the IDs the agent's stream showed that have no hook
+// record; the adapter computes it before it deletes the log. Call both after
+// Wait. A non-empty UnhookedToolUses means enforcement did not see a call.
+type HookCoverageReporter interface {
+	HookedToolUses() []string
+	UnhookedToolUses() []string
+}
+
+// TamperReporter is optionally implemented by a Run whose adapter keeps its own
+// enforcement files (policy, hook and settings) and checks them after the run.
+// Tampered is true when the agent changed any of them; the tasks service fails
+// the task. Call it after Wait.
+type TamperReporter interface {
+	Tampered() bool
+}
+
+// DenyCountReporter is optionally implemented next to DenyReporter. Denies is
+// capped; DenyCount is the true number of refusals.
+type DenyCountReporter interface {
+	DenyCount() int
 }
