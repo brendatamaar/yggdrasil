@@ -14,7 +14,6 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/brendatamaar/yggdrasil/internal/agents"
 	"github.com/brendatamaar/yggdrasil/internal/agents/claudecode"
 	"github.com/brendatamaar/yggdrasil/internal/agents/mock"
 	"github.com/brendatamaar/yggdrasil/internal/api"
@@ -27,6 +26,7 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/platform"
 	"github.com/brendatamaar/yggdrasil/internal/repos"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
+	"github.com/brendatamaar/yggdrasil/internal/tasks"
 )
 
 // app is the running Yggdrasil: the database, the audit log, the agents and
@@ -49,6 +49,8 @@ type app struct {
 	actions *repos.ActionsService
 	// feeder gives the hosts service the repo set, off the status publish path.
 	feeder *hostsFeeder
+	// tasks runs agent tasks. It starts in run and is closed before the store.
+	tasks *tasks.Service
 }
 
 // newLogger writes redacted text logs: no token reaches a log (invariant 4).
@@ -101,7 +103,7 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		_ = d.Close()
 		return nil, fmt.Errorf("create the runs folder: %w", err)
 	}
-	adapters := map[string]agents.Adapter{
+	adapters := adapterRegistry{
 		// The demo agent replays a recorded session with nested sub-agents. It
 		// starts no process and reads nothing, so it is always on.
 		"mock":        mock.New(mock.Options{Fixture: "subagents", Delay: cfg.mockDelay}),
@@ -169,8 +171,15 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		return nil, fmt.Errorf("start code search: %w", err)
 	}
 
+	taskHub := &api.HubAdapter{}
+	taskSvc, err := newTasks(store, adapters, g, taskHub, redactor, cfg.dataDir, log)
+	if err != nil {
+		_ = d.Close()
+		return nil, err
+	}
+
 	srv, err := api.New(api.Deps{
-		Store: store, Adapters: adapters, Env: safety.NewEnvBuilder(), Log: log,
+		Store: store, Log: log, Tasks: taskSvc, WriteModes: cfg.writeModes,
 		Redactor: redactor, Version: version, Assets: assets,
 		Tracking: tracking, Status: status, RepoDetail: repos.NewDetailService(store, g),
 		Builds: buildSvc, Hosts: hostSvc, Search: searchSvc,
@@ -187,7 +196,8 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	buildsPub.srv = srv
 	hostsPub.srv = srv
 	batchPub.srv = srv
-	return &app{cfg: cfg, log: log, db: d, store: store, srv: srv, status: status, builds: buildSvc, hosts: hostSvc, actions: actions, feeder: feeder}, nil
+	taskHub.Bind(srv)
+	return &app{cfg: cfg, log: log, db: d, store: store, srv: srv, status: status, builds: buildSvc, hosts: hostSvc, actions: actions, feeder: feeder, tasks: taskSvc}, nil
 }
 
 // run serves on ln until ctx is cancelled. On the way out the server stops
@@ -195,6 +205,12 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 // child outlives ygg) is main's job: it happens once, when the process ends.
 func (a *app) run(ctx context.Context, ln net.Listener) error {
 	a.log.Info("Yggdrasil is running", "url", "http://"+ln.Addr().String(), "version", version, "data", a.cfg.dataDir)
+	// Recovery of tasks that were running at the last shutdown comes before
+	// anything is served; Close below stops every run before the store closes.
+	if err := a.tasks.Start(ctx); err != nil {
+		_ = a.tasks.Close()
+		return errors.Join(fmt.Errorf("start tasks: %w", err), a.db.Close())
+	}
 	group, gctx := errgroup.WithContext(ctx)
 	group.Go(func() error { return a.status.Start(gctx) })
 	group.Go(func() error { return a.builds.Start(gctx) })
@@ -205,9 +221,10 @@ func (a *app) run(ctx context.Context, ln net.Listener) error {
 	group.Go(func() error { return a.feeder.run(gctx) })
 	group.Go(func() error { return a.srv.Run(gctx, ln) })
 	serveErr := group.Wait()
+	tasksErr := a.tasks.Close()
 	a.hosts.Close()
 	closeErr := a.db.Close()
-	return errors.Join(serveErr, closeErr)
+	return errors.Join(serveErr, tasksErr, closeErr)
 }
 
 // lateReposPublisher forwards tracking's "repos changed" to the server, which
