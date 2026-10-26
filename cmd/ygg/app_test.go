@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/brendatamaar/yggdrasil/internal/search/searchtest"
 	"io"
 	"net"
 	"net/http"
@@ -15,13 +14,20 @@ import (
 	"testing"
 	"testing/fstest"
 	"time"
+
+	"github.com/brendatamaar/yggdrasil/internal/search/searchtest"
 )
 
 // startApp wires the real application on a loopback port with the demo agent
 // and no pause between events.
 func startApp(t *testing.T) (base string, cfg config, stop func() error) {
 	t.Helper()
-	cfg = config{addr: "127.0.0.1:0", dataDir: t.TempDir(), mockDelay: 0}
+	return startAppWith(t, config{addr: "127.0.0.1:0", dataDir: t.TempDir(), mockDelay: 0})
+}
+
+// startAppWith is startApp with the given settings.
+func startAppWith(t *testing.T, cfg config) (base string, _ config, stop func() error) {
+	t.Helper()
 	assets := fstest.MapFS{"index.html": {Data: []byte("<html>ygg</html>")}}
 	var logs bytes.Buffer
 	a, err := newApp(context.Background(), cfg, assets, &logs)

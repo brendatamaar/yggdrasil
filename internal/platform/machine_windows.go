@@ -25,7 +25,7 @@ type memoryStatusEx struct {
 
 func freeMemMB() int {
 	m := memoryStatusEx{Length: uint32(unsafe.Sizeof(memoryStatusEx{}))}
-	r, _, _ := procGlobalMemoryStatusEx.Call(uintptr(unsafe.Pointer(&m)))
+	r, _, _ := procGlobalMemoryStatusEx.Call(uintptr(unsafe.Pointer(&m))) //nolint:gosec // raw Win32 call
 	if r == 0 {
 		return 0
 	}
