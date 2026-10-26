@@ -1,0 +1,153 @@
+package safety_test
+
+import (
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/brendatamaar/yggdrasil/internal/core"
+	"github.com/brendatamaar/yggdrasil/internal/core/guard"
+	"github.com/brendatamaar/yggdrasil/internal/platform"
+	"github.com/brendatamaar/yggdrasil/internal/safety"
+)
+
+func TestAllowlistRoundTrip(t *testing.T) {
+	rules := []guard.CommandRule{
+		{Program: "go", Args: []string{"vet", "./..."}, Tail: guard.TailNone},
+		{Program: "npm", Args: []string{"run", "test"}, Tail: guard.TailPaths},
+		{Program: "mvnw", Tail: guard.TailPaths},
+		{Program: "x", Args: []string{"two words"}, Tail: guard.TailNone},
+	}
+	data := safety.FormatAllowlist(rules)
+	if data == nil {
+		t.Fatal("format failed")
+	}
+	got, err := safety.ParseAllowlist(data)
+	if err != nil || !reflect.DeepEqual(got, rules) {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+	if got, err := safety.ParseAllowlist([]byte("[]")); err != nil || len(got) != 0 {
+		t.Fatalf("empty list: %v %v", got, err)
+	}
+}
+
+func TestAllowlistRejects(t *testing.T) {
+	cases := map[string]string{
+		"not json":            `nope`,
+		"not an array":        `{"program":"go"}`,
+		"unknown field":       `[{"program":"go","args":[],"tail":"none","extra":1}]`,
+		"trailing data":       `[] []`,
+		"empty program":       `[{"program":"","tail":"none"}]`,
+		"slash in program":    `[{"program":"bin/go","tail":"none"}]`,
+		"backslash":           `[{"program":"bin\\go","tail":"none"}]`,
+		"drive path":          `[{"program":"C:go","tail":"none"}]`,
+		"option as program":   `[{"program":"-go","tail":"none"}]`,
+		"dot program":         `[{"program":"..","tail":"none"}]`,
+		"space in program":    `[{"program":"g o","tail":"none"}]`,
+		"shell char program":  `[{"program":"go;rm","tail":"none"}]`,
+		"unknown tail":        `[{"program":"go","tail":"any"}]`,
+		"empty tail":          `[{"program":"go","tail":""}]`,
+		"dollar in arg":       `[{"program":"go","args":["$HOME"],"tail":"none"}]`,
+		"backslash in arg":    `[{"program":"go","args":["a\\b"],"tail":"none"}]`,
+		"glob in arg":         `[{"program":"go","args":["*"],"tail":"none"}]`,
+		"comma in arg":        `[{"program":"go","args":["a,b"],"tail":"none"}]`,
+		"empty arg":           `[{"program":"go","args":[""],"tail":"none"}]`,
+		"control char in arg": `[{"program":"go","args":["a\u0001"],"tail":"none"}]`,
+	}
+	for name, in := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got, err := safety.ParseAllowlist([]byte(in)); err == nil {
+				t.Fatalf("accepted %s as %+v", in, got)
+			}
+		})
+	}
+	var many []string
+	for range safety.MaxAllowlistRules + 1 {
+		many = append(many, `{"program":"go","tail":"none"}`)
+	}
+	if _, err := safety.ParseAllowlist([]byte("[" + strings.Join(many, ",") + "]")); err == nil {
+		t.Fatal("accepted too many rules")
+	}
+}
+
+func FuzzParseAllowlist(f *testing.F) {
+	f.Add([]byte(`[{"program":"go","args":["vet"],"tail":"paths"}]`))
+	f.Add([]byte(`[]`))
+	f.Add([]byte(`[{"program":"a/b","tail":"none"}]`))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		rules, err := safety.ParseAllowlist(data)
+		if err != nil {
+			return
+		}
+		for _, r := range rules {
+			if err := safety.ValidateRule(r); err != nil {
+				t.Fatalf("accepted an invalid rule %+v: %v", r, err)
+			}
+			if strings.ContainsAny(r.Program, `/\ `) {
+				t.Fatalf("program %q has a separator", r.Program)
+			}
+		}
+		again, err := safety.ParseAllowlist(safety.FormatAllowlist(rules))
+		if err != nil || !reflect.DeepEqual(again, rules) {
+			t.Fatalf("round trip: %+v vs %+v (%v)", again, rules, err)
+		}
+	})
+}
+
+func testPolicy(t *testing.T) guard.Policy {
+	t.Helper()
+	root, err := platform.ResolveRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return guard.Policy{
+		Mode: core.ModeAsk, ReadRoots: []string{root},
+		Allow:       []guard.CommandRule{{Program: "go", Args: []string{"vet"}, Tail: guard.TailNone}},
+		FoldCase:    platform.FoldCase(),
+		Enforcement: guard.EnforcementHook,
+	}
+}
+
+func TestPolicyFileRoundTrip(t *testing.T) {
+	p := testPolicy(t)
+	parent := t.TempDir()
+	path, err := safety.WritePolicyFile(parent, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(path, parent) {
+		t.Fatalf("file outside the parent: %s", path)
+	}
+	got, err := safety.ReadPolicyFile(path)
+	if err != nil || !reflect.DeepEqual(got, p) {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+	// Each run gets its own folder; nothing is overwritten.
+	path2, err := safety.WritePolicyFile(parent, p)
+	if err != nil || filepath.Dir(path2) == filepath.Dir(path) {
+		t.Fatalf("second file shares the folder: %s %s %v", path, path2, err)
+	}
+	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm()&0o077 != 0 && fi.Mode().Perm() != 0o666 {
+		t.Fatalf("mode = %v, %v", fi.Mode(), err)
+	}
+}
+
+func TestPolicyFileRefusesInvalid(t *testing.T) {
+	p := testPolicy(t)
+	p.ReadRoots = nil
+	if _, err := safety.WritePolicyFile(t.TempDir(), p); err == nil {
+		t.Fatal("wrote an invalid policy")
+	}
+	bad := filepath.Join(t.TempDir(), "p.json")
+	if err := os.WriteFile(bad, []byte(`{"mode":"ask"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := safety.ReadPolicyFile(bad); err == nil {
+		t.Fatal("read an invalid policy")
+	}
+	if _, err := safety.ReadPolicyFile(filepath.Join(t.TempDir(), "none.json")); err == nil {
+		t.Fatal("read a missing file")
+	}
+}
