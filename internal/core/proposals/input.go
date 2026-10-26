@@ -1,6 +1,10 @@
 package proposals
 
-import "time"
+import (
+	"time"
+
+	"github.com/brendatamaar/yggdrasil/internal/core"
+)
 
 // Input is one event for Step (sealed). Time arrives in Now.
 type Input interface{ isInput() }
@@ -15,6 +19,10 @@ type Facts struct {
 	PendingForTask int
 	// RemoteSupported: false for a merge request on a non-GitLab remote.
 	RemoteSupported bool
+	// TaskChangeSet is the task's existing change set ID, empty when it has
+	// none yet. A non-empty value must equal the header's ChangeSet, so a
+	// proposal never attaches to another change set.
+	TaskChangeSet core.ChangeSetID
 }
 
 // Created: a new proposal (header and action) with the facts about it.

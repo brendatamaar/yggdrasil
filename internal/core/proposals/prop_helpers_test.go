@@ -98,6 +98,27 @@ func genFacts(r *rand.Rand) Facts {
 	return Facts{RepoTracked: true, PathsOK: true, RemoteSupported: true, PendingForTask: r.Intn(10)}
 }
 
+// genAnyFacts varies every fact, including bad ones and counts at or over the
+// cap. goodFacts reports whether Created may succeed with them.
+func genAnyFacts(r *rand.Rand, h Proposal) Facts {
+	f := Facts{
+		RepoTracked: r.Intn(5) != 0, PathsOK: r.Intn(5) != 0, RemoteSupported: r.Intn(5) != 0,
+		PendingForTask: r.Intn(MaxPendingPerTask + 3),
+	}
+	switch r.Intn(4) {
+	case 0:
+		f.TaskChangeSet = h.ChangeSet
+	case 1:
+		f.TaskChangeSet = "cs-other"
+	}
+	return f
+}
+
+func goodFacts(f Facts, h Proposal) bool {
+	return f.RepoTracked && f.PathsOK && f.RemoteSupported && f.PendingForTask < MaxPendingPerTask &&
+		(f.TaskChangeSet == "" || f.TaskChangeSet == h.ChangeSet)
+}
+
 func header(r *rand.Rand, id string) Proposal {
 	task := core.TaskID(fmt.Sprintf("t%d", r.Intn(3)))
 	return Proposal{

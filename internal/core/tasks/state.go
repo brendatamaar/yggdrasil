@@ -49,6 +49,9 @@ type Stopping struct {
 	Attempt Attempt
 	Since   time.Time
 	Cause   StopCause
+	// Phase says whether a process was ever started. The zero value is
+	// StopAfterStart (fail safe: a prepare result is ignored).
+	Phase StopPhase
 	// Usage is carried over from Running so FinishTurn does not lose it.
 	Usage Usage
 }
@@ -123,6 +126,21 @@ func (c StopCause) outcome() Outcome {
 	}
 	return Cancelled{}
 }
+
+// StopPhase says where a Stopping task came from (closed set). It replaces a
+// "never started" boolean. It is not stored (task_turns.state has no room for
+// it): a Stopping row reads back as StopAfterStart, and a stopping task is
+// recovered to Idle at the next start anyway.
+type StopPhase string
+
+const (
+	// StopAfterStart: the stop came from Running (zero value). Only
+	// RunFinished ends it; a prepare result is a duplicate and is ignored.
+	StopAfterStart StopPhase = ""
+	// StopBeforeStart: the stop came from Starting, so no agent process was
+	// started; the prepare result ends it.
+	StopBeforeStart StopPhase = "before_start"
+)
 
 // NeedsWhy says why an idle task needs the user.
 type NeedsWhy string

@@ -77,6 +77,8 @@ func stepCreated(c Created) (Proposal, []Command) {
 		return refuse(RefuseRepoUntracked)
 	case !f.PathsOK || !f.RemoteSupported:
 		return refuse(RefuseBadFacts)
+	case f.TaskChangeSet != "" && f.TaskChangeSet != p.ChangeSet:
+		return refuse(RefuseBadFacts)
 	case f.PendingForTask >= MaxPendingPerTask:
 		return refuse(RefuseTooMany)
 	case p.ID.Validate() != nil || p.ChangeSet.Validate() != nil || p.Task.Validate() != nil ||
