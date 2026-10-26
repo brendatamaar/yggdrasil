@@ -125,8 +125,10 @@ func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run,
 		return nil, errors.New("claudecode: no clean environment given")
 	case o.Mode.Validate() != nil:
 		return nil, &UserError{Message: "That task mode isn't known."}
-	case len(o.ExtraDirs) > 0 && o.Mode != core.ModeProject:
-		return nil, &UserError{Message: "Only a task over the whole project can use more than one folder."}
+	// Several folders: a project task, or a read-only Ask run (no write
+	// roots). Code and current-branch runs keep their single folder.
+	case len(o.ExtraDirs) > 0 && o.Mode != core.ModeProject && (o.Mode != core.ModeAsk || len(o.Policy.WriteRoots) > 0):
+		return nil, &UserError{Message: "Only a task over the whole project, or a read-only Ask over it, can use more than one folder."}
 	case o.MCPConfigPath != "" && (!filepath.IsAbs(o.MCPConfigPath) || strings.ContainsAny(o.MCPConfigPath, "\r\n\x00") || !exists(o.MCPConfigPath)):
 		return nil, errors.New("claudecode: the MCP config file is missing")
 	case !o.Admitted:

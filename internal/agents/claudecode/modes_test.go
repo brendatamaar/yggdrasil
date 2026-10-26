@@ -117,6 +117,59 @@ func TestStartInTheWritingModes(t *testing.T) {
 	}
 }
 
+func TestAskOverSeveralFoldersIsReadOnly(t *testing.T) {
+	a := newAdapter(t, "capture")
+	out := filepath.Join(t.TempDir(), "capture")
+	o := startOpts(t, "capture", map[string]string{fakeOut: out})
+	o.Mode = core.ModeAsk
+	second, third := t.TempDir(), t.TempDir()
+	o.ExtraDirs = []string{second, third}
+	o.Policy = policyFor(t, core.ModeAsk, o.Dir, second, third)
+	if len(o.Policy.WriteRoots) != 0 {
+		t.Fatalf("ask policy has write roots: %v", o.Policy.WriteRoots)
+	}
+	res, err := agents.Execute(context.Background(), a, o, &collectSink{})
+	if err != nil || res.Status != agents.RunCompleted {
+		t.Fatalf("ask over 3 folders: %+v, %v", res, err)
+	}
+	args := strings.Split(read(t, out+".args"), "\x00")
+	n := 0
+	for _, arg := range args {
+		if arg == "--add-dir" {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Errorf("--add-dir appears %d times, want 2, in %q", n, args)
+	}
+
+	// A write root makes it a writing run: refused outside project mode.
+	w := startOpts(t, "stream", nil)
+	w.Mode = core.ModeAsk
+	w.ExtraDirs = []string{second}
+	p := policyFor(t, core.ModeAsk, w.Dir, second)
+	p.WriteRoots = []string{p.ReadRoots[0]}
+	w.Policy = p
+	if r, err := a.Start(context.Background(), w); err == nil {
+		t.Error("ask with a write root over several folders was accepted")
+		for range r.Events() { //nolint:revive // drain so the run ends
+		}
+	}
+
+	// Code and current_branch keep their single folder.
+	for _, mode := range []core.TaskMode{core.ModeCode, core.ModeCurrentBranch} {
+		c := startOpts(t, "stream", nil)
+		c.Mode = mode
+		c.ExtraDirs = []string{second}
+		c.Policy = policyFor(t, mode, c.Dir, second)
+		if r, err := a.Start(context.Background(), c); err == nil {
+			t.Errorf("%s with extra folders was accepted", mode)
+			for range r.Events() { //nolint:revive // drain so the run ends
+			}
+		}
+	}
+}
+
 func TestStartRefusesAPolicyThatDoesNotCoverTheFolders(t *testing.T) {
 	a := newAdapter(t, "stream")
 	o := startOpts(t, "stream", nil)
