@@ -11,11 +11,16 @@ import { widgetRegistry } from "../../widgets/registry";
 import { LAYOUT_KEY, defaultLayout } from "./layout";
 
 function renderHome() {
-  stubApi((c) =>
-    c.path.startsWith("/api/tasks?")
+  const usage = { inputTokens: 0, outputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0, costMicroUsd: 0, costKnown: false, durationMs: 0 };
+  stubApi((c) => {
+    if (c.path === "/api/board") {
+      const card = { taskId: "tsk_1", title: "Find the order routes", mode: "ask", agent: "demo", status: "running", column: "working", repoNames: [], pendingProposals: 0, usage, updatedAt: "2026-01-01T00:00:00Z" };
+      return { body: { maxAgents: 2, active: 1, hint: { raiseTo: 0 }, cards: [card] } };
+    }
+    return c.path.startsWith("/api/tasks?")
       ? { body: { tasks: [{ id: "tsk_1", title: "Find the order routes", status: "running" }] } }
-      : undefined,
-  );
+      : undefined;
+  });
   const router = createAppRouter(createMemoryHistory({ initialEntries: ["/"] }));
   render(<App router={router} socket={new WSClient({ url: "ws://x/ws", socketCtor: FakeSocket })} />);
 }
@@ -34,7 +39,7 @@ describe("widget grid", () => {
     renderHome();
     expect(await screen.findByRole("heading", { name: "Working now" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "This machine" })).toBeTruthy();
-    const link = await screen.findByRole("link", { name: "Find the order routes" });
+    const link = (await screen.findAllByRole("link", { name: "Find the order routes" }))[0] as HTMLElement;
     expect(link.getAttribute("href")).toBe("/tasks/tsk_1");
     await waitFor(() => {
       expect(screen.getByText("test")).toBeTruthy(); // the server version, from /api/health
