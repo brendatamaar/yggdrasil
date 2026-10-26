@@ -32,6 +32,11 @@ func (r adapterRegistry) Get(name string) (agents.Adapter, bool) {
 // tasks.LockProber. Owners are strings "<kind>:<id>" ("task:tsk_...").
 type taskLock struct{ reg *mainlock.Registry }
 
+// taskLock must keep implementing the lock probe: without it the scheduler falls back to
+// LocksDenied and loses the no-commit, no-audit wait (gate 3 review).
+var _ tasks.LockProber = taskLock{}
+var _ tasks.MainLock = taskLock{}
+
 func (l taskLock) TryAcquire(repos []core.RepoID, owner string) (tasks.Release, string, bool) {
 	kind, id, _ := strings.Cut(owner, ":")
 	rel, h, ok := l.reg.TryAcquire(repos, mainlock.Owner{Kind: mainlock.OwnerKind(kind), ID: id})

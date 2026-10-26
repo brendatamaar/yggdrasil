@@ -313,4 +313,4 @@ archtest `coreSubpackages` forbids core domains importing each other, so `core/t
 - **interpret.** One `dispatch` switch; an unknown command logs and fails the task (`markFailed`). Order: kill, release, publish, then spawn prepare/run. Panics in the loop, the run/prepare goroutines and the feed paths are recovered, logged redacted, and fail the task. A panic in an Ask run still takes the After snapshot.
 - **Startup.** One task whose rows do not load is marked failed (`task.quarantined` audit) and Start continues.
 - **WriteModes.** `Config.WriteModes=false` refuses every mode but Ask in `Message`. `BoardCard.Usage` totals the turn rows. `ConfigTrusted` follows admission for non-Ask modes.
-- **Known gap.** An Ask turn on a whole-project task passes several folders to the adapter; claudecode rejects more than one folder outside Project mode.
+- **Ask over several folders (resolved by FD3).** An Ask turn on a whole-project task passes several folders to the adapter; claudecode allows `ExtraDirs` for Ask when the policy has no write roots (read-only). Code and current_branch keep the single-folder rule.
