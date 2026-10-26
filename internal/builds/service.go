@@ -20,6 +20,7 @@ import (
 	corebuilds "github.com/brendatamaar/yggdrasil/internal/core/builds"
 	corerepos "github.com/brendatamaar/yggdrasil/internal/core/repos"
 	"github.com/brendatamaar/yggdrasil/internal/db"
+	"github.com/brendatamaar/yggdrasil/internal/mainlock"
 	"github.com/brendatamaar/yggdrasil/internal/platform"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
@@ -80,6 +81,13 @@ type Deps struct {
 	ReconcileBackoff time.Duration
 	DataDir          string
 	Log              *slog.Logger
+	// MainLock is the shared main-checkout lock. A build that targets main
+	// checkouts holds it from admission to its terminal state. Nil means no
+	// locking.
+	MainLock mainlock.MainLock
+	// LockRetry is how long a build waits before the queue retries it after
+	// the lock was denied. Default 500 ms.
+	LockRetry time.Duration
 }
 
 // BuildStarted is sent to subscribers when a build is admitted.
@@ -111,6 +119,7 @@ type Service struct {
 	live    map[stepKey]context.CancelFunc
 	started map[stepKey]struct{}
 	subs    []func(BuildStarted)
+	locks   map[core.BuildID]func() // release funcs of builds holding main checkouts
 }
 
 type stepKey struct {
@@ -179,6 +188,7 @@ func NewService(d Deps) (*Service, error) {
 	return &Service{
 		d: d, inbox: make(chan msg, 64), wake: make(chan struct{}, 1), done: make(chan struct{}),
 		live: map[stepKey]context.CancelFunc{}, started: map[stepKey]struct{}{},
+		locks: map[core.BuildID]func(){},
 	}, nil
 }
 
@@ -300,6 +310,10 @@ func (s *Service) handle(ctx context.Context, m msg) (result, []msg) {
 			s.d.Log.Error("builds: commit failed", "build", m.id, "err", err)
 		}
 		return result{err: apperr.New(apperr.Unavailable, "Yggdrasil couldn't save the build. Try again.", err)}, nil
+	}
+	if _, done := after.(corebuilds.Finished); done {
+		s.unlock(m.id)
+		s.signalWake()
 	}
 	if len(cmds) == 0 {
 		return result{state: after}, nil
