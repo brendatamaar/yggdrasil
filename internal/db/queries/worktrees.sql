@@ -10,3 +10,9 @@ SELECT * FROM worktrees WHERE task_id = ? ORDER BY created_at, id;
 
 -- name: UpdateWorktreeStatus :execrows
 UPDATE worktrees SET status = ? WHERE id = ?;
+
+-- name: SetWorktreeBaseCommit :execrows
+UPDATE worktrees SET base_commit = ? WHERE id = ?;
+
+-- name: GetWorktreeBaseCommit :one
+SELECT base_commit FROM worktrees WHERE id = ?;

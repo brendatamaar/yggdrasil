@@ -60,6 +60,17 @@ func (q *Queries) GetWorktree(ctx context.Context, id string) (Worktree, error) 
 	return i, err
 }
 
+const getWorktreeBaseCommit = `-- name: GetWorktreeBaseCommit :one
+SELECT base_commit FROM worktrees WHERE id = ?
+`
+
+func (q *Queries) GetWorktreeBaseCommit(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getWorktreeBaseCommit, id)
+	var base_commit string
+	err := row.Scan(&base_commit)
+	return base_commit, err
+}
+
 const listWorktreesByTask = `-- name: ListWorktreesByTask :many
 SELECT id, repo_id, task_id, name, path, branch, status, created_at, base_commit FROM worktrees WHERE task_id = ? ORDER BY created_at, id
 `
@@ -95,6 +106,23 @@ func (q *Queries) ListWorktreesByTask(ctx context.Context, taskID string) ([]Wor
 		return nil, err
 	}
 	return items, nil
+}
+
+const setWorktreeBaseCommit = `-- name: SetWorktreeBaseCommit :execrows
+UPDATE worktrees SET base_commit = ? WHERE id = ?
+`
+
+type SetWorktreeBaseCommitParams struct {
+	BaseCommit string
+	ID         string
+}
+
+func (q *Queries) SetWorktreeBaseCommit(ctx context.Context, arg SetWorktreeBaseCommitParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setWorktreeBaseCommit, arg.BaseCommit, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const updateWorktreeStatus = `-- name: UpdateWorktreeStatus :execrows
