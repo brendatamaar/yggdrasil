@@ -140,6 +140,12 @@ func TestCleanRootPathWindowsForms(t *testing.T) {
 		`C:\a\x. `:                  platform.ErrPathTrailing,
 		`C:\a\x.`:                   platform.ErrPathTrailing,
 		`C:\a\*`:                    platform.ErrPathChars,
+		`C:\a\CONIN$.txt`:           platform.ErrPathDevice,
+		`C:\a\conout$ .txt`:         platform.ErrPathDevice,
+		`C:\a\CLOCK$.a.b`:           platform.ErrPathDevice,
+		`C:\a\CONIN$`:               platform.ErrPathDevice,
+		`C:\a\CONIN$ `:              platform.ErrPathTrailing,
+		`C:\a\CLOCK$.`:              platform.ErrPathTrailing,
 	}
 	for in, want := range bad {
 		if _, err := platform.CleanRootPath(in); !errors.Is(err, want) {
@@ -187,7 +193,7 @@ func TestResolveRootInsideIffLexicalJoinInside(t *testing.T) {
 
 func FuzzResolveRoot(f *testing.F) {
 	for _, s := range []string{
-		"", "x", fakeRoot(), fakeRoot("..", ".."), `C:\a\..\b`, `\\?\C:\x`, `C:\a\NUL`, `C:\a\f:s`, `\\wsl$\u`,
+		"", "x", fakeRoot(), fakeRoot("..", ".."), `C:\a\..\b`, `\\?\C:\x`, `C:\a\NUL`, `C:\a\f:s`, `C:\a\CONIN$.txt`, `C:\a\CONOUT$ `, `C:\a\CLOCK$.x`, `\\wsl$\u`,
 		`C:\Program Files\x`, "/tmp/a/../b", os.TempDir(), "C:\\a\\b\x00",
 	} {
 		f.Add(s)

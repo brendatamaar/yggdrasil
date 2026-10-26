@@ -198,7 +198,8 @@ func checkWindowsSegment(seg string, names bool) error {
 	if isReservedName(seg) {
 		return ErrPathDevice
 	}
-	switch strings.ToUpper(seg) {
+	stem, _, _ := strings.Cut(strings.ToUpper(seg), ".")
+	switch strings.TrimRight(stem, " ") {
 	case "CONIN$", "CONOUT$", "CLOCK$":
 		return ErrPathDevice
 	}
