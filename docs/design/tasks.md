@@ -299,3 +299,18 @@ archtest `coreSubpackages` forbids core domains importing each other, so `core/t
 - `SubagentStarted` with an empty `AgentID` or `Depth < 1` counts as over the cap (fail closed).
 - `narrowCaps` with zero `Task.Caps` keeps the new caps (bounded by the maximums): the shell must load the previous turn's caps with the task and test that.
 - `Stopping.Phase` is not persisted. A cancel during `Starting` makes `Stopping{StopBeforeStart}`; if the shell reloads the task before the prepare result arrives it reads back as `StopAfterStart` and the prepare result is ignored, leaving the task stopping until the next start's `Recovered`. **S1 constraint:** keep the live `Task` in memory per task between inputs, or have the interpreter of a never-started cancel feed `RunFinished{Cancelled}` after `KillRun`; add a shell test for cancel-during-Starting.
+
+## Gate 3 notes (2026-10-26)
+
+- **Locks.** `LockProber` / `mainBlocker` replaces the earlier `LockDenied` / `LockGranted` inputs: a waiting task whose main checkout is held stays Waiting without a commit or an audit entry; `TryAcquire` stays the authority and a lost race still returns `LocksDenied`.
+- **Caps.** Sub-agent caps come from `Config.Caps` on every step. The caps of the previous turn are not loaded from the store (C1).
+- **Opt-in.** `OptIn` is inferred true for the wide modes (current_branch, project) at `StartRun`: a stored turn in such a mode could only be created with the opt-in.
+- **Batcher.** The usage/sub-agent batcher is synchronous: no flush goroutine; it flushes from the run goroutine.
+- **Trust.** `TrustAgent` is fixed to `claude-code`; a second real adapter needs a per-agent or union scan.
+- **Naming.** The input is `DismissRequested`.
+- **Store errors.** `feed` retries a non-conflict store error up to 5 times (`Config.FeedRetry` base wait). An `IntegrityViolated` that still cannot be stored turns the end of the run into `RunFinished{Failed}`, never Completed (SF-07). A final input (RunFinished, Prepared, PrepareFailed) that cannot be stored frees the slot, the lock and the processes in memory (`abandon`) and marks the task stuck; the loop retries `Recovered` on its tick, and the next start recovers it anyway.
+- **Usage on recovery.** `SumUsage(events, since)` ignores events stored before the turn's start time, so a turn that crashed before its first event is not charged the turn before.
+- **interpret.** One `dispatch` switch; an unknown command logs and fails the task (`markFailed`). Order: kill, release, publish, then spawn prepare/run. Panics in the loop, the run/prepare goroutines and the feed paths are recovered, logged redacted, and fail the task. A panic in an Ask run still takes the After snapshot.
+- **Startup.** One task whose rows do not load is marked failed (`task.quarantined` audit) and Start continues.
+- **WriteModes.** `Config.WriteModes=false` refuses every mode but Ask in `Message`. `BoardCard.Usage` totals the turn rows. `ConfigTrusted` follows admission for non-Ask modes.
+- **Known gap.** An Ask turn on a whole-project task passes several folders to the adapter; claudecode rejects more than one folder outside Project mode.

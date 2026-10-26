@@ -51,6 +51,14 @@ type scriptAdapter struct {
 	denyCount  int
 	checkErr   error
 	configs    []string
+	// events, when set, replace the fixture: the run emits started, these
+	// events, then the final status.
+	events []agents.Event
+	// waitErr is what Wait returns; with it the run ends as failed.
+	waitErr error
+	// onCheck runs inside Check (a test can change the world between the
+	// check and the commit of a message).
+	onCheck func()
 
 	mu      sync.Mutex
 	started []agents.StartOptions
@@ -64,8 +72,13 @@ func newScriptAdapter() *scriptAdapter {
 
 func (a *scriptAdapter) Name() string                      { return "mock" }
 func (a *scriptAdapter) Capabilities() agents.Capabilities { return a.caps }
-func (a *scriptAdapter) Check(context.Context) error       { return a.checkErr }
-func (a *scriptAdapter) ConfigPaths() []string             { return a.configs }
+func (a *scriptAdapter) Check(context.Context) error {
+	if a.onCheck != nil {
+		a.onCheck()
+	}
+	return a.checkErr
+}
+func (a *scriptAdapter) ConfigPaths() []string { return a.configs }
 func (a *scriptAdapter) Starts() []agents.StartOptions {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -80,6 +93,15 @@ func (a *scriptAdapter) Start(ctx context.Context, opts agents.StartOptions) (ag
 		return nil, a.startErr
 	}
 	events, err := mock.Load(a.fixture)
+	if a.events != nil {
+		final := agents.RunCompleted
+		if a.waitErr != nil {
+			final = agents.RunFailed
+		}
+		events = append(append([]agents.Event{{Kind: agents.EventStatus, Status: agents.RunStarted}}, a.events...),
+			agents.Event{Kind: agents.EventStatus, Status: final})
+		err = nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +159,7 @@ type scriptRun struct {
 
 func (r *scriptRun) Events() <-chan agents.Event { return r.events }
 func (r *scriptRun) SessionID() string           { return r.session }
-func (r *scriptRun) Wait() error                 { <-r.done; return nil }
+func (r *scriptRun) Wait() error                 { <-r.done; return r.a.waitErr }
 func (r *scriptRun) Tampered() bool              { return r.a.tamper }
 func (r *scriptRun) HookedToolUses() []string    { return nil }
 func (r *scriptRun) UnhookedToolUses() []string  { return r.a.unhooked }
@@ -152,6 +174,7 @@ type fakeHub struct {
 	mu       sync.Mutex
 	statuses []StatusMessage
 	events   map[core.TaskID][]int64
+	payloads map[core.TaskID][]agents.Event
 }
 
 func (h *fakeHub) Status(m StatusMessage) {
@@ -160,12 +183,14 @@ func (h *fakeHub) Status(m StatusMessage) {
 	h.mu.Unlock()
 }
 
-func (h *fakeHub) Event(id core.TaskID, seq int64, _ agents.Event) {
+func (h *fakeHub) Event(id core.TaskID, seq int64, e agents.Event) {
 	h.mu.Lock()
 	if h.events == nil {
 		h.events = map[core.TaskID][]int64{}
+		h.payloads = map[core.TaskID][]agents.Event{}
 	}
 	h.events[id] = append(h.events[id], seq)
+	h.payloads[id] = append(h.payloads[id], e)
 	h.mu.Unlock()
 }
 
@@ -412,6 +437,8 @@ type harness struct {
 	// afterCommit is the crash hook of the service: returning true skips the
 	// interpretation of the commands, as if the process died after the commit.
 	afterCommit func(id core.TaskID, cmds []coretasks.Command) bool
+	// beforeCommit makes the store fail for chosen inputs.
+	beforeCommit func(id core.TaskID, in coretasks.Input) error
 	// tune changes the Config before the service is built.
 	tune func(*Config)
 }
@@ -421,7 +448,7 @@ type harness struct {
 func (h *harness) restart() *Service {
 	h.t.Helper()
 	_ = h.svc.Close()
-	h.afterCommit = nil
+	h.afterCommit, h.beforeCommit = nil, nil
 	return h.start()
 }
 
@@ -474,7 +501,7 @@ func (h *harness) start() *Service {
 		Scanner: h.scanner, Snapshotter: h.snap, Env: safety.NewEnvBuilder(), Redactor: safety.NewRedactor(),
 		Hub: h.hub, Machine: fakeMachine{cpus: 16, mem: 32768}, Killer: h.killer.Kill,
 		Now: func() time.Time { return time.Now().UTC() }, NewID: db.NewID,
-		UsageEvery: time.Millisecond, SnapshotTimeout: 2 * time.Second, SnapshotRetry: time.Millisecond, LockRetry: 20 * time.Millisecond,
+		WriteModes: true, UsageEvery: time.Millisecond, SnapshotTimeout: 2 * time.Second, SnapshotRetry: time.Millisecond, LockRetry: 20 * time.Millisecond,
 	}
 	if h.tune != nil {
 		h.tune(&h.cfg)
@@ -483,7 +510,7 @@ func (h *harness) start() *Service {
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	svc.afterCommit = h.afterCommit
+	svc.afterCommit, svc.beforeCommit = h.afterCommit, h.beforeCommit
 	if err := svc.Start(context.Background()); err != nil {
 		h.t.Fatal(err)
 	}

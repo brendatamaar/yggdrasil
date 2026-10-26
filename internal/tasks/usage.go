@@ -36,11 +36,17 @@ func nonNeg(n int64) int64 {
 // SumUsage recomputes the usage of the last run of a task from its stored
 // events, the way agents.Execute adds it: usage events add up, a cumulative
 // event replaces the total so far. Events before the last "started" status
-// belong to earlier turns and are left out. An event that does not decode is
+// belong to earlier attempts and are left out. Events stored before since (the
+// start of the turn; the zero time means no bound) belong to earlier turns and
+// are left out too, so a turn that crashed before its first event is not
+// charged the usage of the turn before. An event that does not decode is
 // skipped and counted.
-func SumUsage(events []db.TaskEvent) (u coretasks.Usage, skipped int) {
+func SumUsage(events []db.TaskEvent, since time.Time) (u coretasks.Usage, skipped int) {
 	decoded := make([]agents.Event, 0, len(events))
 	for _, row := range events {
+		if !since.IsZero() && !row.At.IsZero() && row.At.Before(since) {
+			continue
+		}
 		var e agents.Event
 		if err := json.Unmarshal(row.Data, &e); err != nil {
 			skipped++

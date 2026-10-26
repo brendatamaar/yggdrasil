@@ -23,6 +23,9 @@ func (s *Service) loop(ctx context.Context) {
 			return
 		case <-s.wake:
 		case <-t.C:
+			if s.anyStuck() {
+				s.retryStuck()
+			}
 			if !s.anyWaiting() {
 				continue
 			}

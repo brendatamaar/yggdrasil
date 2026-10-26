@@ -34,6 +34,8 @@ type Service struct {
 	releases map[core.TaskID]Release
 	prep     map[core.TaskID]*sync.Mutex
 	blocked  map[core.TaskID]string // waiting task -> holder of its main checkout
+	stuck    map[core.TaskID]bool   // tasks whose end could not be stored (recovered later)
+	failing  map[core.TaskID]bool   // tasks being marked failed (no recursion)
 
 	boardMu sync.Mutex
 	board   coretasks.Board
@@ -43,6 +45,8 @@ type Service struct {
 
 	// hooks for tests; nil in production.
 	afterCommit func(id core.TaskID, cmds []coretasks.Command) (skip bool)
+	// beforeCommit lets a test make the store fail for one input.
+	beforeCommit func(id core.TaskID, in coretasks.Input) error
 }
 
 // New returns a Service. Nothing runs until Start.
@@ -59,6 +63,8 @@ func New(c Config) (*Service, error) {
 		releases: map[core.TaskID]Release{},
 		prep:     map[core.TaskID]*sync.Mutex{},
 		blocked:  map[core.TaskID]string{},
+		stuck:    map[core.TaskID]bool{},
+		failing:  map[core.TaskID]bool{},
 		board: coretasks.Board{
 			Max: c.DefaultMax, Tasks: map[core.TaskID]coretasks.Entry{}, Locks: map[core.RepoID]core.TaskID{},
 		},
@@ -152,14 +158,18 @@ func (s *Service) Message(ctx context.Context, req MessageRequest) (MessageResul
 		existing = &st
 		req.ProjectID, req.Agent, req.Model = st.Row.ProjectID, st.Row.Agent, st.Row.Model
 		req.Scope = string(st.Row.Scope)
-		req.Repos = repoStrings(st.Row.RepoIDs)
+		// A whole-project task covers every repo; the parser rejects a list.
+		req.Repos = nil
+		if st.Row.Scope != core.ScopeProject {
+			req.Repos = repoStrings(st.Row.RepoIDs)
+		}
 	}
 	raw := coretasks.RawMessage{Prompt: req.Prompt, Mode: req.Mode, Scope: req.Scope, Agent: req.Agent, Model: req.Model, Repos: req.Repos, Title: req.Title}
 	check := raw
 	if existing != nil && existing.Row.Scope == core.ScopeProject && req.Mode == string(core.ModeAsk) {
 		// An Ask turn in a whole-project task reads the task's scope; the
 		// scope/mode pairing rule is for the first message.
-		check.Scope, check.Repos = string(core.ScopeRepo), req.Repos[:min(1, len(req.Repos))]
+		check.Scope, check.Repos = string(core.ScopeRepo), repoStrings(existing.Row.RepoIDs[:min(1, len(existing.Row.RepoIDs))])
 	}
 	pm, err := coretasks.ParseMessage(check)
 	if err != nil {
@@ -168,6 +178,10 @@ func (s *Service) Message(ctx context.Context, req MessageRequest) (MessageResul
 	pm.Scope, pm.Repos = core.TaskScope(raw.Scope), idsOf(raw.Repos)
 	if existing != nil {
 		pm.Repos = existing.Row.RepoIDs
+	}
+
+	if pm.Mode != core.ModeAsk && !s.c.WriteModes {
+		return MessageResult{}, &RejectedError{Reason: "write_modes_off", Message: "Modes that edit files are switched off in this Yggdrasil setup. Ask a question instead, or turn on write modes in the setup and restart."}
 	}
 
 	project, err := s.c.Store.GetProject(ctx, req.ProjectID)

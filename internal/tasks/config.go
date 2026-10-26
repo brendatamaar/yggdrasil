@@ -107,6 +107,12 @@ type Config struct {
 	// SnapshotRetry is the wait before the one retry of a failed snapshot.
 	// Default 1 second.
 	SnapshotRetry time.Duration
+	// FeedRetry is the base wait between the tries to store a result of the
+	// service itself. Default 20 ms.
+	FeedRetry time.Duration
+	// WriteModes allows the modes that edit files (code, current_branch,
+	// project). Off means Ask only.
+	WriteModes bool
 	// LockRetry is how often waiting tasks get another chance when a
 	// main-checkout lock was denied. Default 3 seconds.
 	LockRetry time.Duration
@@ -136,6 +142,9 @@ func (c *Config) validate() error {
 	}
 	if c.SnapshotRetry == 0 {
 		c.SnapshotRetry = time.Second
+	}
+	if c.FeedRetry == 0 {
+		c.FeedRetry = 20 * time.Millisecond
 	}
 	if c.LockRetry == 0 {
 		c.LockRetry = 3 * time.Second

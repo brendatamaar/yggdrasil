@@ -75,6 +75,8 @@ type BoardCard struct {
 	PendingProposals int
 	// BlockedBy is the plain-language reason a queued task waits, or "".
 	BlockedBy string
+	// Usage is the total over the task's turns (tokens, cost, duration).
+	Usage coretasks.Usage
 }
 
 // BoardView is the read model of the agent board (AG-12): a card per task with
@@ -123,7 +125,15 @@ func (s *Service) Board(ctx context.Context, project core.ProjectID) (BoardView,
 					return BoardView{}, fmt.Errorf("count proposals of %s: %w", t.ID, err)
 				}
 			}
-			view.Cards = append(view.Cards, BoardCard{Task: t, Column: coretasks.Column(stateOfStatus(t.Status), pending), PendingProposals: pending})
+			turns, err := s.c.Store.ListTaskTurns(ctx, t.ID)
+			if err != nil {
+				return BoardView{}, fmt.Errorf("read turns of %s: %w", t.ID, err)
+			}
+			var usage coretasks.Usage
+			for _, tr := range turns {
+				usage = addCoreUsage(usage, tr.Usage)
+			}
+			view.Cards = append(view.Cards, BoardCard{Task: t, Column: coretasks.Column(stateOfStatus(t.Status), pending), PendingProposals: pending, Usage: usage})
 			if t.Status == core.TaskQueued {
 				view.Cards[len(view.Cards)-1].BlockedBy = s.blockedReason(t.ID)
 			}

@@ -22,7 +22,7 @@ func (s *Service) startRun(id core.TaskID, cmd coretasks.StartRun) {
 	if at == nil {
 		at = s.newAttempt(id, cmd.Turn, cmd.Attempt)
 	}
-	if !s.spawn(func() { s.runTurn(id, at, cmd) }) {
+	if !s.spawn(s.guarded(id, "run", func() { s.runTurn(id, at, cmd) })) {
 		at.cancel()
 	}
 }
@@ -46,10 +46,18 @@ func (s *Service) runTurn(id core.TaskID, at *attempt, cmd coretasks.StartRun) {
 	// integrity verdict goes first (SF-07, tasks.md Gate 1 fixes).
 	audits := rep.audits
 	if rep.violated {
-		s.feed(id, coretasks.IntegrityViolated{Turn: cmd.Turn, Now: s.c.Now().UTC()}, applyOpts{extra: audits})
-		audits = nil
+		if _, ok := s.feed(id, coretasks.IntegrityViolated{Turn: cmd.Turn, Now: s.c.Now().UTC()}, applyOpts{extra: audits}); ok {
+			audits = nil
+		} else {
+			// The verdict could not be stored. The turn must never end as
+			// answered after that: it fails, and the audit entries go with it.
+			rep.fin.Status, rep.fin.StartFail = coretasks.RunFailed, false
+			s.c.Log.Error("the integrity verdict of a read-only turn could not be stored; the turn is failed", "task", id)
+		}
 	}
-	s.feed(id, rep.fin, applyOpts{extra: audits})
+	if _, ok := s.feed(id, rep.fin, applyOpts{extra: audits}); !ok {
+		s.abandon(id, "run finished")
+	}
 }
 
 func (s *Service) safeExecute(id core.TaskID, at *attempt, cmd coretasks.StartRun) (rep report) {
@@ -58,6 +66,15 @@ func (s *Service) safeExecute(id core.TaskID, at *attempt, cmd coretasks.StartRu
 			s.c.Log.Error("task run panic", "task", id, "panic", v, "stack", string(debug.Stack()))
 			rep = report{fin: coretasks.RunFinished{Status: coretasks.RunFailed}}
 			s.explain(s.bgCtx(), id, "The run stopped unexpectedly. The Yggdrasil log has the details.")
+			// A read-only turn is still checked after a panic (SF-07).
+			s.killTask(id)
+			for _, c := range at.checks {
+				v := s.integrityStep(s.bgCtx(), c, guard.TurnEnds{Turn: guard.TurnID(cmd.Turn)})
+				rep.audits = append(rep.audits, v.audits...)
+				if v.violated() {
+					rep.violated = true
+				}
+			}
 		}
 	}()
 	return s.execute(id, at, cmd)
@@ -89,11 +106,18 @@ func (c *capture) started() agents.Run {
 
 func (s *Service) execute(id core.TaskID, at *attempt, cmd coretasks.StartRun) report {
 	bg := s.bgCtx()
+	// rep collects the audit entries gathered so far; every early return keeps
+	// them (the entries of the folders checked before a later one failed).
+	var rep report
 	startFailed := func(msg string) report {
 		s.explain(bg, id, msg)
-		return report{fin: coretasks.RunFinished{Status: coretasks.RunFailed, StartFail: true}}
+		rep.fin = coretasks.RunFinished{Status: coretasks.RunFailed, StartFail: true}
+		return rep
 	}
-	cancelled := func() report { return report{fin: coretasks.RunFinished{Status: coretasks.RunCancelled}} }
+	cancelled := func() report {
+		rep.fin = coretasks.RunFinished{Status: coretasks.RunCancelled}
+		return rep
+	}
 	if at.ctx.Err() != nil {
 		return cancelled()
 	}
@@ -150,12 +174,12 @@ func (s *Service) execute(id core.TaskID, at *attempt, cmd coretasks.StartRun) r
 
 	// Ask turns: fingerprint every folder before the run (SF-07).
 	var checks []*checker
-	var rep report
 	gturn := guard.TurnID(cmd.Turn)
 	if cmd.Mode == core.ModeAsk {
 		for _, d := range append([]string{cmd.Dir}, cmd.ExtraDirs...) {
 			c := &checker{dir: d, state: guard.IntegrityIdle{}}
 			checks = append(checks, c)
+			at.checks = checks
 			v := s.integrityStep(at.ctx, c, guard.TurnStarts{Turn: gturn, Mode: cmd.Mode})
 			rep.audits = append(rep.audits, v.audits...)
 			if v.violated() {
@@ -190,7 +214,7 @@ func (s *Service) execute(id core.TaskID, at *attempt, cmd coretasks.StartRun) r
 	opts := agents.StartOptions{
 		TaskID: id, Prompt: prompt, Mode: cmd.Mode, Model: st.Row.Model, Dir: cmd.Dir, ExtraDirs: cmd.ExtraDirs,
 		ResumeSessionID: resume, Env: env, MaxSubagentDepth: cmd.Caps.Depth, MaxConcurrentSubagents: cmd.Caps.Concurrent,
-		Policy: policy, ConfigTrusted: true, Admitted: adm.Admitted,
+		Policy: policy, ConfigTrusted: cmd.Mode != core.ModeAsk && adm.Admitted, Admitted: adm.Admitted,
 	}
 	res, execErr := agents.Execute(at.ctx, cap, opts, sk)
 	bt.flush()

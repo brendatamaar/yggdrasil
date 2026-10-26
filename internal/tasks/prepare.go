@@ -13,7 +13,7 @@ import (
 
 func (s *Service) startPrepare(id core.TaskID, cmd coretasks.PrepareRun) {
 	at := s.newAttempt(id, cmd.Turn, cmd.Attempt)
-	if !s.spawn(func() { s.prepare(id, at, cmd) }) {
+	if !s.spawn(s.guarded(id, "prepare", func() { s.prepare(id, at, cmd) })) {
 		at.cancel()
 	}
 }
@@ -26,6 +26,7 @@ func (s *Service) prepare(id core.TaskID, at *attempt, cmd coretasks.PrepareRun)
 	in := s.safePrepare(id, at, cmd)
 	res, ok := s.feed(id, in, applyOpts{})
 	if !ok {
+		s.abandon(id, "prepare")
 		return
 	}
 	// A kill that raced the preparation: if the core did not start the run,
