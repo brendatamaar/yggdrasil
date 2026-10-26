@@ -66,6 +66,15 @@ func (s *Service) safeExecute(id core.TaskID, at *attempt, cmd coretasks.StartRu
 			s.c.Log.Error("task run panic", "task", id, "panic", v, "stack", string(debug.Stack()))
 			rep = report{fin: coretasks.RunFinished{Status: coretasks.RunFailed}}
 			s.explain(s.bgCtx(), id, "The run stopped unexpectedly. The Yggdrasil log has the details.")
+			// A read-only turn is still checked after a panic (SF-07).
+			s.killTask(id)
+			for _, c := range at.checks {
+				v := s.integrityStep(s.bgCtx(), c, guard.TurnEnds{Turn: guard.TurnID(cmd.Turn)})
+				rep.audits = append(rep.audits, v.audits...)
+				if v.violated() {
+					rep.violated = true
+				}
+			}
 		}
 	}()
 	return s.execute(id, at, cmd)
@@ -170,6 +179,7 @@ func (s *Service) execute(id core.TaskID, at *attempt, cmd coretasks.StartRun) r
 		for _, d := range append([]string{cmd.Dir}, cmd.ExtraDirs...) {
 			c := &checker{dir: d, state: guard.IntegrityIdle{}}
 			checks = append(checks, c)
+			at.checks = checks
 			v := s.integrityStep(at.ctx, c, guard.TurnStarts{Turn: gturn, Mode: cmd.Mode})
 			rep.audits = append(rep.audits, v.audits...)
 			if v.violated() {
@@ -204,7 +214,7 @@ func (s *Service) execute(id core.TaskID, at *attempt, cmd coretasks.StartRun) r
 	opts := agents.StartOptions{
 		TaskID: id, Prompt: prompt, Mode: cmd.Mode, Model: st.Row.Model, Dir: cmd.Dir, ExtraDirs: cmd.ExtraDirs,
 		ResumeSessionID: resume, Env: env, MaxSubagentDepth: cmd.Caps.Depth, MaxConcurrentSubagents: cmd.Caps.Concurrent,
-		Policy: policy, ConfigTrusted: true, Admitted: adm.Admitted,
+		Policy: policy, ConfigTrusted: cmd.Mode != core.ModeAsk && adm.Admitted, Admitted: adm.Admitted,
 	}
 	res, execErr := agents.Execute(at.ctx, cap, opts, sk)
 	bt.flush()

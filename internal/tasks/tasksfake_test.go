@@ -501,7 +501,7 @@ func (h *harness) start() *Service {
 		Scanner: h.scanner, Snapshotter: h.snap, Env: safety.NewEnvBuilder(), Redactor: safety.NewRedactor(),
 		Hub: h.hub, Machine: fakeMachine{cpus: 16, mem: 32768}, Killer: h.killer.Kill,
 		Now: func() time.Time { return time.Now().UTC() }, NewID: db.NewID,
-		UsageEvery: time.Millisecond, SnapshotTimeout: 2 * time.Second, SnapshotRetry: time.Millisecond, LockRetry: 20 * time.Millisecond,
+		WriteModes: true, UsageEvery: time.Millisecond, SnapshotTimeout: 2 * time.Second, SnapshotRetry: time.Millisecond, LockRetry: 20 * time.Millisecond,
 	}
 	if h.tune != nil {
 		h.tune(&h.cfg)

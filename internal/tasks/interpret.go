@@ -20,6 +20,9 @@ type attempt struct {
 	n      coretasks.Attempt
 	ctx    context.Context
 	cancel context.CancelFunc
+	// checks are the integrity checks of a read-only turn, kept so a panic
+	// can still run the After snapshot.
+	checks []*checker
 }
 
 func (s *Service) newAttempt(id core.TaskID, turn coretasks.TurnID, n coretasks.Attempt) *attempt {

@@ -180,6 +180,10 @@ func (s *Service) Message(ctx context.Context, req MessageRequest) (MessageResul
 		pm.Repos = existing.Row.RepoIDs
 	}
 
+	if pm.Mode != core.ModeAsk && !s.c.WriteModes {
+		return MessageResult{}, &RejectedError{Reason: "write_modes_off", Message: "Modes that edit files are switched off in this Yggdrasil setup. Ask a question instead, or turn on write modes in the setup and restart."}
+	}
+
 	project, err := s.c.Store.GetProject(ctx, req.ProjectID)
 	if err != nil {
 		return MessageResult{}, err
