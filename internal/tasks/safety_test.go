@@ -423,9 +423,75 @@ func TestRunRechecksAdmission(t *testing.T) {
 	}
 }
 
-// TestAdmittedOnlyFromAdmit: every start the service makes carries Admitted
-// and a policy that matches its mode.
-func TestAdmittedOnlyFromAdmit(t *testing.T) {
+// TestNoRunStartsWhenAdmitRefusesAtRunTime: Admit decides again when the run
+// starts, and a refusal for any reason starts nothing. The message is accepted
+// while the main checkout is held by a build, the world changes while the task
+// waits, and then the lock is released.
+func TestNoRunStartsWhenAdmitRefusesAtRunTime(t *testing.T) {
+	cases := []struct {
+		name   string
+		mode   string
+		scope  string
+		change func(h *harness)
+	}{
+		{"enforcement dropped to limited, current_branch", "current_branch", "repo", func(h *harness) { h.adapter.caps.Enforcement = agents.EnforcementLimited }},
+		{"repo config changed, current_branch", "current_branch", "repo", func(h *harness) {
+			h.scanner.set(h.repos[0].Path, map[string]string{".claude/settings.json": `{"hooks":{}, "x":1}`})
+		}},
+		{"second repo config changed, project", "project", "project", func(h *harness) {
+			h.scanner.set(h.repos[1].Path, map[string]string{".claude/settings.json": `{"hooks":{}, "x":1}`})
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, []string{"shop-api", "shop-web"})
+			h.adapter.caps.Enforcement = agents.EnforcementHook
+			h.trust(0, claudeConfig)
+			h.trust(1, claudeConfig)
+			h.start()
+			// A build holds the main checkout of repo 0, so a current_branch task
+			// waits; a project task is not held by it, so hold Ensure instead.
+			var release Release
+			if tc.mode == "current_branch" {
+				rel, _, ok := h.lock.TryAcquire([]core.RepoID{h.repos[0].ID}, "build:x")
+				if !ok {
+					t.Fatal("could not hold the main checkout")
+				}
+				release = rel
+			} else {
+				h.wts.hold = make(chan struct{})
+				h.wts.enter = make(chan struct{}, 1)
+			}
+			req := h.msg(tc.mode, "edit", 0)
+			if tc.scope == "project" {
+				req = h.projectMsg("edit")
+			}
+			id := h.send(req).Task.ID
+			if tc.mode == "project" {
+				<-h.wts.enter
+			}
+			tc.change(h)
+			if release != nil {
+				release()
+			} else {
+				close(h.wts.hold)
+			}
+			st := h.waitStatus(id, core.TaskFailed)
+			if outcomeOf(t, st) != (coretasks.Failed{Kind: coretasks.FailStart}) {
+				t.Errorf("outcome = %#v", outcomeOf(t, st))
+			}
+			if n := len(h.adapter.Starts()); n != 0 {
+				t.Fatalf("the agent started %d time(s) although Admit refused", n)
+			}
+		})
+	}
+}
+
+// TestEveryStartCarriesAdmittedAndAMatchingPolicy: every start the service
+// makes carries Admitted and a policy that matches its mode. (It cannot tell
+// a hard-coded Admitted from the real one: TestNoRunStartsWhenAdmitRefusesAtRunTime
+// covers the refusal path.)
+func TestEveryStartCarriesAdmittedAndAMatchingPolicy(t *testing.T) {
 	h := newHarness(t, []string{"shop-api", "shop-web"})
 	h.adapter.caps.Enforcement = agents.EnforcementHook
 	h.start()
