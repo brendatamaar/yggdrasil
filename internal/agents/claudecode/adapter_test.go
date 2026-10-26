@@ -376,7 +376,7 @@ func TestRunCommandLineEnvironmentAndCleanup(t *testing.T) {
 	if slices.Contains(argv, o.Prompt) || slices.Contains(argv, "--") {
 		t.Errorf("the prompt or a separator is on the command line: %q", argv)
 	}
-	for _, want := range []string{"--forward-subagent-text", "--setting-sources", "dontAsk", "--allowedTools", "--max-budget-usd", "0.1", "--model", "haiku"} {
+	for _, want := range []string{"--forward-subagent-text", "--setting-sources=", "dontAsk", "--allowedTools", "--max-budget-usd", "0.1", "--model", "haiku"} {
 		if !slices.Contains(argv, want) {
 			t.Errorf("argument %q missing from %q", want, argv)
 		}

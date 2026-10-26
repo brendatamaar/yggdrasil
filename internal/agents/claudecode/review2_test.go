@@ -109,9 +109,8 @@ func TestStartAlwaysPinsSettingsAndMCP(t *testing.T) {
 		t.Fatalf("%+v %v", res, err)
 	}
 	argv := strings.Split(read(t, out+".args"), "\x00")
-	i := slices.Index(argv, "--setting-sources")
-	if i < 0 || argv[i+1] != "" {
-		t.Errorf("--setting-sources not empty in %q", argv)
+	if !slices.Contains(argv, "--setting-sources=") {
+		t.Errorf("--setting-sources= (empty list, equals form) not in %q", argv)
 	}
 	if !slices.Contains(argv, "--strict-mcp-config") {
 		t.Errorf("no --strict-mcp-config in %q", argv)

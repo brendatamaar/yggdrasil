@@ -19,7 +19,7 @@ func TestBuildArgsGoldenForTheWritingModes(t *testing.T) {
 	base := []string{
 		"-p", "--output-format", "stream-json", "--verbose", "--forward-subagent-text",
 		"--settings", "SETTINGS",
-		"--setting-sources", "",
+		"--setting-sources=",
 		"--strict-mcp-config", "--mcp-config", "MCP",
 		"--permission-mode", "dontAsk",
 		"--allowedTools", "Read,Grep,Glob,Edit,Write,MultiEdit,Bash,PowerShell,Agent",
@@ -43,7 +43,7 @@ func TestBuildArgsGoldenForTheWritingModes(t *testing.T) {
 	}
 	// A mode that is not a writing mode never gets the writing tools.
 	for _, mode := range []core.TaskMode{core.ModeAsk, ""} {
-		if got := buildArgs("SETTINGS", "MCP", agents.StartOptions{Mode: mode}); !slices.Contains(got, "Read,Grep,Glob") || slices.Contains(got, base[15]) {
+		if got := buildArgs("SETTINGS", "MCP", agents.StartOptions{Mode: mode}); !slices.Contains(got, "Read,Grep,Glob") || slices.Contains(got, base[14]) {
 			t.Errorf("mode %q: args %q", mode, got)
 		}
 	}

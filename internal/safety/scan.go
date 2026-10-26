@@ -18,17 +18,20 @@ import (
 	"unicode/utf8"
 
 	"github.com/brendatamaar/yggdrasil/internal/core/guard"
+	"github.com/brendatamaar/yggdrasil/internal/platform"
 )
 
 // Limits of the agent-config scan (SF-09).
 const (
 	// MaxConfigFileSize is the largest agent-config file the scan reads.
 	MaxConfigFileSize = 1 << 20
-	// MaxConfigFiles is the most matching files a scan accepts.
-	MaxConfigFiles = 5000
 	// maxWalked bounds how many directory entries the walk visits.
 	maxWalked = 500000
 )
+
+// MaxConfigFiles is the most matching files a scan accepts. It is a variable
+// only so the contract suite can lower it; nothing else writes it.
+var MaxConfigFiles = 5000
 
 // ErrScan is wrapped by every scan failure. The message names the file
 // relative to the repo and never holds an absolute path.
@@ -96,6 +99,56 @@ func SelectConfig(rel string, paths, names []string) bool {
 	return false
 }
 
+// LinkBlocksConfig reports whether a link, junction or special entry at rel
+// would hide or replace agent configuration: rel is a config path, a folder
+// above one, something below one, or is named like a config name. The scan
+// refuses such an entry because it can't see what the link leads to.
+func LinkBlocksConfig(rel string, paths, names []string) bool {
+	if SelectConfig(rel, paths, names) {
+		return true
+	}
+	return isAboveConfigPath(rel, paths)
+}
+
+// isAboveConfigPath is true when rel is a folder on the way to one of paths.
+func isAboveConfigPath(rel string, paths []string) bool {
+	for _, p := range paths {
+		p = cleanScanPath(p)
+		if p != "" && len(p) > len(rel) && p[len(rel)] == '/' && strings.EqualFold(p[:len(rel)], rel) {
+			return true
+		}
+	}
+	return false
+}
+
+// skippedFolders are dependency and build folders the walk does not enter
+// unless a config path runs through them, so a big repo does not exceed the
+// walk cap for ever. Config files that are only matched by name inside them
+// are not seen: they are third-party code, not the repo's own agent setup.
+var skippedFolders = []string{"node_modules", "target", "build", "dist", ".venv", "vendor"}
+
+func skippable(rel, name string, paths []string) bool {
+	for _, s := range skippedFolders {
+		if strings.EqualFold(name, s) {
+			return !isAboveConfigPath(rel, paths) && !SelectConfig(rel, paths, nil)
+		}
+	}
+	return false
+}
+
+// isLinkEntry is true for a symlink, a junction (a reparse point Go may report
+// as a plain directory) or any other irregular entry.
+func isLinkEntry(p string, d fs.DirEntry) bool {
+	if d.Type()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
+		return true
+	}
+	if d.IsDir() {
+		r, err := platform.IsReparsePoint(p)
+		return err != nil || r
+	}
+	return false
+}
+
 // Scan walks dir (skipping .git), reads every selected file and returns the
 // hash and the "would run" summary. A file over 1 MiB, a selected link and any
 // read error fail the whole scan, naming the file relative to dir.
@@ -126,8 +179,11 @@ func Scan(ctx context.Context, dir string, paths, names []string) (guard.Scan, e
 		if visited++; visited > maxWalked {
 			return fmt.Errorf("%w: the repo has too many files", ErrScan)
 		}
+		if LinkBlocksConfig(rel, paths, names) && isLinkEntry(p, d) {
+			return fmt.Errorf("%w: %s is a link", ErrScan, rel)
+		}
 		if d.IsDir() {
-			if strings.EqualFold(d.Name(), ".git") {
+			if strings.EqualFold(d.Name(), ".git") || skippable(rel, d.Name(), paths) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -157,15 +213,26 @@ func Scan(ctx context.Context, dir string, paths, names []string) (guard.Scan, e
 		}
 		return guard.Scan{}, ErrScan
 	}
-	// WalkDir does not follow a linked folder, so a linked .claude would be
-	// skipped silently: refuse it.
+	// Belt and braces: every segment of every config path must be a plain
+	// entry, whatever the walk saw (a link may have appeared since).
 	for _, p := range paths {
 		p = cleanScanPath(p)
 		if p == "" {
 			continue
 		}
-		if fi, lerr := os.Lstat(filepath.Join(dir, filepath.FromSlash(p))); lerr == nil && fi.Mode()&fs.ModeSymlink != 0 {
-			return guard.Scan{}, fmt.Errorf("%w: %s is a link", ErrScan, p)
+		segs := strings.Split(p, "/")
+		for i := range segs {
+			sub := strings.Join(segs[:i+1], "/")
+			full := filepath.Join(dir, filepath.FromSlash(sub))
+			if _, lerr := os.Lstat(full); lerr != nil {
+				if errors.Is(lerr, fs.ErrNotExist) {
+					break
+				}
+				return guard.Scan{}, fmt.Errorf("%w: %s can't be checked", ErrScan, sub)
+			}
+			if r, rerr := platform.IsReparsePoint(full); rerr != nil || r {
+				return guard.Scan{}, fmt.Errorf("%w: %s is a link", ErrScan, sub)
+			}
 		}
 	}
 	return BuildScan(in), nil

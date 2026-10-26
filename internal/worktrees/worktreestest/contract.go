@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	"github.com/brendatamaar/yggdrasil/internal/platform"
@@ -40,6 +41,103 @@ type Env struct {
 
 // Factory builds an Env whose worktrees go under dataDir.
 type Factory func(t *testing.T, dataDir string) Env
+
+// StoreEnv is one worktrees.Store under test.
+type StoreEnv struct {
+	Store worktrees.Store
+	// NewScope makes a task and a repo the store accepts rows for.
+	NewScope func(t *testing.T) (core.TaskID, core.RepoID)
+	// Audits returns how many audit entries exist for the subject.
+	Audits func(subject string) int
+}
+
+// StoreContract runs the contract of worktrees.Store against the fake and the
+// database: Record is atomic (row and audit entry together or neither), ids
+// are unique, and List only returns the task's own rows.
+func StoreContract(t *testing.T, mk func(t *testing.T) StoreEnv) {
+	t.Helper()
+	ctx := context.Background()
+	row := func(id string, task core.TaskID, repo core.RepoID) core.Worktree {
+		return core.Worktree{ID: core.WorktreeID(id), RepoID: repo, TaskID: task, Name: "calm-pine-" + id, Path: filepath.Join(t.TempDir(), "wt"),
+			Branch: "ygg/calm-pine-" + id, Status: core.WorktreeActive, CreatedAt: time.Now().UTC().Truncate(time.Second)}
+	}
+	audit := func(id string, task core.TaskID) core.AuditEntry {
+		return core.AuditEntry{ID: core.AuditID(id), At: time.Now().UTC(), Actor: "system", Action: "worktree.create",
+			Subject: "task:" + string(task), Detail: []byte(`{"k":"v"}`)}
+	}
+
+	t.Run("empty list", func(t *testing.T) {
+		env := mk(t)
+		task, _ := env.NewScope(t)
+		got, err := env.Store.List(ctx, task)
+		if err != nil || len(got) != 0 {
+			t.Fatalf("List = %+v, %v", got, err)
+		}
+	})
+	t.Run("list after record", func(t *testing.T) {
+		env := mk(t)
+		task, repo := env.NewScope(t)
+		w := row("wt_a1", task, repo)
+		a := audit("aud_a1", task)
+		if err := env.Store.Record(ctx, w, "abc123", a); err != nil {
+			t.Fatal(err)
+		}
+		got, err := env.Store.List(ctx, task)
+		if err != nil || len(got) != 1 {
+			t.Fatalf("List = %+v, %v", got, err)
+		}
+		if got[0].ID != w.ID || got[0].Path != w.Path || got[0].Branch != w.Branch || got[0].Name != w.Name || got[0].Status != core.WorktreeActive {
+			t.Fatalf("List returned %+v, recorded %+v", got[0], w)
+		}
+		if n := env.Audits(a.Subject); n != 1 {
+			t.Fatalf("%d audit entries, want 1", n)
+		}
+	})
+	t.Run("duplicate id is an error and stores nothing", func(t *testing.T) {
+		env := mk(t)
+		task, repo := env.NewScope(t)
+		if err := env.Store.Record(ctx, row("wt_d1", task, repo), "abc", audit("aud_d1", task)); err != nil {
+			t.Fatal(err)
+		}
+		dup := row("wt_d1", task, repo)
+		dup.Name = "other-name-d"
+		if err := env.Store.Record(ctx, dup, "abc", audit("aud_d2", task)); err == nil {
+			t.Fatal("a duplicate worktree id was accepted")
+		}
+		if got, _ := env.Store.List(ctx, task); len(got) != 1 {
+			t.Fatalf("%d rows after the failed record, want 1", len(got))
+		}
+		if n := env.Audits("task:" + string(task)); n != 1 {
+			t.Fatalf("%d audit entries after the failed record, want 1", n)
+		}
+	})
+	t.Run("a bad audit entry rolls the row back", func(t *testing.T) {
+		env := mk(t)
+		task, repo := env.NewScope(t)
+		bad := audit("aud_b1", task)
+		bad.Actor = ""
+		if err := env.Store.Record(ctx, row("wt_b1", task, repo), "abc", bad); err == nil {
+			t.Fatal("an audit entry without an actor was accepted")
+		}
+		if got, _ := env.Store.List(ctx, task); len(got) != 0 {
+			t.Fatalf("row stored without its audit entry: %+v", got)
+		}
+	})
+	t.Run("tasks do not see each other's rows", func(t *testing.T) {
+		env := mk(t)
+		a, repoA := env.NewScope(t)
+		b, _ := env.NewScope(t)
+		if err := env.Store.Record(ctx, row("wt_i1", a, repoA), "abc", audit("aud_i1", a)); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := env.Store.List(ctx, b); len(got) != 0 {
+			t.Fatalf("task b sees %+v", got)
+		}
+		if got, _ := env.Store.List(ctx, a); len(got) != 1 {
+			t.Fatalf("task a sees %+v", got)
+		}
+	})
+}
 
 // WorktreesContract runs the contract of worktrees.Ensurer.
 func WorktreesContract(t *testing.T, f Factory) {
@@ -227,6 +325,10 @@ func WorktreesContract(t *testing.T, f Factory) {
 		got, err := env.Ensurer.Ensure(ctx, "tsk_1", []worktrees.RepoRef{{ID: "rep_w", Path: `\\wsl$\Ubuntu\home\ada\shop-api`}})
 		if err == nil || len(got) != 0 {
 			t.Fatalf("got %+v, %v; want a refusal", got, err)
+		}
+		var we *worktrees.Error
+		if !errors.As(err, &we) || we.UserMessage() == "" || strings.Contains(we.UserMessage(), "wsl") || strings.Contains(we.UserMessage(), "Ubuntu") {
+			t.Fatalf("user message must be plain and hold no path: %v", err)
 		}
 	})
 

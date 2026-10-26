@@ -17,7 +17,7 @@ func TestBuildArgs(t *testing.T) {
 	want := []string{
 		"-p", "--output-format", "stream-json", "--verbose", "--forward-subagent-text",
 		"--settings", `C:\tmp\settings.json`,
-		"--setting-sources", "",
+		"--setting-sources=",
 		"--strict-mcp-config", "--mcp-config", `C:\tmp\mcp.json`,
 		"--permission-mode", "dontAsk",
 		"--allowedTools", "Read,Grep,Glob",

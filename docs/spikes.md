@@ -200,3 +200,5 @@ Without `--strict-mcp-config` the init event lists the account's own connectors 
 6. The repo's `CLAUDE.md` text still reaches the model as prompt context (not executable).
 
 Not tested: user-level hooks under `""` (excluded by definition of the empty list), nested `CLAUDE.md`, `apiKeyHelper`/`statusLine`/`env` keys in project settings (all project settings are excluded by the empty source list).
+
+**B5 follow-up (2026-10-26):** the adapter passes `--setting-sources=` (equals form, empty list). Verified with the real CLI (hook fires, repo hook/agents/commands do not load). Reason: an empty positional argument can be dropped by cmd.exe when the CLI is an npm `.cmd` shim, which would make the next flag the value of `--setting-sources`.

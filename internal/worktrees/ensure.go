@@ -6,10 +6,12 @@ package worktrees
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
@@ -104,6 +106,12 @@ func (e *Ensurer) Ensure(ctx context.Context, task core.TaskID, repos []RepoRef)
 	out := make([]core.Worktree, 0, len(repos))
 	for _, r := range repos {
 		if w, ok := byRepo[r.ID]; ok {
+			if !e.underWorktreeRoot(w.Path) {
+				return out, &Error{
+					Msg: "A saved worktree for this task is not in Yggdrasil's worktree folder, so it was not used. Check the data folder setting or restore the folder, then try again.",
+					Err: fmt.Errorf("worktree %s of repo %s is outside the worktree root", w.ID, r.ID),
+				}
+			}
 			out = append(out, w)
 			continue
 		}
@@ -118,7 +126,11 @@ func (e *Ensurer) Ensure(ctx context.Context, task core.TaskID, repos []RepoRef)
 
 func (e *Ensurer) create(ctx context.Context, task core.TaskID, r RepoRef) (core.Worktree, error) {
 	if err := platform.CheckPath(r.Path); err != nil {
-		return core.Worktree{}, &Error{Msg: err.Error(), Err: err}
+		// The detail (it may hold the path) stays in Err, never in the message.
+		return core.Worktree{}, &Error{
+			Msg: "Yggdrasil can't use this repo's folder. Folders inside WSL are not supported yet; move the repository to a normal Windows folder and add it again.",
+			Err: err,
+		}
 	}
 	fail := func(err error) (core.Worktree, error) {
 		if ctx.Err() != nil {
@@ -159,10 +171,13 @@ func (e *Ensurer) create(ctx context.Context, task core.TaskID, r RepoRef) (core
 			ID: core.WorktreeID(e.c.NewID("wt")), RepoID: r.ID, TaskID: task, Name: string(name),
 			Path: long, Branch: name.Branch(), Status: core.WorktreeActive, CreatedAt: now,
 		}
+		detail, err := json.Marshal(map[string]string{"worktree": string(w.ID), "repo": string(r.ID), "branch": w.Branch, "base": base})
+		if err != nil {
+			return fail(err)
+		}
 		audit := core.AuditEntry{
 			ID: core.AuditID(e.c.NewID("aud")), At: now, Actor: "system", Action: "worktree.create",
-			Subject: "task:" + string(task),
-			Detail:  []byte(fmt.Sprintf(`{"worktree":%q,"repo":%q,"branch":%q,"base":%q}`, w.ID, r.ID, w.Branch, base)),
+			Subject: "task:" + string(task), Detail: detail,
 		}
 		if err := e.c.Store.Record(ctx, w, base, audit); err != nil {
 			return core.Worktree{}, &Error{
@@ -176,6 +191,30 @@ func (e *Ensurer) create(ctx context.Context, task core.TaskID, r RepoRef) (core
 		Msg: "Yggdrasil could not find a free worktree name. Try again.",
 		Err: fmt.Errorf("repo %s: %w", r.ID, ErrNameTaken),
 	}
+}
+
+// underWorktreeRoot reports whether p lies under DataDir/wt (plain or long
+// form), the only place Yggdrasil makes worktrees.
+func (e *Ensurer) underWorktreeRoot(p string) bool {
+	roots := []string{filepath.Join(e.c.DataDir, "wt")}
+	if long, err := platform.LongPath(e.c.DataDir); err == nil {
+		roots = append(roots, filepath.Join(long, "wt"))
+	}
+	if long, err := platform.LongPath(roots[0]); err == nil {
+		roots = append(roots, long)
+	}
+	p = filepath.Clean(p)
+	for _, root := range roots {
+		root = filepath.Clean(root)
+		if platform.FoldCase() {
+			root, p = strings.ToLower(root), strings.ToLower(p)
+		}
+		rel, err := filepath.Rel(root, p)
+		if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
+			return true
+		}
+	}
+	return false
 }
 
 // taken reports whether the branch or the folder for name already exists.

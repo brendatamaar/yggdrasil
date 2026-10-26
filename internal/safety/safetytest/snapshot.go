@@ -51,6 +51,9 @@ func (FakeSnapshotter) Snapshot(ctx context.Context, dir string) (guard.Snapshot
 		if rel == "." || d.IsDir() || rel == ".fakehead" {
 			return nil
 		}
+		if rel == ".fakehuge" {
+			return ErrFakeTooLarge
+		}
 		for _, ig := range ignored {
 			if rel == ig || strings.HasPrefix(rel, strings.TrimSuffix(ig, "/")+"/") {
 				return nil
@@ -89,7 +92,17 @@ type SnapshotHarness struct {
 	Ignore func(t *testing.T, dir, name string)
 	// SetExec changes the executable mode of a tracked file.
 	SetExec func(t *testing.T, dir, rel string)
+	// Oversize makes the working tree larger than the snapshot allows (the
+	// real test lowers the limit and adds a file or two).
+	Oversize func(t *testing.T, dir string)
+	// IsTooLarge reports whether err is the snapshotter's "tree too large" error.
+	IsTooLarge func(err error) bool
+	// NewRef adds a branch or tag at HEAD without changing the tree or HEAD.
+	NewRef func(t *testing.T, dir string)
 }
+
+// ErrFakeTooLarge is what FakeSnapshotter returns for a tree holding .fakehuge.
+var ErrFakeTooLarge = errors.New("fake: working tree too large to fingerprint")
 
 func writeFile(t *testing.T, p, c string, appendTo bool) {
 	t.Helper()
@@ -128,6 +141,13 @@ func FakeHarness() SnapshotHarness {
 		},
 		SetExec: func(t *testing.T, d, rel string) {
 			writeFile(t, filepath.Join(d, ".fakemodes"), rel+"\n", true)
+		},
+		Oversize: func(t *testing.T, d string) {
+			writeFile(t, filepath.Join(d, ".fakehuge"), "x", false)
+		},
+		IsTooLarge: func(err error) bool { return errors.Is(err, ErrFakeTooLarge) },
+		NewRef: func(t *testing.T, d string) {
+			writeFile(t, filepath.Join(d, ".fakerefs"), "branch\n", true)
 		},
 	}
 }
@@ -205,6 +225,23 @@ func SnapshotterContract(t *testing.T, h SnapshotHarness) {
 		},
 		func(t *testing.T, d string) { write(t, d, "build.log", "noise") }, false)
 
+	check(t, "new branch or tag", nil, func(t *testing.T, d string) { h.NewRef(t, d) }, true)
+	t.Run("oversize tree is a distinct error", func(t *testing.T) {
+		dir := h.NewRepo(t)
+		h.Oversize(t, dir)
+		_, err := h.Snap.Snapshot(context.Background(), dir)
+		if err == nil || !h.IsTooLarge(err) {
+			t.Fatalf("err = %v, want the too-large error", err)
+		}
+	})
+	t.Run("cancelled snapshot fails", func(t *testing.T) {
+		dir := h.NewRepo(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if _, err := h.Snap.Snapshot(ctx, dir); err == nil {
+			t.Fatal("a cancelled snapshot succeeded")
+		}
+	})
 	t.Run("not a repository", func(t *testing.T) {
 		if _, err := h.Snap.Snapshot(context.Background(), h.NonRepo(t)); err == nil {
 			t.Fatal("a plain folder gave a snapshot")

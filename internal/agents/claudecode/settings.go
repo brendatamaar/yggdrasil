@@ -64,10 +64,11 @@ func buildArgs(settingsPath, mcpPath string, o agents.StartOptions) []string {
 	args := []string{
 		"-p", "--output-format", "stream-json", "--verbose", "--forward-subagent-text",
 		"--settings", settingsPath,
-		// An empty source list loads no user, project or local settings, so
+		// The equals form carries the empty list without an empty argument,
+		// which cmd.exe would drop for a .cmd shim. An empty source list loads no user, project or local settings, so
 		// no repo or user hook, MCP server, agent, skill or command runs
 		// (docs/spikes.md B5). Repo config is inert in every mode.
-		"--setting-sources", "",
+		"--setting-sources=",
 		// Only our MCP file loads: none of the repo's, none of the account's
 		// connectors. The file is empty unless the run has Yggdrasil's server.
 		"--strict-mcp-config", "--mcp-config", mcpPath,
