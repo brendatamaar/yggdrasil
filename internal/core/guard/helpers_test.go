@@ -93,7 +93,7 @@ func genArgv(r *rand.Rand) []string {
 	argv := []string{prog}
 	argv = append(argv, pick(r, nil, []string{"test"}, []string{"vet", "./..."}, []string{"run", "test"}, []string{"push", "--force"})...)
 	for n := r.Intn(3); n > 0; n-- {
-		argv = append(argv, pick(r, "pkg", "./pkg", "-run", "--config=x", "@r.txt", `C:\work\repo\x`, "C:/work/repo/x", `C:\elsewhere\x`, "../x", "",
+		argv = append(argv, pick(r, "pkg", "./pkg", "-run", "--config=x", "@r.txt", "./a,../..", `C:\work\repo\x`, "C:/work/repo/x", `C:\elsewhere\x`, "../x", "",
 			`\-exec=evil.sh`, `$'\055x'`, `{-x,y}`, `"-"x`, `''-x`, "-", "$HOME", "*", "~", "é", "a b", "a\tb", "a;b", "x\\y"))
 	}
 	return argv

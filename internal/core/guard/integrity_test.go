@@ -31,7 +31,7 @@ func TestStepIntegrityTable(t *testing.T) {
 			Unverifiable{Turn: turn, Why: "locked"}, nil, func(t *testing.T, c []Command) { wantStop(t, c, turn, StopCannotVerify) }},
 		{"arming + other turn", Arming{Turn: turn}, SnapshotTaken{Turn: "t2", Phase: PhaseBefore, Snap: snapA}, Arming{Turn: turn}, nil, nil},
 		{"arming + wrong phase", Arming{Turn: turn}, SnapshotTaken{Turn: turn, Phase: PhaseAfter, Snap: snapA}, Arming{Turn: turn}, nil, nil},
-		{"arming + turn ends", Arming{Turn: turn}, TurnEnds{Turn: turn}, Arming{Turn: turn}, nil, nil},
+		{"arming + turn ends", Arming{Turn: turn}, TurnEnds{Turn: turn}, Unverifiable{Turn: turn, Why: "the turn ended before the snapshot before it was taken"}, nil, func(t *testing.T, c []Command) { wantStop(t, c, turn, StopCannotVerify) }},
 		{"armed + turn ends", Armed{Turn: turn, Before: snapA}, TurnEnds{Turn: turn}, Checking{Turn: turn, Before: snapA},
 			[]Command{TakeSnapshot{Turn: turn, Phase: PhaseAfter}}, nil},
 		{"armed + other turn ends", Armed{Turn: turn, Before: snapA}, TurnEnds{Turn: "t2"}, Armed{Turn: turn, Before: snapA}, nil, nil},

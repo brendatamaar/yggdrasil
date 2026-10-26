@@ -253,8 +253,11 @@ func TestPropIntegrityTurnIDKept(t *testing.T) {
 		if _, idle := prev.(IntegrityIdle); idle {
 			return
 		}
-		if _, ok := in.(TurnStarts); ok && isTerminal(prev) {
+		if _, ok := in.(TurnStarts); ok {
 			return
+		}
+		if _, ended := in.(TurnEnds); ended && isArming(prev) {
+			return // the run ended before the Before snapshot: Unverifiable
 		}
 		if _, aborted := in.(TurnAborted); aborted {
 			if _, back := next.(IntegrityIdle); back {

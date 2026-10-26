@@ -108,7 +108,7 @@ func refNameRe(name string, fold bool) *regexp.Regexp {
 }
 
 var (
-	refPlainWord = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./ -]+$`)
+	refPlainWord = regexp.MustCompile(`^[A-Za-z0-9_%+=:./ -]+$`)
 	refDriveAbs  = regexp.MustCompile(`^[A-Za-z]:/`)
 )
 

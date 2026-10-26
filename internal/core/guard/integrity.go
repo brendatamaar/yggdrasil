@@ -104,6 +104,14 @@ func (TurnEnds) isIntegrityInput()       {}
 // stopped. A TurnStarts for a new turn ID starts fresh from any terminal
 // state (Ask: Arming; other modes: Idle).
 func StepIntegrity(s Integrity, in IntegrityInput) (Integrity, []Command) {
+	// S2: a different turn replaces a live check. The old turn gets its
+	// Unverifiable verdict as commands, then the new turn starts fresh.
+	if ts, ok := in.(TurnStarts); ok {
+		if old := liveTurn(s); old != "" && ts.Turn != old {
+			next, cmds := startTurn(IntegrityIdle{}, in)
+			return next, append(supersede(old), cmds...)
+		}
+	}
 	switch st := s.(type) {
 	case IntegrityIdle:
 		return startTurn(s, in)
@@ -135,6 +143,11 @@ func StepIntegrity(s Integrity, in IntegrityInput) (Integrity, []Command) {
 		case TurnAborted:
 			if in.Turn == st.Turn {
 				return IntegrityIdle{}, nil
+			}
+		case TurnEnds:
+			// The run ended before the Before snapshot returned.
+			if in.Turn == st.Turn {
+				return unverifiable(st.Turn, "the turn ended before the snapshot before it was taken")
 			}
 		}
 	case Armed:
@@ -196,8 +209,28 @@ func startTurn(s Integrity, in IntegrityInput) (Integrity, []Command) {
 // aborted: the turn ended without its After check. The task is already
 // stopped, so there is no StopTask; the user sees the Unverifiable state.
 func aborted(t TurnID) (Integrity, []Command) {
-	return Unverifiable{Turn: t, Why: "the turn was cancelled or crashed before it could be checked"}, []Command{
+	return Unverifiable{Turn: t, Why: "the turn was cancelled or crashed before it could be checked"}, supersede(t)
+}
+
+// liveTurn is the turn of a check in flight, or "".
+func liveTurn(s Integrity) TurnID {
+	switch st := s.(type) {
+	case Arming:
+		return st.Turn
+	case Armed:
+		return st.Turn
+	case Checking:
+		return st.Turn
+	}
+	return ""
+}
+
+// supersede tells the shell a turn could not be verified without stopping it
+// (it is already stopped or replaced): an audit entry and a flag for the user.
+func supersede(t TurnID) []Command {
+	return []Command{
 		Audit{Entry: AuditEntry{Action: "guard.integrity", Outcome: "unverifiable", Turn: t}},
+		FlagTask{Turn: t},
 	}
 }
 

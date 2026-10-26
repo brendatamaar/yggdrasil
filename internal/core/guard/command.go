@@ -11,11 +11,13 @@ import (
 var ErrShellSyntax = errors.New("the command line uses shell syntax that isn't allowed")
 
 // wordAllowed reports whether a is made only of the characters a word may
-// hold: [A-Za-z0-9_@%+=:,./-] and, inside quotes, the space. It is the single
+// hold: [A-Za-z0-9_%+=:./-] and, inside quotes, the space. It is the single
 // definition used by ParseCommandLine (to refuse) and by the tail rule of the
-// allowlist (to judge), so the word we judge is the word the shell sees: no
-// character in it is special to bash, cmd or PowerShell, except that "%" is
-// allowed once (a second "%" could close a cmd variable, see below).
+// allowlist (to judge), so the word we judge is the word the shell sees. "," is
+// not allowed (the PowerShell array operator: ./a,../.. is two arguments
+// there) and neither is "@" (PowerShell splatting). "=" stays: it only matters
+// at the start of a PowerShell statement, and the program is checked first.
+// "%" is allowed once (a second "%" could close a cmd variable, see below).
 func wordAllowed(a string) bool {
 	for i := 0; i < len(a); i++ {
 		if !wordByte(a[i]) && a[i] != ' ' {
@@ -30,7 +32,7 @@ func wordByte(c byte) bool {
 	case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
 		return true
 	}
-	return strings.IndexByte("_@%+=:,./-", c) >= 0
+	return strings.IndexByte("_%+=:./-", c) >= 0
 }
 
 // ParseCommandLine splits a command line into argv, or refuses it. The shell

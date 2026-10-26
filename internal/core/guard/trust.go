@@ -57,8 +57,13 @@ const (
 // Why is the reason of an Untrusted state.
 type Why struct {
 	Kind WhyKind
-	// Was is the hash that was trusted, for WhyConfigChanged.
+	// Was is the hash that was trusted, for WhyConfigChanged; kept through
+	// WhyScanIncomplete so a later complete scan can restore it.
 	Was string
+	// Prior is, for WhyScanIncomplete only, the reason that held before the
+	// scan failed. A complete scan recomputes Why from it (a revoke stays
+	// revoked).
+	Prior WhyKind
 }
 
 // TrustInput is an input of StepTrust (sealed): Scanned, ScanFailed,
@@ -157,9 +162,11 @@ func StepTrust(t Trust, in TrustInput) (Trust, []Command) {
 			if in.Scan.Empty() {
 				return NoConfig{Repo: st.Repo}, nil
 			}
-			return Untrusted{Repo: st.Repo, Found: in.Scan, Why: st.Why}, nil
+			return Untrusted{Repo: st.Repo, Found: in.Scan, Why: rescanWhy(st.Why)}, nil
 		case UserTrusts:
-			if in.Hash != "" && in.Hash == st.Found.Hash {
+			// Only a complete scan can re-arm trust: the hash the user saw
+			// may come from a partial view.
+			if st.Why.Kind != WhyScanIncomplete && in.Hash != "" && in.Hash == st.Found.Hash {
 				return Trusted{Repo: st.Repo, Hash: in.Hash, At: in.Now, Scan: st.Found}, []Command{
 					PersistTrust{Repo: in.Repo, Hash: in.Hash},
 					Audit{Entry: trustEntry("trusted", in.Repo, st.Found)},
@@ -208,6 +215,21 @@ func repoOf(t Trust) core.RepoID {
 	return ""
 }
 
+// rescanWhy is the reason after a complete scan: an incomplete scan falls back
+// to the reason it interrupted; any other reason is kept.
+func rescanWhy(w Why) Why {
+	if w.Kind != WhyScanIncomplete {
+		return w
+	}
+	switch w.Prior {
+	case WhyRevoked:
+		return Why{Kind: WhyRevoked}
+	case WhyConfigChanged:
+		return Why{Kind: WhyConfigChanged, Was: w.Was}
+	}
+	return Why{Kind: WhyNeverTrusted}
+}
+
 func neverTrusted(repo core.RepoID, s Scan) (Trust, []Command) {
 	return Untrusted{Repo: repo, Found: s, Why: Why{Kind: WhyNeverTrusted}}, []Command{
 		Audit{Entry: trustEntry("trust_required", repo, s)},
@@ -219,16 +241,19 @@ func neverTrusted(repo core.RepoID, s Scan) (Trust, []Command) {
 // persisted trust, if any, is left alone: the next complete scan decides.
 func scanFailed(t Trust, sf ScanFailed) (Trust, []Command) {
 	var found Scan
+	why := Why{Kind: WhyScanIncomplete}
 	switch st := t.(type) {
 	case Untrusted:
 		if st.Why.Kind == WhyScanIncomplete {
 			return t, nil // already so; stay idempotent
 		}
 		found = st.Found
+		why.Was, why.Prior = st.Why.Was, st.Why.Kind
 	case Trusted:
 		found = st.Scan
+		why.Was, why.Prior = st.Hash, WhyConfigChanged
 	}
-	return Untrusted{Repo: sf.Repo, Found: found, Why: Why{Kind: WhyScanIncomplete}}, []Command{
+	return Untrusted{Repo: sf.Repo, Found: found, Why: why}, []Command{
 		Audit{Entry: AuditEntry{Action: "guard.trust", Outcome: "scan_incomplete", Repo: sf.Repo}},
 	}
 }
