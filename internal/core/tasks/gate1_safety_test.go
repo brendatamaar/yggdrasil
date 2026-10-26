@@ -11,7 +11,7 @@ import (
 // dropped, even when the turn already finished.
 func TestIntegrityAfterFinish(t *testing.T) {
 	needs := NeedsYou{Why: NeedsIntegrityViolated}
-	for _, o := range []Outcome{Answered{}, ReadyForReview{}} {
+	for _, o := range []Outcome{Answered{}, ReadyForReview{}, Cancelled{}, Failed{Kind: FailRun}, Dismissed{}, NeedsYou{Why: NeedsCapExceeded}} {
 		tk := Task{ID: "k", Mode: core.ModeAsk, Turns: 1, State: Idle{Outcome: o, Turn: "t1", At: t0}}
 		now := t0.Add(5)
 		got, cmds := Step(tk, IntegrityViolated{Turn: "t1", Now: now})
@@ -23,7 +23,7 @@ func TestIntegrityAfterFinish(t *testing.T) {
 			t.Errorf("%T: commands %s", o, names(cmds))
 		}
 	}
-	// Not the last turn, an outcome that is not a success, or no turn: unchanged.
+	// Not the last turn, no turn, or already an integrity needs_you: unchanged.
 	for _, tc := range []struct {
 		name string
 		s    Idle
@@ -32,9 +32,7 @@ func TestIntegrityAfterFinish(t *testing.T) {
 		{"other turn", Idle{Outcome: Answered{}, Turn: "t1"}, IntegrityViolated{Turn: "t2"}},
 		{"legacy idle without turn", Idle{Outcome: Answered{}}, IntegrityViolated{Turn: "t1"}},
 		{"empty turn on both", Idle{Outcome: Answered{}}, IntegrityViolated{}},
-		{"dismissed", Idle{Outcome: Dismissed{}, Turn: "t1"}, IntegrityViolated{Turn: "t1"}},
-		{"cancelled", Idle{Outcome: Cancelled{}, Turn: "t1"}, IntegrityViolated{Turn: "t1"}},
-		{"already needs you", Idle{Outcome: NeedsYou{Why: NeedsCapExceeded}, Turn: "t1"}, IntegrityViolated{Turn: "t1"}},
+		{"already integrity", Idle{Outcome: NeedsYou{Why: NeedsIntegrityViolated}, Turn: "t1"}, IntegrityViolated{Turn: "t1"}},
 	} {
 		tk := Task{ID: "k", Mode: core.ModeAsk, Turns: 1, State: tc.s}
 		got, cmds := Step(tk, tc.in)
@@ -182,7 +180,7 @@ func TestStoppingEndsOnPrepareResult(t *testing.T) {
 			Prepared{Turn: "t1", Attempt: 1, Dir: "w", Now: t0},
 		} {
 			tk := Task{ID: "k", Mode: core.ModeCode, Turns: 1,
-				State: Stopping{Turn: "t1", Attempt: 1, Since: t0, Cause: cause, Usage: Usage{InputTokens: 4}}}
+				State: Stopping{Turn: "t1", Attempt: 1, Since: t0, Cause: cause, Phase: StopBeforeStart, Usage: Usage{InputTokens: 4}}}
 			got, cmds := Step(tk, in)
 			if got.State != (Idle{Outcome: want, Turn: "t1", At: t0}) {
 				t.Errorf("%s/%T: state %#v", cause, in, got.State)
@@ -210,5 +208,82 @@ func TestStoppingEndsOnPrepareResult(t *testing.T) {
 	tk := Task{ID: "k", Turns: 1, State: Stopping{Turn: "t1", Attempt: 1, Since: t0, Cause: CauseUserCancel}}
 	if g, c := Step(tk, ProcessesGone{Turn: "t1", Attempt: 1}); !sameTask(g, tk) || len(c) != 0 {
 		t.Errorf("ProcessesGone changed a stopping task")
+	}
+}
+
+// S1: Prepared/PrepareFailed end a stop only when the process never started. A
+// stop that came from Running ignores a duplicate prepare result; only
+// RunFinished ends it.
+func TestStoppingFromRunningIgnoresPrepareResult(t *testing.T) {
+	run := Task{ID: "k", Mode: core.ModeCode, Turns: 1, State: Running{Turn: "t1", Attempt: 1, Since: t0}}
+	stopped, _ := Step(run, CancelRequested{Now: t0})
+	for _, in := range []Input{
+		Prepared{Turn: "t1", Attempt: 1, Dir: "w", Now: t0},
+		PrepareFailed{Turn: "t1", Attempt: 1, Reason: "dup", Now: t0},
+	} {
+		got, cmds := Step(stopped, in)
+		if !sameTask(got, stopped) || len(cmds) != 0 {
+			t.Errorf("%T ended a stop that came from Running: %#v %s", in, got.State, names(cmds))
+		}
+	}
+	if fin, _ := Step(stopped, RunFinished{Turn: "t1", Attempt: 1, Status: RunCancelled, Now: t0}); fin.State.Status() != core.TaskCancelled {
+		t.Errorf("RunFinished did not end the stop: %#v", fin.State)
+	}
+	// A stop from Starting does end on the prepare result.
+	st := Task{ID: "k", Mode: core.ModeCode, Turns: 1, State: Starting{Turn: "t1", Attempt: 1, Since: t0}}
+	stopped, _ = Step(st, CancelRequested{Now: t0})
+	if s, ok := stopped.State.(Stopping); !ok || s.Phase != StopBeforeStart {
+		t.Fatalf("cancel in Starting gave %#v", stopped.State)
+	}
+	if got, _ := Step(stopped, Prepared{Turn: "t1", Attempt: 1, Now: t0}); got.State.Status() != core.TaskCancelled {
+		t.Errorf("Prepared did not end a stop before start: %#v", got.State)
+	}
+}
+
+// S5: recovering a Stopping task must not lose an integrity violation.
+func TestRecoveredStoppingKeepsIntegrity(t *testing.T) {
+	needs := NeedsYou{Why: NeedsIntegrityViolated}
+	for _, tc := range []struct {
+		name string
+		mode core.TaskMode
+		s    Stopping
+		want Outcome
+	}{
+		{"ask user cancel", core.ModeAsk, Stopping{Turn: "t1", Attempt: 1, Cause: CauseUserCancel}, needs},
+		{"ask cap", core.ModeAsk, Stopping{Turn: "t1", Attempt: 1, Cause: CauseCapExceeded}, needs},
+		{"code integrity cause", core.ModeCode, Stopping{Turn: "t1", Attempt: 1, Cause: CauseIntegrityViolated}, needs},
+		{"code user cancel", core.ModeCode, Stopping{Turn: "t1", Attempt: 1, Cause: CauseUserCancel}, Failed{Kind: FailInterrupted}},
+		{"code cap", core.ModeCode, Stopping{Turn: "t1", Attempt: 1, Cause: CauseCapExceeded}, Failed{Kind: FailInterrupted}},
+	} {
+		got, cmds := Step(Task{ID: "k", Mode: tc.mode, Turns: 1, State: tc.s}, Recovered{Now: t0})
+		if got.State != (Idle{Outcome: tc.want, Turn: "t1", At: t0}) {
+			t.Errorf("%s: %#v", tc.name, got.State)
+		}
+		if !publishes(cmds, tc.want.status()) || !hasCmd[FinishTurn](cmds) {
+			t.Errorf("%s: %s", tc.name, names(cmds))
+		}
+	}
+	// Starting and Running keep Failed(Interrupted), even in Ask mode.
+	for _, s := range []State{Starting{Turn: "t1", Attempt: 1}, Running{Turn: "t1", Attempt: 1}} {
+		got, _ := Step(Task{ID: "k", Mode: core.ModeAsk, Turns: 1, State: s}, Recovered{Now: t0})
+		if got.State != (Idle{Outcome: Failed{Kind: FailInterrupted}, Turn: "t1", At: t0}) {
+			t.Errorf("%T: %#v", s, got.State)
+		}
+	}
+}
+
+// A sub-agent report with no ID or a depth below 1 counts as over the cap.
+func TestSubagentStartedMalformedFailsClosed(t *testing.T) {
+	run := Task{ID: "k", Mode: core.ModeCode, Turns: 1, Caps: Caps{Depth: 2, Concurrent: 3},
+		State: Running{Turn: "t1", Attempt: 1, Since: t0}}
+	for _, e := range []SubagentStarted{
+		{Turn: "t1", Attempt: 1, AgentID: "", Depth: 1},
+		{Turn: "t1", Attempt: 1, AgentID: "a", Depth: 0},
+		{Turn: "t1", Attempt: 1, AgentID: "a", Depth: -1},
+	} {
+		got, cmds := Step(run, e)
+		if s, ok := got.State.(Stopping); !ok || s.Cause != CauseCapExceeded || !hasCmd[KillRun](cmds) {
+			t.Errorf("%+v: %#v %s", e, got.State, names(cmds))
+		}
 	}
 }

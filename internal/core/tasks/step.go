@@ -98,7 +98,8 @@ func stepMessage(t Task, m Message) (Task, []Command) {
 
 // narrowCaps keeps the caps of the turn before when they are known (both
 // above zero): a later message may keep or narrow them, never raise them. The
-// shell loads the previous caps with the task; a zero Caps means "none yet".
+// shell loads the previous caps with the task; a zero Caps means "none yet",
+// which also covers a shell that forgot to load them (see tasks.md).
 func narrowCaps(prev, asked Caps) Caps {
 	if prev.Depth < 1 || prev.Concurrent < 1 {
 		return asked
@@ -139,7 +140,10 @@ func stepAdmitted(t Task, a Admitted) (Task, []Command) {
 }
 
 func stepPrepared(t Task, p Prepared) (Task, []Command) {
-	if st, ok := t.State.(Stopping); ok && st.Turn == p.Turn && st.Attempt == p.Attempt {
+	if st, ok := t.State.(Stopping); ok {
+		if st.Phase != StopBeforeStart || st.Turn != p.Turn || st.Attempt != p.Attempt {
+			return t, nil // a stop from Running ends only on RunFinished
+		}
 		// The stop raced the prepare: nothing was started, so the stop ends
 		// here (C2). KillTask is harmless and covers a half-started process.
 		return toIdle(t, st.Turn, st.Attempt, st.Usage, "", st.Cause.outcome(), p.Now, true)
@@ -173,7 +177,10 @@ func toIdle(t Task, turn TurnID, attempt Attempt, usage Usage, session string, o
 }
 
 func stepPrepareFailed(t Task, p PrepareFailed) (Task, []Command) {
-	if st, ok := t.State.(Stopping); ok && st.Turn == p.Turn && st.Attempt == p.Attempt {
+	if st, ok := t.State.(Stopping); ok {
+		if st.Phase != StopBeforeStart || st.Turn != p.Turn || st.Attempt != p.Attempt {
+			return t, nil
+		}
 		return toIdle(t, st.Turn, st.Attempt, st.Usage, "", st.Cause.outcome(), p.Now, false)
 	}
 	s, ok := t.State.(Starting)
@@ -254,7 +261,9 @@ func stepSubagentStarted(t Task, e SubagentStarted) (Task, []Command) {
 			active = true
 		}
 	}
-	over := e.Depth > t.Caps.Depth || (!active && len(r.Subagents) >= t.Caps.Concurrent)
+	// A report with no ID or a depth below 1 cannot be checked, so it counts
+	// as over the cap (fail closed).
+	over := e.AgentID == "" || e.Depth < 1 || e.Depth > t.Caps.Depth || (!active && len(r.Subagents) >= t.Caps.Concurrent)
 	if over {
 		cmds := []Command{
 			KillRun{Turn: r.Turn, Attempt: r.Attempt},
@@ -325,7 +334,7 @@ func stepCancel(t Task, c CancelRequested) (Task, []Command) {
 		cmds = append(cmds, change("task.finish", OutcomeCode(Cancelled{}), s.Turn, core.TaskCancelled)...)
 		return t.with(Idle{Outcome: Cancelled{}, Turn: s.Turn, At: c.Now}), cmds
 	case Starting:
-		return t.with(Stopping{Turn: s.Turn, Attempt: s.Attempt, Since: s.Since, Cause: CauseUserCancel}), stopCmds(s.Turn, s.Attempt, "task.cancel")
+		return t.with(Stopping{Turn: s.Turn, Attempt: s.Attempt, Since: s.Since, Cause: CauseUserCancel, Phase: StopBeforeStart}), stopCmds(s.Turn, s.Attempt, "task.cancel")
 	case Running:
 		return t.with(Stopping{Turn: s.Turn, Attempt: s.Attempt, Since: s.Since, Cause: CauseUserCancel, Usage: s.Usage}), stopCmds(s.Turn, s.Attempt, "task.cancel")
 	}
@@ -342,7 +351,8 @@ func stopCmds(turn TurnID, attempt Attempt, action string) []Command {
 // stepIntegrity handles guard.StepIntegrity's verdict. It is never dropped
 // for the turn it names (SF-07): a running turn is stopped, a stop in progress
 // is upgraded to the integrity cause, and a turn that already finished as
-// answered or ready for review becomes needs_you. The shell should hold
+// any other outcome (answered, ready for review, cancelled, failed, dismissed,
+// another needs_you) becomes needs_you{integrity_violated}. The shell should hold
 // RunFinished until the After snapshot is checked; the Idle row is the safety
 // net when it does not.
 func stepIntegrity(t Task, v IntegrityViolated) (Task, []Command) {
@@ -363,12 +373,12 @@ func stepIntegrity(t Task, v IntegrityViolated) (Task, []Command) {
 		if v.Turn == "" || s.Turn != v.Turn {
 			return t, nil
 		}
-		switch s.Outcome.(type) {
-		case Answered, ReadyForReview:
-			o := NeedsYou{Why: NeedsIntegrityViolated}
-			return t.with(Idle{Outcome: o, Turn: s.Turn, At: v.Now}),
-				change("task.integrity", OutcomeCode(o), s.Turn, o.status())
+		o := NeedsYou{Why: NeedsIntegrityViolated}
+		if s.Outcome == Outcome(o) {
+			return t, nil
 		}
+		return t.with(Idle{Outcome: o, Turn: s.Turn, At: v.Now}),
+			change("task.integrity", OutcomeCode(o), s.Turn, o.status())
 	}
 	return t, nil
 }
@@ -396,6 +406,13 @@ func stepRecovered(t Task, r Recovered) (Task, []Command) {
 		turn, att, u = s.Turn, s.Attempt, s.Usage
 	case Stopping:
 		turn, att, u = s.Turn, s.Attempt, s.Usage
+		// A stop in a read-only turn may hide an integrity violation that was
+		// lost with the process, and the stored row has no cause. Conservative:
+		// the user reviews it (a plain user-cancel of an Ask turn is mislabelled
+		// on purpose). Other causes end as interrupted.
+		if t.Mode == core.ModeAsk || s.Cause == CauseIntegrityViolated {
+			return toIdle(t, turn, att, u, "", NeedsYou{Why: NeedsIntegrityViolated}, r.Now, false)
+		}
 	default:
 		return t, nil
 	}

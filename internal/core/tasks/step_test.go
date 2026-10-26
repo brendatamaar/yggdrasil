@@ -56,7 +56,7 @@ func TestStepTransitionTable(t *testing.T) {
 		{"starting locks denied", task(core.ModeCurrentBranch, Starting{Turn: "t1", Attempt: 1, Since: t0}), LocksDenied{Turn: "t1", Attempt: 1, Repo: "r1", Holder: "build"},
 			Waiting{Turn: "t1", Attempt: 1, BlockedBy: BlockedMainCheckout{Repo: "r1", Holder: "build"}}, "Requeue,Audit,Publish"},
 		{"starting cancel", task(core.ModeCode, Starting{Turn: "t1", Attempt: 1, Since: t0}), CancelRequested{Now: t0},
-			Stopping{Turn: "t1", Attempt: 1, Since: t0, Cause: CauseUserCancel}, "KillRun,Audit"},
+			Stopping{Turn: "t1", Attempt: 1, Since: t0, Cause: CauseUserCancel, Phase: StopBeforeStart}, "KillRun,Audit"},
 		{"running usage increment", task(core.ModeCode, Running{Turn: "t1", Attempt: 1, Usage: Usage{InputTokens: 2}}),
 			UsageReported{Turn: "t1", Attempt: 1, Usage: Usage{InputTokens: 3}}, Running{Turn: "t1", Attempt: 1, Usage: Usage{InputTokens: 5}}, ""},
 		{"running usage cumulative never lowers", task(core.ModeCode, Running{Turn: "t1", Attempt: 1, Usage: Usage{InputTokens: 9}}),

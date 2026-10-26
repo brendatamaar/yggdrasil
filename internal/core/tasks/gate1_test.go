@@ -26,7 +26,7 @@ func TestSubagentCapTable(t *testing.T) {
 		{"concurrent equals cap", two, SubagentStarted{AgentID: "x", Depth: 1}, true},
 		{"repeated id at cap", two, SubagentStarted{AgentID: "a", Depth: 1}, false},
 		{"repeated id too deep", two, SubagentStarted{AgentID: "a", Depth: 3}, true},
-		{"zero depth is not over", nil, SubagentStarted{AgentID: "x", Depth: 0}, false},
+		{"zero depth fails closed", nil, SubagentStarted{AgentID: "x", Depth: 0}, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

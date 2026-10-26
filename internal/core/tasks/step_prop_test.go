@@ -182,7 +182,7 @@ func TestPropSubagentCapsEnforced(t *testing.T) {
 					active = true
 				}
 			}
-			over := e.Depth > prev.Caps.Depth || (!active && len(r.Subagents) >= prev.Caps.Concurrent)
+			over := e.AgentID == "" || e.Depth < 1 || e.Depth > prev.Caps.Depth || (!active && len(r.Subagents) >= prev.Caps.Concurrent)
 			if over != hasCmd[KillRun](cmds) {
 				return fmt.Errorf("over=%v but KillRun=%v", over, hasCmd[KillRun](cmds))
 			}
@@ -214,8 +214,12 @@ func TestPropRecoveryStartsNothing(t *testing.T) {
 				return fmt.Errorf("Recovered started something")
 			}
 			if activeState(prev.State) {
-				if i, ok := next.State.(Idle); !ok || (i.Outcome != Failed{Kind: FailInterrupted}) {
-					return fmt.Errorf("recovered to %#v", next.State)
+				want := Outcome(Failed{Kind: FailInterrupted})
+				if st, ok := prev.State.(Stopping); ok && (prev.Mode == core.ModeAsk || st.Cause == CauseIntegrityViolated) {
+					want = NeedsYou{Why: NeedsIntegrityViolated}
+				}
+				if i, ok := next.State.(Idle); !ok || i.Outcome != want {
+					return fmt.Errorf("recovered to %#v, want outcome %#v", next.State, want)
 				}
 			}
 			return nil
