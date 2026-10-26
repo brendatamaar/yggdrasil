@@ -5,6 +5,7 @@ package worktreestest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"sync"
@@ -140,6 +141,16 @@ func (s *Store) List(_ context.Context, task core.TaskID) ([]core.Worktree, erro
 func (s *Store) Record(_ context.Context, w core.Worktree, base string, audit core.AuditEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Like the database: a duplicate id or an unusable audit entry stores
+	// nothing at all.
+	for _, r := range s.rows {
+		if r.ID == w.ID {
+			return errors.New("fake store: worktree id already recorded")
+		}
+	}
+	if audit.Actor == "" || audit.Action == "" || audit.Subject == "" || (len(audit.Detail) > 0 && !json.Valid(audit.Detail)) {
+		return errors.New("fake store: audit entry needs actor, action and subject, and valid JSON detail")
+	}
 	s.rows = append(s.rows, w)
 	s.bases[w.ID] = base
 	s.Audits = append(s.Audits, audit)
