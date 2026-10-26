@@ -199,7 +199,7 @@ func BuildScan(in []ScanInput) guard.Scan {
 	var out guard.Scan
 	var n [8]byte
 	writeLen := func(s int) {
-		binary.BigEndian.PutUint64(n[:], uint64(s))
+		binary.BigEndian.PutUint64(n[:], uint64(s)) //nolint:gosec // lengths are never negative
 		h.Write(n[:])
 	}
 	for _, f := range files {

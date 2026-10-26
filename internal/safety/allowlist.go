@@ -112,7 +112,7 @@ func FormatAllowlist(rules []guard.CommandRule) []byte {
 }
 
 // WritePolicyFile writes the policy for one run into a new folder under
-// parent (created 0700) and returns the file path (0600, never overwritten).
+// parent (os.MkdirTemp creates it 0700) and returns the file path (0600, never overwritten).
 // parent should be Yggdrasil's own per-run temp folder under the user
 // profile. The path goes to the hook through its config, never on a command
 // line. On Windows the mode bits are not enforced; the user-profile temp
@@ -124,10 +124,6 @@ func WritePolicyFile(parent string, p guard.Policy) (string, error) {
 	dir, err := os.MkdirTemp(parent, "ygg-policy-*")
 	if err != nil {
 		return "", fmt.Errorf("write policy: create folder: %w", err)
-	}
-	if err := os.Chmod(dir, 0o700); err != nil {
-		_ = os.Remove(dir)
-		return "", fmt.Errorf("write policy: protect folder: %w", err)
 	}
 	file := filepath.Join(dir, "policy.json")
 	f, err := os.OpenFile(file, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // fresh private folder

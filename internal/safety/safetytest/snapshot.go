@@ -25,12 +25,12 @@ type FakeSnapshotter struct{}
 
 // Snapshot implements safety.Snapshotter.
 func (FakeSnapshotter) Snapshot(ctx context.Context, dir string) (guard.Snapshot, error) {
-	head, err := os.ReadFile(filepath.Join(dir, ".fakehead"))
+	head, err := os.ReadFile(filepath.Join(dir, ".fakehead")) //nolint:gosec // test fake on a temp dir
 	if err != nil {
 		return guard.Snapshot{}, errors.New("this folder is not a repository")
 	}
 	var ignored []string
-	if b, err := os.ReadFile(filepath.Join(dir, ".fakeignore")); err == nil {
+	if b, err := os.ReadFile(filepath.Join(dir, ".fakeignore")); err == nil { //nolint:gosec // test fake on a temp dir
 		for _, l := range strings.Split(string(b), "\n") {
 			if l = strings.TrimSpace(l); l != "" {
 				ignored = append(ignored, l)
@@ -56,7 +56,7 @@ func (FakeSnapshotter) Snapshot(ctx context.Context, dir string) (guard.Snapshot
 				return nil
 			}
 		}
-		b, err := os.ReadFile(p)
+		b, err := os.ReadFile(p) //nolint:gosec // test fake on a temp dir
 		if err != nil {
 			return err
 		}
