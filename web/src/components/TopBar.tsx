@@ -18,6 +18,9 @@ export function TopBar() {
         <Link to="/projects" className={navClass}>
           Projects
         </Link>
+        <Link to="/board" className={navClass}>
+          Board
+        </Link>
         <Link to="/builds" className={navClass}>
           Builds
         </Link>

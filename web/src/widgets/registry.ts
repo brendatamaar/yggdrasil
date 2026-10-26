@@ -1,9 +1,11 @@
+import { agentUsage } from "./agent-usage";
 import { builds } from "./builds";
 import { ciFailures } from "./ci-failures";
 import { gitActivity } from "./git-activity";
 import { mergeRequests } from "./merge-requests";
 import { needsAttention } from "./needs-attention";
 import { recentAreas } from "./recent-areas";
+import { recentChats } from "./recent-chats";
 import { thisMachine } from "./this-machine";
 import type { WidgetModule } from "./types";
 import { workingNow } from "./working-now";
@@ -21,6 +23,8 @@ export const widgetRegistry: readonly WidgetModule[] = [
   ciFailures,
   builds,
   recentAreas,
+  recentChats,
+  agentUsage,
 ];
 
 export function getWidget(id: string): WidgetModule | undefined {
