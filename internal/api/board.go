@@ -53,7 +53,7 @@ func boardResponse(v tasks.BoardView) BoardResponse {
 		out.Cards = append(out.Cards, BoardCardDTO{
 			TaskID: c.Task.ID, Title: c.Task.Title, Mode: c.Task.Mode, Agent: c.Task.Agent,
 			Status: c.Task.Status, Column: string(c.Column), RepoNames: []string{}, RepoIDs: ids,
-			PendingProposals: c.PendingProposals, UpdatedAt: c.Task.UpdatedAt,
+			PendingProposals: c.PendingProposals, BlockedBy: c.BlockedBy, UpdatedAt: c.Task.UpdatedAt,
 		})
 	}
 	return out

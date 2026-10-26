@@ -391,7 +391,7 @@ func TestBoardResponse(t *testing.T) {
 	f.board = tasks.BoardView{
 		Max: 3, Active: 3, Hint: coretasks.Hint{RaiseTo: 4},
 		Cards: []tasks.BoardCard{
-			{Task: core.Task{ID: "tsk_1", Title: "Cart bug", Mode: core.ModeAsk, Agent: "mock", Status: core.TaskRunning, RepoIDs: []core.RepoID{"repo_1"}, UpdatedAt: now, Prompt: secretDetail}, Column: coretasks.ColumnWorking},
+			{Task: core.Task{ID: "tsk_1", Title: "Cart bug", Mode: core.ModeAsk, Agent: "mock", Status: core.TaskRunning, RepoIDs: []core.RepoID{"repo_1"}, UpdatedAt: now, Prompt: secretDetail}, Column: coretasks.ColumnWorking, BlockedBy: "Waiting for shop-api"},
 			{Task: core.Task{ID: "tsk_2", Title: "Draft", Status: core.TaskDraft}, Column: coretasks.ColumnDone},
 			{Task: core.Task{ID: "tsk_3", Title: "Docs", Status: core.TaskReview}, Column: coretasks.ColumnNeedsYou, PendingProposals: 2},
 		},
@@ -404,7 +404,7 @@ func TestBoardResponse(t *testing.T) {
 	if b.MaxAgents != 3 || b.Active != 3 || b.Hint.RaiseTo != 4 || len(b.Cards) != 2 {
 		t.Fatalf("board = %+v", b)
 	}
-	if c := b.Cards[0]; c.TaskID != "tsk_1" || c.Column != "working" || c.Title != "Cart bug" || len(c.RepoIDs) != 1 {
+	if c := b.Cards[0]; c.TaskID != "tsk_1" || c.Column != "working" || c.Title != "Cart bug" || len(c.RepoIDs) != 1 || c.BlockedBy != "Waiting for shop-api" {
 		t.Errorf("card 0 = %+v", c)
 	}
 	if c := b.Cards[1]; c.TaskID != "tsk_3" || c.Column != "needs_you" || c.PendingProposals != 2 || c.RepoIDs == nil {
