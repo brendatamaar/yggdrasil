@@ -73,6 +73,8 @@ type BoardCard struct {
 	Task             core.Task
 	Column           coretasks.BoardColumn
 	PendingProposals int
+	// BlockedBy is the plain-language reason a queued task waits, or "".
+	BlockedBy string
 }
 
 // BoardView is the read model of the agent board (AG-12): a card per task with
@@ -122,6 +124,9 @@ func (s *Service) Board(ctx context.Context, project core.ProjectID) (BoardView,
 				}
 			}
 			view.Cards = append(view.Cards, BoardCard{Task: t, Column: coretasks.Column(stateOfStatus(t.Status), pending), PendingProposals: pending})
+			if t.Status == core.TaskQueued {
+				view.Cards[len(view.Cards)-1].BlockedBy = s.blockedReason(t.ID)
+			}
 		}
 	}
 	s.boardMu.Lock()
