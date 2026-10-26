@@ -64,6 +64,13 @@ type StartOptions struct {
 	// through a hook write it where the hook reads it. The zero value is not
 	// a valid policy; adapters that use it call Policy.Validate first.
 	Policy guard.Policy
+	// ConfigTrusted says the user has trusted the agent config the task's repos
+	// ship (SF-09). Without it an adapter refuses to run in a repo that ships
+	// such config.
+	ConfigTrusted bool
+	// MCPConfigPath is the file WriteMCPConfig wrote; when set, the adapter
+	// loads that MCP server and no other.
+	MCPConfigPath string
 }
 
 // RepoConfigProvider is optionally implemented by an adapter whose CLI reads

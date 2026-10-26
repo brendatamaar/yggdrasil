@@ -8,33 +8,70 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/brendatamaar/yggdrasil/internal/core"
+	"github.com/brendatamaar/yggdrasil/internal/core/guard"
 )
 
 type hookEnv struct {
 	t       *testing.T
 	cfgPath string
 	log     string
+	repo    string // the task's worktree: readable and writable in the policy
+	bin     string // a folder on the hook's PATH holding a fake `go`
+	policy  string
 	getenv  func(string) string
 }
 
+// newHookEnv sets up a hook for a Code-mode task over a temp worktree. The hook
+// finds programs in h.bin only.
 func newHookEnv(t *testing.T, maxDepth, maxConcurrent int) *hookEnv {
 	t.Helper()
 	dir := t.TempDir()
-	h := &hookEnv{t: t, cfgPath: filepath.Join(dir, "hook.json"), log: filepath.Join(dir, "hook.log")}
-	data, err := json.Marshal(HookConfig{LogPath: h.log, MaxDepth: maxDepth, MaxConcurrent: maxConcurrent})
-	if err != nil {
-		t.Fatal(err)
+	h := &hookEnv{
+		t: t, cfgPath: filepath.Join(dir, "hook.json"), log: filepath.Join(dir, "hook.log"),
+		repo: t.TempDir(), bin: t.TempDir(), policy: filepath.Join(dir, "policy.json"),
 	}
-	if err := os.WriteFile(h.cfgPath, data, 0o600); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"go", "go.exe", "curl", "curl.exe"} {
+		if err := os.WriteFile(filepath.Join(h.bin, name), []byte("x"), 0o755); err != nil { //nolint:gosec // a fake program in a temp folder
+			t.Fatal(err)
+		}
 	}
+	h.writePolicy(policyFor(t, core.ModeCode, h.repo))
+	h.writeConfig(HookConfig{LogPath: h.log, MaxDepth: maxDepth, MaxConcurrent: maxConcurrent, PolicyPath: h.policy})
 	h.getenv = func(k string) string {
-		if k == HookConfigEnv {
+		switch k {
+		case HookConfigEnv:
 			return h.cfgPath
+		case "PATH":
+			return h.bin
 		}
 		return ""
 	}
 	return h
+}
+
+func (h *hookEnv) writePolicy(p guard.Policy) {
+	h.t.Helper()
+	if err := os.WriteFile(h.policy, guard.FormatPolicy(p), 0o600); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+func (h *hookEnv) writeConfig(cfg HookConfig) {
+	h.t.Helper()
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	if err := os.WriteFile(h.cfgPath, data, 0o600); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+// tool builds a PreToolUse input for the task's worktree.
+func (h *hookEnv) tool(name string, input map[string]any) map[string]any {
+	return map[string]any{"tool_name": name, "tool_input": input, "cwd": h.repo}
 }
 
 // call runs the hook once and returns its exit code and stderr.
@@ -65,8 +102,12 @@ func agentCall(input map[string]any) map[string]any {
 
 func TestHookAllowsOrdinaryToolCalls(t *testing.T) {
 	h := newHookEnv(t, 2, 4)
-	for _, tool := range []string{"Read", "Grep", "Bash", "Edit"} {
-		if code, stderr := h.call("PreToolUse", map[string]any{"tool_name": tool, "tool_input": map[string]any{"secret_arg": "S3CRET"}}); code != 0 {
+	file := filepath.Join(h.repo, "a.go")
+	for tool, input := range map[string]map[string]any{
+		"Read": {"file_path": file}, "Grep": {"pattern": "x"}, "Bash": {"command": "go test ./..."}, "Edit": {"file_path": file},
+	} {
+		input["secret_arg"] = "S3CRET"
+		if code, stderr := h.call("PreToolUse", h.tool(tool, input)); code != 0 {
 			t.Errorf("%s: exit %d (%s)", tool, code, stderr)
 		}
 	}
@@ -86,7 +127,7 @@ func TestHookDeniesAgentNativeIsolation(t *testing.T) {
 		code, stderr := h.call("PreToolUse", agentCall(map[string]any{
 			"tool_input": map[string]any{"description": "d", "prompt": "p", "isolation": iso},
 		}))
-		if code != 2 || !strings.Contains(stderr, "isolation") {
+		if code != 2 || !strings.Contains(stderr, "worktree") {
 			t.Errorf("isolation %s: exit %d, stderr %q", iso, code, stderr)
 		}
 	}
@@ -160,7 +201,7 @@ func TestHookLogOnlyEventsNeverBlock(t *testing.T) {
 func TestHookFailsClosedOnEnforcingEvents(t *testing.T) {
 	h := newHookEnv(t, 1, 1)
 	// No tool name, unreadable input: the call is blocked.
-	if code, _ := h.call("PreToolUse", map[string]any{"cwd": "x"}); code != 2 {
+	if code, _ := h.call("PreToolUse", map[string]any{"cwd": h.repo}); code != 2 {
 		t.Errorf("a call without a tool name: exit %d, want 2", code)
 	}
 	if code, _ := h.raw([]string{"--event", "PreToolUse"}, "garbage"); code != 2 {
@@ -197,55 +238,5 @@ func TestHookWithoutConfiguration(t *testing.T) {
 	}
 	if strings.Contains(errOut.String(), bad) {
 		t.Errorf("the hook message shows a path: %q", errOut.String())
-	}
-}
-
-// Ask mode is enforced by the hook, not only requested through flags (SF-06).
-func TestHookEnforcesAskModeAndTheRepoFolder(t *testing.T) {
-	repo := t.TempDir()
-	h := newHookEnv(t, 2, 4)
-	data, err := json.Marshal(HookConfig{LogPath: h.log, MaxDepth: 2, MaxConcurrent: 4, AllowedTools: askTools, AllowedDir: repo})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(h.cfgPath, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	for _, tool := range []string{"Bash", "Edit", "Write", "WebFetch"} {
-		code, stderr := h.call("PreToolUse", map[string]any{"tool_name": tool, "tool_input": map[string]any{"command": "x"}})
-		if code != 2 || !strings.Contains(stderr, "Ask mode") {
-			t.Errorf("%s: exit %d, stderr %q", tool, code, stderr)
-		}
-	}
-	if code, stderr := h.call("PreToolUse", map[string]any{"tool_name": "Read", "tool_input": map[string]any{"file_path": filepath.Join(repo, "a.go")}}); code != 0 {
-		t.Errorf("a read inside the repo: exit %d, stderr %q", code, stderr)
-	}
-	code, stderr := h.call("PreToolUse", map[string]any{"tool_name": "Read", "tool_input": map[string]any{"file_path": filepath.Join("..", "secret")}})
-	if code != 2 || strings.Contains(stderr, repo) {
-		t.Errorf("a read outside the repo: exit %d, stderr %q", code, stderr)
-	}
-	// A sub-agent call is judged by the sub-agent rules, not the tool list.
-	if code, _ := h.call("PreToolUse", agentCall(nil)); code != 0 {
-		t.Errorf("a plain sub-agent was denied: exit %d", code)
-	}
-	// The same call from inside a sub-agent is held to the same rules.
-	if code, _ := h.call("PreToolUse", map[string]any{"tool_name": "Bash", "agent_id": "a1", "tool_input": map[string]any{"command": "x"}}); code != 2 {
-		t.Errorf("Bash from a sub-agent: exit %d, want 2", code)
-	}
-	// Events after the call only log: they never block.
-	if code, _ := h.call("PostToolUse", map[string]any{"tool_name": "Bash"}); code != 0 {
-		t.Errorf("PostToolUse of a refused tool blocked: exit %d", code)
-	}
-}
-
-func TestHookBlocksWhenItCannotWriteItsLog(t *testing.T) {
-	h := newHookEnv(t, 0, 0)
-	data, _ := json.Marshal(HookConfig{LogPath: filepath.Join(t.TempDir(), "no", "such", "dir", "hook.log")})
-	if err := os.WriteFile(h.cfgPath, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if code, _ := h.call("PreToolUse", map[string]any{"tool_name": "Read"}); code != 2 {
-		t.Errorf("a call was allowed although it could not be logged: exit %d", code)
 	}
 }

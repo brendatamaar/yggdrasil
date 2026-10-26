@@ -9,6 +9,8 @@ import (
 	"io/fs"
 	"os"
 	"time"
+
+	"github.com/brendatamaar/yggdrasil/internal/core/guard"
 )
 
 // The hook is how Yggdrasil enforces sub-agent rules inside Claude Code
@@ -33,14 +35,10 @@ type HookConfig struct {
 	// back up the CLI's own environment limits.
 	MaxDepth      int `json:"maxDepth"`
 	MaxConcurrent int `json:"maxConcurrent"`
-	// AllowedTools lists the tools a call may use; empty means no limit. The
-	// sub-agent tool is always allowed here (it has its own limits). This is
-	// Yggdrasil's own enforcement of Ask mode, in addition to the CLI flags
-	// (SF-06, invariant 5).
-	AllowedTools []string `json:"allowedTools,omitempty"`
-	// AllowedDir limits the file paths a call may name to this folder (the
-	// task's repo); empty means no check (invariant 6).
-	AllowedDir string `json:"allowedDir,omitempty"`
+	// PolicyPath is the guard.Policy file (guard.ParsePolicy) every PreToolUse
+	// call is judged against (SF-06, invariants 5 and 6). Without a readable,
+	// valid policy every enforcing call is denied.
+	PolicyPath string `json:"policyPath,omitempty"`
 }
 
 // Hook event names (Claude Code hooks documentation).
@@ -67,7 +65,10 @@ type hookInput struct {
 	ToolName      string          `json:"tool_name"`
 	ToolInput     json.RawMessage `json:"tool_input"`
 	ToolUseID     string          `json:"tool_use_id"`
-	ToolResponse  json.RawMessage `json:"tool_response"`
+	// Cwd is the working directory the CLI reports; relative paths are taken
+	// from it.
+	Cwd          string          `json:"cwd"`
+	ToolResponse json.RawMessage `json:"tool_response"`
 	// AgentID and AgentType are set when the call happens inside a sub-agent.
 	AgentID   string `json:"agent_id"`
 	AgentType string `json:"agent_type"`
@@ -133,7 +134,7 @@ func RunHook(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv fu
 	}
 	defer unlock()
 
-	rec := decide(cfg, event, stdin, time.Now())
+	rec := decide(cfg, event, stdin, time.Now(), getenv)
 	if err := appendRecord(cfg.LogPath, rec); err != nil {
 		if !enforcing(rec.Event) {
 			return fail(err.Error())
@@ -145,6 +146,36 @@ func RunHook(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv fu
 	}
 	_, _ = fmt.Fprintln(stderr, rec.Reason)
 	return 2
+}
+
+// judge is Yggdrasil's own check of a tool call (SF-06, invariants 5 and 6):
+// it loads the task's policy, turns the call into a guard.Call and lets the
+// pure core decide. It returns the plain-language reason a call is refused, or
+// "" to let it through. Every failure refuses (fail closed). The reason holds
+// no path and none of the call's text, since the model sees it.
+func judge(cfg HookConfig, in hookInput, getenv func(string) string) string {
+	pol, err := loadPolicy(cfg.PolicyPath)
+	if err != nil {
+		return guard.ReasonPolicyUnavailable.Message()
+	}
+	// If this machine ignores case, so does the guard, whatever the file says.
+	b := newCallBuilder(getenv)
+	pol.FoldCase = pol.FoldCase || b.paths.FoldCase()
+	if v := guard.Decide(pol, b.toCall(in)); !v.Allow {
+		return v.Reason.Message()
+	}
+	return ""
+}
+
+func loadPolicy(path string) (guard.Policy, error) {
+	if path == "" {
+		return guard.Policy{}, errors.New("no policy")
+	}
+	data, err := os.ReadFile(path) //nolint:gosec // the path is Yggdrasil's own policy file, named in its hook configuration
+	if err != nil {
+		return guard.Policy{}, err
+	}
+	return guard.ParsePolicy(data)
 }
 
 func readHookConfig(path string) (HookConfig, error) {
@@ -162,7 +193,7 @@ func readHookConfig(path string) (HookConfig, error) {
 	return cfg, nil
 }
 
-func decide(cfg HookConfig, event string, stdin io.Reader, now time.Time) hookRecord {
+func decide(cfg HookConfig, event string, stdin io.Reader, now time.Time, getenv func(string) string) hookRecord {
 	rec := hookRecord{Time: now.UTC().Format(time.RFC3339Nano), Event: event, Decision: decisionAllow}
 	deny := func(format string, a ...any) hookRecord {
 		rec.Decision, rec.Reason = decisionDeny, fmt.Sprintf(format, a...)
@@ -201,12 +232,12 @@ func decide(cfg HookConfig, event string, stdin io.Reader, now time.Time) hookRe
 		}
 		return rec
 	}
-	if !isSubagentTool(in.ToolName) {
-		if pre {
-			if reason := checkToolCall(cfg, in); reason != "" {
-				return deny("%s", reason)
-			}
+	if pre {
+		if reason := judge(cfg, in, getenv); reason != "" {
+			return deny("%s", reason)
 		}
+	}
+	if !isSubagentTool(in.ToolName) {
 		return rec
 	}
 	var sub struct {
