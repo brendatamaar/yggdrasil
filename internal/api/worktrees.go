@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
@@ -26,6 +27,48 @@ type WorktreeView struct {
 	RepoName string
 	// BaseCommit is the commit the worktree started from.
 	BaseCommit string
+}
+
+// worktreeReads is the part of db.Store the worktree service reads.
+type worktreeReads interface {
+	GetTask(ctx context.Context, id core.TaskID) (core.Task, error)
+	ListWorktrees(ctx context.Context, task core.TaskID) ([]core.Worktree, error)
+	GetWorktreeBaseCommit(ctx context.Context, id core.WorktreeID) (string, error)
+	GetRepo(ctx context.Context, id core.RepoID) (core.Repo, error)
+}
+
+type dbWorktrees struct{ store worktreeReads }
+
+// NewWorktreeService serves GET /api/tasks/{id}/worktrees from the database.
+// The folder on disk is dropped here, so no caller can leak it.
+func NewWorktreeService(store worktreeReads) WorktreeService { return dbWorktrees{store: store} }
+
+func (d dbWorktrees) ForTask(ctx context.Context, task core.TaskID) ([]WorktreeView, error) {
+	if _, err := d.store.GetTask(ctx, task); err != nil {
+		return nil, fmt.Errorf("find task %s: %w", task, err)
+	}
+	list, err := d.store.ListWorktrees(ctx, task)
+	if err != nil {
+		return nil, fmt.Errorf("list worktrees of task %s: %w", task, err)
+	}
+	names := map[core.RepoID]string{}
+	out := make([]WorktreeView, 0, len(list))
+	for _, w := range list {
+		name, ok := names[w.RepoID]
+		if !ok {
+			if r, err := d.store.GetRepo(ctx, w.RepoID); err == nil {
+				name = r.Name
+			}
+			names[w.RepoID] = name
+		}
+		base, err := d.store.GetWorktreeBaseCommit(ctx, w.ID)
+		if err != nil {
+			return nil, fmt.Errorf("read base commit of worktree %s: %w", w.ID, err)
+		}
+		w.Path = ""
+		out = append(out, WorktreeView{Worktree: w, RepoName: name, BaseCommit: base})
+	}
+	return out, nil
 }
 
 // routesWorktrees registers the worktree endpoints.

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -539,6 +540,37 @@ func TestTrustEndpoints(t *testing.T) {
 	}
 	if resp, _ := e.do(t, http.MethodGet, "/api/repos/a%20b/trust", nil); resp.StatusCode != 400 {
 		t.Errorf("bad repo id = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestTrustAlreadyTrustedOtherHashIs409(t *testing.T) {
+	e, f := taskEnv(t, false)
+	base := "/api/repos/" + string(e.repo.ID) + "/trust"
+	other := strings.Repeat("a", 64)
+	f.trust = guard.Trusted{Repo: e.repo.ID, Hash: other}
+	resp, data := e.do(t, http.MethodPost, base, TrustRequest{Hash: goodHash})
+	if resp.StatusCode != 409 || errCode(t, data) != ErrConflict {
+		t.Errorf("other hash on a trusted repo = %d %s, want 409", resp.StatusCode, data)
+	}
+	resp, _ = e.do(t, http.MethodPost, base, TrustRequest{Hash: other})
+	if resp.StatusCode != 200 {
+		t.Errorf("same hash = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestDecodeBodyRejectsTrailingJSON(t *testing.T) {
+	for body, want := range map[string]bool{
+		`{"hash":"x"}`:         true,
+		`{"hash":"x"} {"a":1}`: false,
+		`{"hash":"x"} garbage`: false,
+		"{\"hash\":\"x\"}\n\n": true,
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+		var v TrustRequest
+		if got := decodeBody(rec, req, &v); got != want {
+			t.Errorf("decodeBody(%q) = %v, want %v", body, got, want)
+		}
 	}
 }
 

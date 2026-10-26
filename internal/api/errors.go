@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 
 	"github.com/brendatamaar/yggdrasil/internal/apperr"
@@ -63,7 +64,8 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
+	// Exactly one JSON value: anything after it (even a second object) is refused.
+	if err := dec.Decode(v); err != nil || dec.Decode(&json.RawMessage{}) != io.EOF {
 		badRequest(w, "The request body isn't valid.", "Send a JSON object with the documented fields.")
 		return false
 	}

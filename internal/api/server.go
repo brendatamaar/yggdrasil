@@ -15,7 +15,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/brendatamaar/yggdrasil/internal/agents"
 	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
@@ -23,12 +22,6 @@ import (
 // Deps are what the server needs. Store is required.
 type Deps struct {
 	Store *db.Store
-	// Adapters is unused since the tasks service owns the runs.
-	//
-	Adapters map[string]agents.Adapter
-	// Env is unused since the tasks service owns the runs.
-	//
-	Env safety.EnvBuilder
 	// Log defaults to a redacting text logger on stderr.
 	Log *slog.Logger
 	// Redactor masks tokens in agent output before it is stored or sent.
@@ -40,9 +33,6 @@ type Deps struct {
 	// AllowedOrigins are extra browser origins that may call the API, such as
 	// the Vite dev server (http://localhost:5173).
 	AllowedOrigins []string
-	// KillTask is unused since the tasks service owns the runs.
-	//
-	KillTask func(taskID string) error
 
 	// The services of the Phase 2 areas. A nil service registers no route
 	// (each routesX returns early), so the server runs with any subset.

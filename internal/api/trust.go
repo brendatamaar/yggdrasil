@@ -95,7 +95,8 @@ func (s *Server) handleSetTrust(w http.ResponseWriter, r *http.Request) {
 	// The core ignores a hash that is no longer the repo's config and returns
 	// the state unchanged: anything but Trusted means the user approved
 	// something other than what is there now.
-	if _, trusted := t.(guard.Trusted); !trusted {
+	// A repo that is already trusted with another hash is the same case.
+	if tr, trusted := t.(guard.Trusted); !trusted || tr.Hash != req.Hash {
 		writeError(w, http.StatusConflict, ErrConflict,
 			"The repo's agent settings are not what you were shown, so nothing was trusted.",
 			"Reload the page, review what the repo would run, then trust it again.")
