@@ -27,16 +27,19 @@ var (
 		"ssh", "scp", "curl", "wget", "nc", "ncat", "telnet", "ftp", "gh", "glab", "docker",
 		"rm", "del", "erase", "rmdir", "format", "reg", "sc", "net", "runas", "mklink", "icacls", "takeown",
 		"msiexec", "rundll32", "regsvr32", "certutil", "bitsadmin", "schtasks", "wmic", "robocopy", "xcopy",
-		"move", "copy", "tar", "7z")
+		"move", "copy", "tar", "7z",
+		// launchers of other programs, with or without elevation.
+		"conhost", "wt", "forfiles", "sudo", "code")
 	// interpreters run whatever script they get: only a fixed script is allowed.
 	interpreters = nameSet("node", "npx", "tsx", "ts-node", "python", "python3", "pythonw", "py", "ruby", "perl",
-		"php", "deno", "bun")
+		"php", "deno", "bun", "uvx", "pipx", "pnpx", "bunx", "corepack", "java", "jshell", "make")
 	// wrappers live inside the repo, which the guard refuses to run from (D11).
 	wrappers = nameSet("mvnw", "gradlew")
 	// packageTools need a fixed subcommand, and not one that installs,
 	// publishes or runs arbitrary code.
 	packageTools   = nameSet("npm", "pnpm", "yarn", "pip", "pip3", "uv", "cargo", "go", "dotnet", "mvn", "gradle")
-	badSubcommands = nameSet("install", "add", "i", "publish", "exec", "dlx", "x", "remove", "uninstall", "update", "upgrade")
+	badSubcommands = nameSet("install", "add", "i", "publish", "exec", "dlx", "x", "remove", "uninstall", "update", "upgrade",
+		"ci", "get", "run", "generate", "restore", "fetch", "tool", "rebuild", "link", "login", "config", "download", "sync")
 )
 
 // programBase is the lower-case name of a program without any extension
@@ -80,10 +83,15 @@ func validateRule(r CommandRule) error {
 	if _, w := wrappers[base]; w {
 		return fmt.Errorf("allowlist program %q: build wrappers are not supported yet; allow the tool itself (for example mvn or gradle)", clip(r.Program))
 	}
-	if _, i := interpreters[base]; i && (len(r.Args) == 0 || r.Tail != TailNone) {
+	_, isInterp := interpreters[base]
+	_, isPkg := packageTools[base]
+	if (isInterp || isPkg) && len(r.Args) > 0 && strings.HasPrefix(r.Args[0], "-") {
+		return fmt.Errorf("allowlist rule %q can't start with the option %q: it changes what the rest of the command does; start with a plain script or subcommand", clip(r.Program), clip(r.Args[0]))
+	}
+	if isInterp && (len(r.Args) == 0 || r.Tail != TailNone) {
 		return fmt.Errorf("allowlist program %q runs any script it is given; allow it only with fixed arguments and no extra arguments", clip(r.Program))
 	}
-	if _, p := packageTools[base]; p {
+	if isPkg {
 		if len(r.Args) == 0 {
 			return fmt.Errorf("allowlist program %q needs a fixed first argument such as test or build", clip(r.Program))
 		}

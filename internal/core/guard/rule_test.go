@@ -15,13 +15,29 @@ var refusedGroups = map[string][]string{
 	"network":     {"ssh", "scp", "curl", "wget", "nc", "ncat", "telnet", "ftp", "gh", "glab", "docker"},
 	"destructive": {"rm", "del", "erase", "rmdir", "format", "reg", "sc", "net", "runas", "mklink", "icacls", "takeown", "msiexec", "rundll32", "regsvr32", "certutil", "bitsadmin", "schtasks", "wmic", "robocopy", "xcopy", "move", "copy", "tar", "7z"},
 	"wrappers":    {"mvnw", "gradlew"},
+	"launchers":   {"conhost", "wt", "forfiles", "sudo", "code"},
 }
 
 var (
-	interpreterNames = []string{"node", "npx", "tsx", "ts-node", "python", "python3", "pythonw", "py", "ruby", "perl", "php", "deno", "bun"}
-	pkgTools         = []string{"npm", "pnpm", "yarn", "pip", "pip3", "uv", "cargo", "go", "dotnet", "mvn", "gradle"}
-	badSub           = []string{"install", "add", "i", "publish", "exec", "dlx", "x", "remove", "uninstall", "update", "upgrade"}
+	interpreterNames = []string{"node", "npx", "tsx", "ts-node", "python", "python3", "pythonw", "py", "ruby", "perl", "php", "deno", "bun",
+		"uvx", "pipx", "pnpx", "bunx", "corepack", "java", "jshell", "make"}
+	pkgTools = []string{"npm", "pnpm", "yarn", "pip", "pip3", "uv", "cargo", "go", "dotnet", "mvn", "gradle"}
+	badSub   = []string{"install", "add", "i", "publish", "exec", "dlx", "x", "remove", "uninstall", "update", "upgrade",
+		"ci", "get", "run", "generate", "restore", "fetch", "tool", "rebuild", "link", "login", "config", "download", "sync"}
 )
+
+// A fixed leading flag (-C, --prefix, -e, -c) changes what the rest means.
+func TestRuleRefusesLeadingFlag(t *testing.T) {
+	for _, n := range append(append([]string{}, interpreterNames...), pkgTools...) {
+		for _, flag := range []string{"-C", "--prefix", "-e", "-c", "-"} {
+			for _, args := range [][]string{{flag}, {flag, "test"}} {
+				if (guard.CommandRule{Program: n, Args: args, Tail: guard.TailNone}).Validate() == nil {
+					t.Errorf("%s %v accepted", n, args)
+				}
+			}
+		}
+	}
+}
 
 func variant(n string, r *rand.Rand) string {
 	s := n

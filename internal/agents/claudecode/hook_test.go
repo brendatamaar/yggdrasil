@@ -56,10 +56,20 @@ func (h *hookEnv) writePolicy(p guard.Policy) {
 	if err := os.WriteFile(h.policy, guard.FormatPolicy(p), 0o600); err != nil {
 		h.t.Fatal(err)
 	}
+	// A legitimate policy change re-seals the configuration, as Start does.
+	if data, err := os.ReadFile(h.cfgPath); err == nil {
+		var cfg HookConfig
+		if json.Unmarshal(data, &cfg) == nil && cfg.PolicyPath == h.policy {
+			h.writeConfig(cfg)
+		}
+	}
 }
 
 func (h *hookEnv) writeConfig(cfg HookConfig) {
 	h.t.Helper()
+	if pol, err := os.ReadFile(cfg.PolicyPath); err == nil {
+		cfg.Seal(pol)
+	}
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		h.t.Fatal(err)

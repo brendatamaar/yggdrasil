@@ -227,10 +227,12 @@ func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run,
 		cleanup()
 		return nil, fmt.Errorf("write policy: %w", err)
 	}
-	settings, hookConfig, err := writeConfigFiles(work, a.opts.HookExecutable, HookConfig{
+	hcfg := HookConfig{
 		LogPath: filepath.Join(work, "hook.log"), MaxDepth: o.MaxSubagentDepth, MaxConcurrent: o.MaxConcurrentSubagents,
 		PolicyPath: policyPath,
-	})
+	}
+	hcfg.Seal(append(policy, '\n'))
+	settings, hookConfig, err := writeConfigFiles(work, a.opts.HookExecutable, hcfg)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("prepare run: %w", err)
@@ -243,6 +245,10 @@ func (a *Adapter) Start(ctx context.Context, o agents.StartOptions) (agents.Run,
 		cleanup()
 		return nil, fmt.Errorf("prepare run: %w", err)
 	}
+
+	// Where the OS allows, the files cannot be rewritten without first
+	// changing their mode; the hook's hash check catches the rest.
+	makeReadOnly(policyPath, settings, hookConfig)
 
 	pr, pw := io.Pipe()
 	stderr := &tailBuffer{max: 8 << 10}
@@ -358,7 +364,7 @@ func (r *run) loop(ctx context.Context, proc platform.Process, pr *io.PipeReader
 		sum := summarizeHookLog(hookLog)
 		r.denies, r.denyCount, r.hooked = sum.denies, sum.denyCount, sum.hooked
 		r.toolUses = p.toolUses
-		r.unhooked = unhooked(p.toolUses, sum.hooked)
+		r.unhooked = p.unhookedToolUses(sum.hooked)
 		cleanup()
 	}()
 

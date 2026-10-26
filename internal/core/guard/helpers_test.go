@@ -81,7 +81,7 @@ func genPolicy(r *rand.Rand) Policy {
 	for n := r.Intn(4); n > 0; n-- {
 		p.Allow = append(p.Allow, CommandRule{
 			Program: pick(r, "go", "npm", "mvn", "cargo"),
-			Args:    pick(r, []string{"test"}, []string{"vet", "./..."}, []string{"run", "test"}),
+			Args:    pick(r, []string{"test"}, []string{"vet", "./..."}, []string{"build"}),
 			Tail:    pick(r, TailNone, TailPaths),
 		})
 	}
