@@ -19,6 +19,7 @@ import (
 	corerepos "github.com/brendatamaar/yggdrasil/internal/core/repos"
 	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/git"
+	"github.com/brendatamaar/yggdrasil/internal/mainlock"
 	"github.com/brendatamaar/yggdrasil/internal/platform"
 	"github.com/brendatamaar/yggdrasil/internal/repos"
 	"github.com/brendatamaar/yggdrasil/internal/repos/repostest"
@@ -317,6 +318,8 @@ type actOpts struct {
 	ids   func(prefix string) string
 	// wrap, if set, puts a runner around the script runner.
 	wrap func(*scriptGit) repos.GitRunner
+	// lock, if set, is the shared main-checkout lock.
+	lock mainlock.MainLock
 }
 
 func newActEnv(t *testing.T, o actOpts) *actEnv {
@@ -365,7 +368,7 @@ func newActEnv(t *testing.T, o actOpts) *actEnv {
 	}
 	e.svc, err = repos.NewActionsService(repos.ActionsDeps{
 		Store: store, Redactor: red, Git: runner, Builds: e.bld, Status: e.rec, Publisher: e.pub,
-		Max: o.max, IDs: o.ids,
+		Max: o.max, IDs: o.ids, MainLock: o.lock,
 	})
 	if err != nil {
 		t.Fatal(err)

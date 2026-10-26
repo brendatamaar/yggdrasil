@@ -19,6 +19,7 @@ import (
 	corerepos "github.com/brendatamaar/yggdrasil/internal/core/repos"
 	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/git"
+	"github.com/brendatamaar/yggdrasil/internal/mainlock"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
 
@@ -68,6 +69,8 @@ type ActionsDeps struct {
 	// Status is the same refresher tracking uses; nil means no refresh.
 	Status    StatusRefresher
 	Publisher BatchPublisher
+	// MainLock is the shared main-checkout lock. Nil means no locking.
+	MainLock  mainlock.MainLock
 	Log       *slog.Logger
 	Clock     func() time.Time
 	IDs       func(prefix string) string
@@ -88,6 +91,16 @@ type ActionsService struct {
 	group   errgroup.Group
 	runCtx  context.Context
 	stopped bool
+	// locks are the main-checkout locks of items that may still run, released
+	// when the item is done or skipped. notes say who held a repo when an item
+	// was skipped for the lock, for the plain-language message.
+	locks map[itemKey]func()
+	notes map[itemKey]mainlock.OwnerKind
+}
+
+type itemKey struct {
+	batch corerepos.BatchID
+	repo  core.RepoID
 }
 
 // NewActionsService returns the service and subscribes to build starts.
@@ -109,7 +122,7 @@ func NewActionsService(d ActionsDeps) (*ActionsService, error) {
 	if d.IDs == nil {
 		d.IDs = db.NewID
 	}
-	s := &ActionsService{d: d, st: corerepos.NewActions(d.Max)}
+	s := &ActionsService{d: d, st: corerepos.NewActions(d.Max), locks: map[itemKey]func(){}, notes: map[itemKey]mainlock.OwnerKind{}}
 	if d.Builds != nil {
 		d.Builds.SubscribeStarted(s.onBuildStarted)
 	}
@@ -247,15 +260,115 @@ func (s *ActionsService) Start(ctx context.Context, req BatchRequest, actor core
 		}
 	}
 	id := corerepos.BatchID(s.d.IDs("gab"))
+	busy, undo := s.lockRepos(id, req, busy)
 	in := corerepos.StartBatch{ID: id, Kind: req.Kind, Branch: req.Branch, Repos: req.Repos, Busy: busy,
 		Actor: actor, Now: s.d.Clock().UTC()}
 	if err := in.Validate(); err != nil {
+		undo()
 		return "", apperr.New(apperr.Invalid, "That request isn't valid. Check the action and the repos.", err)
 	}
 	if _, err := s.apply(in); err != nil {
+		undo()
 		return "", err
 	}
 	return id, nil
+}
+
+// lockRepos takes the main-checkout lock of every repo of a batch that
+// changes the checkout (fetch changes no working tree and takes none). A repo
+// that a task, a build or another git action holds is added to busy, so its
+// item is skipped. The locks stay held until the item is done or skipped.
+// undo gives them back when the batch could not be started.
+func (s *ActionsService) lockRepos(id corerepos.BatchID, req BatchRequest, busy map[core.RepoID]string) (map[core.RepoID]string, func()) {
+	if s.d.MainLock == nil || !req.Kind.ChangesCheckout() {
+		return busy, func() {}
+	}
+	out := make(map[core.RepoID]string, len(busy)+len(req.Repos))
+	for r, why := range busy {
+		out[r] = why
+	}
+	taken := map[itemKey]func(){}
+	notes := map[itemKey]mainlock.OwnerKind{}
+	for _, r := range req.Repos {
+		k := itemKey{id, r}
+		if _, dup := taken[k]; dup {
+			continue
+		}
+		if _, skip := out[r]; skip {
+			continue
+		}
+		rel, h, ok := s.d.MainLock.TryAcquire([]core.RepoID{r}, mainlock.Owner{Kind: mainlock.KindGitAction, ID: string(id) + ":" + string(r)})
+		if !ok {
+			out[r] = holderReason(h.Owner.Kind)
+			notes[k] = h.Owner.Kind
+			continue
+		}
+		taken[k] = rel
+	}
+	s.mu.Lock()
+	for k, rel := range taken {
+		s.locks[k] = rel
+	}
+	for k, n := range notes {
+		s.notes[k] = n
+	}
+	s.mu.Unlock()
+	return out, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		for k, rel := range taken {
+			rel()
+			delete(s.locks, k)
+		}
+		for k := range notes {
+			delete(s.notes, k)
+		}
+	}
+}
+
+func holderReason(k mainlock.OwnerKind) string {
+	switch k {
+	case mainlock.KindTask:
+		return "a task is working in this repo"
+	case mainlock.KindBuild:
+		return "a build is running in this repo"
+	case mainlock.KindGitAction:
+		return "another git action is running in this repo"
+	}
+	return "something else is using this repo"
+}
+
+// releaseFinished gives back the locks of items that are done or skipped, and
+// forgets notes of batches that are gone. Callers hold s.mu.
+func (s *ActionsService) releaseFinished(st corerepos.Actions) {
+	over := func(k itemKey) bool {
+		b, ok := st.Batches[k.batch]
+		if !ok {
+			return true
+		}
+		for _, it := range b.Items {
+			if it.Repo != k.repo {
+				continue
+			}
+			switch it.State.(type) {
+			case corerepos.Done, corerepos.Skipped:
+				return true
+			}
+			return false
+		}
+		return true
+	}
+	for k, rel := range s.locks {
+		if over(k) {
+			rel()
+			delete(s.locks, k)
+		}
+	}
+	for k := range s.notes {
+		if _, ok := st.Batches[k.batch]; !ok {
+			delete(s.notes, k)
+		}
+	}
 }
 
 // Get returns a copy of a batch. ok is false for an unknown or expired batch.
@@ -266,7 +379,13 @@ func (s *ActionsService) Get(id corerepos.BatchID) (BatchView, bool) {
 	if !ok {
 		return BatchView{}, false
 	}
-	return viewOf(b), true
+	v := viewOf(b)
+	for i, it := range v.Items {
+		if n, ok := s.notes[itemKey{id, it.Repo}]; ok && it.State == "skipped" && it.Reason == string(corerepos.SkipBuildRunning) {
+			v.Items[i].Message = "Skipped: " + holderReason(n) + ". Wait for it to finish, then try again."
+		}
+	}
+	return v, true
 }
 
 // Cancel skips the items that have not started. A running command finishes.
@@ -348,6 +467,7 @@ func (s *ActionsService) apply(in corerepos.ActInput) (BatchView, error) {
 		}
 	}
 	s.st = next
+	s.releaseFinished(next)
 	var after []func()
 	for _, c := range cmds {
 		switch c := c.(type) {
