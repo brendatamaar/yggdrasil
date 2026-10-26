@@ -102,9 +102,9 @@ const (
 	maxHookInput = 4 << 20
 	// maxHookLog caps the hook log: past it the log is not read further and
 	// the hook refuses enforcing calls (fail closed).
-	maxHookLog = 1 << 20
-	staleLock    = 30 * time.Second
-	lockTimeout  = 10 * time.Second
+	maxHookLog  = 1 << 20
+	staleLock   = 30 * time.Second
+	lockTimeout = 10 * time.Second
 )
 
 // RunHook is hook mode. args are the arguments after "hook" (--event NAME);
