@@ -26,9 +26,9 @@ func (tx *Tx) RecordWorktree(ctx context.Context, w core.Worktree, baseCommit st
 	return w, nil
 }
 
-// WorktreeBaseCommit returns the commit a worktree started from ("" for rows
+// GetWorktreeBaseCommit returns the commit a worktree started from ("" for rows
 // made before it was recorded).
-func (s *Store) WorktreeBaseCommit(ctx context.Context, id core.WorktreeID) (string, error) {
+func (s *Store) GetWorktreeBaseCommit(ctx context.Context, id core.WorktreeID) (string, error) {
 	c, err := s.db.reader().GetWorktreeBaseCommit(ctx, string(id))
 	if err := found("get worktree base commit "+string(id), err); err != nil {
 		return "", err
