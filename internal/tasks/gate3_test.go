@@ -41,6 +41,33 @@ func TestIntegrityVerdictSurvivesOneStoreError(t *testing.T) {
 	}
 }
 
+// Both the verdict and the end of the turn fail to store, then the store is
+// back: the recovery of the abandoned task still knows the tree changed.
+func TestViolatedAskKeepsItsVerdictAcrossAnAbandon(t *testing.T) {
+	h := newHarness(t, []string{"shop-api"})
+	violatingAsk(h)
+	var failed atomic.Int32
+	h.beforeCommit = func(_ core.TaskID, in coretasks.Input) error {
+		switch in.(type) {
+		case coretasks.IntegrityViolated, coretasks.RunFinished:
+			if failed.Add(1) <= 2*feedTries {
+				return errBoom
+			}
+		}
+		return nil
+	}
+	h.tune = func(c *Config) { c.FeedRetry = 1 }
+	h.start()
+	id := h.send(h.msg("ask", "look", 0)).Task.ID
+	st := h.waitStatus(id, core.TaskNeedsYou)
+	if outcomeOf(t, st) != (coretasks.NeedsYou{Why: coretasks.NeedsIntegrityViolated}) {
+		t.Errorf("outcome = %#v", outcomeOf(t, st))
+	}
+	if !h.hasAudit(id, "guard.integrity") {
+		t.Errorf("audit = %v", h.audits(id))
+	}
+}
+
 func TestIntegrityVerdictThatCannotBeStoredNeverEndsAnswered(t *testing.T) {
 	h := newHarness(t, []string{"shop-api"})
 	violatingAsk(h)

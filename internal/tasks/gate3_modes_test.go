@@ -37,6 +37,32 @@ func TestWriteModesOffRefusesEverythingButAsk(t *testing.T) {
 	h.waitStatus(id, core.TaskDone)
 }
 
+// A write-mode turn stored while the flag was on must not run after a restart
+// with the flag off.
+func TestRecoveredWaitingWriteTurnRespectsWriteModesOff(t *testing.T) {
+	h := newHarness(t, []string{"shop-api"})
+	h.adapter.caps.Enforcement = agents.EnforcementHook
+	h.afterCommit = func(_ core.TaskID, cmds []coretasks.Command) bool {
+		for _, c := range cmds {
+			if _, ok := c.(coretasks.Enqueue); ok {
+				return true
+			}
+		}
+		return false
+	}
+	h.start()
+	id := h.send(h.msg("current_branch", "edit", 0)).Task.ID
+	h.tune = func(c *Config) { c.WriteModes = false }
+	h.restart()
+	st := h.waitStatus(id, core.TaskFailed)
+	if outcomeOf(t, st) != (coretasks.Failed{Kind: coretasks.FailStart}) {
+		t.Errorf("outcome = %#v", outcomeOf(t, st))
+	}
+	if n := len(h.adapter.Starts()); n != 0 {
+		t.Errorf("adapter started %d time(s)", n)
+	}
+}
+
 // eventPanicHub panics when an event is published after the agent changed a file.
 type eventPanicHub struct {
 	*fakeHub
