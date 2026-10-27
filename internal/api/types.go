@@ -35,8 +35,10 @@ type ErrorBody struct {
 
 // HealthResponse is the body of GET /api/health.
 type HealthResponse struct {
-	Status  string `json:"status"`
-	Version string `json:"version"`
+	Status string `json:"status"`
+	// WriteModes: modes other than Ask are on (YGG_WRITE_MODES).
+	WriteModes bool   `json:"writeModes"`
+	Version    string `json:"version"`
 }
 
 // MessageType is the type of a WebSocket message.

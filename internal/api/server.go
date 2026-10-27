@@ -51,6 +51,8 @@ type Deps struct {
 	// whether or not the service is wired; until the owning task replaces a
 	// stub handler it answers 501 with a plain message.
 	Worktrees WorktreeService
+	// Agents lists the registered agents for the composer (GET /api/agents).
+	Agents    AgentService
 	Proposals ProposalService
 	Composer  ComposerService
 	MCP       MCPService
@@ -91,6 +93,7 @@ type Server struct {
 	gitActions GitActionsService
 	worktrees  WorktreeService
 	proposals  ProposalService
+	agents     AgentService
 	tasks      TaskService
 	writeModes bool
 	composer   ComposerService
@@ -132,6 +135,7 @@ func New(d Deps) (*Server, error) {
 	s.repoDetail = d.RepoDetail
 	s.gitActions = d.GitActions
 	s.worktrees, s.proposals, s.composer, s.mcp = d.Worktrees, d.Proposals, d.Composer, d.MCP
+	s.agents = d.Agents
 	s.tasks, s.writeModes = d.Tasks, d.WriteModes
 	s.clock, s.ids = d.Clock, d.IDs
 	if s.clock == nil {
@@ -163,6 +167,7 @@ func (s *Server) Handler() http.Handler {
 	s.routesSearch(mux)
 	s.routesWorktrees(mux)
 	s.routesProposals(mux)
+	s.routesAgents(mux)
 	s.routesTrust(mux)
 	s.routesBoard(mux)
 	s.routesComposer(mux)
@@ -175,7 +180,7 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, HealthResponse{Status: "ok", Version: s.version})
+	writeJSON(w, http.StatusOK, HealthResponse{Status: "ok", Version: s.version, WriteModes: s.writeModes})
 }
 
 // Run serves on ln until ctx is cancelled, then shuts down: HTTP first, then

@@ -78,6 +78,10 @@ export interface ErrorBody {
  */
 export interface HealthResponse {
   status: string;
+  /**
+   * WriteModes: modes other than Ask are on (YGG_WRITE_MODES).
+   */
+  writeModes: boolean;
   version: string;
 }
 /**
@@ -300,6 +304,42 @@ export interface EditorSettingDTO {
  */
 export interface SetEditorRequest {
   editor: string;
+}
+
+//////////
+// source: types_agents.go
+
+/**
+ * AgentCapabilitiesDTO is the part of agents.Capabilities the composer shows.
+ */
+export interface AgentCapabilitiesDTO {
+  resume: boolean;
+  costReporting: boolean;
+  /**
+   * Subagents is "none", "flat" or "nested".
+   */
+  subagents: string;
+  /**
+   * Enforcement is the adapter's enforcement level.
+   */
+  enforcement: string;
+}
+/**
+ * AgentDTO is one registered agent. Reason says in plain language why an
+ * unavailable agent can't run and what to do about it.
+ */
+export interface AgentDTO {
+  id: string;
+  label: string;
+  available: boolean;
+  reason?: string;
+  capabilities: AgentCapabilitiesDTO;
+}
+/**
+ * AgentsResponse is the body of GET /api/agents.
+ */
+export interface AgentsResponse {
+  agents: AgentDTO[];
 }
 
 //////////
@@ -881,6 +921,7 @@ export const TopicProposals = "proposals";
 export interface ProposalChangedMessage {
   proposalId: core.ProposalID;
   taskId: core.TaskID;
+  repoId?: core.RepoID;
   status: core.ProposalStatus;
 }
 /**
@@ -907,6 +948,10 @@ export interface ProposalDTO {
   kind: core.ProposalKind;
   status: core.ProposalStatus;
   source: string;
+  /**
+   * FromAgent is true when an agent made the proposal.
+   */
+  fromAgent: boolean;
   /**
    * Summary is the agent's own text, shown as plain text.
    */

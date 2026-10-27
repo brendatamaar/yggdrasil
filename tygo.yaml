@@ -37,6 +37,7 @@ packages:
       - stubs.go
       - worktrees.go
       - proposals.go
+      - agents.go
       - trust.go
       - board.go
       - composer.go
