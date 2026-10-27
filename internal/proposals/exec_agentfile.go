@@ -44,6 +44,10 @@ func (s *Service) execAgentFile(ctx context.Context, p coreprop.Proposal, a core
 	if err != nil {
 		return failed(coreprop.FailExec, true, "Yggdrasil could not read %s to check it is unchanged: %v", a.Path, err)
 	}
+	if cur == FileHash([]byte(a.Content)) {
+		// An earlier attempt landed (the same check as reconcile): done.
+		return done(coreprop.Result{Note: "Wrote " + string(a.Path) + "."})
+	}
 	if cur != a.ExpectHash {
 		return failed(coreprop.FailStale, false, "%s changed since this was proposed. Reject it and ask the agent for a new one.", a.Path)
 	}

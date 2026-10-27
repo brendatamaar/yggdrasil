@@ -40,6 +40,8 @@ type spyGit struct {
 	pushes    []git.PushRequest
 	adds      [][]string
 	branches  map[string]string // CurrentBranch answers
+	// loseCommitResult makes the next Commit land and then time out.
+	loseCommitResult bool
 	// extraStaged are paths someone staged outside the proposal.
 	extraStaged []string
 }
@@ -93,7 +95,12 @@ func (g *spyGit) Commit(ctx context.Context, dir string, paths []string, message
 	g.mu.Lock()
 	g.commits = append(g.commits, message)
 	g.mu.Unlock()
-	return g.Fake.Commit(ctx, dir, paths, message, expect)
+	id, err := g.Fake.Commit(ctx, dir, paths, message, expect)
+	if err == nil && g.loseCommitResult {
+		g.loseCommitResult = false
+		return "", context.DeadlineExceeded // landed, but the caller never heard
+	}
+	return id, err
 }
 
 func (g *spyGit) Push(ctx context.Context, dir string, req git.PushRequest) (git.PushResult, error) {

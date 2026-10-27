@@ -23,6 +23,11 @@ func (s *Service) execCommit(ctx context.Context, p coreprop.Proposal, a corepro
 	if why := checkPaths(wd.dir, a.Paths, false); why != "" {
 		return failed(coreprop.FailPrecondition, false, "%s", why)
 	}
+	// An earlier attempt may have landed (a timeout after the commit): the same
+	// check as reconcile, so a Retry reports Executed and not Stale.
+	if info, err := s.cfg.Git.HeadInfo(ctx, wd.dir); err == nil && info.Parent == a.ExpectHead && info.Message == strings.TrimSpace(a.Message) {
+		return done(coreprop.Result{CommitID: info.ID})
+	}
 	head, err := s.cfg.Git.Head(ctx, wd.dir)
 	if err != nil {
 		return readFailure("read the current commit", err)
