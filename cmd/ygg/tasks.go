@@ -77,7 +77,7 @@ func newTasks(store *db.Store, adapters adapterRegistry, g *git.Git, hub *api.Hu
 		Scanner: safety.FSScanner{}, Snapshotter: g, Env: safety.NewEnvBuilder(), Redactor: redactor,
 		Hub: hub, Machine: platform.Machine{}, Killer: platform.KillTask,
 		Now: now, NewID: db.NewID, Log: log, WriteModes: writeModes,
-		Allowlist: newAllowlist(store, log),
+		Allowlist:        newAllowlist(store, log),
 		PendingProposals: pending,
 	})
 	if err != nil {

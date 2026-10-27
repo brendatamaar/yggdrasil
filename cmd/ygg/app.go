@@ -199,8 +199,8 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		Tracking: tracking, Status: status, RepoDetail: repos.NewDetailService(store, g),
 		Builds: buildSvc, Hosts: hostSvc, Search: searchSvc,
 		GitActions: repos.GitActions{ActionsService: actions, OpenService: opener},
-		Proposals:  propSvc,
-		Composer:   newComposer(store, adapters, taskSvc, g, redactor, log),
+		Proposals:  propSvc, Agents: newAgentService(adapters),
+		Composer: newComposer(store, adapters, taskSvc, g, redactor, log),
 	})
 	if err != nil {
 		_ = d.Close()
