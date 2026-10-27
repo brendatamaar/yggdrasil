@@ -119,6 +119,9 @@ const (
 	MaxResultBytes  = 64 * 1024
 	MaxRequestBytes = 1 << 20
 	MaxBuildSteps   = 50
+	MaxDiffBytes    = 64 * 1024
+	MaxLogBytes     = 64 * 1024
+	MaxListLimit    = 200
 )
 
 // DenyReason says why a tool call is not allowed.
