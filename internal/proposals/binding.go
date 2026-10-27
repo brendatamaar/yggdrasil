@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/brendatamaar/yggdrasil/internal/core"
 	coreprop "github.com/brendatamaar/yggdrasil/internal/core/proposals"
 )
 
@@ -51,6 +52,42 @@ func (s *Service) checkBranchBinding(ctx context.Context, where coreprop.Target,
 		return errWrongBranch
 	}
 	return nil
+}
+
+// view is viewOf plus what the confirm dialog needs and the action hash does
+// not cover: the repo name, and for a pending push or merge request the host it
+// goes to (a "Remote: host" line). A lookup that fails only leaves them out.
+func (s *Service) view(ctx context.Context, p coreprop.Proposal) View {
+	v := viewOf(p)
+	if info, err := s.cfg.Resolver.Repo(ctx, p.Repo); err == nil {
+		v.RepoName = info.Name
+	}
+	if v.Status != core.ProposalPending {
+		return v
+	}
+	var where coreprop.Target
+	var remote string
+	switch a := p.Action.(type) {
+	case coreprop.Push:
+		where, remote = a.Where, a.Remote
+	case coreprop.MergeRequest:
+		where, remote = a.Where, a.Remote
+	default:
+		return v
+	}
+	dir, err := s.dirOf(ctx, where)
+	if err != nil || dir == "" {
+		return v
+	}
+	url, err := s.cfg.Git.RemoteURL(ctx, dir, remote)
+	if err != nil {
+		return v
+	}
+	if host, err := checkRemoteURL(url); err == nil && host != "" {
+		v.Remote = host
+		v.Lines = append(v.Lines, "Remote: "+host)
+	}
+	return v
 }
 
 // pushBranch returns the branch a Push or MergeRequest names ("" for others).

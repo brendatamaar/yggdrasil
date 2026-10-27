@@ -257,7 +257,7 @@ func newWorld(t *testing.T, redactSecrets ...string) *world {
 		t: t, store: store, git: &spyGit{Fake: fg, inflight: map[string]int{}, branches: map[string]string{mainDir: "main", wtDir: branch}}, builds: &fakeBuilds{outcome: BuildOutcome{Succeeded: true}},
 		lock: &mainlocktest.Fake{}, pub: &recPublisher{}, repo: repo, task: task, wtDir: wtDir, mainDir: mainDir, ctx: ctx,
 		res: &fakeResolver{
-			repo: RepoInfo{ID: repo.ID, Path: mainDir},
+			repo: RepoInfo{ID: repo.ID, Path: mainDir, Name: repo.Name},
 			wts:  map[core.WorktreeID]WorktreeInfo{wtID: {ID: wtID, Repo: repo.ID, Task: task.ID, Path: wtDir, Branch: branch}},
 			task: TaskInfo{ID: task.ID, Repos: []core.RepoID{repo.ID}},
 		},

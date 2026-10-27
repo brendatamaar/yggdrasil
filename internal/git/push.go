@@ -32,6 +32,9 @@ type PushRequest struct {
 	Branch string
 	// ExpectHead is the commit the local branch must point to.
 	ExpectHead string
+	// DefaultBranch is the default branch stored for the repo; a push of it is
+	// refused on top of the checks against the clone's remote HEAD.
+	DefaultBranch string
 	// MR, when set, adds the merge-request push options.
 	MR *MROptions
 }
@@ -287,7 +290,7 @@ func (g *Git) Push(ctx context.Context, dir string, req PushRequest) (PushResult
 	if err != nil {
 		return PushResult{}, err
 	}
-	if isDef {
+	if isDef || (req.DefaultBranch != "" && req.Branch == req.DefaultBranch) {
 		return PushResult{}, &Error{Op: "push", Err: ErrDefaultBranch,
 			UserMsg: "Yggdrasil does not push to the default branch. Push a task branch and open a merge request instead."}
 	}

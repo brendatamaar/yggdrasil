@@ -25,6 +25,10 @@ type RepoInfo struct {
 	// Tracked is false for a repo the user untracked: nothing may run in it
 	// (invariant 6).
 	Tracked bool
+	// Name is the repo's display name.
+	Name string
+	// DefaultBranch is the default branch stored for the repo ("" if unknown).
+	DefaultBranch string
 }
 
 // WorktreeInfo is a task worktree.
@@ -248,6 +252,10 @@ func refusal(reason coreprop.RefuseReason, detail string) *Refusal {
 // confirms, and the outcome so far.
 type View struct {
 	ID         core.ProposalID
+	// RepoName is the repo's display name; Remote is the host a push or merge
+	// request goes to. Neither is part of the action hash.
+	RepoName string
+	Remote   string
 	ChangeSet  core.ChangeSetID
 	Task       core.TaskID
 	Repo       core.RepoID
@@ -304,7 +312,7 @@ func (s *Service) Get(ctx context.Context, id core.ProposalID) (View, error) {
 	if err != nil {
 		return View{}, fmt.Errorf("get proposal %s: %w", id, err)
 	}
-	return viewOf(rec.Proposal), nil
+	return s.view(ctx, rec.Proposal), nil
 }
 
 // ListFilter selects proposals; set Task, or Status, or both.
@@ -333,7 +341,7 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]View, error) {
 		if f.Status != "" && r.Proposal.State.Status() != f.Status {
 			continue
 		}
-		out = append(out, viewOf(r.Proposal))
+		out = append(out, s.view(ctx, r.Proposal))
 	}
 	return out, nil
 }
@@ -436,7 +444,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (View, error) {
 		return View{}, fmt.Errorf("create proposal: %w", err)
 	}
 	s.publishAll(created, cmds)
-	return viewOf(created), nil
+	return s.view(ctx, created), nil
 }
 
 // detailFor keeps our own explanation only for the generic reason it explains.
@@ -511,10 +519,10 @@ func (s *Service) persistDecision(ctx context.Context, id core.ProposalID, mk fu
 		now := s.now()
 		next, cmds := coreprop.Step(rec.Proposal, mk(rec, tracked, now))
 		if r, ok := containsRefuse(cmds); ok {
-			return viewOf(rec.Proposal), nil, refusal(r.Reason, "")
+			return s.view(ctx, rec.Proposal), nil, refusal(r.Reason, "")
 		}
 		if len(cmds) == 0 {
-			return viewOf(rec.Proposal), nil, ErrAlreadyDecided
+			return s.view(ctx, rec.Proposal), nil, ErrAlreadyDecided
 		}
 		err = s.cfg.Store.Commit(ctx, func(tx *db.Tx) error {
 			if _, err := tx.SaveProposalRecord(ctx, next, rec.Version); err != nil {
@@ -528,7 +536,7 @@ func (s *Service) persistDecision(ctx context.Context, id core.ProposalID, mk fu
 		if err != nil {
 			return View{}, nil, fmt.Errorf("save proposal %s: %w", id, err)
 		}
-		return viewOf(next), func() { s.publishAll(next, cmds); s.dispatch(next, cmds) }, nil
+		return s.view(ctx, next), func() { s.publishAll(next, cmds); s.dispatch(next, cmds) }, nil
 	}
 	return View{}, nil, fmt.Errorf("proposal %s changed too often while it was being decided; try again", id)
 }
