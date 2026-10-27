@@ -286,7 +286,7 @@ func TestExecutorsAskForNoDestructiveGitForm(t *testing.T) {
 			return coreprop.Push{Where: wt, Branch: branch, Remote: "origin", ExpectHead: w.head(w.wtDir)}
 		},
 		func() coreprop.Action {
-			w.git.SetBranch(w.wtDir, "ygg/other")
+			w.switchBranch("ygg/other")
 			return coreprop.MergeRequest{Where: wt, Branch: "ygg/other", Remote: "origin", TargetBranch: "main", Title: "t", Description: "d", ExpectHead: w.head(w.wtDir)}
 		},
 	}

@@ -200,6 +200,19 @@ func (g *Git) DefaultBranch(ctx context.Context, dir, remote string) (string, er
 	return strings.TrimPrefix(strings.TrimSpace(so), remote+"/"), nil
 }
 
+// CurrentBranch returns the branch HEAD points at in dir, or "" when HEAD is
+// detached.
+func (g *Git) CurrentBranch(ctx context.Context, dir string) (string, error) {
+	so, _, code, err := g.exec(ctx, dir, "current branch", nil, "symbolic-ref", "--short", "-q", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	if code != 0 {
+		return "", nil
+	}
+	return strings.TrimSpace(so), nil
+}
+
 // IsDefaultBranch reports whether pushing branch is refused as a push to the
 // default branch. When the default is unknown, "main" and "master" count.
 func (g *Git) IsDefaultBranch(ctx context.Context, dir, remote, branch string) (bool, error) {

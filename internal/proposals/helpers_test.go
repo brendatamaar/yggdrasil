@@ -39,6 +39,21 @@ type spyGit struct {
 	commits   []string // messages, in the order commits ran
 	pushes    []git.PushRequest
 	adds      [][]string
+	branches  map[string]string // CurrentBranch answers
+}
+
+// CurrentBranch answers from a table the test sets; the fake writer does not
+// report the checked-out branch of a folder.
+func (g *spyGit) CurrentBranch(_ context.Context, dir string) (string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.branches[dir], nil
+}
+
+func (g *spyGit) setCurrentBranch(dir, b string) {
+	g.mu.Lock()
+	g.branches[dir] = b
+	g.mu.Unlock()
 }
 
 func (g *spyGit) enter(dir string) func() {
@@ -219,7 +234,7 @@ func newWorld(t *testing.T, redactSecrets ...string) *world {
 	fg.AddRepo(mainDir, "main")
 	fg.AddRemote(mainDir, "origin", remoteURL)
 	w := &world{
-		t: t, store: store, git: &spyGit{Fake: fg, inflight: map[string]int{}}, builds: &fakeBuilds{outcome: BuildOutcome{Succeeded: true}},
+		t: t, store: store, git: &spyGit{Fake: fg, inflight: map[string]int{}, branches: map[string]string{mainDir: "main", wtDir: branch}}, builds: &fakeBuilds{outcome: BuildOutcome{Succeeded: true}},
 		lock: &mainlocktest.Fake{}, pub: &recPublisher{}, repo: repo, task: task, wtDir: wtDir, mainDir: mainDir, ctx: ctx,
 		res: &fakeResolver{
 			repo: RepoInfo{ID: repo.ID, Path: mainDir},
@@ -256,6 +271,16 @@ func (w *world) start() {
 	}
 	w.svc = svc
 	w.t.Cleanup(svc.Close)
+}
+
+// switchBranch moves the worktree to a branch in the fake and in the resolver.
+func (w *world) switchBranch(b string) {
+	w.git.SetBranch(w.wtDir, b)
+	w.res.mu.Lock()
+	info := w.res.wts[wtID]
+	info.Branch = b
+	w.res.wts[wtID] = info
+	w.res.mu.Unlock()
 }
 
 func (w *world) head(dir string) string {

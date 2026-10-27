@@ -119,6 +119,13 @@ func (s *Service) gatherFacts(ctx context.Context, req CreateRequest) (coreprop.
 		if why := checkPaths(dir, sub.paths, sub.agent); why != "" {
 			f.PathsOK, detail = false, why
 		}
+		if b, ok := pushBranch(req.Action); ok {
+			if err := s.checkBranchBinding(ctx, sub.where, dir, b); errors.Is(err, errWrongBranch) {
+				return bad(wrongBranchMsg)
+			} else if err != nil {
+				return coreprop.Facts{}, "", "", err
+			}
+		}
 		if mr, ok := req.Action.(coreprop.MergeRequest); ok {
 			url, err := s.cfg.Git.RemoteURL(ctx, dir, mr.Remote)
 			if err != nil || s.cfg.Hosts.Kind(url) != HostGitLab {

@@ -147,6 +147,9 @@ func New(cfg Config) (*Service, error) {
 	case cfg.Hosts == nil:
 		return nil, errors.New("proposals: no hosts")
 	}
+	if _, ok := cfg.Git.(BranchReader); !ok {
+		return nil, errors.New("proposals: the git writer cannot read the current branch")
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
