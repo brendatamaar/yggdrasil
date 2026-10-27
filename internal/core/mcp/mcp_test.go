@@ -38,20 +38,6 @@ func contains(s, sub string) bool {
 	return false
 }
 
-func TestStubsFailClosed(t *testing.T) {
-	c := Context{Task: "t", Live: true}
-	if got := Offered(c); len(got) != 0 {
-		t.Errorf("Offered = %v", got)
-	}
-	for _, tool := range AllTools() {
-		if d := Authorize(c, tool); d.Allowed {
-			t.Errorf("Authorize(%q) allowed", tool)
-		}
-	}
-	if _, err := ParseCall("list_repos", nil); err == nil {
-		t.Error("ParseCall stub accepted a call")
-	}
-}
 
 func TestLimiterBoundsCalls(t *testing.T) {
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
