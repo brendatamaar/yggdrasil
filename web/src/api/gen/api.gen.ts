@@ -881,6 +881,7 @@ export const TopicProposals = "proposals";
 export interface ProposalChangedMessage {
   proposalId: core.ProposalID;
   taskId: core.TaskID;
+  repoId?: core.RepoID;
   status: core.ProposalStatus;
 }
 /**
@@ -907,6 +908,10 @@ export interface ProposalDTO {
   kind: core.ProposalKind;
   status: core.ProposalStatus;
   source: string;
+  /**
+   * FromAgent is true when an agent made the proposal.
+   */
+  fromAgent: boolean;
   /**
    * Summary is the agent's own text, shown as plain text.
    */

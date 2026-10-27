@@ -17,6 +17,7 @@ const TopicProposals = "proposals"
 type ProposalChangedMessage struct {
 	ProposalID core.ProposalID     `json:"proposalId"`
 	TaskID     core.TaskID         `json:"taskId"`
+	RepoID     core.RepoID         `json:"repoId,omitempty"`
 	Status     core.ProposalStatus `json:"status"`
 }
 
@@ -41,6 +42,8 @@ type ProposalDTO struct {
 	Kind        core.ProposalKind   `json:"kind"`
 	Status      core.ProposalStatus `json:"status"`
 	Source      string              `json:"source"`
+	// FromAgent is true when an agent made the proposal.
+	FromAgent bool `json:"fromAgent"`
 	// Summary is the agent's own text, shown as plain text.
 	Summary string `json:"summary"`
 	// Lines is what the confirmation dialog shows.
