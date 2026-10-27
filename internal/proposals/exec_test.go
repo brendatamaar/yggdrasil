@@ -250,7 +250,11 @@ func TestReconcileOutcomesPerKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, w.wtDir, "CLAUDE.md", "rules\n")
-	if _, err := moveAside(w.wtDir, "gone.txt"); err != nil {
+	dest, err := moveAside(w.wtDir, "gone.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := recordMove(w.wtDir, string(del.ID), "gone.txt", dest); err != nil {
 		t.Fatal(err)
 	}
 	w.svc.Close()

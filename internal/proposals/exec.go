@@ -86,9 +86,20 @@ func (s *Service) enqueue(key string, job func()) {
 			next := q[0]
 			s.queues[key] = q[1:]
 			s.qmu.Unlock()
-			next()
+			s.safely(next)
 		}
 	})
+}
+
+// safely runs one queued job; a panic (in applyInput or Step, say) is logged
+// and must not take the process down or stop the queue.
+func (s *Service) safely(job func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.cfg.Logger.Error("proposal job panicked", "panic", s.redact(fmt.Sprint(r)), "stack", string(debug.Stack()))
+		}
+	}()
+	job()
 }
 
 // dispatch interprets the Execute and Reconcile commands of a step.

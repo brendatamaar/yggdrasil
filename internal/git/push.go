@@ -116,8 +116,12 @@ func checkOptionText(s string) bool {
 // bare repo on this machine). It holds no credentials and runs no program, but
 // the proposals URL check does not know it, so the service asks here.
 func IsLocalPath(u string) bool {
+	// A network share (\\host\share, //host/share) is a remote machine: no.
+	if strings.HasPrefix(u, `\\`) || strings.HasPrefix(u, "//") {
+		return false
+	}
 	return u != "" && !strings.Contains(u, "::") && !strings.Contains(u, "://") &&
-		!strings.ContainsAny(u, "\r\n\x00") && (filepath.IsAbs(u) || strings.HasPrefix(u, `\\`)) &&
+		!strings.ContainsAny(u, "\r\n\x00") && filepath.IsAbs(u) &&
 		!strings.HasPrefix(u, "-")
 }
 

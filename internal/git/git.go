@@ -23,6 +23,8 @@ var baseConfig = []string{
 	"-c", "core.longpaths=true",
 	"-c", "core.quotepath=false",
 	"-c", "credential.helper=",
+	// A repo's core.fsmonitor is a program git would run on status/diff: off.
+	"-c", "core.fsmonitor=false",
 }
 
 // Git runs the safe subset of the git CLI. It is safe for concurrent use.
