@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -157,7 +158,9 @@ type fakeBuilds struct {
 	owners  []string
 	steps   []string
 	outcome BuildOutcome
-	inWait  chan struct{} // closed when Wait is entered, if set
+	live    map[string]core.BuildID // owner -> a build still queued or running
+	known   []string                // install steps the repo has; nil: any
+	inWait chan struct{} // closed when Wait is entered, if set
 	release chan struct{} // Wait blocks until it is closed, if set
 }
 
@@ -166,6 +169,19 @@ func (b *fakeBuilds) Enqueue(_ context.Context, _ core.RepoID, step, owner strin
 	defer b.mu.Unlock()
 	b.owners, b.steps = append(b.owners, owner), append(b.steps, step)
 	return "bld_one", nil
+}
+
+// FindLive answers from a table the test sets.
+func (b *fakeBuilds) FindLive(_ context.Context, owner string) (core.BuildID, bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	id, ok := b.live[owner]
+	return id, ok, nil
+}
+
+// HasInstallStep says whether step is in known (every step when known is nil).
+func (b *fakeBuilds) HasInstallStep(_ context.Context, _ core.RepoID, step string) (bool, error) {
+	return b.known == nil || slices.Contains(b.known, step), nil
 }
 
 func (b *fakeBuilds) Wait(ctx context.Context, _ core.BuildID) (BuildOutcome, error) {

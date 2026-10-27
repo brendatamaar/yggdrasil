@@ -21,6 +21,19 @@ type StagedReader interface {
 	StagedPaths(ctx context.Context, dir string) ([]string, error)
 }
 
+// BuildFinder is an optional part of Builds: the build, still queued or
+// running, that a proposal owner started. A Retry waits for it instead of
+// starting a second install.
+type BuildFinder interface {
+	FindLive(ctx context.Context, owner string) (core.BuildID, bool, error)
+}
+
+// StepChecker is an optional part of Builds: whether the repo has an install
+// step with this ID. Create refuses a step that does not exist.
+type StepChecker interface {
+	HasInstallStep(ctx context.Context, repo core.RepoID, step string) (bool, error)
+}
+
 const wrongBranchMsg = "A push or merge request may only send the branch of this task (for the main checkout, the branch that is checked out now). Name that branch."
 
 var errWrongBranch = errors.New("branch is not the task branch")

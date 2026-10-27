@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/brendatamaar/yggdrasil/internal/core"
 	coreprop "github.com/brendatamaar/yggdrasil/internal/core/proposals"
 )
 
@@ -15,15 +16,33 @@ func (s *Service) execInstall(ctx context.Context, p coreprop.Proposal, a corepr
 	if !s.repoTracked(ctx, a.Repo) {
 		return failed(coreprop.FailRepoUntracked, false, "This repo is no longer tracked, so nothing was run. Track the repo again, then ask for a new proposal.")
 	}
-	id, err := s.cfg.Builds.Enqueue(ctx, a.Repo, a.Step, "proposal:"+string(p.ID))
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return gitFailure(err)
+	owner := "proposal:" + string(p.ID)
+	var id core.BuildID
+	found := false
+	if bf, ok := s.cfg.Builds.(BuildFinder); ok {
+		live, ok, err := bf.FindLive(ctx, owner)
+		if err != nil {
+			return readFailure("look for a running install", err)
 		}
-		return failed(coreprop.FailExec, true, "The install could not be started. Check the repo's install command in its build settings, then retry.")
+		id, found = live, ok
 	}
-	out, err := s.cfg.Builds.Wait(ctx, id)
+	if !found {
+		var err error
+		id, err = s.cfg.Builds.Enqueue(ctx, a.Repo, a.Step, owner)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return gitFailure(err)
+			}
+			return failed(coreprop.FailExec, true, "The install could not be started. Check the repo's install command in its build settings, then retry.")
+		}
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, s.cfg.InstallTimeout)
+	defer cancel()
+	out, err := s.cfg.Builds.Wait(waitCtx, id)
 	if err != nil {
+		if waitCtx.Err() != nil && ctx.Err() == nil {
+			return failed(coreprop.FailInterrupted, true, "The install (build %s) is taking very long, so Yggdrasil stopped waiting. It may still be running: look at its log, then retry if needed.", id)
+		}
 		return failed(coreprop.FailInterrupted, true, "Yggdrasil lost track of build %s. Look at its log, then retry if needed.", id)
 	}
 	if !out.Succeeded {

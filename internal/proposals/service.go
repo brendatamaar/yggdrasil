@@ -118,6 +118,8 @@ type Config struct {
 	// ExecTimeout bounds one executor run; default 10 minutes (installs may
 	// take long, so it only applies to git).
 	ExecTimeout time.Duration
+	// InstallTimeout bounds the wait for an install build; default 20 minutes.
+	InstallTimeout time.Duration
 }
 
 // Service creates, decides and executes proposals (RV-02, GH-03).
@@ -168,6 +170,9 @@ func New(cfg Config) (*Service, error) {
 	}
 	if cfg.NewID == nil {
 		cfg.NewID = db.NewID
+	}
+	if cfg.InstallTimeout <= 0 {
+		cfg.InstallTimeout = 20 * time.Minute
 	}
 	if cfg.ExecTimeout <= 0 {
 		cfg.ExecTimeout = 10 * time.Minute
