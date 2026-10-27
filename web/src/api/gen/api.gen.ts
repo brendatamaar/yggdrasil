@@ -608,21 +608,40 @@ export interface ModelDTO {
   label: string;
 }
 /**
- * ModelsResponse is the body of GET /api/composer/models?agent=.
+ * ModelsResponse lists the models of one agent. AllowCustom says the agent
+ * also accepts a model name that is not in the list.
  */
 export interface ModelsResponse {
   agent: string;
   models: ModelDTO[];
+  allowCustom: boolean;
+}
+/**
+ * ModelsListResponse is the body of GET /api/composer/models: one entry per
+ * registered agent (or only the agent named in ?agent=).
+ */
+export interface ModelsListResponse {
+  agents: ModelsResponse[];
+}
+/**
+ * UpdatePromptRequest is the body of PUT /api/composer/prompts/{id}.
+ */
+export interface UpdatePromptRequest {
+  name: string;
+  text: string;
 }
 /**
  * DraftRequest is the body of POST /api/composer/drafts. Kind is
- * "commit_message", "mr_title" or "mr_description".
+ * "commit_message" or "mr_description". TaskID, when set, drafts from that
+ * task's worktree of the repo instead of the main checkout.
  */
 export interface DraftRequest {
   kind: string;
+  projectId: core.ProjectID;
   repoId: core.RepoID;
   taskId?: core.TaskID;
   agent?: string;
+  model?: string;
 }
 /**
  * DraftResponse is the draft text. The user edits it before anything is
@@ -630,6 +649,16 @@ export interface DraftRequest {
  */
 export interface DraftResponse {
   text: string;
+  /**
+   * Title and Description are set for an MR draft: the first line (up to
+   * 200 characters) and the rest.
+   */
+  title?: string;
+  description?: string;
+  /**
+   * PushDescription is Description on one line, for a git push option.
+   */
+  pushDescription?: string;
 }
 
 //////////
