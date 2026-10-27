@@ -330,7 +330,9 @@ func (f *Fake) Push(_ context.Context, dir string, req git.PushRequest) (git.Pus
 	rem.refs[req.Branch] = tip
 	out := "To " + "remote\n"
 	if req.MR != nil {
-		out += "remote: View merge request for " + req.Branch + ":\nremote:   https://fake.example.test/mr/1\n"
+		host := strings.TrimPrefix(strings.TrimPrefix(url, "https://"), "http://")
+		host, _, _ = strings.Cut(host, "/")
+		out += "remote: View merge request for " + req.Branch + ":\nremote:   https://" + host + "/acme/shop-api/-/merge_requests/1\n"
 	}
 	return git.PushResult{Output: out}, nil
 }
