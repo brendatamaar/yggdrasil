@@ -55,10 +55,9 @@ func score(q []rune, path string) (int, bool) {
 		return 0, true
 	}
 	p := strings.ToLower(path)
-	pr := []rune(p)
 	run, best, total := 0, 0, 0
 	qi := 0
-	for _, c := range pr {
+	for _, c := range p {
 		if qi < len(q) && c == q[qi] {
 			qi++
 			run++
