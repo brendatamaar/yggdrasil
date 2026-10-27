@@ -150,6 +150,9 @@ func New(cfg Config) (*Service, error) {
 	if _, ok := cfg.Git.(BranchReader); !ok {
 		return nil, errors.New("proposals: the git writer cannot read the current branch")
 	}
+	if _, ok := cfg.Git.(StagedReader); !ok {
+		return nil, errors.New("proposals: the git writer cannot list staged files")
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}

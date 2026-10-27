@@ -212,6 +212,16 @@ func (g *Git) DiffHash(ctx context.Context, dir string, paths []string) (string,
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// StagedPaths lists every file name in the index that differs from HEAD
+// (`git diff --cached --name-only -z`). It only reads.
+func (g *Git) StagedPaths(ctx context.Context, dir string) ([]string, error) {
+	out, err := g.run(ctx, dir, "staged paths", true, "-c", "core.fsmonitor=false", "diff", "--cached", "--name-only", "-z", "--no-renames", "--")
+	if err != nil {
+		return nil, err
+	}
+	return splitNUL(out), nil
+}
+
 // Add stages exactly paths (literal pathspecs; never -A).
 func (g *Git) Add(ctx context.Context, dir string, paths []string) error {
 	if err := checkPathspecs(paths); err != nil {

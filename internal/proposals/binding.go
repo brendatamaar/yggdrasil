@@ -14,6 +14,12 @@ type BranchReader interface {
 	CurrentBranch(ctx context.Context, dir string) (string, error)
 }
 
+// StagedReader lists the files staged in the index. *git.Git implements it;
+// New requires it.
+type StagedReader interface {
+	StagedPaths(ctx context.Context, dir string) ([]string, error)
+}
+
 const wrongBranchMsg = "A push or merge request may only send the branch of this task (for the main checkout, the branch that is checked out now). Name that branch."
 
 var errWrongBranch = errors.New("branch is not the task branch")

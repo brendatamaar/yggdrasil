@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	coreprop "github.com/brendatamaar/yggdrasil/internal/core/proposals"
@@ -53,8 +54,14 @@ func checkPaths(dir string, paths []coreprop.RelPath, agentFile bool) string {
 		if dir == "" {
 			continue
 		}
-		if _, err := insideRoot(dir, string(p)); err != nil {
+		full, err := insideRoot(dir, string(p))
+		if err != nil {
 			return "A file path is not inside the folder of this task. Use paths inside the task's worktree."
+		}
+		if !agentFile {
+			if fi, err := os.Stat(full); err == nil && fi.IsDir() {
+				return "A path names a folder. Name each file, so that nothing else is included by accident."
+			}
 		}
 	}
 	return ""

@@ -40,6 +40,8 @@ type spyGit struct {
 	pushes    []git.PushRequest
 	adds      [][]string
 	branches  map[string]string // CurrentBranch answers
+	// extraStaged are paths someone staged outside the proposal.
+	extraStaged []string
 }
 
 // CurrentBranch answers from a table the test sets; the fake writer does not
@@ -48,6 +50,17 @@ func (g *spyGit) CurrentBranch(_ context.Context, dir string) (string, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.branches[dir], nil
+}
+
+// StagedPaths answers with what Add staged plus anything a test staged by hand.
+func (g *spyGit) StagedPaths(_ context.Context, dir string) ([]string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	out := append([]string(nil), g.extraStaged...)
+	for _, a := range g.adds {
+		out = append(out, a...)
+	}
+	return out, nil
 }
 
 func (g *spyGit) setCurrentBranch(dir, b string) {
