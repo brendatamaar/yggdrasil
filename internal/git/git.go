@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"github.com/brendatamaar/yggdrasil/internal/platform"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
@@ -30,6 +31,12 @@ type Git struct {
 	env    []string
 	taskID string
 	redact safety.Redactor
+
+	// hooksDir is the empty folder core.hooksPath points at for proposal
+	// commits and pushes (commit.go).
+	hooksOnce sync.Once
+	hooksDir  string
+	hooksErr  error
 }
 
 // Option configures New.
