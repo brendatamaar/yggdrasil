@@ -189,7 +189,7 @@ var rules = []rule{
 	// Invariant 1: Yggdrasil never deletes files. Executing a proposal only
 	// moves (os.Rename); the code that runs proposals and the git wrapper
 	// have no way to remove anything. Tests may clean up after themselves.
-	rule{name: "proposals and git never delete files", check: func(f file) []string {
+	{name: "proposals and git never delete files", check: func(f file) []string {
 		if f.test || !inDir(f, "internal/proposals", "internal/git") {
 			return nil
 		}

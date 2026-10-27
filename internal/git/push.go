@@ -123,7 +123,7 @@ func IsLocalPath(u string) bool {
 // applies the stricter proposals.CheckRemote first.
 func checkRemoteURL(u string) error {
 	unsafe := &Error{Op: "push", Err: ErrUnsafeRemote,
-		UserMsg: "The remote address has a password or token in it, or is not a normal address. Remove the credentials from the remote URL (use SSH keys or a credential manager), then retry."}
+		UserMsg: "The remote address has a password or token in it, or is not a normal address. Take the credentials out of the remote URL (use SSH keys or a credential manager), then retry."}
 	if u == "" || strings.ContainsAny(u, "\r\n\x00") || strings.Contains(u, "::") || strings.HasPrefix(u, "-") {
 		return unsafe
 	}

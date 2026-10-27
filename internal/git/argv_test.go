@@ -80,8 +80,8 @@ func TestPropGitArgvHasNoDestructiveForm(t *testing.T) {
 		branch := randName(r, "abcxyz/-_.+:~^*? \\@{}", 12)
 		remote := randName(r, "origin-_.+:", 8)
 		paths := []string{randName(r, "ab/._-:*", 8), randName(r, "xy/-+", 8)}
-		var req PushRequest
-		req = PushRequest{Remote: remote, Branch: branch, ExpectHead: "abc"}
+
+		req := PushRequest{Remote: remote, Branch: branch, ExpectHead: "abc"}
 		if r.Intn(2) == 0 {
 			req.MR = &MROptions{Target: randName(r, "main-dev", 6), Title: randName(r, "t ", 8), Description: randName(r, "d ", 8)}
 		}

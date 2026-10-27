@@ -65,7 +65,6 @@ type realHarness struct {
 	exe       string
 	cfg       string
 	dir, bare string
-	markers   string
 }
 
 func (r *realHarness) setAuthor(known bool) {
