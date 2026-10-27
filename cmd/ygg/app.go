@@ -25,6 +25,7 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/hosts/hostclients"
 	"github.com/brendatamaar/yggdrasil/internal/mainlock"
 	"github.com/brendatamaar/yggdrasil/internal/platform"
+	"github.com/brendatamaar/yggdrasil/internal/proposals"
 	"github.com/brendatamaar/yggdrasil/internal/repos"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 	"github.com/brendatamaar/yggdrasil/internal/tasks"
@@ -52,6 +53,9 @@ type app struct {
 	feeder *hostsFeeder
 	// tasks runs agent tasks. It starts in run and is closed before the store.
 	tasks *tasks.Service
+	// proposals decides and runs proposals. It starts after tasks and closes
+	// before them, and before the store.
+	proposals *proposals.Service
 }
 
 // newLogger writes redacted text logs: no token reaches a log (invariant 4).
@@ -175,8 +179,15 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		return nil, fmt.Errorf("start code search: %w", err)
 	}
 
+	propHub := &api.ProposalsHub{}
+	propSvc, err := newProposals(store, g, checkoutLock, buildSvc, hostSvc, propHub, redactor)
+	if err != nil {
+		_ = d.Close()
+		return nil, err
+	}
+
 	taskHub := &api.HubAdapter{}
-	taskSvc, err := newTasks(store, adapters, g, taskHub, redactor, checkoutLock, cfg.dataDir, cfg.writeModes, log)
+	taskSvc, err := newTasks(store, adapters, g, taskHub, redactor, checkoutLock, cfg.dataDir, cfg.writeModes, propSvc.PendingCount, log)
 	if err != nil {
 		_ = d.Close()
 		return nil, err
@@ -188,6 +199,7 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		Tracking: tracking, Status: status, RepoDetail: repos.NewDetailService(store, g),
 		Builds: buildSvc, Hosts: hostSvc, Search: searchSvc,
 		GitActions: repos.GitActions{ActionsService: actions, OpenService: opener},
+		Proposals:  propSvc,
 		Composer:   newComposer(store, adapters, taskSvc, g, redactor, log),
 	})
 	if err != nil {
@@ -202,7 +214,8 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	hostsPub.srv = srv
 	batchPub.srv = srv
 	taskHub.Bind(srv)
-	return &app{cfg: cfg, log: log, db: d, store: store, srv: srv, status: status, builds: buildSvc, hosts: hostSvc, actions: actions, feeder: feeder, tasks: taskSvc}, nil
+	propHub.Bind(srv)
+	return &app{cfg: cfg, log: log, db: d, store: store, srv: srv, status: status, builds: buildSvc, hosts: hostSvc, actions: actions, feeder: feeder, tasks: taskSvc, proposals: propSvc}, nil
 }
 
 // run serves on ln until ctx is cancelled. On the way out the server stops
@@ -216,6 +229,12 @@ func (a *app) run(ctx context.Context, ln net.Listener) error {
 		_ = a.tasks.Close()
 		return errors.Join(fmt.Errorf("start tasks: %w", err), a.db.Close())
 	}
+	// Proposals that were Confirmed at the last shutdown are reconciled here,
+	// never executed again on their own.
+	if err := a.proposals.Start(ctx); err != nil {
+		a.proposals.Close()
+		return errors.Join(fmt.Errorf("start proposals: %w", err), a.tasks.Close(), a.db.Close())
+	}
 	group, gctx := errgroup.WithContext(ctx)
 	group.Go(func() error { return a.status.Start(gctx) })
 	group.Go(func() error { return a.builds.Start(gctx) })
@@ -226,6 +245,7 @@ func (a *app) run(ctx context.Context, ln net.Listener) error {
 	group.Go(func() error { return a.feeder.run(gctx) })
 	group.Go(func() error { return a.srv.Run(gctx, ln) })
 	serveErr := group.Wait()
+	a.proposals.Close()
 	tasksErr := a.tasks.Close()
 	a.hosts.Close()
 	closeErr := a.db.Close()
