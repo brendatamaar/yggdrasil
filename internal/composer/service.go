@@ -26,8 +26,11 @@ type TaskRunner interface {
 // Config wires a Service. Store, Env, Redactor, Now and NewID are required;
 // Tasks is required for Draft.
 type Config struct {
-	Store    *db.Store
-	Tasks    TaskRunner
+	Store *db.Store
+	Tasks TaskRunner
+	// Git reads diffs for Draft. Reader reads the draft task; nil means the store.
+	Git      Differ
+	Reader   TaskReader
 	Env      safety.EnvBuilder
 	Redactor safety.Redactor
 	// Agents are the names of the registered adapters, for Models.

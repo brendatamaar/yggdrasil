@@ -3,15 +3,36 @@ package composer
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/apperr"
+	"github.com/brendatamaar/yggdrasil/internal/core"
 	"github.com/brendatamaar/yggdrasil/internal/db"
+	"github.com/brendatamaar/yggdrasil/internal/db/dbtest"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
+
+type projRepo struct {
+	proj core.Project
+	repo core.Repo
+}
+
+// newProject stores one project with one tracked repo (a plain folder).
+func newProject(t *testing.T, st *db.Store) projRepo {
+	t.Helper()
+	root := t.TempDir()
+	p := dbtest.Project(t, st, core.Project{Name: "acme-shop", Path: filepath.Join(root, "acme-shop")})
+	dir := filepath.Join(p.Path, "shop-api")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	r := dbtest.Repo(t, st, core.Repo{ProjectID: p.ID, Name: "shop-api", Path: dir, DefaultBranch: "main"})
+	return projRepo{proj: p, repo: r}
+}
 
 func newStore(t *testing.T) *db.Store {
 	t.Helper()
