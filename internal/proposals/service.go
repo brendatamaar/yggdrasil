@@ -379,6 +379,11 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (View, error) {
 	if err != nil {
 		return View{}, err
 	}
+	if facts.RepoTracked && facts.PathsOK && facts.RemoteSupported {
+		if req.Action, err = s.fillExpected(ctx, req.Action); err != nil {
+			return View{}, err
+		}
+	}
 	src := req.Source
 	if src == nil {
 		src = coreprop.UserSource{}

@@ -123,6 +123,8 @@ func TestParseActionRejectionRules(t *testing.T) {
 		{"remote space", "push", set("remote", "or igin"), "remote name"},
 		{"remote empty", "push", set("remote", ""), "remote name"},
 		{"push head missing", "push", set("expect_head", ""), "expect_head"},
+		{"merge request head missing", "merge_request", set("expect_head", ""), "expect_head"},
+		{"commit head missing", "commit", set("expect_head", ""), "expect_head"},
 		{"target branch bad", "merge_request", set("target", "-m"), "branch name"},
 		{"title empty", "merge_request", set("title", ""), "title is empty"},
 		{"title too long", "merge_request", set("title", long), "title is over"},
@@ -169,7 +171,6 @@ func TestParseActionAcceptsEdgeCases(t *testing.T) {
 	}{
 		{"commit", set("paths", []string{"a b/c d.txt", "dir/.gitignore", "dir/.github/x.yml", "ünï/çode.txt"})},
 		{"commit", set("paths", []string{"CONSOLE.txt", "nulls/x", "com10", "COM", "a.b.c"})},
-		{"commit", func(m map[string]any) { delete(m, "expect_head") }},
 		{"commit", set("message", strings.Repeat("m", MaxMessageSize))},
 		{"push", set("branch", "feature/a-b_c.d")},
 		{"push", set("remote", "my.remote_1-x")},

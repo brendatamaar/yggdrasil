@@ -124,30 +124,44 @@ func ParseAction(kind string, data []byte) (Action, error) {
 	if err := supported(k); err != nil {
 		return nil, err
 	}
-	a, err := parseKind(k, data)
+	a, err := parseKind(k, data, true)
 	return a, wrapKind(kind, err)
 }
 
-func parseKind(k core.ProposalKind, data []byte) (Action, error) {
+// ParseDraftAction is ParseAction for a caller that does not know the branch
+// tip or the diff checksum (the MCP tools and the UI): expect_head and
+// expect_diff_hash may be missing. The result is NOT an executable action: the
+// service fills the two fields and then calls Validate, which requires them. A
+// value that is present is checked as in ParseAction.
+func ParseDraftAction(kind string, data []byte) (Action, error) {
+	k := core.ProposalKind(kind)
+	if err := supported(k); err != nil {
+		return nil, err
+	}
+	a, err := parseKind(k, data, false)
+	return a, wrapKind(kind, err)
+}
+
+func parseKind(k core.ProposalKind, data []byte, strict bool) (Action, error) {
 	switch k {
 	case core.ProposalCommit:
 		var v commitArgs
 		if err := decodeStrict(data, &v); err != nil {
 			return nil, err
 		}
-		return buildCommit(v)
+		return buildCommit(v, strict)
 	case core.ProposalPush:
 		var v pushArgs
 		if err := decodeStrict(data, &v); err != nil {
 			return nil, err
 		}
-		return buildPush(v)
+		return buildPush(v, strict)
 	case core.ProposalMergeRequest:
 		var v mrArgs
 		if err := decodeStrict(data, &v); err != nil {
 			return nil, err
 		}
-		return buildMR(v)
+		return buildMR(v, strict)
 	case core.ProposalAgentFile:
 		var v agentFileArgs
 		if err := decodeStrict(data, &v); err != nil {
@@ -170,7 +184,7 @@ func parseKind(k core.ProposalKind, data []byte) (Action, error) {
 	return nil, fmt.Errorf("%w: %q", ErrUnsupportedKind, string(k))
 }
 
-func buildCommit(v commitArgs) (Action, error) {
+func buildCommit(v commitArgs, strict bool) (Action, error) {
 	t, err := parseTarget(v.Worktree, v.Repo)
 	if err != nil {
 		return nil, err
@@ -182,16 +196,16 @@ func buildCommit(v commitArgs) (Action, error) {
 	if err := checkMessage(v.Message); err != nil {
 		return nil, err
 	}
-	if err := checkHexField("expect_head", v.ExpectHead, true); err != nil {
+	if err := checkHexField("expect_head", v.ExpectHead, !strict); err != nil {
 		return nil, err
 	}
-	if err := checkHexField("expect_diff_hash", v.ExpectDiffHash, false); err != nil {
+	if err := checkHexField("expect_diff_hash", v.ExpectDiffHash, !strict); err != nil {
 		return nil, err
 	}
 	return Commit{Where: t, Paths: ps, Message: v.Message, ExpectHead: v.ExpectHead, ExpectDiffHash: v.ExpectDiffHash}, nil
 }
 
-func buildPush(v pushArgs) (Action, error) {
+func buildPush(v pushArgs, strict bool) (Action, error) {
 	t, err := parseTarget(v.Worktree, v.Repo)
 	if err != nil {
 		return nil, err
@@ -199,7 +213,7 @@ func buildPush(v pushArgs) (Action, error) {
 	if err := checkBranchRemote(v.Branch, v.Remote); err != nil {
 		return nil, err
 	}
-	if err := checkHexField("expect_head", v.ExpectHead, false); err != nil {
+	if err := checkHexField("expect_head", v.ExpectHead, !strict); err != nil {
 		return nil, err
 	}
 	return Push{Where: t, Branch: v.Branch, Remote: v.Remote, ExpectHead: v.ExpectHead}, nil
@@ -212,7 +226,7 @@ func checkBranchRemote(branch, remote string) error {
 	return CheckRemoteName(remote)
 }
 
-func buildMR(v mrArgs) (Action, error) {
+func buildMR(v mrArgs, strict bool) (Action, error) {
 	t, err := parseTarget(v.Worktree, v.Repo)
 	if err != nil {
 		return nil, err
@@ -229,7 +243,7 @@ func buildMR(v mrArgs) (Action, error) {
 	if err := checkDescription(v.Description); err != nil {
 		return nil, err
 	}
-	if err := checkHexField("expect_head", v.ExpectHead, false); err != nil {
+	if err := checkHexField("expect_head", v.ExpectHead, !strict); err != nil {
 		return nil, err
 	}
 	return MergeRequest{
@@ -288,7 +302,7 @@ func ActionFromRow(kind core.ProposalKind, payload []byte) (Action, error) {
 	if err := supported(kind); err != nil {
 		return nil, err
 	}
-	a, err := parseKind(kind, payload)
+	a, err := parseKind(kind, payload, true)
 	if err != nil {
 		return nil, fmt.Errorf("read %s proposal: %w", kind, err)
 	}
