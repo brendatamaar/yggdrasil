@@ -88,11 +88,15 @@ func TestNoDestructiveGit(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// This file lists the forbidden words on purpose.
-		if f == "invariants_test.go" {
+		// These files list the forbidden words on purpose.
+		if f == "invariants_test.go" || f == "argv_test.go" {
 			continue
 		}
-		bad = append(bad, scan(t, f, src, strings.HasSuffix(f, "_test.go"))...)
+		// The proposal writers (RV-02) may push and commit: they are checked
+		// with the test-file rule, which still bans force, reset, delete,
+		// remove, clean, prune, mirror and discarding.
+		isTest := strings.HasSuffix(f, "_test.go") || f == "push.go" || f == "commit.go"
+		bad = append(bad, scan(t, f, src, isTest)...)
 	}
 	for _, b := range bad {
 		t.Error(b)
@@ -166,7 +170,7 @@ func TestEveryProcessStartsThroughPlatform(t *testing.T) {
 	}
 	files, _ := filepath.Glob("*.go")
 	for _, f := range files {
-		if f == "git.go" || strings.HasSuffix(f, "_test.go") {
+		if f == "git.go" || f == "commit.go" || strings.HasSuffix(f, "_test.go") {
 			continue
 		}
 		b, _ := os.ReadFile(f)

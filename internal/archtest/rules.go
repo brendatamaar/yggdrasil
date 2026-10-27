@@ -186,6 +186,22 @@ var rules = []rule{
 		return f.uses1("golang.org/x/sys/windows.CreateProcess") || f.uses1("golang.org/x/sys/windows.CreateProcessAsUser")
 	}, "internal/platform"),
 
+	// Invariant 1: Yggdrasil never deletes files. Executing a proposal only
+	// moves (os.Rename); the code that runs proposals and the git wrapper
+	// have no way to remove anything. Tests may clean up after themselves.
+	{name: "proposals and git never delete files", check: func(f file) []string {
+		if f.test || !inDir(f, "internal/proposals", "internal/git") {
+			return nil
+		}
+		var out []string
+		for _, call := range []string{"os.Remove", "os.RemoveAll", "syscall.Unlink", "golang.org/x/sys/windows.DeleteFile"} {
+			if f.uses1(call) {
+				out = append(out, violation(f, "calls %s; proposals move files into _to_delete/ and never delete (invariant 1)", call))
+			}
+		}
+		return out
+	}},
+
 	// 5.2 Platform: no OS checks outside internal/platform.
 	banOutside("runtime.GOOS", "reads runtime.GOOS", func(f file) bool { return f.uses1("runtime.GOOS") }, "internal/platform"),
 
