@@ -16,12 +16,17 @@ export function DraftButton({
   projectId,
   repoId,
   taskId,
+  agent,
+  model,
   onDraft,
 }: {
   kind: keyof typeof LABEL;
   projectId: string;
   repoId: string;
   taskId?: string;
+  /** The agent that writes the draft; the server refuses a draft without one. */
+  agent?: string;
+  model?: string;
   onDraft: (text: string) => void;
 }) {
   const [state, setState] = useState<DraftState>({ tag: "idle" });
@@ -48,7 +53,7 @@ export function DraftButton({
         ctl.abort();
       }, DRAFT_TIMEOUT_MS);
       // projectId scopes the repo; the server resolves the repo from repoId.
-      void requestDraft({ kind, repoId, ...(taskId ? { taskId } : {}) }, ctl.signal)
+      void requestDraft({ kind, projectId, repoId, ...(taskId ? { taskId } : {}), ...(agent ? { agent } : {}), ...(model ? { model } : {}) }, ctl.signal)
         .then((r) => {
           // fill is a command of the step; its text is the answer.
           send({ tag: "done", requestId: c.requestId }, r.text);
