@@ -38,7 +38,6 @@ func contains(s, sub string) bool {
 	return false
 }
 
-
 func TestLimiterBoundsCalls(t *testing.T) {
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	var b Bucket
