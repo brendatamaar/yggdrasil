@@ -2,6 +2,7 @@ package proposals
 
 import (
 	"context"
+	"errors"
 
 	coreprop "github.com/brendatamaar/yggdrasil/internal/core/proposals"
 	"github.com/brendatamaar/yggdrasil/internal/git"
@@ -33,6 +34,19 @@ func (s *Service) runPush(ctx context.Context, p coreprop.Proposal, plan pushPla
 	ctx, cancel := context.WithTimeout(ctx, s.cfg.ExecTimeout)
 	defer cancel()
 
+	if err := s.checkBranchBinding(ctx, plan.where, wd.dir, plan.branch); err != nil {
+		if errors.Is(err, errWrongBranch) {
+			return failed(coreprop.FailPrecondition, false, "%s The branch changed since this was proposed: reject it and ask for a new one.", wrongBranchMsg)
+		}
+		return readFailure("check the branch", err)
+	}
+	defBranch := ""
+	if info, err := s.cfg.Resolver.Repo(ctx, wd.repo); err == nil {
+		defBranch = info.DefaultBranch
+	}
+	if defBranch != "" && plan.branch == defBranch {
+		return failed(coreprop.FailPrecondition, false, "Yggdrasil does not push to the default branch. Push a task branch and open a merge request instead.")
+	}
 	url, err := s.cfg.Git.RemoteURL(ctx, wd.dir, plan.remote)
 	if err != nil {
 		return readFailure("read the remote", err)
@@ -48,7 +62,7 @@ func (s *Service) runPush(ctx context.Context, p coreprop.Proposal, plan pushPla
 		return done(coreprop.Result{Note: alreadyPushed + mrHint(plan)})
 	}
 	res, err := s.cfg.Git.Push(ctx, wd.dir, git.PushRequest{
-		Remote: plan.remote, Branch: plan.branch, ExpectHead: plan.expectHead, MR: plan.mr,
+		Remote: plan.remote, Branch: plan.branch, ExpectHead: plan.expectHead, DefaultBranch: defBranch, MR: plan.mr,
 	})
 	if err != nil {
 		return gitFailure(err)

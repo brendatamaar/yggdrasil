@@ -194,7 +194,7 @@ var rules = []rule{
 			return nil
 		}
 		var out []string
-		for _, call := range []string{"os.Remove", "os.RemoveAll", "syscall.Unlink", "golang.org/x/sys/windows.DeleteFile"} {
+		for _, call := range []string{"os.Remove", "os.RemoveAll", "os.Truncate", "os.O_TRUNC", "syscall.O_TRUNC", "syscall.Unlink", "golang.org/x/sys/windows.DeleteFile"} {
 			if f.uses1(call) {
 				out = append(out, violation(f, "calls %s; proposals move files into _to_delete/ and never delete (invariant 1)", call))
 			}

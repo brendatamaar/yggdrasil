@@ -32,6 +32,9 @@ type PushRequest struct {
 	Branch string
 	// ExpectHead is the commit the local branch must point to.
 	ExpectHead string
+	// DefaultBranch is the default branch stored for the repo; a push of it is
+	// refused on top of the checks against the clone's remote HEAD.
+	DefaultBranch string
 	// MR, when set, adds the merge-request push options.
 	MR *MROptions
 }
@@ -113,8 +116,12 @@ func checkOptionText(s string) bool {
 // bare repo on this machine). It holds no credentials and runs no program, but
 // the proposals URL check does not know it, so the service asks here.
 func IsLocalPath(u string) bool {
+	// A network share (\\host\share, //host/share) is a remote machine: no.
+	if strings.HasPrefix(u, `\\`) || strings.HasPrefix(u, "//") {
+		return false
+	}
 	return u != "" && !strings.Contains(u, "::") && !strings.Contains(u, "://") &&
-		!strings.ContainsAny(u, "\r\n\x00") && (filepath.IsAbs(u) || strings.HasPrefix(u, `\\`)) &&
+		!strings.ContainsAny(u, "\r\n\x00") && filepath.IsAbs(u) &&
 		!strings.HasPrefix(u, "-")
 }
 
@@ -200,6 +207,19 @@ func (g *Git) DefaultBranch(ctx context.Context, dir, remote string) (string, er
 	return strings.TrimPrefix(strings.TrimSpace(so), remote+"/"), nil
 }
 
+// CurrentBranch returns the branch HEAD points at in dir, or "" when HEAD is
+// detached.
+func (g *Git) CurrentBranch(ctx context.Context, dir string) (string, error) {
+	so, _, code, err := g.exec(ctx, dir, "current branch", nil, "symbolic-ref", "--short", "-q", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	if code != 0 {
+		return "", nil
+	}
+	return strings.TrimSpace(so), nil
+}
+
 // IsDefaultBranch reports whether pushing branch is refused as a push to the
 // default branch. When the default is unknown, "main" and "master" count.
 func (g *Git) IsDefaultBranch(ctx context.Context, dir, remote, branch string) (bool, error) {
@@ -274,7 +294,7 @@ func (g *Git) Push(ctx context.Context, dir string, req PushRequest) (PushResult
 	if err != nil {
 		return PushResult{}, err
 	}
-	if isDef {
+	if isDef || (req.DefaultBranch != "" && req.Branch == req.DefaultBranch) {
 		return PushResult{}, &Error{Op: "push", Err: ErrDefaultBranch,
 			UserMsg: "Yggdrasil does not push to the default branch. Push a task branch and open a merge request instead."}
 	}

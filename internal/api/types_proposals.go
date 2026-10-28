@@ -34,14 +34,16 @@ type ProposalResultDTO struct {
 // and Retryable are set on a failed proposal. ActionHash is what Confirm must
 // send back.
 type ProposalDTO struct {
-	ID          core.ProposalID     `json:"id"`
-	ChangeSetID core.ChangeSetID    `json:"changeSetId,omitempty"`
-	TaskID      core.TaskID         `json:"taskId,omitempty"`
-	RepoID      core.RepoID         `json:"repoId,omitempty"`
-	RepoName    string              `json:"repoName,omitempty"`
-	Kind        core.ProposalKind   `json:"kind"`
-	Status      core.ProposalStatus `json:"status"`
-	Source      string              `json:"source"`
+	ID          core.ProposalID  `json:"id"`
+	ChangeSetID core.ChangeSetID `json:"changeSetId,omitempty"`
+	TaskID      core.TaskID      `json:"taskId,omitempty"`
+	RepoID      core.RepoID      `json:"repoId,omitempty"`
+	RepoName    string           `json:"repoName,omitempty"`
+	// Remote is the host a pending push or merge request goes to.
+	Remote string              `json:"remote,omitempty"`
+	Kind   core.ProposalKind   `json:"kind"`
+	Status core.ProposalStatus `json:"status"`
+	Source string              `json:"source"`
 	// FromAgent is true when an agent made the proposal.
 	FromAgent bool `json:"fromAgent"`
 	// Summary is the agent's own text, shown as plain text.

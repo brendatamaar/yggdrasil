@@ -945,6 +945,10 @@ export interface ProposalDTO {
   taskId?: core.TaskID;
   repoId?: core.RepoID;
   repoName?: string;
+  /**
+   * Remote is the host a pending push or merge request goes to.
+   */
+  remote?: string;
   kind: core.ProposalKind;
   status: core.ProposalStatus;
   source: string;

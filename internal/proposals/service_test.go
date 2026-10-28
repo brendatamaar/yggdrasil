@@ -177,9 +177,10 @@ func TestConfirmationsOnOneRepoRunOneAtATimeInConfirmationOrder(t *testing.T) {
 	head := w.head(w.wtDir)
 	var views []View
 	for i := 0; i < 4; i++ {
-		b := fmt.Sprintf("ygg/b%d", i)
-		w.git.SetBranch(w.wtDir, b)
-		views = append(views, w.create(coreprop.Push{Where: coreprop.InWorktree{ID: wtID}, Branch: b, Remote: "origin", ExpectHead: head}))
+		// The branch is bound to the worktree, so the pushes differ by remote.
+		r := fmt.Sprintf("r%d", i)
+		w.git.AddRemote(w.wtDir, r, fmt.Sprintf("https://gitlab.example.test/acme/shop-%d.git", i))
+		views = append(views, w.create(coreprop.Push{Where: coreprop.InWorktree{ID: wtID}, Branch: branch, Remote: r, ExpectHead: head}))
 	}
 	for _, v := range views {
 		w.confirm(v)
@@ -191,8 +192,8 @@ func TestConfirmationsOnOneRepoRunOneAtATimeInConfirmationOrder(t *testing.T) {
 		t.Fatalf("%d git operations overlapped in one worktree", w.git.maxFlight)
 	}
 	for i, p := range w.git.pushes {
-		if p.Branch != fmt.Sprintf("ygg/b%d", i) {
-			t.Fatalf("push %d was %s: not confirmation order", i, p.Branch)
+		if p.Remote != fmt.Sprintf("r%d", i) {
+			t.Fatalf("push %d went to %s: not confirmation order", i, p.Remote)
 		}
 	}
 }
@@ -287,6 +288,11 @@ func TestMergeRequestOpensWithPushOptionsAndKeepsTheLink(t *testing.T) {
 func TestPushToTheDefaultBranchFails(t *testing.T) {
 	w := newWorld(t)
 	w.git.SetBranch(w.wtDir, "main")
+	w.res.mu.Lock()
+	info := w.res.wts[wtID]
+	info.Branch = "main"
+	w.res.wts[wtID] = info
+	w.res.mu.Unlock()
 	v := w.create(coreprop.Push{Where: coreprop.InWorktree{ID: wtID}, Branch: "main", Remote: "origin", ExpectHead: w.head(w.wtDir)})
 	w.confirm(v)
 	got := w.waitFor(v.ID, core.ProposalFailed)

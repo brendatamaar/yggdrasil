@@ -35,9 +35,35 @@ func scanSource(t *testing.T, name string, src any) []string {
 	return scan(t, name, src, false)
 }
 
+// nameForbidden checks a function or type name. In a writer file the word
+// "push" is removed first when the name is in the pushNames allow-list.
+func nameForbidden(n string, writer bool) bool {
+	if writer && pushNames.MatchString(n) {
+		n = strings.NewReplacer("Push", "", "push", "").Replace(n)
+	}
+	return forbiddenName.MatchString(n)
+}
+
 // scan reports violations. In test files (tests true) function and type names
 // are not checked and a plain push is allowed.
 func scan(t *testing.T, name string, src any, tests bool) []string {
+	t.Helper()
+	return scanMode(t, name, src, tests, false)
+}
+
+// pushNames are the only names that may hold the word "push" in the proposal
+// writer files: names starting with Push, and classifyPush.
+var pushNames = regexp.MustCompile(`^([Pp]ush|classifyPush$)`)
+
+// scanWriter scans push.go and commit.go. Strings follow the test-file rule
+// (a plain push is allowed), but function and type names stay checked, with
+// the word "push" allowed only in pushNames.
+func scanWriter(t *testing.T, name string, src any) []string {
+	t.Helper()
+	return scanMode(t, name, src, true, true)
+}
+
+func scanMode(t *testing.T, name string, src any, tests, writer bool) []string {
 	t.Helper()
 	file, err := parser.ParseFile(token.NewFileSet(), name, src, 0)
 	if err != nil {
@@ -52,11 +78,11 @@ func scan(t *testing.T, name string, src any, tests bool) []string {
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.FuncDecl:
-			if !tests && forbiddenName.MatchString(x.Name.Name) {
+			if (!tests || writer) && nameForbidden(x.Name.Name, writer) {
 				bad = append(bad, name+": forbidden function "+x.Name.Name)
 			}
 		case *ast.TypeSpec:
-			if !tests && forbiddenName.MatchString(x.Name.Name) {
+			if (!tests || writer) && nameForbidden(x.Name.Name, writer) {
 				bad = append(bad, name+": forbidden type "+x.Name.Name)
 			}
 		case *ast.BasicLit:
@@ -92,11 +118,16 @@ func TestNoDestructiveGit(t *testing.T) {
 		if f == "invariants_test.go" || f == "argv_test.go" {
 			continue
 		}
-		// The proposal writers (RV-02) may push and commit: they are checked
-		// with the test-file rule, which still bans force, reset, delete,
-		// remove, clean, prune, mirror and discarding.
-		isTest := strings.HasSuffix(f, "_test.go") || f == "push.go" || f == "commit.go"
-		bad = append(bad, scan(t, f, src, isTest)...)
+		// The proposal writers (RV-02) may push and commit: strings follow the
+		// test-file rule (force, reset, delete, remove, clean, prune, mirror
+		// and discarding stay banned), names stay checked and may hold "push"
+		// only through the pushNames allow-list.
+		switch f {
+		case "push.go", "commit.go":
+			bad = append(bad, scanWriter(t, f, src)...)
+		default:
+			bad = append(bad, scan(t, f, src, strings.HasSuffix(f, "_test.go"))...)
+		}
 	}
 	for _, b := range bad {
 		t.Error(b)
@@ -126,6 +157,22 @@ func TestScanCatchesDestructiveCode(t *testing.T) {
 	}
 	if bad := scanSource(t, "ok.go", `package p; var a = []string{"fetch", "-b", "--ff-only", "-z", "-c"}`); len(bad) != 0 {
 		t.Errorf("false positive: %v", bad)
+	}
+	// The writer files keep the name check: only Push-prefixed names and
+	// classifyPush may say push.
+	if bad := scanWriter(t, "ok.go", `package p; type PushRequest struct{}; func classifyPush() {}; func PushArgv() {}`); len(bad) != 0 {
+		t.Errorf("writer file: allowed push names flagged: %v", bad)
+	}
+	for name, src := range map[string]string{
+		"writer force name":    `package p; func ForcePush() {}`,
+		"writer delete name":   `package p; func DeleteBranch() {}`,
+		"writer other push":    `package p; func sendPush() {}`,
+		"writer pushed delete": `package p; func PushDelete() {}`,
+		"writer force string":  `package p; var a = "--force"`,
+	} {
+		if len(scanWriter(t, "bad.go", src)) == 0 {
+			t.Errorf("%s: writer scan found nothing", name)
+		}
 	}
 	// Test files may push to a local bare remote, nothing more.
 	if bad := scan(t, "ok_test.go", `package p; var a = []string{"push", "origin", "main"}`, true); len(bad) != 0 {
@@ -167,6 +214,15 @@ func TestEveryProcessStartsThroughPlatform(t *testing.T) {
 	}
 	if n := strings.Count(string(src), "platform.Start("); n != 1 {
 		t.Errorf("git.go calls platform.Start %d times, want exactly 1 (in run)", n)
+	}
+	// commit.go runs the commit and push processes with its own call; it must
+	// really be there (a positive check, not an exemption).
+	cb, err := os.ReadFile("commit.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(cb), "platform.Start("); n != 1 {
+		t.Errorf("commit.go calls platform.Start %d times, want exactly 1 (in exec)", n)
 	}
 	files, _ := filepath.Glob("*.go")
 	for _, f := range files {

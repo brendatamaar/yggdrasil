@@ -23,6 +23,11 @@ func (s *Service) execCommit(ctx context.Context, p coreprop.Proposal, a corepro
 	if why := checkPaths(wd.dir, a.Paths, false); why != "" {
 		return failed(coreprop.FailPrecondition, false, "%s", why)
 	}
+	// An earlier attempt may have landed (a timeout after the commit): the same
+	// check as reconcile, so a Retry reports Executed and not Stale.
+	if info, err := s.cfg.Git.HeadInfo(ctx, wd.dir); err == nil && info.Parent == a.ExpectHead && info.Message == strings.TrimSpace(a.Message) {
+		return done(coreprop.Result{CommitID: info.ID})
+	}
 	head, err := s.cfg.Git.Head(ctx, wd.dir)
 	if err != nil {
 		return readFailure("read the current commit", err)
@@ -42,6 +47,21 @@ func (s *Service) execCommit(ctx context.Context, p coreprop.Proposal, a corepro
 	}
 	if err := s.cfg.Git.Add(ctx, wd.dir, paths); err != nil {
 		return gitFailure(err)
+	}
+	// Nothing but the declared files may be staged, and none of them protected.
+	// The index is left as it is: this only fails (nothing is unstaged).
+	staged, err := s.cfg.Git.(StagedReader).StagedPaths(ctx, wd.dir)
+	if err != nil {
+		return readFailure("check what is staged", err)
+	}
+	declared := map[string]bool{}
+	for _, p := range paths {
+		declared[p] = true
+	}
+	for _, sp := range staged {
+		if !declared[sp] || coreprop.IsProtectedPath(coreprop.RelPath(sp)) {
+			return failed(coreprop.FailPrecondition, false, "Files other than the ones in this proposal are staged in the repo, so nothing was committed. Yggdrasil left the staged files as they are: unstage the extra files yourself, then ask for a new proposal.")
+		}
 	}
 	id, err := s.cfg.Git.Commit(ctx, wd.dir, paths, strings.TrimSpace(a.Message), a.ExpectHead)
 	if err != nil {

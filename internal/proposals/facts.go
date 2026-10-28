@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	coreprop "github.com/brendatamaar/yggdrasil/internal/core/proposals"
@@ -53,8 +54,14 @@ func checkPaths(dir string, paths []coreprop.RelPath, agentFile bool) string {
 		if dir == "" {
 			continue
 		}
-		if _, err := insideRoot(dir, string(p)); err != nil {
+		full, err := insideRoot(dir, string(p))
+		if err != nil {
 			return "A file path is not inside the folder of this task. Use paths inside the task's worktree."
+		}
+		if !agentFile {
+			if fi, err := os.Stat(full); err == nil && fi.IsDir() {
+				return "A path names a folder. Name each file, so that nothing else is included by accident."
+			}
 		}
 	}
 	return ""
@@ -118,6 +125,24 @@ func (s *Service) gatherFacts(ctx context.Context, req CreateRequest) (coreprop.
 	if tracked {
 		if why := checkPaths(dir, sub.paths, sub.agent); why != "" {
 			f.PathsOK, detail = false, why
+		}
+		if in, ok := req.Action.(coreprop.Install); ok {
+			if sc, ok := s.cfg.Builds.(StepChecker); ok {
+				has, err := sc.HasInstallStep(ctx, in.Repo, in.Step)
+				if err != nil {
+					return coreprop.Facts{}, "", "", fmt.Errorf("look up install step: %w", err)
+				}
+				if !has {
+					f.PathsOK, detail = false, "This repo has no install step with that name. Use one of the install steps shown in its build settings."
+				}
+			}
+		}
+		if b, ok := pushBranch(req.Action); ok {
+			if err := s.checkBranchBinding(ctx, sub.where, dir, b); errors.Is(err, errWrongBranch) {
+				return bad(wrongBranchMsg)
+			} else if err != nil {
+				return coreprop.Facts{}, "", "", err
+			}
 		}
 		if mr, ok := req.Action.(coreprop.MergeRequest); ok {
 			url, err := s.cfg.Git.RemoteURL(ctx, dir, mr.Remote)

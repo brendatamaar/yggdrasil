@@ -251,3 +251,17 @@ All six recommendations accepted: (1) hooks disabled for proposal commits and pu
 ## Review gate 1, round 2 fixes (2026-10-26)
 
 - **P11.** `Facts.TaskChangeSet` is the task's existing change set ID (empty when none). `Created` is refused with `RefuseBadFacts` when it is non-empty and differs from the header's `ChangeSet`. `TestPropCreatedNeedsGoodFacts` varies `RepoTracked`, `PathsOK`, `RemoteSupported`, `PendingForTask` (at and over the cap) and `TaskChangeSet`, and checks both ways: refused means no `Persist` and a nil `State`; persisted means every fact was good. The shell fills `TaskChangeSet` from the task row.
+
+## Gate 4 fixes and deviations
+
+- **Branch binding.** `Push.Branch` and `MergeRequest.Branch` must equal the task worktree's branch (InWorktree) or the current branch of the main checkout (MainCheckout, read with `CurrentBranch`). Checked in `gatherFacts` (refusal) and again in `runPush` (FailPrecondition, not retryable).
+- **Required checksums, filled by Create.** `expect_head` (Commit, Push, MergeRequest) and `expect_diff_hash` (Commit) can no longer be empty: `ParseAction`, `ActionFromRow` and `Validate` reject it. Callers that do not know them use `ParseDraftAction`; `Service.Create` fills them from git before hashing the action and then validates strictly. A Create that cannot compute them is refused.
+- **Folder paths and staged files.** Create refuses a path that is a folder. Before committing, the staged file names must be exactly the declared paths and none protected; otherwise FailPrecondition and the index is left untouched (no reset, no unstaging).
+- **Retry of work that landed.** Commit and AgentFile executors first run the reconcile check and return Executed when the work is there, not Stale.
+- **Default branch.** The repo row's stored default branch is passed to git and refused on any match, on top of the remote-HEAD and main/master checks.
+- **Confirm dialog data.** The View (not the action hash) carries `RepoName` and, for a pending Push or MergeRequest, `Remote` and a `Remote: <host>` line. `ProposalDTO.repoName` is now filled and `remote` added (additive).
+- **Install.** The install lock owner is `proposal:<id>` on the build, not a main-checkout lock held by the executor. `Wait` is bounded by `InstallTimeout` (20 min). A Retry first looks for a live build of that owner and waits for it. The install step name is checked at Create as a fact, looked up at the repo root only.
+- **Local-path remotes.** A plain absolute folder remote is accepted (no host, no credentials); UNC (`\host\share`, `//host/share`) is refused.
+- **Delete moves** are recorded per proposal in `_to_delete/.ygg-moves-<id>.log`; retry and reconcile trust only that record, so a pre-existing file there never counts.
+- **Hardening.** `core.fsmonitor=false` on every git call and the composer's `ls-files`; queue jobs run under `recover`; agent-file errors map to plain reasons without machine paths; archtest also bans `os.Truncate` and `O_TRUNC` in proposals and git.
+- **Deviations from the original design.** `Event` has no Kind field. An already-pushed branch (ls-remote at the expected commit) is Executed without a second push. There is no `interpret.go`; command interpretation is split across `service.go` and `exec.go`.

@@ -9,6 +9,18 @@ import (
 	coreprop "github.com/brendatamaar/yggdrasil/internal/core/proposals"
 )
 
+// osReason is a plain reason for a file error. The error text itself holds the
+// machine path, so it never goes into a persisted message.
+func osReason(err error) string {
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return "not found"
+	case errors.Is(err, fs.ErrPermission):
+		return "in use or no permission"
+	}
+	return moveReason(err)
+}
+
 // currentFileHash is the hash of the file now, or "" when it does not exist.
 func currentFileHash(path string) (string, error) {
 	b, err := os.ReadFile(path) //nolint:gosec // path was resolved inside the task folder by insideRoot
@@ -42,13 +54,17 @@ func (s *Service) execAgentFile(ctx context.Context, p coreprop.Proposal, a core
 	}
 	cur, err := currentFileHash(full)
 	if err != nil {
-		return failed(coreprop.FailExec, true, "Yggdrasil could not read %s to check it is unchanged: %v", a.Path, err)
+		return failed(coreprop.FailExec, true, "Yggdrasil could not read %s to check it is unchanged (%s).", a.Path, osReason(err))
+	}
+	if cur == FileHash([]byte(a.Content)) {
+		// An earlier attempt landed (the same check as reconcile): done.
+		return done(coreprop.Result{Note: "Wrote " + string(a.Path) + "."})
 	}
 	if cur != a.ExpectHash {
 		return failed(coreprop.FailStale, false, "%s changed since this was proposed. Reject it and ask the agent for a new one.", a.Path)
 	}
 	if err := writeAtomic(full, []byte(a.Content)); err != nil {
-		return failed(coreprop.FailExec, true, "Yggdrasil could not write %s: %v", a.Path, err)
+		return failed(coreprop.FailExec, true, "Yggdrasil could not write %s (%s). Close programs that may be using it, then retry.", a.Path, osReason(err))
 	}
 	return done(coreprop.Result{Note: "Wrote " + string(a.Path) + "."})
 }

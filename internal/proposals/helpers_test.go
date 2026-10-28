@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -39,6 +40,36 @@ type spyGit struct {
 	commits   []string // messages, in the order commits ran
 	pushes    []git.PushRequest
 	adds      [][]string
+	branches  map[string]string // CurrentBranch answers
+	// loseCommitResult makes the next Commit land and then time out.
+	loseCommitResult bool
+	// extraStaged are paths someone staged outside the proposal.
+	extraStaged []string
+}
+
+// CurrentBranch answers from a table the test sets; the fake writer does not
+// report the checked-out branch of a folder.
+func (g *spyGit) CurrentBranch(_ context.Context, dir string) (string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.branches[dir], nil
+}
+
+// StagedPaths answers with what Add staged plus anything a test staged by hand.
+func (g *spyGit) StagedPaths(_ context.Context, dir string) ([]string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	out := append([]string(nil), g.extraStaged...)
+	for _, a := range g.adds {
+		out = append(out, a...)
+	}
+	return out, nil
+}
+
+func (g *spyGit) setCurrentBranch(dir, b string) {
+	g.mu.Lock()
+	g.branches[dir] = b
+	g.mu.Unlock()
 }
 
 func (g *spyGit) enter(dir string) func() {
@@ -65,7 +96,12 @@ func (g *spyGit) Commit(ctx context.Context, dir string, paths []string, message
 	g.mu.Lock()
 	g.commits = append(g.commits, message)
 	g.mu.Unlock()
-	return g.Fake.Commit(ctx, dir, paths, message, expect)
+	id, err := g.Fake.Commit(ctx, dir, paths, message, expect)
+	if err == nil && g.loseCommitResult {
+		g.loseCommitResult = false
+		return "", context.DeadlineExceeded // landed, but the caller never heard
+	}
+	return id, err
 }
 
 func (g *spyGit) Push(ctx context.Context, dir string, req git.PushRequest) (git.PushResult, error) {
@@ -122,8 +158,10 @@ type fakeBuilds struct {
 	owners  []string
 	steps   []string
 	outcome BuildOutcome
-	inWait  chan struct{} // closed when Wait is entered, if set
-	release chan struct{} // Wait blocks until it is closed, if set
+	live    map[string]core.BuildID // owner -> a build still queued or running
+	known   []string                // install steps the repo has; nil: any
+	inWait  chan struct{}           // closed when Wait is entered, if set
+	release chan struct{}           // Wait blocks until it is closed, if set
 }
 
 func (b *fakeBuilds) Enqueue(_ context.Context, _ core.RepoID, step, owner string) (core.BuildID, error) {
@@ -131,6 +169,19 @@ func (b *fakeBuilds) Enqueue(_ context.Context, _ core.RepoID, step, owner strin
 	defer b.mu.Unlock()
 	b.owners, b.steps = append(b.owners, owner), append(b.steps, step)
 	return "bld_one", nil
+}
+
+// FindLive answers from a table the test sets.
+func (b *fakeBuilds) FindLive(_ context.Context, owner string) (core.BuildID, bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	id, ok := b.live[owner]
+	return id, ok, nil
+}
+
+// HasInstallStep says whether step is in known (every step when known is nil).
+func (b *fakeBuilds) HasInstallStep(_ context.Context, _ core.RepoID, step string) (bool, error) {
+	return b.known == nil || slices.Contains(b.known, step), nil
 }
 
 func (b *fakeBuilds) Wait(ctx context.Context, _ core.BuildID) (BuildOutcome, error) {
@@ -219,10 +270,10 @@ func newWorld(t *testing.T, redactSecrets ...string) *world {
 	fg.AddRepo(mainDir, "main")
 	fg.AddRemote(mainDir, "origin", remoteURL)
 	w := &world{
-		t: t, store: store, git: &spyGit{Fake: fg, inflight: map[string]int{}}, builds: &fakeBuilds{outcome: BuildOutcome{Succeeded: true}},
+		t: t, store: store, git: &spyGit{Fake: fg, inflight: map[string]int{}, branches: map[string]string{mainDir: "main", wtDir: branch}}, builds: &fakeBuilds{outcome: BuildOutcome{Succeeded: true}},
 		lock: &mainlocktest.Fake{}, pub: &recPublisher{}, repo: repo, task: task, wtDir: wtDir, mainDir: mainDir, ctx: ctx,
 		res: &fakeResolver{
-			repo: RepoInfo{ID: repo.ID, Path: mainDir},
+			repo: RepoInfo{ID: repo.ID, Path: mainDir, Name: repo.Name},
 			wts:  map[core.WorktreeID]WorktreeInfo{wtID: {ID: wtID, Repo: repo.ID, Task: task.ID, Path: wtDir, Branch: branch}},
 			task: TaskInfo{ID: task.ID, Repos: []core.RepoID{repo.ID}},
 		},
@@ -256,6 +307,16 @@ func (w *world) start() {
 	}
 	w.svc = svc
 	w.t.Cleanup(svc.Close)
+}
+
+// switchBranch moves the worktree to a branch in the fake and in the resolver.
+func (w *world) switchBranch(b string) {
+	w.git.SetBranch(w.wtDir, b)
+	w.res.mu.Lock()
+	info := w.res.wts[wtID]
+	info.Branch = b
+	w.res.wts[wtID] = info
+	w.res.mu.Unlock()
 }
 
 func (w *world) head(dir string) string {

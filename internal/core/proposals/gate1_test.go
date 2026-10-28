@@ -205,7 +205,7 @@ func TestStepCreatedRevalidatesTheAction(t *testing.T) {
 // action validates.
 func TestParsedActionsValidate(t *testing.T) {
 	for kind, args := range map[string]string{
-		"commit":        `{"repo":"r1","paths":["a/b.go"],"message":"m","expect_diff_hash":"abcdef0"}`,
+		"commit":        `{"repo":"r1","paths":["a/b.go"],"message":"m","expect_head":"abcdef0","expect_diff_hash":"abcdef0"}`,
 		"push":          `{"repo":"r1","branch":"x","remote":"origin","expect_head":"abcdef0"}`,
 		"agent_file":    `{"repo":"r1","path":"CLAUDE.md","content":"x"}`,
 		"delete_files":  `{"worktree":"w1","paths":["a.txt"]}`,

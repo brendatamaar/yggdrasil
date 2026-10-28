@@ -250,7 +250,11 @@ func TestReconcileOutcomesPerKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, w.wtDir, "CLAUDE.md", "rules\n")
-	if _, err := moveAside(w.wtDir, "gone.txt"); err != nil {
+	dest, err := moveAside(w.wtDir, "gone.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := recordMove(w.wtDir, string(del.ID), "gone.txt", dest); err != nil {
 		t.Fatal(err)
 	}
 	w.svc.Close()
@@ -286,7 +290,7 @@ func TestExecutorsAskForNoDestructiveGitForm(t *testing.T) {
 			return coreprop.Push{Where: wt, Branch: branch, Remote: "origin", ExpectHead: w.head(w.wtDir)}
 		},
 		func() coreprop.Action {
-			w.git.SetBranch(w.wtDir, "ygg/other")
+			w.switchBranch("ygg/other")
 			return coreprop.MergeRequest{Where: wt, Branch: "ygg/other", Remote: "origin", TargetBranch: "main", Title: "t", Description: "d", ExpectHead: w.head(w.wtDir)}
 		},
 	}

@@ -26,8 +26,8 @@ func (s *Service) execDelete(ctx context.Context, p coreprop.Proposal, a corepro
 		if ctx.Err() != nil {
 			return gitFailure(ctx.Err())
 		}
-		if movedAlready(wd.dir, string(rel)) {
-			moved = append(moved, coreprop.RelPath(toDeleteDir+"/"+string(rel)))
+		if dest, ok := movedAlready(wd.dir, string(p.ID), string(rel)); ok {
+			moved = append(moved, coreprop.RelPath(dest))
 			continue
 		}
 		if _, err := insideRoot(wd.dir, string(rel)); err != nil {
@@ -38,6 +38,9 @@ func (s *Service) execDelete(ctx context.Context, p coreprop.Proposal, a corepro
 		if err != nil {
 			problems = append(problems, string(rel)+" ("+moveReason(err)+")")
 			continue
+		}
+		if err := recordMove(wd.dir, string(p.ID), string(rel), dest); err != nil {
+			problems = append(problems, string(rel)+" (moved, but the move could not be recorded)")
 		}
 		moved = append(moved, coreprop.RelPath(dest))
 	}

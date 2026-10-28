@@ -140,17 +140,45 @@ func moveAside(root, rel string) (string, error) {
 	return filepath.ToSlash(out), nil
 }
 
-// movedAlready reports whether rel was moved into _to_delete earlier (the
-// source is gone and a file of that name or a numbered one is there).
-func movedAlready(root, rel string) bool {
+// moveLog is the file in _to_delete that records, per proposal, where each
+// file went ("<path>\t<destination>" per line). A retry or a reconcile trusts
+// only this record, so a file that was in _to_delete before cannot count.
+func moveLog(root, proposal string) string {
+	return filepath.Join(root, toDeleteDir, ".ygg-moves-"+proposal+".log")
+}
+
+// recordMove appends one move to the proposal's record (append only).
+func recordMove(root, proposal, rel, dest string) error {
+	f, err := os.OpenFile(moveLog(root, proposal), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) //nolint:gosec // inside the task folder
+	if err != nil {
+		return err
+	}
+	_, werr := f.WriteString(strings.Trim(filepath.ToSlash(rel), "/") + "\t" + dest + "\n")
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	return werr
+}
+
+// movedAlready returns where this proposal moved rel to: the move is in its
+// record, the source is gone and the destination exists.
+func movedAlready(root, proposal, rel string) (string, bool) {
 	slash := strings.Trim(filepath.ToSlash(rel), "/")
 	if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(slash))); err == nil {
-		return false
+		return "", false
 	}
-	dest := filepath.Join(root, toDeleteDir, filepath.FromSlash(slash))
-	if _, err := os.Lstat(dest); err == nil {
-		return true
+	b, err := os.ReadFile(moveLog(root, proposal)) //nolint:gosec // inside the task folder
+	if err != nil {
+		return "", false
 	}
-	_, err := os.Lstat(dest + ".1")
-	return err == nil
+	for line := range strings.SplitSeq(string(b), "\n") {
+		path, dest, ok := strings.Cut(line, "\t")
+		if !ok || path != slash {
+			continue
+		}
+		if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(dest))); err == nil {
+			return dest, true
+		}
+	}
+	return "", false
 }

@@ -51,7 +51,7 @@ func (a Commit) Validate() error {
 	if err := checkMessage(a.Message); err != nil {
 		return err
 	}
-	if err := checkHexField("expect_head", a.ExpectHead, true); err != nil {
+	if err := checkHexField("expect_head", a.ExpectHead, false); err != nil {
 		return err
 	}
 	return checkHexField("expect_diff_hash", a.ExpectDiffHash, false)

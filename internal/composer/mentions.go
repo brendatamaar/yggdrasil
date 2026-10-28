@@ -154,7 +154,7 @@ func (s *Service) listFiles(ctx context.Context, env []string, dir string) (file
 	w := &countingWriter{max: s.c.MaxScanFiles, stop: cancel}
 	var stderr bytes.Buffer
 	p, err := platform.Start(runCtx, platform.Spec{
-		Argv: []string{exe, "-c", "core.quotepath=false", "-c", "core.longpaths=true", "--no-optional-locks",
+		Argv: []string{exe, "-c", "core.quotepath=false", "-c", "core.longpaths=true", "-c", "core.fsmonitor=false", "--no-optional-locks",
 			"ls-files", "-z", "--cached", "--others", "--exclude-standard"},
 		Dir: dir, Env: append(append([]string(nil), env...), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C"),
 		Stdout: w, Stderr: &stderr,

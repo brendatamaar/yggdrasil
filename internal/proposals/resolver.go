@@ -18,7 +18,7 @@ var _ Resolver = StoreResolver{}
 func (r StoreResolver) Repo(ctx context.Context, id core.RepoID) (RepoInfo, error) {
 	repo, err := r.Store.GetRepo(ctx, id)
 	if err == nil {
-		return RepoInfo{ID: repo.ID, Path: repo.Path, Tracked: true}, nil
+		return RepoInfo{ID: repo.ID, Path: repo.Path, Tracked: true, Name: repo.Name, DefaultBranch: repo.DefaultBranch}, nil
 	}
 	if !errors.Is(err, db.ErrNotFound) {
 		return RepoInfo{}, fmt.Errorf("read repo %s: %w", id, err)
@@ -27,7 +27,7 @@ func (r StoreResolver) Repo(ctx context.Context, id core.RepoID) (RepoInfo, erro
 	if err != nil {
 		return RepoInfo{}, fmt.Errorf("read repo %s: %w", id, err)
 	}
-	return RepoInfo{ID: repo.ID, Path: repo.Path, Tracked: false}, nil
+	return RepoInfo{ID: repo.ID, Path: repo.Path, Tracked: false, Name: repo.Name, DefaultBranch: repo.DefaultBranch}, nil
 }
 
 // Worktree returns a task worktree.

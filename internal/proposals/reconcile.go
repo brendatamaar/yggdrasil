@@ -99,10 +99,11 @@ func (s *Service) reconcile(ctx context.Context, p coreprop.Proposal) (coreprop.
 		}
 		var moved []coreprop.RelPath
 		for _, rel := range a.Paths {
-			if !movedAlready(wd.dir, string(rel)) {
+			dest, ok := movedAlready(wd.dir, string(p.ID), string(rel))
+			if !ok {
 				return coreprop.ReconcileNotDone, coreprop.Result{}
 			}
-			moved = append(moved, coreprop.RelPath(toDeleteDir+"/"+string(rel)))
+			moved = append(moved, coreprop.RelPath(dest))
 		}
 		return coreprop.ReconcileDone, coreprop.Result{MovedPaths: moved, Note: "Moved the files into " + toDeleteDir + ". Nothing was deleted."}
 	}
