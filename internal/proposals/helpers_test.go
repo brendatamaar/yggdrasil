@@ -160,8 +160,8 @@ type fakeBuilds struct {
 	outcome BuildOutcome
 	live    map[string]core.BuildID // owner -> a build still queued or running
 	known   []string                // install steps the repo has; nil: any
-	inWait chan struct{} // closed when Wait is entered, if set
-	release chan struct{} // Wait blocks until it is closed, if set
+	inWait  chan struct{}           // closed when Wait is entered, if set
+	release chan struct{}           // Wait blocks until it is closed, if set
 }
 
 func (b *fakeBuilds) Enqueue(_ context.Context, _ core.RepoID, step, owner string) (core.BuildID, error) {

@@ -122,8 +122,8 @@ func TestNoDestructiveGit(t *testing.T) {
 		// test-file rule (force, reset, delete, remove, clean, prune, mirror
 		// and discarding stay banned), names stay checked and may hold "push"
 		// only through the pushNames allow-list.
-		switch {
-		case f == "push.go" || f == "commit.go":
+		switch f {
+		case "push.go", "commit.go":
 			bad = append(bad, scanWriter(t, f, src)...)
 		default:
 			bad = append(bad, scan(t, f, src, strings.HasSuffix(f, "_test.go"))...)

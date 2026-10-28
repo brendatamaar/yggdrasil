@@ -256,11 +256,11 @@ func refusal(reason coreprop.RefuseReason, detail string) *Refusal {
 // View is a proposal for the API: the stored header, the exact lines the user
 // confirms, and the outcome so far.
 type View struct {
-	ID         core.ProposalID
+	ID core.ProposalID
 	// RepoName is the repo's display name; Remote is the host a push or merge
 	// request goes to. Neither is part of the action hash.
-	RepoName string
-	Remote   string
+	RepoName   string
+	Remote     string
 	ChangeSet  core.ChangeSetID
 	Task       core.TaskID
 	Repo       core.RepoID
