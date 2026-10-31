@@ -74,7 +74,7 @@ func snapshot(mode core.TaskMode) mcp.Snapshot {
 	}
 }
 
-func newEnv(t *testing.T) *env {
+func newEnv(t testing.TB) *env {
 	t.Helper()
 	e := &env{
 		ws: mcptest.NewFakeWorkspace(), rd: &mcptest.FakeReader{Diffs: map[core.RepoID]string{apiRepo: "diff --git a/x b/x\n+hello\n"}},
