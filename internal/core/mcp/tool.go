@@ -132,6 +132,9 @@ const (
 	DenyUnknown    DenyReason = "unknown"
 	DenyNoSession  DenyReason = "no_session"
 	DenyNoWorktree DenyReason = "no_worktree"
+	// DenyAskMode: the tool changes a working tree, which Ask mode never does
+	// (invariant 9).
+	DenyAskMode DenyReason = "ask_mode"
 	// DenyNoSuchRepo is the one answer for an untracked, an unknown and an
 	// out-of-scope repo, so an agent cannot probe (M3).
 	DenyNoSuchRepo DenyReason = "no_such_repo"

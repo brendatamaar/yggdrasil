@@ -62,6 +62,10 @@ func Authorize(c Context, t Tool, repos ...core.RepoID) Decision {
 	if c.Mode.Validate() != nil {
 		return Decision{Reason: DenyUnknown}
 	}
+	if t == ToolPull && c.Mode == core.ModeAsk {
+		// pull rewrites the main checkout; Ask mode never changes a tree (invariant 9).
+		return Decision{Reason: DenyAskMode}
+	}
 	for _, r := range repos {
 		if r == "" || !slices.Contains(c.Project, r) || (class != ClassMetadata && !slices.Contains(c.Scope, r)) {
 			return Decision{Reason: DenyNoSuchRepo}

@@ -218,6 +218,29 @@ func TestWorktreeRules(t *testing.T) {
 	}
 }
 
+// Invariant 9: Ask mode never changes a working tree, so pull is neither
+// offered nor callable there; fetch (remote refs only) stays.
+func TestAskModeHasNoPull(t *testing.T) {
+	e := newEnv(t)
+	if !slices.Contains(e.listTools(t), "pull") {
+		t.Fatal("pull not offered in Code mode")
+	}
+	e.ws.Set(e.task, snapshot(core.ModeAsk))
+	tools := e.listTools(t)
+	if slices.Contains(tools, "pull") || !slices.Contains(tools, "fetch") {
+		t.Fatalf("Ask mode tools: %v", tools)
+	}
+	before := e.audit.Count()
+	r := e.callTool(t, "pull", map[string]any{"repo": "shop-api"})
+	// A tool that is not offered is refused either as unknown or as unavailable.
+	if r.Err == nil && (!r.Result.IsError || !strings.Contains(r.text(), "Ask mode")) {
+		t.Fatalf("pull in Ask mode: %s", r.Raw)
+	}
+	if e.audit.Count() != before || len(e.git.All()) != 0 {
+		t.Fatalf("pull in Ask mode had an effect: audit %d, calls %v", e.audit.Count(), e.git.All())
+	}
+}
+
 func TestMergeRequestToolNeedsAGitLabRemote(t *testing.T) {
 	e := newEnv(t)
 	if !slices.Contains(e.listTools(t), "propose_merge_request") {

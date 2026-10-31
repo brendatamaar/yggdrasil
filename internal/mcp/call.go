@@ -115,6 +115,8 @@ func denyMessage(r cmcp.DenyReason) string {
 		return "This task has no worktree for that repo, so there is nothing to commit or push from. Ask the user to start a task that can edit it."
 	case cmcp.DenyNoSuchRepo:
 		return msgNoRepo
+	case cmcp.DenyAskMode:
+		return "That tool changes files, so it is not available in Ask mode."
 	}
 	return "That tool is not available."
 }
