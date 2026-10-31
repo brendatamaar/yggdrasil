@@ -92,7 +92,7 @@ func TestSanitizeAndCap(t *testing.T) {
 		t.Errorf("relative paths changed: %q", out)
 	}
 	big := strings.Repeat("é", 80000)
-	text, cut := srv.finish(big)
+	text, cut := (&reqCtx{s: srv}).finish(big)
 	if !cut || len(text) > 64*1024+20 || !strings.HasSuffix(text, "[truncated]") {
 		t.Errorf("cap: cut=%v len=%d", cut, len(text))
 	}

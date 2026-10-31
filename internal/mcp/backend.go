@@ -35,6 +35,9 @@ type RepoView struct {
 	// Worktree is the task's worktree of this repo, "" when it has none.
 	Worktree       core.WorktreeID
 	WorktreeBranch string
+	// Paths are the absolute folders of this repo (main checkout, task
+	// worktree). They are never shown to the agent: sanitize scrubs them.
+	Paths []string
 }
 
 // Snapshot is the task's view of the workspace at one moment. Repos holds only

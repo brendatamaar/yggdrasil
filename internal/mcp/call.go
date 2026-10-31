@@ -90,15 +90,15 @@ func (s *Server) call(ctx context.Context, act Active, name string, args json.Ra
 	if rerr != nil {
 		var ue userErr
 		if errors.As(rerr, &ue) {
-			return toolError(s.sanitize(string(ue))), nil
+			return toolError(rc.sanitize(string(ue))), nil
 		}
 		if m, ok := userMessage(rerr); ok {
-			return toolError(s.sanitize(m)), nil
+			return toolError(rc.sanitize(m)), nil
 		}
-		s.cfg.Logger.Error("mcp tool failed", "call", id, "tool", name, "task", act.Task, "err", s.sanitize(rerr.Error()))
+		s.cfg.Logger.Error("mcp tool failed", "call", id, "tool", name, "task", act.Task, "err", rc.sanitize(rerr.Error()))
 		return toolError(genericFailure(id)), nil
 	}
-	text, cut := s.finish(out.text)
+	text, cut := rc.finish(out.text)
 	cr := &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: text}}}
 	if cut || out.truncated {
 		cr.Meta = sdk.Meta{"truncated": true}
@@ -138,20 +138,58 @@ func userMessage(err error) (string, bool) {
 // Absolute paths of the machine never leave the process (M7): Windows drive
 // and UNC paths, and rooted Unix paths under the usual system folders.
 var (
-	reWinPath  = regexp.MustCompile(`(?i)(?:\\\\\?\\)?\b[a-z]:[\\/][^\s"'<>|*?]*|\\\\[A-Za-z0-9_.$-]+\\[^\s"'<>|*?]*`)
-	reUnixPath = regexp.MustCompile(`(^|[\s"'(=:])/(?:home|Users|tmp|var|private|mnt|opt|root|etc|usr|srv|Volumes)/[^\s"')]*`)
+	reWinPath = regexp.MustCompile(`(?i)(?:\\\\\?\\)?(?:[a-z]:\\|\b[a-z]:/)[^\s"'<>|*?]*|\\\\[A-Za-z0-9_.$-]+\\[^\s"'<>|*?]*`)
+	// Any rooted /seg/seg token, whatever the first folder is.
+	reUnixPath = regexp.MustCompile(`(^|[\s"'(=:])/[^\s/"')]+/[^\s"')]*`)
 )
 
-// sanitize redacts secrets and replaces absolute paths.
-func (s *Server) sanitize(text string) string {
+// sanitize redacts secrets and replaces absolute paths. extra are folders to
+// scrub whatever they look like (the visible repos' paths); the data folder is
+// always scrubbed. Matching ignores case and treats / and \ alike.
+func (s *Server) sanitize(text string, extra ...string) string {
 	text = s.cfg.Redactor.Redact(text)
+	for _, p := range append([]string{s.cfg.DataDir}, extra...) {
+		if re := folderRegexp(p); re != nil {
+			text = re.ReplaceAllString(text, "<path>")
+		}
+	}
 	text = reWinPath.ReplaceAllString(text, "<path>")
 	return reUnixPath.ReplaceAllString(text, "${1}<path>")
 }
 
+// folderRegexp matches a folder path and whatever follows it in the same token.
+func folderRegexp(p string) *regexp.Regexp {
+	p = strings.TrimRight(p, `\/`)
+	parts := strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' })
+	if len(p) < 2 || len(parts) == 0 {
+		return nil
+	}
+	for i, x := range parts {
+		parts[i] = regexp.QuoteMeta(x)
+	}
+	lead := ""
+	if strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) {
+		lead = `[\\/]+`
+	}
+	re, err := regexp.Compile(`(?i)` + lead + strings.Join(parts, `[\\/]+`) + `[^\s"'<>|*?]*`)
+	if err != nil {
+		return nil
+	}
+	return re
+}
+
+// sanitize scrubs text with the paths of this call's visible repos too.
+func (rc *reqCtx) sanitize(text string) string {
+	var paths []string
+	for _, r := range rc.snap.Repos {
+		paths = append(paths, r.Paths...)
+	}
+	return rc.s.sanitize(text, paths...)
+}
+
 // finish sanitizes and caps a result at MaxResultBytes on a rune boundary.
-func (s *Server) finish(text string) (string, bool) {
-	text = s.sanitize(text)
+func (rc *reqCtx) finish(text string) (string, bool) {
+	text = rc.sanitize(text)
 	if len(text) <= cmcp.MaxResultBytes {
 		return text, false
 	}
@@ -162,31 +200,44 @@ func (s *Server) finish(text string) (string, bool) {
 	return text[:cut] + "\n[truncated]", true
 }
 
-// resolve finds a repo among the visible ones by ID, then by name. Anything
-// else, whether untracked, unknown or out of scope, is not found.
-func (rc *reqCtx) resolve(ref cmcp.RepoRef) (RepoView, bool) {
-	for _, r := range rc.snap.Repos {
-		if string(r.ID) == string(ref) {
-			return r, true
-		}
+// msgAmbiguous: two visible repos answer to the same reference.
+const msgAmbiguous = "More than one repo has that name. Use the repo's id from list_repos."
+
+// resolve finds a repo among the visible ones by ID, then by exact name, then
+// by name ignoring case. Anything else, whether untracked, unknown or out of
+// scope, is not found. When more than one repo matches at the first level that
+// matches, ambiguous is true and no repo is returned: never pick one silently.
+func (rc *reqCtx) resolve(ref cmcp.RepoRef) (r RepoView, found, ambiguous bool) {
+	levels := []func(RepoView) bool{
+		func(v RepoView) bool { return string(v.ID) == string(ref) },
+		func(v RepoView) bool { return v.Name == string(ref) },
+		func(v RepoView) bool { return strings.EqualFold(v.Name, string(ref)) },
 	}
-	for _, r := range rc.snap.Repos {
-		if r.Name == string(ref) {
-			return r, true
+	for _, match := range levels {
+		var hits []RepoView
+		for _, v := range rc.snap.Repos {
+			if match(v) {
+				hits = append(hits, v)
+			}
 		}
-	}
-	for _, r := range rc.snap.Repos {
-		if strings.EqualFold(r.Name, string(ref)) {
-			return r, true
+		switch len(hits) {
+		case 0:
+			continue
+		case 1:
+			return hits[0], true, false
 		}
+		return RepoView{}, false, true
 	}
-	return RepoView{}, false
+	return RepoView{}, false, false
 }
 
 // repo resolves ref and authorizes tool for it. The refusal is the same for an
 // untracked, an unknown and an out-of-scope repo (M3).
 func (rc *reqCtx) repo(tool cmcp.Tool, ref cmcp.RepoRef) (RepoView, error) {
-	r, _ := rc.resolve(ref)
+	r, _, ambiguous := rc.resolve(ref)
+	if ambiguous {
+		return RepoView{}, userErr(msgAmbiguous)
+	}
 	d := cmcp.Authorize(rc.cctx, tool, r.ID)
 	if !d.Allowed {
 		return RepoView{}, userErr(denyMessage(d.Reason))

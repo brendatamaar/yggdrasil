@@ -241,6 +241,31 @@ func TestAskModeHasNoPull(t *testing.T) {
 	}
 }
 
+// Two visible repos that answer to the same reference: refuse, never pick one.
+func TestAmbiguousRepoNameIsRefused(t *testing.T) {
+	e := newEnv(t)
+	s := snapshot(core.ModeCode)
+	s.Repos = append(s.Repos, mcp.RepoView{ID: "r-web2", Name: "shop-web", DefaultBranch: "main", InScope: true})
+	e.ws.Set(e.task, s)
+	r := e.callTool(t, "repo_status", map[string]any{"repo": "shop-web"})
+	if !r.Result.IsError || !strings.Contains(r.text(), "More than one repo") {
+		t.Fatalf("exact-name tie: %s", r.Raw)
+	}
+	// The id still works, and so does a name only one repo has.
+	if r = e.callTool(t, "repo_status", map[string]any{"repo": "r-web2"}); r.Result.IsError {
+		t.Fatalf("by id: %s", r.Raw)
+	}
+	if r = e.callTool(t, "repo_status", map[string]any{"repo": "shop-api"}); r.Result.IsError {
+		t.Fatalf("unique name: %s", r.Raw)
+	}
+	// A tie that only shows when case is ignored is a tie as well.
+	s.Repos[3].Name = "Shop-Api"
+	e.ws.Set(e.task, s)
+	if r = e.callTool(t, "repo_status", map[string]any{"repo": "SHOP-API"}); !r.Result.IsError {
+		t.Fatalf("case-insensitive tie: %s", r.Raw)
+	}
+}
+
 func TestMergeRequestToolNeedsAGitLabRemote(t *testing.T) {
 	e := newEnv(t)
 	if !slices.Contains(e.listTools(t), "propose_merge_request") {

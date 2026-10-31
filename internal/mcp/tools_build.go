@@ -197,7 +197,7 @@ func (rc *reqCtx) startBuild(ctx context.Context, v cmcp.StartBuild) (result, er
 		if err != nil {
 			m, ok := userMessage(err)
 			if !ok {
-				rc.s.cfg.Logger.Error("mcp start build failed", "call", rc.id, "repo", r.ID, "err", rc.s.sanitize(err.Error()))
+				rc.s.cfg.Logger.Error("mcp start build failed", "call", rc.id, "repo", r.ID, "err", rc.sanitize(err.Error()))
 				m = genericFailure(rc.id)
 			}
 			fmt.Fprintf(&b, "%s: not started. %s\n", r.Name, m)

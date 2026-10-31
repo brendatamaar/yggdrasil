@@ -38,6 +38,8 @@ type Config struct {
 	Redactor safety.Redactor
 	Clock    func() time.Time
 	Logger   *slog.Logger
+	// DataDir is Yggdrasil's own data folder; its path never reaches an agent.
+	DataDir string
 	// Version is reported to MCP clients.
 	Version string
 	// URL is the address agents are given (for the status page); no token.
