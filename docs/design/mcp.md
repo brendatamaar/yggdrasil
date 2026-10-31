@@ -221,4 +221,4 @@ Shell:
 - **Limiter (C5, S2).** `StepLimiter` denies a zero `Tick.Now` and changes nothing; a backwards tick refills nothing and never moves `Last` back. `TestPropLimiterBound` checks M5 over random forward and backward schedules.
 - **M4 test name.** The test is `TestToolsHaveNoConfirm`, as in the table above.
 - **Enforcement (S6).** `mcp.Caps.Enforcement` is the typed `mcp.Enforcement` (`hook`, `limited`) with `Validate`; the shell converts from `agents.Enforcement` (core packages do not import each other).
-- Offered, Authorize and ParseCall are still stubs (task M1).
+- Offered, Authorize, ParseCall and FormatCall are implemented in the core (`call.go`, `check.go`; `CheckCall` holds the rules ParseCall applies). Defaults: `limit` 20, `max_bytes` 64 KiB.
