@@ -327,3 +327,8 @@ GF5 merged and verified on `main` (generate clean, lint, typecheck, Go suite): n
 ### 2026-10-31: review gate closed
 
 GF6 merged (rooted-path scrub after any punctuation and `file://`, `LiveAttempt`, `live()` before each effect, builds-in-Ask documented with the SF-07 snapshot scope). safety-reviewer re-run: PASS, no Blocking/Must-fix; fe-reviewer earlier: no Blocking/Must-fix (its Should-fix 1-3 closed by GF5/GF6; DraftAction type and shrinking limiter property tests deferred). Residual accepted: an effect already running when `Revoke` fires is not interrupted. Remaining: platform `OpenURL` + smoke.ps1, threat model, PLAN/CHANGELOG, phase close.
+
+### 2026-10-31: PL-OU merged
+
+`platform.OpenURL` (loopback http only, outside the job, errors never echo the link), `--no-browser` / `YGG_NO_BROWSER=1`, smoke drives the `?k=` link. `task smoke`: 8/8 after two stale-smoke fixes (fake Claude version 2.1.999; check 6 now expects an untrusted own-config repo to start in Ask mode, since C1 replaced the blanket refusal with trust gating). Bare `ygg` panic found and fixed by PL-OU. `internal/platform` PTY tests flake under full-suite load, pass alone. Windows manual checks: see PL-OU list (browser opens on launch link; Ctrl+C leaves the browser open; `--no-browser`; Windows Terminal outer job; no `?k=` in logs; rundll32 command line shows the token briefly).
+Remaining: threat model, PLAN ticks + CHANGELOG, phase close.
