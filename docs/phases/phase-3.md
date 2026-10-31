@@ -304,3 +304,9 @@ Queue (one writing agent at a time): finish FP4 and merge; M1a rest; `needsYouRe
 - `cmd/ygg`: prints the launch link to stdout only (`launchMessage`). `YGG_INSECURE_NO_SESSION=1` turns sessions off (used by `task dev:go` and `scripts/smoke.ps1`); `loadConfig` ignores it with a logged warning when `YGG_WRITE_MODES` is on, and `api.New` returns an error for the combination.
 - Not done: opening the link in the browser (needs a `platform.OpenURL`; `OpenFolder` rejects URLs). Frontend needs: handle HTTP 401 with `code == "session_required"` on any API call and on the WebSocket upgrade failure by showing a page that says to open Yggdrasil from the link in the terminal (no retry loop); `session_required` is in the generated `ErrorCode` type.
 - Follow-up: `scripts/smoke.ps1` runs with the session off; it should drive the launch link instead.
+
+### 2026-10-31 progress
+
+Merged and verified on `main`: M1a rest (`ParseCall`/`FormatCall`, 23 tools; path/branch/remote rules are copies of `core/proposals/validate.go` and can drift: reviewers to check), `needsYouReason` on board cards (`integrity_violated`, `cap_exceeded`, `pending_proposals`; no `integrity_unverifiable` since core has no such state), SS1 (per-launch UI session; `YGG_INSECURE_NO_SESSION` refused with write modes), FE4 (proposals confirm, trust panel, needs-you notice, settings, composer mount, session page). Web 359/359.
+Open items: `platform.OpenURL` to open the launch link outside the job object (platform-windows) + `scripts/smoke.ps1` to drive `?k=` instead of the insecure flag; FE4 gaps: no cross-task proposals page, board TaskCard lacks the reason, no diff/file list in `ProposalDTO` (only `lines`); threat-model entries for the session (no expiry during a run; token readable from terminal/URL bar).
+Queue: M1b, platform OpenURL, T1, gate 4 round 2, gate 5, threat model, PLAN/CHANGELOG, phase close.
