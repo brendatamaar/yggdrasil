@@ -77,6 +77,30 @@ type BoardCard struct {
 	BlockedBy string
 	// Usage is the total over the task's turns (tokens, cost, duration).
 	Usage coretasks.Usage
+	// NeedsYouReason says why the card is in the needs_you column, or "".
+	NeedsYouReason string
+}
+
+// Reasons a card is in the needs_you column (AG-11, SF-07, AG-15).
+const (
+	ReasonIntegrityViolated = string(coretasks.NeedsIntegrityViolated)
+	ReasonCapExceeded       = string(coretasks.NeedsCapExceeded)
+	ReasonPendingProposals  = "pending_proposals"
+)
+
+// NeedsYouReason maps the column and the stored state to the reason code. An
+// Idle{NeedsYou{Why}} outcome gives its Why; any other card in needs_you is
+// there only because of pending proposals; other columns give "".
+func NeedsYouReason(col coretasks.BoardColumn, st coretasks.State) string {
+	if col != coretasks.ColumnNeedsYou {
+		return ""
+	}
+	if idle, ok := st.(coretasks.Idle); ok {
+		if ny, ok := idle.Outcome.(coretasks.NeedsYou); ok && ny.Why != "" {
+			return string(ny.Why)
+		}
+	}
+	return ReasonPendingProposals
 }
 
 // BoardView is the read model of the agent board (AG-12): a card per task with
@@ -133,7 +157,18 @@ func (s *Service) Board(ctx context.Context, project core.ProjectID) (BoardView,
 			for _, tr := range turns {
 				usage = addCoreUsage(usage, tr.Usage)
 			}
-			view.Cards = append(view.Cards, BoardCard{Task: t, Column: coretasks.Column(stateOfStatus(t.Status), pending), PendingProposals: pending, Usage: usage})
+			// The stored state carries the Why of a needs_you outcome; the
+			// coarse state from the status does not.
+			st := stateOfStatus(t.Status)
+			if t.Status == core.TaskNeedsYou {
+				ts, err := s.c.Store.GetTaskState(ctx, t.ID)
+				if err != nil {
+					return BoardView{}, fmt.Errorf("read state of %s: %w", t.ID, err)
+				}
+				st = ts.Task.State
+			}
+			col := coretasks.Column(st, pending)
+			view.Cards = append(view.Cards, BoardCard{Task: t, Column: col, PendingProposals: pending, Usage: usage, NeedsYouReason: NeedsYouReason(col, st)})
 			if t.Status == core.TaskQueued {
 				view.Cards[len(view.Cards)-1].BlockedBy = s.blockedReason(t.ID)
 			}

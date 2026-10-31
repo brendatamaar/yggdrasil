@@ -388,6 +388,11 @@ export interface BoardCardDTO {
   repoIds?: core.RepoID[];
   pendingProposals: number /* int */;
   blockedBy?: string;
+  /**
+   * NeedsYouReason is set only in the needs_you column: "integrity_violated",
+   * "cap_exceeded", or "pending_proposals" when only proposals put it there.
+   */
+  needsYouReason?: string;
   usage: UsageDTO;
   updatedAt: string;
 }
