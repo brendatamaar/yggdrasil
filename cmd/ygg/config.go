@@ -25,6 +25,11 @@ type config struct {
 	// writeModes allows task modes other than Ask (YGG_WRITE_MODES). Off by
 	// default.
 	writeModes bool
+	// noSession switches the per-launch UI session off (YGG_INSECURE_NO_SESSION=1,
+	// for task dev behind the Vite proxy). It is never honoured while
+	// writeModes is on: noSessionRefused says the user asked and was refused.
+	noSession        bool
+	noSessionRefused bool
 }
 
 // loadConfig reads settings through getenv, so tests don't touch the real
@@ -73,7 +78,16 @@ func loadConfig(getenv func(string) string, userConfigDir func() (string, error)
 	default:
 		return config{}, fmt.Errorf("YGG_WRITE_MODES %q must be 1, true, 0 or false", getenv("YGG_WRITE_MODES"))
 	}
-	return config{addr: addr, dataDir: dataDir, level: level, mockDelay: delay, writeModes: writeModes}, nil
+	cfg := config{addr: addr, dataDir: dataDir, level: level, mockDelay: delay, writeModes: writeModes}
+	switch strings.ToLower(getenv("YGG_INSECURE_NO_SESSION")) {
+	case "", "0", "false":
+	case "1", "true":
+		// Write modes let an agent change code, so the UI session stays on.
+		cfg.noSession, cfg.noSessionRefused = !writeModes, writeModes
+	default:
+		return config{}, fmt.Errorf("YGG_INSECURE_NO_SESSION %q must be 1, true, 0 or false", getenv("YGG_INSECURE_NO_SESSION"))
+	}
+	return cfg, nil
 }
 
 // listenAddr returns the address to listen on. Only loopback addresses are

@@ -206,7 +206,7 @@ function Get-FreePort([int]$Preferred) {
 # --- ygg -------------------------------------------------------------------
 
 function New-YggEnv([hashtable]$Extra = @{}) {
-    $e = @{ YGG_DATA_DIR = $DataDir; YGG_ADDR = "127.0.0.1:$script:Port"; YGG_MOCK_DELAY_MS = '0'; YGG_LOG = 'info' }
+    $e = @{ YGG_DATA_DIR = $DataDir; YGG_ADDR = "127.0.0.1:$script:Port"; YGG_MOCK_DELAY_MS = '0'; YGG_LOG = 'info'; YGG_INSECURE_NO_SESSION = '1' }  # TODO: drive the launch link instead (SS1 follow-up)
     foreach ($k in @($Extra.Keys)) { $e[$k] = $Extra[$k] }
     return $e
 }

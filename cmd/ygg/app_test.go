@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"io"
 	"net"
-	"net/http"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -41,6 +40,9 @@ func startAppWith(t *testing.T, cfg config) (base string, _ config, stop func() 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- a.run(ctx, ln) }()
+	if tok := a.srv.LaunchToken(); tok != "" {
+		openSession(t, "http://"+ln.Addr().String(), tok)
+	}
 	// stop may be called by the test and again by Cleanup: the result is read
 	// from the channel only once.
 	var once sync.Once
@@ -55,7 +57,7 @@ func startAppWith(t *testing.T, cfg config) (base string, _ config, stop func() 
 
 func getJSON(t *testing.T, url string, v any) int {
 	t.Helper()
-	resp, err := http.Get(url)
+	resp, err := appClient.Get(url)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +77,7 @@ func TestAppRunsADemoTaskEndToEnd(t *testing.T) {
 	if code := getJSON(t, base+"/api/health", &health); code != 200 || health.Status != "ok" || health.Version != "dev" {
 		t.Fatalf("health = %d %+v", code, health)
 	}
-	resp, err := http.Get(base + "/some/client/route")
+	resp, err := appClient.Get(base + "/some/client/route")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +98,7 @@ func TestAppRunsADemoTaskEndToEnd(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{
 		"projectId": ids[0], "repoIds": []string{ids[1]}, "prompt": "Find the order routes.", "mode": "ask", "agent": "mock",
 	})
-	resp, err = http.Post(base+"/api/tasks", "application/json", bytes.NewReader(body))
+	resp, err = appClient.Post(base+"/api/tasks", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}

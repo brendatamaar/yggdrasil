@@ -118,7 +118,17 @@ Settings (all optional, see .env.example):
   YGG_DATA_DIR        where the database and logs live
   YGG_LOG             debug, info, warn or error
   YGG_MOCK_DELAY_MS   pause between events of the demo agent
+  YGG_INSECURE_NO_SESSION  1 turns the UI session off for task dev; ignored when YGG_WRITE_MODES is on
 `)
+}
+
+// launchMessage is what serve prints: the link that opens the UI session. With
+// the session off (task dev) it is the plain address.
+func launchMessage(addr, token string) string {
+	if token == "" {
+		return "Yggdrasil is at http://" + addr + "/ (UI session switched off)"
+	}
+	return "Open Yggdrasil with this link (it works for this run only): http://" + addr + "/?k=" + token
 }
 
 // serve starts Yggdrasil on the configured address until ctx is cancelled.
@@ -141,5 +151,9 @@ func serve(ctx context.Context, s streams) error {
 		_ = ln.Close()
 		return err
 	}
+	// The launch link is the one place the token is shown: the terminal, never
+	// the logger or the audit log (invariant 4). Opening it in the browser
+	// needs a platform.OpenURL, which doesn't exist yet.
+	fmt.Fprintln(s.out, launchMessage(ln.Addr().String(), a.srv.LaunchToken()))
 	return a.run(ctx, ln)
 }

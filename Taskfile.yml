@@ -46,6 +46,10 @@ tasks:
 
   dev:go:
     internal: true
+    # The Vite proxy can't carry the launch link's cookie, so dev switches the
+    # UI session off. ygg ignores this when YGG_WRITE_MODES is on.
+    env:
+      YGG_INSECURE_NO_SESSION: "1"
     cmds:
       - go run ./cmd/ygg
 
