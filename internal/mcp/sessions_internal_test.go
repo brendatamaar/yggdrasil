@@ -1,0 +1,66 @@
+package mcp
+
+import (
+	"crypto/sha256"
+	"strings"
+	"testing"
+	"testing/iotest"
+)
+
+// Only the hash of a token is kept.
+func TestSessionsKeepOnlyTheHash(t *testing.T) {
+	s := NewSessions(nil, nil)
+	tok, _ := s.Issue("t1", 1)
+	want := sha256.Sum256([]byte(tok))
+	if _, ok := s.byHash[want]; !ok || len(s.byHash) != 1 {
+		t.Fatalf("registry holds %d entries and not the hash", len(s.byHash))
+	}
+	for k := range s.byHash {
+		if strings.Contains(string(k[:]), tok) {
+			t.Fatal("the token is stored")
+		}
+	}
+}
+
+// No randomness, no token.
+func TestIssueFailsWithoutRandomness(t *testing.T) {
+	s := NewSessions(nil, iotest.ErrReader(iotest.ErrTimeout))
+	if tok, err := s.Issue("t1", 1); err == nil || tok != "" {
+		t.Fatalf("issued %q, %v", tok, err)
+	}
+	if s.Count() != 0 {
+		t.Fatal("a session exists without a token")
+	}
+}
+
+// M7/M9 on the sanitizer itself: random text with secrets and paths never
+// comes out with them, and the cap holds on a rune boundary.
+func TestSanitizeAndCap(t *testing.T) {
+	srv := &Server{cfg: Config{Redactor: stubRedactor{}}}
+	for _, in := range []string{
+		"see C:\\Users\\x\\a.go", "at /Users/x/a.go:1", "(/home/x/y)", "UNC \\\\h\\s\\f", "plain a/b/c.go and b/x",
+		"D:/work/repo", `"C:\\tmp\\x"`,
+	} {
+		out := srv.sanitize(in)
+		for _, bad := range []string{"C:\\", "D:/", "/Users/", "/home/", "\\\\h"} {
+			if strings.Contains(out, bad) {
+				t.Errorf("%q -> %q still has %q", in, out, bad)
+			}
+		}
+	}
+	if out := srv.sanitize("diff a/src/x.go b/src/x.go"); out != "diff a/src/x.go b/src/x.go" {
+		t.Errorf("relative paths changed: %q", out)
+	}
+	big := strings.Repeat("é", 80000)
+	text, cut := srv.finish(big)
+	if !cut || len(text) > 64*1024+20 || !strings.HasSuffix(text, "[truncated]") {
+		t.Errorf("cap: cut=%v len=%d", cut, len(text))
+	}
+	if strings.ContainsRune(strings.TrimSuffix(text, "\n[truncated]"), '\uFFFD') {
+		t.Error("the cap split a rune")
+	}
+}
+
+type stubRedactor struct{}
+
+func (stubRedactor) Redact(s string) string { return s }
