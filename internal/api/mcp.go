@@ -27,12 +27,31 @@ func (s *Server) routesMCP(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/mcp/status", s.handleMCPStatus)
 }
 
-// handleMCP is a stub until task M1. It never reaches a service: until the
-// auth middleware exists, nothing is served.
-func (s *Server) handleMCP(w http.ResponseWriter, _ *http.Request) {
-	notReady(w, "The MCP server")
+// maxMCPBody is the largest request body /mcp accepts.
+const maxMCPBody = 1 << 20
+
+// handleMCP serves the MCP protocol. The Host check ran in the guard
+// middleware; here a request that carries any Origin header is refused (an MCP
+// client is not a browser, and a page must never reach this endpoint) and the
+// body is capped. The service checks the per-task bearer token itself and
+// answers 401 with an empty body when it is missing or wrong.
+func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
+	if s.mcp == nil {
+		notReady(w, "The MCP server")
+		return
+	}
+	if r.Header.Get("Origin") != "" {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxMCPBody)
+	s.mcp.Handler().ServeHTTP(w, r)
 }
 
-func (s *Server) handleMCPStatus(w http.ResponseWriter, _ *http.Request) {
-	notReady(w, "The MCP status")
+func (s *Server) handleMCPStatus(w http.ResponseWriter, r *http.Request) {
+	if s.mcp == nil {
+		notReady(w, "The MCP status")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.mcp.Status(r.Context()))
 }
