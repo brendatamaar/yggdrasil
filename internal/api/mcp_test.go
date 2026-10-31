@@ -38,3 +38,16 @@ func TestMCPMountRefusesOriginAndServes(t *testing.T) {
 		t.Fatalf("status body %s", data)
 	}
 }
+
+// TestInvariant_7_mcp_host_and_origin: the MCP mount keeps the Host check (DNS
+// rebinding); the service is never reached with a foreign Host.
+func TestInvariant_7_mcp_host_and_origin(t *testing.T) {
+	f := &fakeMCP{}
+	e := newEnv(t, func(d *Deps) { d.MCP = f })
+	for _, host := range []string{"evil.example", "evil.example:80", "127.0.0.1.evil.example"} {
+		resp, _ := e.do(t, "POST", "/mcp", nil, noSession, func(r *http.Request) { r.Host = host })
+		if resp.StatusCode != http.StatusForbidden || f.hits != 0 {
+			t.Errorf("Host %q: status %d, service hits %d", host, resp.StatusCode, f.hits)
+		}
+	}
+}

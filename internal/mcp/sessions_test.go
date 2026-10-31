@@ -33,3 +33,7 @@ func TestIssuedTokenIsRedacted(t *testing.T) {
 		t.Fatalf("token too short: %d", len(tok))
 	}
 }
+
+func TestFakeWorkspaceContract(t *testing.T) {
+	mcptest.WorkspaceContract(t, func(*testing.T) mcptest.WorkspaceHarness { return mcptest.NewFakeWorkspaceHarness() })
+}
