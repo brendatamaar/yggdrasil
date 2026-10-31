@@ -81,7 +81,7 @@ func SessionsContract(t *testing.T, mk func() SessionRegistry) {
 	})
 	t.Run("a revoke of another attempt changes nothing", func(t *testing.T) {
 		r := mk()
-		r.Issue("t1", 1)
+		_, _ = r.Issue("t1", 1)
 		b, _ := r.Issue("t1", 2)
 		if r.Revoke("t1", 1) {
 			t.Error("a late revoke of attempt 1 ended attempt 2")
