@@ -60,6 +60,8 @@ type Tool string // closed set, below
 
 Not registered in Phase 3 (decision 6): `propose_publish`, `propose_subtasks`. `list_dev_servers` and `dev_server_log` answer from a `DevServers` interface whose Phase 3 implementation reports none.
 
+**Builds in Ask mode (AG-06):** PRD AG-06 lists "triggering builds" as part of Ask mode, so `start_build` and `run_build_preset` are offered and authorized in Ask mode; this is intended, not an oversight of invariant 9. Build output is not covered by SF-07: the integrity snapshot (`internal/git/snapshot.go`) fingerprints HEAD, `git status --porcelain=v2` with untracked files, the tracked diff against HEAD, the content of untracked files that are not ignored, and all refs. Ignored files are excluded, so artifacts a build writes into the checkout (`target/`, `dist/`, `node_modules/` and the like, normally gitignored) land outside the snapshot's scope and do not trip the check. A build that writes a non-ignored file does change the snapshot and is reported as an integrity violation by the existing check; no behaviour changes for this.
+
 **Visibility rule (SF-02, invariant 6):** the visible set is the task's project repos that are tracked and not untracked. *Metadata* tools (names, status counts, build order, presets, host status) may name any visible repo. *Content* tools (commits, changed files, diffs, build logs) and *action* tools (builds, fetch, pull, proposals) are limited to the task's scope, which is the same scope the guard gives the agent for reading files. Every repo argument is resolved against the visible set by name or ID; anything else is "no such repo" (the same answer for untracked, unknown and out-of-scope, so the agent cannot probe).
 
 ## Inputs
