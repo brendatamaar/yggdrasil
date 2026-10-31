@@ -139,6 +139,8 @@ func TestAskThatChangesTheTreeNeedsYou(t *testing.T) {
 	view, _ := h.svc.Board(context.Background(), "")
 	if len(view.Cards) != 1 || view.Cards[0].Column != coretasks.ColumnNeedsYou {
 		t.Errorf("board = %+v", view.Cards)
+	} else if view.Cards[0].NeedsYouReason != ReasonIntegrityViolated {
+		t.Errorf("needs-you reason = %q", view.Cards[0].NeedsYouReason)
 	}
 	// The user can look at it and mark it done.
 	if _, err := h.svc.Dismiss(context.Background(), id); err != nil {

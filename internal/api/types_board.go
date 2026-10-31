@@ -46,8 +46,11 @@ type BoardCardDTO struct {
 	RepoIDs          []core.RepoID   `json:"repoIds,omitempty"`
 	PendingProposals int             `json:"pendingProposals"`
 	BlockedBy        string          `json:"blockedBy,omitempty"`
-	Usage            UsageDTO        `json:"usage"`
-	UpdatedAt        time.Time       `json:"updatedAt"`
+	// NeedsYouReason is set only in the needs_you column: "integrity_violated",
+	// "cap_exceeded", or "pending_proposals" when only proposals put it there.
+	NeedsYouReason string    `json:"needsYouReason,omitempty"`
+	Usage          UsageDTO  `json:"usage"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 // RoomHintDTO suggests raising maxAgents; RaiseTo is 0 when there is no
