@@ -20,7 +20,7 @@ var (
 	leakWin = regexp.MustCompile(`(?i)[a-z]:\\|\b[a-z]:/|\\\\[A-Za-z0-9_.$-]+\\`)
 	// Independent of production: any /word/word is a leak unless it directly
 	// follows a word character, dot or dash (relative path, git a/ b/ prefix).
-	leakUnix = regexp.MustCompile(`/\w+/\w+`)
+	leakUnix = regexp.MustCompile(`/[\w.\-]+/[\w.\-]+`)
 )
 
 func unixLeak(out string) bool {
@@ -63,7 +63,7 @@ var sanitizeFragments = []string{
 	strings.ToUpper(testDataDir), testRepoWin + `\src\a.go`, strings.ReplaceAll(testRepoWin, `\`, "/"),
 	testRepoNix, testRepoNix + "/pom.xml", "/opt/tool/bin/x", "/weird/dir/file", "/var/log/x.log", `\\fileserver\share\x`,
 	`C:\Windows\System32`, "E:/tmp/x", "[", ",", ";", "{", "<", "`", "|", ">", "file://", "file:///home/dev/x",
-	`C:\Program Files\x`, `C:\Program Files (x86)\Tool\bin y`, "/home/dev/x", `\\?\C:\long\path`, "/", "//", "no path here",
+	`C:\Program Files\x`, `C:\Program Files (x86)\Tool\bin y`, "/home/dev/x", "/my-dir/sub/x", "/home/dev.user/x", `(\\host\share\x)`, `\\?\C:\long\path`, "/", "//", "no path here",
 }
 
 // M7: whatever an error or a tool result is made of, no absolute path (Windows
