@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime/debug"
 	"sync"
 
@@ -41,6 +43,9 @@ type report struct {
 // pattern), so the task never stays running with no one watching it.
 func (s *Service) runTurn(id core.TaskID, at *attempt, cmd coretasks.StartRun) {
 	rep := s.safeExecute(id, at, cmd)
+	// Every end path (finished, failed, cancelled, killed, panic, start
+	// failure) passes here: the run's MCP session ends with it.
+	s.endMCP(id)
 	rep.fin.Turn, rep.fin.Attempt, rep.fin.Now = cmd.Turn, cmd.Attempt, s.c.Now().UTC()
 	// RunFinished is held until the After snapshot was checked, and the
 	// integrity verdict goes first (SF-07, tasks.md Gate 1 fixes).
@@ -221,8 +226,14 @@ func (s *Service) execute(id core.TaskID, at *attempt, cmd coretasks.StartRun) r
 		resume = st.Task.SessionID
 	}
 	cap := &capture{Adapter: adapter}
+	mcpPath, err := s.beginMCP(id, adapter, cmd)
+	if err != nil {
+		s.c.Log.Error("run: MCP session", "task", id, "err", err)
+		return startFailed("Yggdrasil's tools could not be prepared for the agent, so the task was not started. Try again.")
+	}
 	opts := agents.StartOptions{
-		TaskID: id, Prompt: prompt, Mode: cmd.Mode, Model: st.Row.Model, Dir: cmd.Dir, ExtraDirs: cmd.ExtraDirs,
+		MCPConfigPath: mcpPath,
+		TaskID:        id, Prompt: prompt, Mode: cmd.Mode, Model: st.Row.Model, Dir: cmd.Dir, ExtraDirs: cmd.ExtraDirs,
 		ResumeSessionID: resume, Env: env, MaxSubagentDepth: cmd.Caps.Depth, MaxConcurrentSubagents: cmd.Caps.Concurrent,
 		Policy: policy, ConfigTrusted: cmd.Mode != core.ModeAsk && adm.Admitted, Admitted: adm.Admitted,
 	}
@@ -457,4 +468,29 @@ func (s *Service) redactEvent(e agents.Event) agents.Event {
 		e.Command = &c
 	}
 	return e
+}
+
+// beginMCP issues the run's MCP session before the agent starts. The error
+// never carries the token (the adapter and the server keep it out of errors).
+func (s *Service) beginMCP(id core.TaskID, a agents.Adapter, cmd coretasks.StartRun) (string, error) {
+	if s.c.MCP == nil {
+		return "", nil
+	}
+	dir := filepath.Join(s.c.RunsDir, fmt.Sprintf("%s-%d", id, cmd.Attempt))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("create the run folder: %w", err)
+	}
+	path, err := s.c.MCP.BeginRun(a, id, int(cmd.Attempt), dir)
+	if err != nil {
+		s.c.MCP.EndRun(id)
+		return "", fmt.Errorf("begin the MCP session of task %s: %w", id, err)
+	}
+	return path, nil
+}
+
+// endMCP revokes the task's MCP session.
+func (s *Service) endMCP(id core.TaskID) {
+	if s.c.MCP != nil {
+		s.c.MCP.EndRun(id)
+	}
 }

@@ -33,6 +33,15 @@ type Worktrees interface {
 	Ensure(ctx context.Context, task core.TaskID, repos []worktrees.RepoRef) ([]core.Worktree, error)
 }
 
+// MCPSessions gives a run its MCP session (MCP-06). BeginRun issues a token and
+// writes the agent's MCP config into dir, returning its path ("" when the agent
+// cannot use the tools). EndRun revokes the task's session; it is safe to call
+// when there is none, and twice.
+type MCPSessions interface {
+	BeginRun(a agents.Adapter, task core.TaskID, attempt int, dir string) (configPath string, err error)
+	EndRun(task core.TaskID)
+}
+
 // Release gives a main-checkout lock back. It is safe to call twice.
 type Release func()
 
@@ -93,6 +102,12 @@ type Config struct {
 	// Nil means none.
 	PendingProposals func(ctx context.Context, task core.TaskID) (int, error)
 
+	// MCP issues and revokes the per-run MCP sessions. Nil means no run gets
+	// Yggdrasil's tools. RunsDir (an absolute folder outside every worktree) is
+	// where each run's config file goes; it is required when MCP is set.
+	MCP     MCPSessions
+	RunsDir string
+
 	Log *slog.Logger
 	// Caps are the sub-agent limits of every turn (AG-22). Default 2 and 4.
 	Caps coretasks.Caps
@@ -124,6 +139,9 @@ func (c *Config) validate() error {
 		c.Snapshotter == nil, c.Env == nil, c.Redactor == nil, c.Hub == nil, c.Machine == nil,
 		c.Killer == nil, c.Now == nil, c.NewID == nil:
 		return errors.New("tasks: store, adapters, worktrees, main lock, scanner, snapshotter, environment, redactor, hub, machine, killer, clock and id source are required")
+	}
+	if c.MCP != nil && c.RunsDir == "" {
+		return errors.New("tasks: a folder for the runs' MCP config files is required with MCP sessions")
 	}
 	if c.Log == nil {
 		c.Log = slog.Default()

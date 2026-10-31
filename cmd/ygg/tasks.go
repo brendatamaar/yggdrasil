@@ -63,7 +63,7 @@ func holderString(h mainlock.Holder) string { return string(h.Owner.Kind) + ":" 
 // newTasks builds the tasks service. lock is the one main-checkout lock that
 // builds and git actions share. hub is bound to the server after the
 // server exists.
-func newTasks(store *db.Store, adapters adapterRegistry, g *git.Git, hub *api.HubAdapter, redactor safety.Redactor, lock *mainlock.Registry, dataDir string, writeModes bool, pending func(context.Context, core.TaskID) (int, error), log *slog.Logger) (*tasks.Service, error) {
+func newTasks(store *db.Store, adapters adapterRegistry, g *git.Git, hub *api.HubAdapter, redactor safety.Redactor, lock *mainlock.Registry, dataDir string, writeModes bool, pending func(context.Context, core.TaskID) (int, error), mcp tasks.MCPSessions, log *slog.Logger) (*tasks.Service, error) {
 	now := func() time.Time { return time.Now().UTC() }
 	ens, err := worktrees.New(worktrees.Config{
 		Git: g, Store: worktrees.DBStore{S: store}, Rand: tasks.Rand{},
@@ -78,7 +78,7 @@ func newTasks(store *db.Store, adapters adapterRegistry, g *git.Git, hub *api.Hu
 		Hub: hub, Machine: platform.Machine{}, Killer: platform.KillTask,
 		Now: now, NewID: db.NewID, Log: log, WriteModes: writeModes,
 		Allowlist:        newAllowlist(store, log),
-		PendingProposals: pending,
+		PendingProposals: pending, MCP: mcp, RunsDir: filepath.Join(dataDir, "runs", "mcp"),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("start tasks: %w", err)
