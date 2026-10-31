@@ -138,9 +138,14 @@ func userMessage(err error) (string, bool) {
 // Absolute paths of the machine never leave the process (M7): Windows drive
 // and UNC paths, and rooted Unix paths under the usual system folders.
 var (
-	reWinPath = regexp.MustCompile(`(?i)(?:\\\\\?\\)?(?:[a-z]:\\|\b[a-z]:/)[^\s"'<>|*?]*|\\\\[A-Za-z0-9_.$-]+\\[^\s"'<>|*?]*`)
-	// Any rooted /seg/seg token, whatever the first folder is.
-	reUnixPath = regexp.MustCompile(`(^|[\s"'(=:])/[^\s/"')]+/[^\s"')]*`)
+	// A drive or UNC path. After a drive letter the path may hold spaces
+	// (C:\Program Files\x): it runs to the end of the line, or to a colon,
+	// quote or shell character.
+	reWinPath = regexp.MustCompile(`(?i)(?:\\\\\?\\)?(?:[a-z]:\\|\b[a-z]:/)[^\r\n"'<>|*?:]*|\\\\[A-Za-z0-9_.$-]+\\[^\s"'<>|*?]*`)
+	// Any rooted /seg/seg token, whatever comes before it ([, comma, file://,
+	// backtick, ...). Only a slash that follows a word character, dot or dash is
+	// left alone: a relative path or a git diff fragment (a/foo/bar).
+	reUnixPath = regexp.MustCompile(`(^|[^\w.\-])/[^\s/"')]+/[^\s"')]*`)
 )
 
 // sanitize redacts secrets and replaces absolute paths. extra are folders to
