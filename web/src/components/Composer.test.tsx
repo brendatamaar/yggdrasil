@@ -60,9 +60,9 @@ describe("composer", () => {
   it("creates an Ask-mode task with the demo agent and opens its transcript", async () => {
     const api = renderHome((c) => {
       if (c.method === "POST" && c.path === "/api/tasks") {
-        return { status: 201, body: { task: { id: "tsk_9", title: "Look at the cart", status: "running" } } };
+        return { status: 201, body: { task: { id: "tsk_9", title: "Look at the cart", status: "running", repoIds: [], mode: "ask" } } };
       }
-      if (c.path === "/api/tasks/tsk_9") return { body: { task: { id: "tsk_9", title: "Look at the cart", status: "running" } } };
+      if (c.path === "/api/tasks/tsk_9") return { body: { task: { id: "tsk_9", title: "Look at the cart", status: "running", repoIds: [], mode: "ask" } } };
       return undefined;
     });
     await screen.findByRole("option", { name: "acme-shop" }, { timeout: 8000 });

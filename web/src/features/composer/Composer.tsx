@@ -3,7 +3,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useRef, useState, type SyntheticEvent } from "react";
 import { ApiError, describeError } from "../../api/client";
 import { createTask, taskKeys } from "../../api/queries";
-import { AGENTS } from "./agents";
+import { pickAgent, useAgents, useWriteModesOff } from "./agents";
 import {
   effectiveScope,
   invalidReason,
@@ -69,7 +69,11 @@ export function Composer({
   const [ids, setIds] = useState(loadIds);
   const [scope, setScope] = useState<Scope>("repo");
   const [mode, setMode] = useState<Mode>("ask");
-  const [agent, setAgent] = useState("mock");
+  const [wantedAgent, setAgent] = useState("mock");
+  const agents = useAgents();
+  const agentList = agents.data ?? [];
+  const agent = pickAgent(agentList, wantedAgent);
+  const healthOff = useWriteModesOff();
   const [modelChoice, setModelChoice] = useState("");
   const [customModel, setCustomModel] = useState("");
 
@@ -81,9 +85,9 @@ export function Composer({
   const repoId = repoList.some((r) => r.id === ids.repoId) ? ids.repoId : (repoList[0]?.id ?? "");
   const models = useModels(agent);
 
-  const agentChoice = AGENTS.find((a) => a.id === agent);
+  const agentChoice = agentList.find((a) => a.id === agent);
   const model = modelChoice === CUSTOM ? customModel.trim() : modelChoice;
-  const modes = visibleModes(!ui.writeModesOff);
+  const modes = visibleModes(!(ui.writeModesOff || healthOff));
   const activeMode: Mode = modes.includes(mode) ? mode : "ask";
   const scopeNow = effectiveScope(activeMode, scope);
 
@@ -269,7 +273,8 @@ export function Composer({
               setModelChoice("");
             }}
           >
-            {AGENTS.map((a) => (
+            {agentList.length === 0 ? <option value="">{agents.isPending ? "Loading agents…" : "No agents available"}</option> : null}
+            {agentList.map((a) => (
               <option key={a.id} value={a.id} disabled={!a.available}>
                 {a.label}
                 {a.available ? "" : ` (unavailable: ${a.reason ?? "not set up"})`}
