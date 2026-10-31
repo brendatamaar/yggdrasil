@@ -12,7 +12,9 @@ type fakeMCP struct{ hits int }
 func (f *fakeMCP) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { f.hits++; w.WriteHeader(http.StatusAccepted) })
 }
-func (f *fakeMCP) Status(context.Context) McpStatusDTO { return McpStatusDTO{Enabled: true, ActiveSessions: 2} }
+func (f *fakeMCP) Status(context.Context) McpStatusDTO {
+	return McpStatusDTO{Enabled: true, ActiveSessions: 2}
+}
 
 // /mcp refuses any Origin before the service sees the request; the status
 // endpoint reports the service.
