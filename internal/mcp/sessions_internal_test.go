@@ -14,12 +14,15 @@ func TestLateRevokeKeepsNewerAttempt(t *testing.T) {
 	s := &Server{sessions: NewSessions(nil, nil), gates: map[core.TaskID]*gate{}}
 	_, _ = s.Issue("t1", 1)
 	tok2, _ := s.Issue("t1", 2)
-	g := s.gateFor("t1")
+	if s.gateFor(Active{Task: "t1", Attempt: 1}) != nil {
+		t.Fatal("a superseded attempt got a gate")
+	}
+	g := s.gateFor(Active{Task: "t1", Attempt: 2})
 	s.Revoke("t1", 1)
 	if _, ok := s.sessions.Lookup(tok2); !ok || !s.sessions.Live("t1") {
 		t.Fatal("a late revoke ended attempt 2")
 	}
-	if s.gateFor("t1") != g {
+	if s.gateFor(Active{Task: "t1", Attempt: 2}) != g {
 		t.Fatal("a late revoke dropped the gate of attempt 2")
 	}
 	s.Revoke("t1", 2)
@@ -35,14 +38,14 @@ func TestRevokedSessionGetsNoGate(t *testing.T) {
 	if _, err := s.Issue("t1", 1); err != nil {
 		t.Fatal(err)
 	}
-	if s.gateFor("t1") == nil || len(s.gates) != 1 {
+	if s.gateFor(Active{Task: "t1", Attempt: 1}) == nil || len(s.gates) != 1 {
 		t.Fatal("no gate for a live session")
 	}
 	s.Revoke("t1", 1)
 	if len(s.gates) != 0 {
 		t.Fatal("gate survived revoke")
 	}
-	if g := s.gateFor("t1"); g != nil || len(s.gates) != 0 {
+	if g := s.gateFor(Active{Task: "t1", Attempt: 1}); g != nil || len(s.gates) != 0 {
 		t.Fatalf("revoked session recreated its gate: %v", s.gates)
 	}
 }

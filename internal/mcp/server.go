@@ -215,7 +215,7 @@ func (s *Server) anyGitLab(ctx context.Context, snap Snapshot) bool {
 
 func (s *Server) coreContext(act Active, snap Snapshot) cmcp.Context {
 	c := cmcp.Context{
-		Task: act.Task, Live: s.sessions.Live(act.Task), Mode: snap.Mode,
+		Task: act.Task, Live: s.sessions.LiveAttempt(act.Task, act.Attempt), Mode: snap.Mode,
 		HasWorktree: map[core.RepoID]bool{},
 	}
 	for _, r := range snap.Repos {
@@ -234,10 +234,11 @@ func (s *Server) coreContext(act Active, snap Snapshot) cmcp.Context {
 // a call that was in flight when the session was revoked must not recreate the
 // gate Revoke just removed. Revoke ends the session before it takes gmu, so a
 // live check under gmu cannot miss it.
-func (s *Server) gateFor(task core.TaskID) *gate {
+func (s *Server) gateFor(act Active) *gate {
+	task := act.Task
 	s.gmu.Lock()
 	defer s.gmu.Unlock()
-	if !s.sessions.Live(task) {
+	if !s.sessions.LiveAttempt(task, act.Attempt) {
 		return nil
 	}
 	g := s.gates[task]

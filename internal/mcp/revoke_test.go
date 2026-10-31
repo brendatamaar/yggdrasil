@@ -76,3 +76,85 @@ func TestRevokeBetweenAuthorizeAndEffect(t *testing.T) {
 		t.Fatalf("proposal after revoke: audit %d, created %d", e2.audit.Count(), len(e2.prop.Created))
 	}
 }
+
+// afterAudit runs inject once the audit entry is written, which is after the
+// session check that preceded it and before the effect.
+type afterAudit struct {
+	mcp.Auditor
+	inject func()
+}
+
+func (a afterAudit) Record(ctx context.Context, r mcp.AuditRecord) error {
+	err := a.Auditor.Record(ctx, r)
+	a.inject()
+	return err
+}
+
+func (e *env) withAudit(t *testing.T, inject func()) {
+	t.Helper()
+	srv, err := mcp.New(mcp.Config{
+		Workspace: e.ws, Reader: e.rd, Builds: e.bl, Git: e.git, Hosts: e.hosts, DevServers: mcp.NoDevServers{},
+		Proposer: e.prop, Audit: afterAudit{Auditor: e.audit, inject: inject}, Redactor: e.redact, Sessions: e.srv.Sessions(),
+		Clock:  func() time.Time { return time.Unix(0, e.now.Load()).UTC() },
+		Logger: slog.New(slog.NewTextHandler(&e.logs, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.srv = srv
+	e.http.Close()
+	e.http = httptest.NewServer(srv.Handler())
+	t.Cleanup(e.http.Close)
+}
+
+// A session revoked, or replaced by the next attempt, between the audit entry
+// and the effect stops the effect.
+func TestSessionEndedBetweenAuditAndEffectStopsEffect(t *testing.T) {
+	cases := map[string]func(e *env){
+		"revoked":  func(e *env) { e.srv.Sessions().Revoke("t1", 1) },
+		"reissued": func(e *env) { _, _ = e.srv.Sessions().Issue("t1", 2) },
+	}
+	calls := []struct {
+		tool string
+		args map[string]any
+	}{
+		{"pull", map[string]any{"repo": "shop-api"}},
+		{"fetch", map[string]any{"repo": "shop-api"}},
+		{"start_build", map[string]any{"repos": []string{"shop-api"}}},
+		{"run_build_preset", map[string]any{"preset": "web+api"}},
+		{"propose_install", map[string]any{"repo": "shop-api", "summary": "s"}},
+	}
+	for name, inject := range cases {
+		for _, c := range calls {
+			t.Run(name+"/"+c.tool, func(t *testing.T) {
+				e := newEnv(t)
+				e.bl.PresetList = []mcp.BuildPreset{{ID: "pre1", Name: "web+api", Repos: []core.RepoID{webRepo, apiRepo}}}
+				e.withAudit(t, func() { inject(e) })
+				r := e.callTool(t, c.tool, c.args)
+				if !r.Result.IsError || !strings.Contains(r.text(), "ended") {
+					t.Fatalf("call after session ended: %s", r.Raw)
+				}
+				if len(e.git.All()) != 0 || len(e.bl.All()) != 0 || len(e.prop.Created) != 0 {
+					t.Fatalf("effect ran: git %v builds %v proposals %d", e.git.All(), e.bl.All(), len(e.prop.Created))
+				}
+			})
+		}
+	}
+}
+
+// A call that authenticated with attempt 1 is not live once attempt 2 exists.
+func TestLiveAttemptIsPerAttempt(t *testing.T) {
+	s := mcp.NewSessions(nil, nil)
+	if _, err := s.Issue("t1", 1); err != nil {
+		t.Fatal(err)
+	}
+	if !s.LiveAttempt("t1", 1) || s.LiveAttempt("t1", 2) {
+		t.Fatal("attempt 1 should be live, 2 not")
+	}
+	if _, err := s.Issue("t1", 2); err != nil {
+		t.Fatal(err)
+	}
+	if s.LiveAttempt("t1", 1) || !s.LiveAttempt("t1", 2) || !s.Live("t1") {
+		t.Fatal("after reissue only attempt 2 is live")
+	}
+}

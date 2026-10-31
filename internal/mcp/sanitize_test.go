@@ -17,9 +17,25 @@ const (
 )
 
 var (
-	leakWin  = regexp.MustCompile(`(?i)[a-z]:\\|\b[a-z]:/|\\\\[A-Za-z0-9_.$-]+\\`)
-	leakUnix = regexp.MustCompile(`(^|[\s"'(=:])/[^\s/"')]+/`)
+	leakWin = regexp.MustCompile(`(?i)[a-z]:\\|\b[a-z]:/|\\\\[A-Za-z0-9_.$-]+\\`)
+	// Independent of production: any /word/word is a leak unless it directly
+	// follows a word character, dot or dash (relative path, git a/ b/ prefix).
+	leakUnix = regexp.MustCompile(`/\w+/\w+`)
 )
+
+func unixLeak(out string) bool {
+	for _, m := range leakUnix.FindAllStringIndex(out, -1) {
+		if m[0] == 0 {
+			return true
+		}
+		c := out[m[0]-1]
+		rel := c == '.' || c == '-' || c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+		if !rel {
+			return true
+		}
+	}
+	return false
+}
 
 func newSanitizer() *Server {
 	r := safety.NewRedactor()
@@ -33,7 +49,7 @@ func leaks(out string) string {
 		return "secret"
 	case leakWin.MatchString(out):
 		return "windows path"
-	case leakUnix.MatchString(out):
+	case unixLeak(out):
 		return "unix path"
 	case strings.Contains(strings.ToLower(out), "ygg-data"), strings.Contains(out, "shop api"), strings.Contains(out, "odd/repos"):
 		return "known folder"
@@ -46,7 +62,8 @@ var sanitizeFragments = []string{
 	testSecret, testDataDir, testDataDir + `\ygg.db`, strings.ReplaceAll(testDataDir, `\`, "/"),
 	strings.ToUpper(testDataDir), testRepoWin + `\src\a.go`, strings.ReplaceAll(testRepoWin, `\`, "/"),
 	testRepoNix, testRepoNix + "/pom.xml", "/opt/tool/bin/x", "/weird/dir/file", "/var/log/x.log", `\\fileserver\share\x`,
-	`C:\Windows\System32`, "E:/tmp/x", `\\?\C:\long\path`, "/", "//", "no path here",
+	`C:\Windows\System32`, "E:/tmp/x", "[", ",", ";", "{", "<", "`", "|", ">", "file://", "file:///home/dev/x",
+	`C:\Program Files\x`, `C:\Program Files (x86)\Tool\bin y`, "/home/dev/x", `\\?\C:\long\path`, "/", "//", "no path here",
 }
 
 // M7: whatever an error or a tool result is made of, no absolute path (Windows
@@ -81,6 +98,28 @@ func FuzzSanitizeLeavesNoSecretOrKnownFolder(f *testing.F) {
 			}
 		}
 	})
+}
+
+func TestSanitizeScrubsRootedPathsAfterAnyPunctuation(t *testing.T) {
+	srv := newSanitizer()
+	for _, pre := range []string{"[", ",", ";", "{", "<", "`", "|", ">", "(", `"`, "=", ":", "\n", " ", "file://"} {
+		in := "x" + pre + "/home/dev/x/y.go end"
+		if pre == "file://" {
+			in = "x file:///home/dev/x/y.go end"
+		}
+		if out := srv.sanitize(in); strings.Contains(out, "home/dev") {
+			t.Errorf("%q -> %q", in, out)
+		}
+	}
+	for _, in := range []string{"diff a/foo/bar b/foo/bar", "src/main/java/X.java", "see ./a/b and ../c/d"} {
+		if out := srv.sanitize(in); out != in {
+			t.Errorf("relative path changed: %q -> %q", in, out)
+		}
+	}
+	out := srv.sanitize(`cannot open C:\Program Files\Acme Tool\x.exe`)
+	if strings.Contains(out, "Program") || strings.Contains(out, "Acme") {
+		t.Errorf("spaced windows path left: %q", out)
+	}
 }
 
 // A path under the data folder or a repo is scrubbed even when it is not under

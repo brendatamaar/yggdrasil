@@ -52,7 +52,7 @@ func (s *Server) call(ctx context.Context, act Active, name string, args json.Ra
 			res, err = toolError(genericFailure(id)), nil
 		}
 	}()
-	g := s.gateFor(act.Task)
+	g := s.gateFor(act)
 	if g == nil {
 		return toolError(msgNoSession), nil
 	}
@@ -83,7 +83,7 @@ func (s *Server) call(ctx context.Context, act Active, name string, args json.Ra
 		return toolError(denyMessage(d.Reason)), nil
 	}
 	out, rerr := rc.run(ctx, c)
-	if !s.sessions.Live(act.Task) {
+	if !s.sessions.LiveAttempt(act.Task, act.Attempt) {
 		// The run ended while the call was in flight: drop the result.
 		return toolError(msgNoSession), nil
 	}
@@ -138,9 +138,14 @@ func userMessage(err error) (string, bool) {
 // Absolute paths of the machine never leave the process (M7): Windows drive
 // and UNC paths, and rooted Unix paths under the usual system folders.
 var (
-	reWinPath = regexp.MustCompile(`(?i)(?:\\\\\?\\)?(?:[a-z]:\\|\b[a-z]:/)[^\s"'<>|*?]*|\\\\[A-Za-z0-9_.$-]+\\[^\s"'<>|*?]*`)
-	// Any rooted /seg/seg token, whatever the first folder is.
-	reUnixPath = regexp.MustCompile(`(^|[\s"'(=:])/[^\s/"')]+/[^\s"')]*`)
+	// A drive or UNC path. After a drive letter the path may hold spaces
+	// (C:\Program Files\x): it runs to the end of the line, or to a colon,
+	// quote or shell character.
+	reWinPath = regexp.MustCompile(`(?i)(?:\\\\\?\\)?(?:[a-z]:\\|\b[a-z]:/)[^\r\n"'<>|*?:]*|\\\\[A-Za-z0-9_.$-]+\\[^\s"'<>|*?]*`)
+	// Any rooted /seg/seg token, whatever comes before it ([, comma, file://,
+	// backtick, ...). Only a slash that follows a word character, dot or dash is
+	// left alone: a relative path or a git diff fragment (a/foo/bar).
+	reUnixPath = regexp.MustCompile(`(^|[^\w.\-])/[^\s/"')]+/[^\s"')]*`)
 )
 
 // sanitize redacts secrets and replaces absolute paths. extra are folders to
@@ -257,6 +262,18 @@ func (rc *reqCtx) name(id core.RepoID) (string, bool) {
 	return "", false
 }
 
+// live fails when the attempt this call authenticated with is no longer the
+// task's live one. It is checked before the audit entry and again immediately
+// before each effect, so the window between check and effect is as small as it
+// can be without a lock around the (slow) effect itself; an effect already
+// running when Revoke happens is not interrupted.
+func (rc *reqCtx) live() error {
+	if !rc.s.sessions.LiveAttempt(rc.act.Task, rc.act.Attempt) {
+		return userErr(msgNoSession)
+	}
+	return nil
+}
+
 // audit records a state-changing call before it runs; if the entry cannot be
 // written the call does not run (invariant 8).
 //
@@ -264,8 +281,8 @@ func (rc *reqCtx) name(id core.RepoID) (string, bool) {
 // session is checked once more: a run that was revoked since Authorize gets
 // neither an audit entry nor an effect.
 func (rc *reqCtx) audit(ctx context.Context, tool cmcp.Tool, subject string, detail map[string]any) error {
-	if !rc.s.sessions.Live(rc.act.Task) {
-		return userErr(msgNoSession)
+	if err := rc.live(); err != nil {
+		return err
 	}
 	if err := rc.s.cfg.Audit.Record(ctx, AuditRecord{Task: rc.act.Task, Tool: tool, Subject: subject, Detail: detail}); err != nil {
 		return fmt.Errorf("audit %s: %w", tool, err)

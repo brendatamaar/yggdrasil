@@ -23,6 +23,9 @@ func (rc *reqCtx) runGit(ctx context.Context, c cmcp.Call) (result, error) {
 		if err := rc.audit(ctx, cmcp.ToolFetch, "repo:"+string(r.ID), map[string]any{"repo": r.Name}); err != nil {
 			return result{}, err
 		}
+		if err := rc.live(); err != nil {
+			return result{}, err
+		}
 		o, err := g.Fetch(ctx, rc.act.Task, r.ID)
 		if err != nil {
 			return result{}, fmt.Errorf("fetch %s: %w", r.ID, err)
@@ -35,6 +38,9 @@ func (rc *reqCtx) runGit(ctx context.Context, c cmcp.Call) (result, error) {
 			return result{}, err
 		}
 		if err := rc.audit(ctx, cmcp.ToolPull, "repo:"+string(r.ID), map[string]any{"repo": r.Name}); err != nil {
+			return result{}, err
+		}
+		if err := rc.live(); err != nil {
 			return result{}, err
 		}
 		o, err := g.Pull(ctx, rc.act.Task, r.ID)

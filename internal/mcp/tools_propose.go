@@ -76,6 +76,9 @@ func (rc *reqCtx) runPropose(ctx context.Context, c cmcp.Call) (result, error) {
 	if err := rc.audit(ctx, tool, "repo:"+string(r.ID), map[string]any{"repo": r.Name, "kind": string(action.Kind())}); err != nil {
 		return result{}, err
 	}
+	if err := rc.live(); err != nil {
+		return result{}, err
+	}
 	ref2, err := rc.s.cfg.Proposer.Create(ctx, rc.act.Task, action, summary)
 	if err != nil {
 		return result{}, fmt.Errorf("create proposal: %w", err)

@@ -100,6 +100,15 @@ func (s *Sessions) Live(task core.TaskID) bool {
 	return ok
 }
 
+// LiveAttempt reports whether the task's live session is of that attempt. A call
+// that authenticated with attempt N is no longer live once N+1 is issued.
+func (s *Sessions) LiveAttempt(task core.TaskID, attempt int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	h, ok := s.byTask[task]
+	return ok && s.byHash[h].Attempt == attempt
+}
+
 // AnyAttempt as the attempt of Revoke ends the task's session whatever its
 // attempt (recovery, which does not know it).
 const AnyAttempt = 0
