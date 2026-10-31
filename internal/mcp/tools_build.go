@@ -193,6 +193,9 @@ func (rc *reqCtx) startBuild(ctx context.Context, v cmcp.StartBuild) (result, er
 	}
 	var b strings.Builder
 	for _, r := range repos {
+		if err := rc.live(); err != nil {
+			return result{}, err
+		}
 		id, err := rc.s.cfg.Builds.Start(ctx, rc.act.Task, r.loc(), steps)
 		if err != nil {
 			m, ok := userMessage(err)
@@ -230,6 +233,9 @@ func (rc *reqCtx) runPreset(ctx context.Context, v cmcp.RunBuildPreset) (result,
 		}
 		if err := rc.audit(ctx, cmcp.ToolRunBuildPreset, "task:"+string(rc.act.Task),
 			map[string]any{"preset": p.Name}); err != nil {
+			return result{}, err
+		}
+		if err := rc.live(); err != nil {
 			return result{}, err
 		}
 		id, err := rc.s.cfg.Builds.RunPreset(ctx, rc.act.Task, p.ID)
