@@ -56,6 +56,8 @@ type app struct {
 	// proposals decides and runs proposals. It starts after tasks and closes
 	// before them, and before the store.
 	proposals *proposals.Service
+	// mcp serves /mcp and issues per-run tokens.
+	mcp *mcpService
 }
 
 // newLogger writes redacted text logs: no token reaches a log (invariant 4).
@@ -186,6 +188,11 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		return nil, err
 	}
 
+	mcpSvc, err := newMCP(store, g, buildSvc, hostSvc, actions, propSvc, redactor, version)
+	if err != nil {
+		_ = d.Close()
+		return nil, err
+	}
 	taskHub := &api.HubAdapter{}
 	taskSvc, err := newTasks(store, adapters, g, taskHub, redactor, checkoutLock, cfg.dataDir, cfg.writeModes, propSvc.PendingCount, log)
 	if err != nil {
@@ -206,7 +213,7 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		Tracking: tracking, Status: status, RepoDetail: repos.NewDetailService(store, g),
 		Builds: buildSvc, Hosts: hostSvc, Search: searchSvc,
 		GitActions: repos.GitActions{ActionsService: actions, OpenService: opener},
-		Proposals:  propSvc, Agents: newAgentService(adapters),
+		Proposals:  propSvc, Agents: newAgentService(adapters), MCP: mcpSvc,
 		Composer: newComposer(store, adapters, taskSvc, g, redactor, log),
 	})
 	if err != nil {
@@ -222,13 +229,14 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	batchPub.srv = srv
 	taskHub.Bind(srv)
 	propHub.Bind(srv)
-	return &app{cfg: cfg, log: log, db: d, store: store, srv: srv, status: status, builds: buildSvc, hosts: hostSvc, actions: actions, feeder: feeder, tasks: taskSvc, proposals: propSvc}, nil
+	return &app{cfg: cfg, log: log, db: d, store: store, srv: srv, status: status, builds: buildSvc, hosts: hostSvc, actions: actions, feeder: feeder, tasks: taskSvc, proposals: propSvc, mcp: mcpSvc}, nil
 }
 
 // run serves on ln until ctx is cancelled. On the way out the server stops
 // every task, then the database is closed. Closing the process-wide job (so no
 // child outlives ygg) is main's job: it happens once, when the process ends.
 func (a *app) run(ctx context.Context, ln net.Listener) error {
+	a.mcp.setAddr(ln.Addr())
 	a.log.Info("Yggdrasil is running", "url", "http://"+ln.Addr().String(), "version", version, "data", a.cfg.dataDir)
 	// Recovery of tasks that were running at the last shutdown comes before
 	// anything is served; Close below stops every run before the store closes.
