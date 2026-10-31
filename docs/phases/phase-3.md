@@ -323,3 +323,7 @@ Queue: GF5 merge, gate re-run, platform `OpenURL` + smoke.ps1 using `?k=`, threa
 ### 2026-10-31 (resumed): GF5 merged
 
 GF5 merged and verified on `main` (generate clean, lint, typecheck, Go suite): no `pull` in Ask mode (`DenyAskMode`, `TestPropAskModeNeverPulls`), session re-check before audit+effect, no gate for a revoked session, `EndRun/Revoke(task, attempt)` fencing, sanitize scrubs data/repo folders + rooted paths, ambiguous repo names refused. S1 kept the copies (archtest forbids core cross-imports); drift fuzz targets cover it. Residual: `xE:/tmp` (forward-slash drive glued to a word) not scrubbed. Next: re-run both reviewers on the GF5 delta, then OpenURL + smoke, threat model, PLAN/CHANGELOG, phase close.
+
+### 2026-10-31: review gate closed
+
+GF6 merged (rooted-path scrub after any punctuation and `file://`, `LiveAttempt`, `live()` before each effect, builds-in-Ask documented with the SF-07 snapshot scope). safety-reviewer re-run: PASS, no Blocking/Must-fix; fe-reviewer earlier: no Blocking/Must-fix (its Should-fix 1-3 closed by GF5/GF6; DraftAction type and shrinking limiter property tests deferred). Residual accepted: an effect already running when `Revoke` fires is not interrupted. Remaining: platform `OpenURL` + smoke.ps1, threat model, PLAN/CHANGELOG, phase close.
