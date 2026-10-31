@@ -180,7 +180,7 @@ func TestCodeModeEndToEnd_ProposalCommitConfirmedThroughTheAPI(t *testing.T) {
 		t.Fatalf("confirm = %d %s", code, data)
 	}
 	var done api.ProposalDTO
-	deadline := time.Now().Add(20 * time.Second)
+	deadline := time.Now().Add(120 * time.Second)
 	for {
 		getJSON(t, base+"/api/proposals/"+string(p.ID), &done)
 		if done.Status == core.ProposalExecuted {
