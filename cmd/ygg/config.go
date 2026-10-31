@@ -90,6 +90,31 @@ func loadConfig(getenv func(string) string, userConfigDir func() (string, error)
 	return cfg, nil
 }
 
+// serveOpts are the options of `ygg serve`.
+type serveOpts struct {
+	// noBrowser skips opening the launch link (--no-browser or YGG_NO_BROWSER=1).
+	noBrowser bool
+}
+
+// parseServeArgs reads the arguments after `serve` and YGG_NO_BROWSER.
+func parseServeArgs(args []string, getenv func(string) string) (serveOpts, error) {
+	var o serveOpts
+	switch strings.ToLower(getenv("YGG_NO_BROWSER")) {
+	case "", "0", "false":
+	case "1", "true":
+		o.noBrowser = true
+	default:
+		return o, fmt.Errorf("YGG_NO_BROWSER %q must be 1, true, 0 or false", getenv("YGG_NO_BROWSER"))
+	}
+	for _, a := range args {
+		if a != "--no-browser" {
+			return o, fmt.Errorf("unknown option %q for serve; the only option is --no-browser", a)
+		}
+		o.noBrowser = true
+	}
+	return o, nil
+}
+
 // listenAddr returns the address to listen on. Only loopback addresses are
 // accepted until remote access mode (RA-*) exists.
 func listenAddr(env string) (string, error) {

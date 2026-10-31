@@ -32,6 +32,8 @@ Then open the link `ygg` prints in the terminal: `http://127.0.0.1:4747/?k=<toke
 
 Every start of `ygg` makes a new random launch token and keeps it in memory only. The link above trades the token for a session cookie (`ygg_session`, HttpOnly, SameSite=Strict) and then redirects to `/` without the token. Every `/api/` and `/ws` request needs that cookie; without it the server answers 401 `session_required`. Only `/api/health`, the MCP endpoint (it has its own per-task token) and the static page are open. A new start means a new token, so open the new link. If the page says a session is required, use the link from the terminal where `ygg` is running.
 
+`ygg` also opens that link in your default browser. Pass `--no-browser` (or set `YGG_NO_BROWSER=1`) to only print it. The browser is started outside `ygg`, so closing `ygg` does not close it.
+
 `task dev` sets `YGG_INSECURE_NO_SESSION=1` so the Vite proxy works without the cookie. `ygg` ignores that setting (and logs a warning) when `YGG_WRITE_MODES` is on. Do not use it outside development.
 
 ## Naming

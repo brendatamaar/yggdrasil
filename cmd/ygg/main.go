@@ -25,6 +25,8 @@ type streams struct {
 	out, err      io.Writer
 	getenv        func(string) string
 	userConfigDir func() (string, error)
+	// openURL opens the launch link in the browser; nil never opens one.
+	openURL func(string) error
 }
 
 // exitError asks main to exit with a code without printing anything more.
@@ -36,6 +38,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	err := run(ctx, os.Args[1:], streams{
 		in: os.Stdin, out: os.Stdout, err: os.Stderr, getenv: os.Getenv, userConfigDir: os.UserConfigDir,
+		openURL: platform.OpenURL,
 	})
 	stop()
 	// Closes the job every child process belongs to: nothing outlives ygg.
@@ -58,8 +61,11 @@ func run(ctx context.Context, args []string, s streams) error {
 		cmd = args[0]
 	}
 	switch cmd {
-	case "serve":
-		return serve(ctx, s)
+	case "serve", "--no-browser":
+		if cmd == "serve" && len(args) > 0 {
+			args = args[1:]
+		}
+		return serve(ctx, s, args)
 	case "doctor":
 		cfg, err := loadConfig(s.getenv, s.userConfigDir)
 		if err != nil {
@@ -106,7 +112,8 @@ func usage(w io.Writer) {
 	fmt.Fprint(w, `Usage: ygg [command]
 
 Commands:
-  serve            start Yggdrasil (default)
+  serve            start Yggdrasil (default); opens the browser unless
+                   --no-browser or YGG_NO_BROWSER=1
   doctor           check what Yggdrasil needs and explain what is missing
   seed <folder>    track a git repo so you can start a task on it
                    (a stand-in until the project pages arrive)
@@ -128,11 +135,23 @@ func launchMessage(addr, token string) string {
 	if token == "" {
 		return "Yggdrasil is at http://" + addr + "/ (UI session switched off)"
 	}
-	return "Open Yggdrasil with this link (it works for this run only): http://" + addr + "/?k=" + token
+	return "Open Yggdrasil with this link (it works for this run only): " + launchURL(addr, token)
+}
+
+// launchURL is the link that opens the UI session (plain address without a token).
+func launchURL(addr, token string) string {
+	if token == "" {
+		return "http://" + addr + "/"
+	}
+	return "http://" + addr + "/?k=" + token
 }
 
 // serve starts Yggdrasil on the configured address until ctx is cancelled.
-func serve(ctx context.Context, s streams) error {
+func serve(ctx context.Context, s streams, args []string) error {
+	opts, err := parseServeArgs(args, s.getenv)
+	if err != nil {
+		return err
+	}
 	cfg, err := loadConfig(s.getenv, s.userConfigDir)
 	if err != nil {
 		return err
@@ -154,6 +173,13 @@ func serve(ctx context.Context, s streams) error {
 	// The launch link is the one place the token is shown: the terminal, never
 	// the logger or the audit log (invariant 4). Opening it in the browser
 	// needs a platform.OpenURL, which doesn't exist yet.
-	fmt.Fprintln(s.out, launchMessage(ln.Addr().String(), a.srv.LaunchToken()))
+	addr, token := ln.Addr().String(), a.srv.LaunchToken()
+	fmt.Fprintln(s.out, launchMessage(addr, token))
+	if !opts.noBrowser && s.openURL != nil {
+		// The printed link stays valid if this fails; the warning carries no URL.
+		if err := s.openURL(launchURL(addr, token)); err != nil {
+			a.log.Warn("could not open the browser; use the link printed above", "err", err)
+		}
+	}
 	return a.run(ctx, ln)
 }
