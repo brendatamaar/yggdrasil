@@ -28,6 +28,7 @@ const secretDetail = "SECRET-DETAIL-42"
 
 type env struct {
 	srv     *Server
+	cookie  *http.Cookie // the harness session (see newEnv)
 	ts      *httptest.Server
 	store   *db.Store
 	project core.Project
@@ -63,6 +64,11 @@ func newEnv(t *testing.T, extra ...func(*Deps)) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The harness option: a session minted up front, sent by do, doRaw and dial.
+	id, err := srv.sess.open()
+	if err != nil {
+		t.Fatal(err)
+	}
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(func() { ts.Close(); srv.Close() })
 
@@ -72,7 +78,7 @@ func newEnv(t *testing.T, extra ...func(*Deps)) *env {
 		t.Fatal(err)
 	}
 	repo := dbtest.Repo(t, store, core.Repo{ProjectID: project.ID, Name: "shop-api", Path: repoDir})
-	return &env{srv: srv, ts: ts, store: store, project: project, repo: repo}
+	return &env{srv: srv, ts: ts, store: store, project: project, repo: repo, cookie: &http.Cookie{Name: SessionCookie, Value: id}}
 }
 
 // reply is what a test needs from a response; do has already closed the body.
@@ -95,6 +101,7 @@ func (e *env) do(t *testing.T, method, path string, body any, mod ...func(*http.
 	if err != nil {
 		t.Fatal(err)
 	}
+	req.AddCookie(e.cookie)
 	for _, m := range mod {
 		m(req)
 	}
@@ -121,7 +128,7 @@ func (e *env) createReq() CreateTaskRequest {
 
 func (e *env) dial(t *testing.T, mod ...func(*websocket.DialOptions)) *websocket.Conn {
 	t.Helper()
-	opts := &websocket.DialOptions{}
+	opts := &websocket.DialOptions{HTTPHeader: http.Header{"Cookie": []string{e.cookie.String()}}}
 	for _, m := range mod {
 		m(opts)
 	}

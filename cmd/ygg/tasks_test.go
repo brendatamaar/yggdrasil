@@ -36,7 +36,7 @@ func createTask(t *testing.T, base, project, repo, mode string) (int, string) {
 	body, _ := json.Marshal(map[string]any{
 		"projectId": project, "repoIds": []string{repo}, "prompt": "Find the order routes.", "mode": mode, "agent": "mock",
 	})
-	resp, err := http.Post(base+"/api/tasks", "application/json", bytes.NewReader(body))
+	resp, err := appClient.Post(base+"/api/tasks", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -73,6 +73,7 @@ func (e *env) doRaw(t *testing.T, method, path, body string) (reply, []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	req.AddCookie(e.cookie)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)

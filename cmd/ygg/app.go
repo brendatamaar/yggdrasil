@@ -193,8 +193,15 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		return nil, err
 	}
 
+	if cfg.noSession {
+		log.Warn("the UI session is switched off (YGG_INSECURE_NO_SESSION): any program on this computer can use the API; use this only for task dev")
+	}
+	if cfg.noSessionRefused {
+		log.Warn("YGG_INSECURE_NO_SESSION is ignored because YGG_WRITE_MODES is on: the UI session stays required")
+	}
 	srv, err := api.New(api.Deps{
-		Store: store, Log: log, Tasks: taskSvc, Worktrees: api.NewWorktreeService(store), WriteModes: cfg.writeModes,
+		InsecureNoSession: cfg.noSession,
+		Store:             store, Log: log, Tasks: taskSvc, Worktrees: api.NewWorktreeService(store), WriteModes: cfg.writeModes,
 		Redactor: redactor, Version: version, Assets: assets,
 		Tracking: tracking, Status: status, RepoDetail: repos.NewDetailService(store, g),
 		Builds: buildSvc, Hosts: hostSvc, Search: searchSvc,

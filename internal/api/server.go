@@ -68,6 +68,10 @@ type Deps struct {
 	// db.NewID.
 	Clock func() time.Time
 	IDs   func(prefix string) string
+
+	// InsecureNoSession switches the UI session off (task dev with the Vite
+	// proxy). New refuses it together with WriteModes.
+	InsecureNoSession bool
 }
 
 // Server serves the API. Create it with New, run it with Run (or use Handler
@@ -106,6 +110,9 @@ type Server struct {
 	stop context.CancelFunc
 
 	closeOnce sync.Once
+
+	sess     *sessions
+	insecure bool
 }
 
 // New builds a server.
@@ -121,6 +128,21 @@ func New(d Deps) (*Server, error) {
 	if log == nil {
 		log = slog.New(safety.NewLogHandler(slog.NewTextHandler(os.Stderr, nil), redactor))
 	}
+	if d.InsecureNoSession && d.WriteModes {
+		return nil, errors.New("api: the UI session can't be switched off while write modes are on")
+	}
+	sess := &sessions{}
+	if !d.InsecureNoSession {
+		tok, err := randomHex(32)
+		if err != nil {
+			return nil, fmt.Errorf("create the launch token: %w", err)
+		}
+		sess.token = tok
+		// The token is a secret: masked in logs and the audit log (invariant 4).
+		if a, ok := redactor.(interface{ Add(...string) }); ok {
+			a.Add(tok)
+		}
+	}
 	as, err := loadAssets(d.Assets)
 	if err != nil {
 		return nil, fmt.Errorf("read the embedded frontend: %w", err)
@@ -130,6 +152,7 @@ func New(d Deps) (*Server, error) {
 		store: d.Store, log: log, redactor: redactor,
 		version: d.Version, assets: as, allowedOrigins: d.AllowedOrigins,
 		hub: newHub(log), ctx: ctx, stop: stop,
+		sess: sess, insecure: d.InsecureNoSession,
 	}
 	s.tracking, s.status, s.builds, s.hosts, s.search = d.Tracking, d.Status, d.Builds, d.Hosts, d.Search
 	s.repoDetail = d.RepoDetail
@@ -176,7 +199,7 @@ func (s *Server) Handler() http.Handler {
 		writeError(w, http.StatusNotFound, ErrNotFound, "That API endpoint doesn't exist.", "")
 	})
 	mux.HandleFunc("/", s.serveUI)
-	return headers(s.recoverPanics(s.accessLog(s.guard(mux))))
+	return headers(s.recoverPanics(s.accessLog(s.guard(s.session(mux)))))
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {

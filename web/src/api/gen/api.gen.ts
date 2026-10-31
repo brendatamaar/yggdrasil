@@ -30,6 +30,17 @@ import type * as core from "./core.gen";
  */
 
 //////////
+// source: session.go
+
+/**
+ * SessionCookie is the cookie the UI session lives in.
+ */
+export const SessionCookie = "ygg_session";
+/**
+ * sessions holds the launch token and the live session ids, in memory only.
+ */
+
+//////////
 // source: static.go
 
 /**
@@ -63,6 +74,11 @@ export const ErrConflict: ErrorCode = "conflict";
 export const ErrUnavailable: ErrorCode = "unavailable";
 export const ErrInternal: ErrorCode = "internal";
 export const ErrHostRejected: ErrorCode = "host_rejected";
+/**
+ * ErrSessionRequired: no valid UI session cookie (HTTP 401). The page
+ * shows how to open Yggdrasil from the link printed in the terminal.
+ */
+export const ErrSessionRequired: ErrorCode = "session_required";
 /**
  * ErrorBody is the JSON body of every error response (SF-01). Message says
  * what went wrong in plain language; Hint says what to do next. Neither
