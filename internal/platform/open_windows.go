@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"syscall"
@@ -61,6 +62,26 @@ func OpenFolder(ctx context.Context, path string, env []string) error {
 		return fmt.Errorf("platform: %s not found, check SystemRoot", exe)
 	}
 	return launchOutside(ctx, exe, []string{exe, path}, env)
+}
+
+// urlOpener builds the command that hands a link to the default browser:
+// rundll32 url.dll,FileProtocolHandler <link>, with the link as one argument.
+// rundll32 comes from SystemRoot, never from the PATH.
+func urlOpener(link string) (string, []string, []string, error) {
+	root := os.Getenv("SystemRoot")
+	if root == "" {
+		return "", nil, nil, errors.New("platform: SystemRoot is not set, cannot find rundll32.exe")
+	}
+	exe := filepath.Join(root, "System32", "rundll32.exe")
+	if !filepath.IsAbs(exe) || !isRegular(exe) {
+		return "", nil, nil, errors.New("platform: rundll32.exe not found, check SystemRoot")
+	}
+	env := []string{"SystemRoot=" + root, "windir=" + root}
+	return exe, []string{exe, "url.dll,FileProtocolHandler", link}, env, nil
+}
+
+func launchOutsideJob(exe string, argv, env []string) error {
+	return launchOutside(context.Background(), exe, argv, env)
 }
 
 // launchOutside starts exe so that it is in no job at all (spike B2):

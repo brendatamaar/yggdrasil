@@ -81,7 +81,7 @@ function ConvertTo-Arg([string]$Value) {
 # Start-Proc starts a process with extra environment variables for that process
 # only (a $null value removes one). Its output is drained in the background.
 function Start-Proc {
-    param([string]$File, [string[]]$ArgList = @(), [hashtable]$EnvVars = @{}, [string]$Dir = '')
+    param([string]$File, [string[]]$ArgList = @(), [hashtable]$EnvVars = @{}, [string]$Dir = '', [switch]$ReadLines)
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $File
     $psi.Arguments = (@($ArgList | ForEach-Object { ConvertTo-Arg $_ })) -join ' '
@@ -98,9 +98,12 @@ function Start-Proc {
     $p = [System.Diagnostics.Process]::Start($psi)
     $script:Owned.Add([pscustomobject]@{ Proc = $p; Id = $p.Id; Created = $null; Name = [IO.Path]::GetFileName($File) })
     $p.StandardInput.Close()
+    # With -ReadLines the caller reads stdout line by line (Reader) and starts Out itself.
+    $out = $null
+    if (-not $ReadLines) { $out = $p.StandardOutput.ReadToEndAsync() }
     return [pscustomobject]@{
-        Process = $p; Id = $p.Id
-        Out = $p.StandardOutput.ReadToEndAsync(); Err = $p.StandardError.ReadToEndAsync()
+        Process = $p; Id = $p.Id; Reader = $p.StandardOutput
+        Out = $out; Err = $p.StandardError.ReadToEndAsync()
     }
 }
 
@@ -168,6 +171,8 @@ Add-Type -AssemblyName System.Net.Http
 $script:Handler = New-Object System.Net.Http.HttpClientHandler
 $script:Handler.UseProxy = $false
 $script:Handler.AllowAutoRedirect = $false
+$script:Handler.UseCookies = $true
+$script:Handler.CookieContainer = New-Object System.Net.CookieContainer
 $script:Http = New-Object System.Net.Http.HttpClient($script:Handler)
 $script:Http.Timeout = [TimeSpan]::FromSeconds(15)
 $script:BaseUrl = ''
@@ -206,15 +211,36 @@ function Get-FreePort([int]$Preferred) {
 # --- ygg -------------------------------------------------------------------
 
 function New-YggEnv([hashtable]$Extra = @{}) {
-    $e = @{ YGG_DATA_DIR = $DataDir; YGG_ADDR = "127.0.0.1:$script:Port"; YGG_MOCK_DELAY_MS = '0'; YGG_LOG = 'info'; YGG_INSECURE_NO_SESSION = '1' }  # TODO: drive the launch link instead (SS1 follow-up)
+    $e = @{ YGG_DATA_DIR = $DataDir; YGG_ADDR = "127.0.0.1:$script:Port"; YGG_MOCK_DELAY_MS = '0'; YGG_LOG = 'info'; YGG_INSECURE_NO_SESSION = $null; YGG_NO_BROWSER = '1' }
     foreach ($k in @($Extra.Keys)) { $e[$k] = $Extra[$k] }
     return $e
 }
 
 function Start-Server([hashtable]$Extra = @{}) {
-    $h = Start-Proc -File $Ygg -EnvVars (New-YggEnv $Extra)
+    $h = Start-Proc -File $Ygg -ArgList @('serve', '--no-browser') -EnvVars (New-YggEnv $Extra) -ReadLines
     $script:Servers.Add($h)
     $deadline = (Get-Date).AddSeconds(30)
+    # Read the printed launch link; the token stays in this variable only.
+    $link = $null
+    $pending = $null
+    while (-not $link -and (Get-Date) -lt $deadline) {
+        if (-not $pending) { $pending = $h.Reader.ReadLineAsync() }
+        if ($pending.Wait(200)) {
+            $line = $pending.Result; $pending = $null
+            if ($null -eq $line) { break }
+            $m = [regex]::Match($line, 'http://127\.0\.0\.1:\d+(/\?k=\S+)')
+            if ($m.Success) { $link = $m.Groups[1].Value }
+        }
+        if (-not $link -and $h.Process.HasExited -and -not $pending) { break }
+    }
+    if (-not $link) { throw ("ygg printed no launch link within 30 s" + $(if ($h.Process.HasExited) { ": " + (Get-Tail $h.Err.Result 3) } else { "" })) }
+    $h.Out = $h.Reader.ReadToEndAsync()
+    # The launch link trades the token for the ygg_session cookie, kept by the handler.
+    $got = Invoke-Http GET $link
+    if ($got.Status -ne 303) { throw "the launch link answered $($got.Status), want 303" }
+    if (-not ($script:Handler.CookieContainer.GetCookies([Uri]$script:BaseUrl) | Where-Object { $_.Name -eq 'ygg_session' })) {
+        throw 'the launch link set no ygg_session cookie'
+    }
     while ((Get-Date) -lt $deadline) {
         if ($h.Process.HasExited) { throw "ygg exited with code $($h.Process.ExitCode): $(Get-Tail $h.Err.Result 3)" }
         if ((Invoke-Http GET '/api/health').Status -eq 200) { return $h }

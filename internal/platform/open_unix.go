@@ -5,6 +5,7 @@ package platform
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -52,6 +53,30 @@ func OpenFolder(ctx context.Context, path string, env []string) error {
 		return err
 	}
 	return launchDetached(ctx, exe, []string{exe, path}, env)
+}
+
+// urlOpener builds the command that hands a link to the default browser.
+func urlOpener(link string) (string, []string, []string, error) {
+	opener := "xdg-open"
+	if runtime.GOOS == "darwin" {
+		opener = "open"
+	}
+	// Only what a desktop opener needs; nothing else of ygg's environment.
+	env := []string{}
+	for _, k := range []string{"PATH", "HOME", "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "XDG_CURRENT_DESKTOP"} {
+		if v := os.Getenv(k); v != "" {
+			env = append(env, k+"="+v)
+		}
+	}
+	exe, err := lookPath(opener, "", env)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	return exe, []string{exe, link}, env, nil
+}
+
+func launchOutsideJob(exe string, argv, env []string) error {
+	return launchDetached(context.Background(), exe, argv, env)
 }
 
 func launchDetached(ctx context.Context, exe string, argv, env []string) error {
