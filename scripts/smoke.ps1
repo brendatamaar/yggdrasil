@@ -349,7 +349,7 @@ $FakeClaude = @(
     'ping -n 61 127.0.0.1 >nul',
     'exit /b 0',
     ':version',
-    'echo 0.0.0-smoke fake Claude Code',
+    'echo 2.1.999 (smoke fake Claude Code)',
     'exit /b 0'
 ) -join "`r`n"
 
@@ -454,16 +454,26 @@ function Invoke-DefaultChecks {
         "GET / 200 html; /tasks/abc 200 (SPA); /CON 404; CSP has frame-ancestors 'none'"
     }
 
-    Invoke-Check '6' 'repo with its own Claude Code configuration is refused' {
+    Invoke-Check '6' 'repo with its own Claude Code configuration runs only in Ask mode (untrusted)' {
         if ($script:PrepError) { throw $script:PrepError }
         if (-not $script:ServerA) { throw 'the server of check 3 is not running' }
         $t = New-Task $script:OwnIds 'claude-code' 'Smoke own config' 'Describe this repo in one sentence.'
-        $status = Wait-TaskEnd $t.id 30
-        if ($status -ne 'failed') { throw "the task ended '$status', want failed" }
-        $ev = Get-Events $t.id
-        $hit = @($ev.List | Where-Object { $_.kind -eq 'error' -and $_.error -match 'own Claude Code configuration' })
-        if ($hit.Count -eq 0) { throw "no error event in the transcript names the reason ($(Format-Errors $ev.List))" }
-        "failed, and the transcript says: $($hit[0].error.Substring(0, [Math]::Min(70, $hit[0].error.Length)))..."
+        $deadline = (Get-Date).AddSeconds(30)
+        $status = ''
+        while ((Get-Date) -lt $deadline) {
+            $r = Invoke-Http GET "/api/tasks/$($t.id)"
+            if ($r.Status -eq 200) {
+                $x = (ConvertFrom-Json $r.Body).task
+                $status = $x.status
+                if ($status -eq 'running') { break }
+                if (@('done', 'failed', 'cancelled') -contains $status) { break }
+            }
+            Start-Sleep -Milliseconds 250
+        }
+        Add-OwnedTree (Get-Descendants $script:ServerA.Id)
+        [void](Invoke-Http POST "/api/tasks/$($t.id)/cancel")
+        if ($status -ne 'running') { throw "the Ask task did not start; status '$status' ($(Format-Errors (Get-Events $t.id).List))" }
+        "an untrusted repo with its own configuration starts in Ask mode (Code mode needs trust, SF-09; covered by Go tests)"
     }
 
     Invoke-Check '7' 'killing ygg ends the agent and its children' {
