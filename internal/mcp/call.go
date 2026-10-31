@@ -53,6 +53,9 @@ func (s *Server) call(ctx context.Context, act Active, name string, args json.Ra
 		}
 	}()
 	g := s.gateFor(act.Task)
+	if g == nil {
+		return toolError(msgNoSession), nil
+	}
 	if a := g.allow(s.cfg.Clock()); !a.Allowed {
 		return toolError(msgSlowDown), nil
 	}
@@ -205,7 +208,14 @@ func (rc *reqCtx) name(id core.RepoID) (string, bool) {
 
 // audit records a state-changing call before it runs; if the entry cannot be
 // written the call does not run (invariant 8).
+//
+// Every audit-and-effect step goes through here, so it is also where the
+// session is checked once more: a run that was revoked since Authorize gets
+// neither an audit entry nor an effect.
 func (rc *reqCtx) audit(ctx context.Context, tool cmcp.Tool, subject string, detail map[string]any) error {
+	if !rc.s.sessions.Live(rc.act.Task) {
+		return userErr(msgNoSession)
+	}
 	if err := rc.s.cfg.Audit.Record(ctx, AuditRecord{Task: rc.act.Task, Tool: tool, Subject: subject, Detail: detail}); err != nil {
 		return fmt.Errorf("audit %s: %w", tool, err)
 	}

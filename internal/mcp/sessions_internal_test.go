@@ -5,7 +5,28 @@ import (
 	"strings"
 	"testing"
 	"testing/iotest"
+
+	"github.com/brendatamaar/yggdrasil/internal/core"
 )
+
+// A call that was in flight when the session was revoked must not recreate the
+// gate that Revoke removed.
+func TestRevokedSessionGetsNoGate(t *testing.T) {
+	s := &Server{sessions: NewSessions(nil, nil), gates: map[core.TaskID]*gate{}}
+	if _, err := s.Issue("t1", 1); err != nil {
+		t.Fatal(err)
+	}
+	if s.gateFor("t1") == nil || len(s.gates) != 1 {
+		t.Fatal("no gate for a live session")
+	}
+	s.Revoke("t1")
+	if len(s.gates) != 0 {
+		t.Fatal("gate survived revoke")
+	}
+	if g := s.gateFor("t1"); g != nil || len(s.gates) != 0 {
+		t.Fatalf("revoked session recreated its gate: %v", s.gates)
+	}
+}
 
 // Only the hash of a token is kept.
 func TestSessionsKeepOnlyTheHash(t *testing.T) {
