@@ -54,7 +54,7 @@ func TestRevokeBetweenAuthorizeAndEffect(t *testing.T) {
 	e := newEnv(t)
 	e.bl.PresetList = []mcp.BuildPreset{{ID: "pre1", Name: "web+api", Repos: []core.RepoID{webRepo, apiRepo}}}
 	e.withBuilds(t, func(b mcp.Builds) mcp.Builds {
-		return revokingBuilds{Builds: b, revoke: func() { e.srv.Sessions().Revoke("t1") }}
+		return revokingBuilds{Builds: b, revoke: func() { e.srv.Sessions().Revoke("t1", 1) }}
 	})
 	r := e.callTool(t, "run_build_preset", map[string]any{"preset": "web+api"})
 	if !r.Result.IsError || !strings.Contains(r.text(), "ended") {
@@ -66,7 +66,7 @@ func TestRevokeBetweenAuthorizeAndEffect(t *testing.T) {
 
 	e2 := newEnv(t)
 	e2.withBuilds(t, func(b mcp.Builds) mcp.Builds {
-		return revokingBuilds{Builds: b, revoke: func() { e2.srv.Sessions().Revoke("t1") }}
+		return revokingBuilds{Builds: b, revoke: func() { e2.srv.Sessions().Revoke("t1", 1) }}
 	})
 	r = e2.callTool(t, "propose_install", map[string]any{"repo": "shop-api", "summary": "s"})
 	if !r.Result.IsError {

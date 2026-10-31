@@ -86,14 +86,14 @@ func (m *mcpService) BeginRun(a agents.Adapter, task core.TaskID, attempt int, d
 	}
 	path, err := cfg.WriteMCPConfig(dir, url, token)
 	if err != nil {
-		m.Revoke(task)
+		m.Revoke(task, attempt)
 		return "", fmt.Errorf("write the MCP config for task %s: %w", task, err)
 	}
 	return path, nil
 }
 
 // EndRun revokes the task's session.
-func (m *mcpService) EndRun(task core.TaskID) { m.Revoke(task) }
+func (m *mcpService) EndRun(task core.TaskID, attempt int) { m.Revoke(task, attempt) }
 
 // newMCP builds the MCP server over the real services.
 func newMCP(store *db.Store, g *git.Git, buildSvc *builds.Service, hostSvc *hosts.Service, actions *repos.ActionsService,

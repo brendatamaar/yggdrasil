@@ -45,7 +45,7 @@ func (s *Service) runTurn(id core.TaskID, at *attempt, cmd coretasks.StartRun) {
 	rep := s.safeExecute(id, at, cmd)
 	// Every end path (finished, failed, cancelled, killed, panic, start
 	// failure) passes here: the run's MCP session ends with it.
-	s.endMCP(id)
+	s.endMCP(id, int(cmd.Attempt))
 	rep.fin.Turn, rep.fin.Attempt, rep.fin.Now = cmd.Turn, cmd.Attempt, s.c.Now().UTC()
 	// RunFinished is held until the After snapshot was checked, and the
 	// integrity verdict goes first (SF-07, tasks.md Gate 1 fixes).
@@ -482,15 +482,17 @@ func (s *Service) beginMCP(id core.TaskID, a agents.Adapter, cmd coretasks.Start
 	}
 	path, err := s.c.MCP.BeginRun(a, id, int(cmd.Attempt), dir)
 	if err != nil {
-		s.c.MCP.EndRun(id)
+		s.c.MCP.EndRun(id, int(cmd.Attempt))
 		return "", fmt.Errorf("begin the MCP session of task %s: %w", id, err)
 	}
 	return path, nil
 }
 
-// endMCP revokes the task's MCP session.
-func (s *Service) endMCP(id core.TaskID) {
+// endMCP revokes the MCP session of one attempt; a late end of an older
+// attempt leaves a newer attempt's session alone. Attempt 0 means any attempt
+// (recovery, when the attempt is not known).
+func (s *Service) endMCP(id core.TaskID, attempt int) {
 	if s.c.MCP != nil {
-		s.c.MCP.EndRun(id)
+		s.c.MCP.EndRun(id, attempt)
 	}
 }

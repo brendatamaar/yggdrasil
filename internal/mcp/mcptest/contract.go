@@ -13,7 +13,7 @@ import (
 type SessionRegistry interface {
 	Issue(task core.TaskID, attempt int) (string, error)
 	Lookup(token string) (mcp.Active, bool)
-	Revoke(task core.TaskID)
+	Revoke(task core.TaskID, attempt int) bool
 }
 
 // SessionsContract is the contract of SessionRegistry. Every implementation
@@ -54,7 +54,7 @@ func SessionsContract(t *testing.T, mk func() SessionRegistry) {
 		r := mk()
 		a, _ := r.Issue("t1", 1)
 		b, _ := r.Issue("t2", 1)
-		r.Revoke("t1")
+		r.Revoke("t1", 1)
 		if _, ok := r.Lookup(a); ok {
 			t.Error("revoked token works")
 		}
@@ -74,9 +74,34 @@ func SessionsContract(t *testing.T, mk func() SessionRegistry) {
 	t.Run("revoking an unknown task does nothing", func(t *testing.T) {
 		r := mk()
 		a, _ := r.Issue("t1", 1)
-		r.Revoke("nobody")
+		r.Revoke("nobody", 1)
 		if _, ok := r.Lookup(a); !ok {
 			t.Error("a revoke of another task ended t1")
+		}
+	})
+	t.Run("a revoke of another attempt changes nothing", func(t *testing.T) {
+		r := mk()
+		r.Issue("t1", 1)
+		b, _ := r.Issue("t1", 2)
+		if r.Revoke("t1", 1) {
+			t.Error("a late revoke of attempt 1 ended attempt 2")
+		}
+		if _, ok := r.Lookup(b); !ok {
+			t.Error("attempt 2 lost its session")
+		}
+		if !r.Revoke("t1", 2) {
+			t.Error("revoke of the live attempt did nothing")
+		}
+		if _, ok := r.Lookup(b); ok {
+			t.Error("attempt 2 still works")
+		}
+	})
+	t.Run("AnyAttempt revokes whatever the attempt", func(t *testing.T) {
+		r := mk()
+		a, _ := r.Issue("t1", 7)
+		r.Revoke("t1", 0)
+		if _, ok := r.Lookup(a); ok {
+			t.Error("AnyAttempt left the session")
 		}
 	})
 	t.Run("an invalid task id is refused", func(t *testing.T) {

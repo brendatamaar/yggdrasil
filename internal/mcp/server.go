@@ -103,9 +103,12 @@ func (s *Server) Issue(task core.TaskID, attempt int) (string, error) {
 	return s.sessions.Issue(task, attempt)
 }
 
-// Revoke ends the task's session; later calls with its token get 401.
-func (s *Server) Revoke(task core.TaskID) {
-	s.sessions.Revoke(task)
+// Revoke ends the task's session of that attempt (AnyAttempt: whichever);
+// later calls with its token get 401. A session of another attempt is kept.
+func (s *Server) Revoke(task core.TaskID, attempt int) {
+	if !s.sessions.Revoke(task, attempt) {
+		return
+	}
 	s.gmu.Lock()
 	delete(s.gates, task)
 	s.gmu.Unlock()
