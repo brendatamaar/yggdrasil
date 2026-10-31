@@ -8,12 +8,5 @@
 // propose_publish and propose_subtasks are not in the set until their
 // executors exist.
 //
-// Foundations only: Offered and Authorize fail closed (nothing offered,
-// everything denied) and ParseCall is a stub until task M1. The limiter is
-// implemented.
+// Offered, Authorize, ParseCall, FormatCall and the limiter are implemented.
 package mcp
-
-import "errors"
-
-// ErrNotImplemented is returned by boundary parsers that are still stubs.
-var ErrNotImplemented = errors.New("mcp: not implemented yet")
