@@ -14,6 +14,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/brendatamaar/yggdrasil/internal/audit"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
@@ -210,6 +211,10 @@ func TestLaunchTokenIsNeverLoggedOrAudited(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 	auditStore := db.NewStore(d, redactor.Redact)
+	entry, err = audit.Prepare(entry, redactor, entry.ID, entry.At)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := auditStore.Commit(ctx, func(tx *db.Tx) error { return tx.AppendAudit(ctx, entry) }); err != nil {
 		t.Fatal(err)
 	}
