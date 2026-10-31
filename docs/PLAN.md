@@ -91,32 +91,32 @@ Goal: the workspace half matches the personal tool.
 
 Goal: the agent half matches the personal tool, with stronger enforcement.
 
-- [ ] Worktree creation with auto-generated short names (AG-07, WE-04).
-- [ ] Ask mode, Code mode, current-branch mode (opt-in, warning), whole-project mode (AG-06–AG-09).
+- [x] Worktree creation with auto-generated short names (AG-07, WE-04).
+- [x] Ask mode, Code mode, current-branch mode (opt-in, warning), whole-project mode (AG-06–AG-09).
   - **Core:** mode rules in `internal/core/guard`.
-- [ ] Mode switching per message (AG-10).
+- [x] Mode switching per message (AG-10).
 - [ ] **OpenCode reference adapter** (AG-03, D6), tested with a local model through Ollama. Building it here proves the adapter interface with two real agents before more features depend on it.
-- [ ] Parallel agents with `maxAgents` (default 2, with a settings hint when the machine has room for more), queue, one editor per main checkout (AG-11, D7).
+- [x] Parallel agents with `maxAgents` (default 2, with a settings hint when the machine has room for more), queue, one editor per main checkout (AG-11, D7).
   - **Core:** queue and `maxAgents` admission in `internal/core/tasks`.
-- [ ] Agent board: Working / Needs you / Review / Done (AG-12).
-- [ ] Composer: scope, agent, model, saved prompts, `@` file mentions (AG-13).
-- [ ] Transcript with inline tool calls, diffs, turn durations; session resume (AG-14).
-- [ ] Sub-agent visibility: nested transcript tree, per-sub-agent usage counted toward the task (AG-21).
-- [ ] Sub-agent limits: depth and concurrency caps per task; agent-native sub-agent worktrees blocked (AG-22).
+- [x] Agent board: Working / Needs you / Review / Done (AG-12).
+- [x] Composer: scope, agent, model, saved prompts, `@` file mentions (AG-13).
+- [x] Transcript with inline tool calls, diffs, turn durations; session resume (AG-14).
+- [x] Sub-agent visibility: nested transcript tree, per-sub-agent usage counted toward the task (AG-21).
+- [x] Sub-agent limits: depth and concurrency caps per task; agent-native sub-agent worktrees blocked (AG-22).
   - **Core:** sub-agent depth and concurrency caps in `internal/core/tasks`.
-- [ ] Usage display and agent usage widget (AG-15).
-- [ ] Draft buttons for commit messages and MR descriptions (AG-20).
-- [ ] Proposals: lifecycle, confirmation UI, execution, audit (RV-02).
+- [x] Usage display and agent usage widget (AG-15).
+- [x] Draft buttons for commit messages and MR descriptions (AG-20).
+- [x] Proposals: lifecycle, confirmation UI, execution, audit (RV-02).
   - **Core:** lifecycle state machine in `internal/core/proposals`; execution and audit in `internal/proposals`.
-- [ ] MR creation via GitLab push options, as a proposal (GH-03; moved from Phase 2).
-- [ ] Path guard and command allowlist enforced by Yggdrasil; "limited enforcement" handling (SF-06).
+- [x] MR creation via GitLab push options, as a proposal (GH-03; moved from Phase 2).
+- [x] Path guard and command allowlist enforced by Yggdrasil; "limited enforcement" handling (SF-06).
   - **Core:** path and command decisions in `internal/core/guard`; the shell supplies resolved paths and commands as input.
-- [ ] Ask-mode integrity check (SF-07).
-- [ ] Repo trust: detect repo-supplied agent hooks and MCP servers, show what they would run, require trust once per repo; untrusted repos are Ask-only (SF-09).
-- [ ] MCP server with all read, build, dev-server, safe-git and proposal tools; `propose_agent_file` naming (MCP-01–MCP-06).
-- [ ] Tests for every safety invariant (docs/AGENTS.md section 6).
-- [ ] Threat model (SF-08).
-- [ ] Widgets: Working now, Recent chats, Agent usage (UI-03).
+- [x] Ask-mode integrity check (SF-07).
+- [x] Repo trust: detect repo-supplied agent hooks and MCP servers, show what they would run, require trust once per repo; untrusted repos are Ask-only (SF-09).
+- [x] MCP server with all read, build, dev-server, safe-git and proposal tools; `propose_agent_file` naming (MCP-01–MCP-06).
+- [x] Tests for every safety invariant (docs/AGENTS.md section 6).
+- [x] Threat model (SF-08).
+- [x] Widgets: Working now, Recent chats, Agent usage (UI-03).
 
 **Exit:** a Code-mode task on the demo project runs in a worktree with either reference adapter, cannot write outside it or run unlisted commands, and produces confirmable proposals. Rewrite can replace the personal tool for agent work.
 

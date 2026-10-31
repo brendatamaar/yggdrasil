@@ -5,6 +5,8 @@ All notable changes to Yggdrasil are documented here. The format follows [Keep a
 ## [Unreleased]
 
 ### Added
+- Agents and safety (Phase 3): worktrees with short names; Ask, Code, current-branch and whole-project modes with a per-turn mode switch; parallel agents with `maxAgents`; the agent board; composer with saved prompts and `@` mentions; transcript with sub-agent tree; draft buttons; proposals you confirm (commit, push, merge request, agent file, install, move-to-`_to_delete`) with the hash you saw; Yggdrasil-side path guard and command allowlist; Ask-mode integrity check; repo trust for agent configs; MCP server with per-task tokens; threat model (AG-06 to AG-15, AG-20 to AG-22, RV-02, GH-03, SF-06 to SF-09, MCP-01 to MCP-06). Write modes stay off until `YGG_WRITE_MODES` is set. OpenCode adapter is not part of this release.
+- The UI now needs the per-launch link printed in the terminal (and opened in your browser); `--no-browser` or `YGG_NO_BROWSER=1` skip the opening (SF-01).
 - Data model and first database migration: projects, repos, worktrees, tasks (with an optional parent task for sub-tasks), change sets, proposals, builds and an append-only audit log, in SQLite with a pure-Go driver (AG-23, SF-05, IN-03).
 - `internal/platform`: process start inside Windows job objects (every child dies with `ygg`), ConPTY terminal sessions, port detection, editor and folder launch outside the job, long-path and WSL-path handling (PL-02, PL-04, PL-05, WE-04).
 - `internal/safety`: clean child environment and token redaction for logs and the audit log (SF-04).
