@@ -17,7 +17,7 @@ const (
 )
 
 var (
-	leakWin  = regexp.MustCompile(`(?i)[a-z]:\\|\b[a-z]:/|\\\\[A-Za-z0-9_.$-]+\\`)
+	leakWin = regexp.MustCompile(`(?i)[a-z]:\\|\b[a-z]:/|\\\\[A-Za-z0-9_.$-]+\\`)
 	// Independent of production: any /word/word is a leak unless it directly
 	// follows a word character, dot or dash (relative path, git a/ b/ prefix).
 	leakUnix = regexp.MustCompile(`/\w+/\w+`)
