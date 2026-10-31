@@ -3,6 +3,7 @@ import { useState } from "react";
 import { describeError } from "../../api/client";
 import { taskKeys } from "../../api/queries";
 import { sendMessage } from "./api";
+import { useWriteModesOff } from "./agents";
 import { MODE_LABEL, needsOptIn, switchTargets, type Mode } from "./core";
 import { OptInDialog } from "./OptInDialog";
 import { useComposerUi } from "./store";
@@ -26,7 +27,8 @@ export function MessageComposer({
   const [prompt, setPrompt] = useState("");
   const [mode, setMode] = useState<Mode>(currentMode);
   const [confirming, setConfirming] = useState(false);
-  const targets = writeModesOff ? [] : switchTargets(currentMode, writeMode);
+  const healthOff = useWriteModesOff();
+  const targets = writeModesOff || healthOff ? [] : switchTargets(currentMode, writeMode);
   const choices: Mode[] = [currentMode, ...targets];
 
   const send = useMutation({

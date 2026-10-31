@@ -13,7 +13,7 @@ import { useComposerUi } from "./store";
 
 const counts = { all: 1, uncommitted: 0, behind: 0, ahead: 0, failedPipeline: 0, problems: 0 };
 const projects = [{ id: "prj_1", name: "acme-shop", path: "x", counts, repos: [{ id: "rep_1", name: "shop-api", flags: [], conflicted: 0, ahead: 0, behind: 0, staged: 0, unstaged: 0, untracked: 0, failedPipeline: false }] }];
-const created = { task: { id: "tsk_9", title: "T", status: "running" } };
+const created = { task: { id: "tsk_9", title: "T", status: "running", repoIds: [], mode: "ask" } };
 
 function base(h?: Handler): Handler {
   return (c) => {

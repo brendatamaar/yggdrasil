@@ -1,4 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
+import { isSessionRequired, useSessionStore } from "../features/session/store";
 import type { ErrorBody } from "./gen/api.gen";
 
 /** An error response from the server, carrying the F4 error body (SF-01). */
@@ -45,12 +46,11 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
 
   if (!res.ok) {
     const body: unknown = await res.json().catch(() => null);
-    throw new ApiError(
-      res.status,
-      isErrorBody(body)
-        ? body
-        : { code: "internal", message: "The server sent an unexpected response.", hint: "Try again." },
-    );
+    const errBody: ErrorBody = isErrorBody(body)
+      ? body
+      : { code: "internal", message: "The server sent an unexpected response.", hint: "Try again." };
+    if (isSessionRequired(res.status, errBody.code)) useSessionStore.getState().markRequired();
+    throw new ApiError(res.status, errBody);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;

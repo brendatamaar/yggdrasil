@@ -1,0 +1,1 @@
+export { ProposalsPanel } from "./ProposalsPanel";

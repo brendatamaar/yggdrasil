@@ -2,11 +2,16 @@ import type { Capabilities } from "../../api/gen/agents.gen";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { describeError } from "../../api/client";
 import { cancelTask, taskKeys, useTask } from "../../api/queries";
+import { useBoard } from "../../features/board";
+import { MessageComposer, type Mode } from "../../features/composer";
+import { ProposalsPanel } from "../../features/proposals";
+import { NeedsYouNotice, TrustPanel } from "../../features/trust";
 import { StatusLine, Transcript, UsageSummary, taskUsage, useTranscript } from "../../features/transcript";
 import { statusLabel } from "../../stores/notifications";
 
 // The API does not expose the adapter capabilities yet; undefined shows every feature.
 const capabilities: Capabilities | undefined = undefined;
+const idleStatuses = new Set(["needs_you", "review", "done"]);
 const cancellable = new Set(["queued", "running"]);
 
 /** One task: its status, its totals and the live transcript. */
@@ -19,6 +24,8 @@ export function TaskPage({ taskId }: { taskId: string }) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: taskKeys.all }),
   });
 
+  const board = useBoard();
+  const reason = board.data?.cards.find((c) => c.taskId === taskId)?.needsYouReason;
   const status = task.data?.status;
   const loadError = task.error ? describeError(task.error) : transcript.error;
 
@@ -51,6 +58,12 @@ export function TaskPage({ taskId }: { taskId: string }) {
         <StatusLine events={transcript.events} label={status ? statusLabel(status) : undefined} />
       </header>
 
+      {status === "needs_you" ? <NeedsYouNotice reason={reason} /> : null}
+      {task.data?.repoIds.map((id) => (
+        <TrustPanel key={id} repoId={id} />
+      ))}
+      {task.data ? <ProposalsPanel taskId={taskId} /> : null}
+
       {loadError ? (
         <p role="alert" className="text-sm text-danger">
           {loadError}
@@ -66,6 +79,13 @@ export function TaskPage({ taskId }: { taskId: string }) {
       ) : (
         <p className="text-sm text-muted">Loading the transcript…</p>
       )}
+      {task.data && idleStatuses.has(task.data.status) ? (
+        <MessageComposer
+          taskId={taskId}
+          currentMode={task.data.mode as Mode}
+          writeMode={task.data.mode === "ask" ? undefined : (task.data.mode as Mode)}
+        />
+      ) : null}
     </section>
   );
 }
