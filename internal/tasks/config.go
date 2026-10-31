@@ -35,11 +35,13 @@ type Worktrees interface {
 
 // MCPSessions gives a run its MCP session (MCP-06). BeginRun issues a token and
 // writes the agent's MCP config into dir, returning its path ("" when the agent
-// cannot use the tools). EndRun revokes the task's session; it is safe to call
+// cannot use the tools). EndRun revokes the task's session of that attempt
+// only (a late end of an older attempt changes nothing; attempt 0 means any
+// attempt, for recovery); it is safe to call
 // when there is none, and twice.
 type MCPSessions interface {
 	BeginRun(a agents.Adapter, task core.TaskID, attempt int, dir string) (configPath string, err error)
-	EndRun(task core.TaskID)
+	EndRun(task core.TaskID, attempt int)
 }
 
 // Release gives a main-checkout lock back. It is safe to call twice.

@@ -15,10 +15,10 @@ func TestTokenWrongExpiredOrOtherTaskIs401(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.srv.Revoke("t2")
+	e.srv.Revoke("t2", 1)
 	revoked := other
 
-	e.srv.Revoke(e.task)
+	e.srv.Revoke(e.task, 1)
 	cases := map[string]string{
 		"none":                 "",
 		"wrong":                "not-a-token",
@@ -61,7 +61,7 @@ func TestRevokeStopsTheTokenAtOnce(t *testing.T) {
 	if r := e.callTool(t, "list_repos", nil); r.Status != 200 || r.Result.IsError {
 		t.Fatalf("before revoke: %+v", r)
 	}
-	e.srv.Revoke(e.task)
+	e.srv.Revoke(e.task, 1)
 	if r := e.callTool(t, "list_repos", nil); r.Status != http.StatusUnauthorized {
 		t.Fatalf("after revoke: status %d", r.Status)
 	}

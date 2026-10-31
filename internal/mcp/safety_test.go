@@ -234,7 +234,7 @@ func TestRevokeDuringACallDropsTheResult(t *testing.T) {
 		r = e.callTool(t, "repo_status", map[string]any{"repo": "shop-api"})
 	}()
 	<-br.in
-	e.srv.Revoke(e.task)
+	e.srv.Revoke(e.task, 1)
 	close(br.out)
 	wg.Wait()
 	if !r.Result.IsError || strings.Contains(r.text(), "branch main") {

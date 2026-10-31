@@ -38,6 +38,8 @@ type Config struct {
 	Redactor safety.Redactor
 	Clock    func() time.Time
 	Logger   *slog.Logger
+	// DataDir is Yggdrasil's own data folder; its path never reaches an agent.
+	DataDir string
 	// Version is reported to MCP clients.
 	Version string
 	// URL is the address agents are given (for the status page); no token.
@@ -103,9 +105,12 @@ func (s *Server) Issue(task core.TaskID, attempt int) (string, error) {
 	return s.sessions.Issue(task, attempt)
 }
 
-// Revoke ends the task's session; later calls with its token get 401.
-func (s *Server) Revoke(task core.TaskID) {
-	s.sessions.Revoke(task)
+// Revoke ends the task's session of that attempt (AnyAttempt: whichever);
+// later calls with its token get 401. A session of another attempt is kept.
+func (s *Server) Revoke(task core.TaskID, attempt int) {
+	if !s.sessions.Revoke(task, attempt) {
+		return
+	}
 	s.gmu.Lock()
 	delete(s.gates, task)
 	s.gmu.Unlock()
@@ -225,9 +230,16 @@ func (s *Server) coreContext(act Active, snap Snapshot) cmcp.Context {
 	return c
 }
 
+// gateFor returns the task's gate, or nil when the session is no longer live:
+// a call that was in flight when the session was revoked must not recreate the
+// gate Revoke just removed. Revoke ends the session before it takes gmu, so a
+// live check under gmu cannot miss it.
 func (s *Server) gateFor(task core.TaskID) *gate {
 	s.gmu.Lock()
 	defer s.gmu.Unlock()
+	if !s.sessions.Live(task) {
+		return nil
+	}
 	g := s.gates[task]
 	if g == nil {
 		g = &gate{sem: make(chan struct{}, cmcp.MaxInFlight)}

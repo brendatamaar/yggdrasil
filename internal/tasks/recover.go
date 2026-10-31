@@ -115,7 +115,13 @@ func (s *Service) loadActiveOneByOne(ctx context.Context) ([]db.TaskState, error
 // recoverTask feeds Recovered to one live task. The usage of the turn is
 // recomputed from the events the run stored before the process stopped.
 func (s *Service) recoverTask(ctx context.Context, id core.TaskID) error {
-	s.endMCP(id) // nothing runs for this task any more: no session may stay
+	// Nothing runs for this task any more: no session may stay. The attempt is
+	// the one the stored turn recorded; when there is none, any session goes.
+	attempt := 0
+	if st, err := s.snapshot(ctx, id); err == nil && st.Turn != nil {
+		attempt = int(st.Turn.Attempt)
+	}
+	s.endMCP(id, attempt)
 	events, err := s.c.Store.ListTaskEvents(ctx, id, 0)
 	if err != nil {
 		return err

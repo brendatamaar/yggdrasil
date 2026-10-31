@@ -84,9 +84,9 @@ func TestMCPConfigFilesLeftAfterARunHoldOnlyRevokedTokens(t *testing.T) {
 		}
 	}
 
-	m.EndRun("tsk_a") // finished
-	m.EndRun("tsk_b") // cancelled or recovered: same call
-	m.EndRun("tsk_b") // a second end changes nothing
+	m.EndRun("tsk_a", 1) // finished
+	m.EndRun("tsk_b", 1) // cancelled or recovered: same call
+	m.EndRun("tsk_b", 1) // a second end changes nothing
 	left := tokensOnDisk(t, runs)
 	if len(left) != 2 {
 		t.Fatalf("the test needs the leftover files: found %d tokens", len(left))
@@ -101,7 +101,18 @@ func TestMCPConfigFilesLeftAfterARunHoldOnlyRevokedTokens(t *testing.T) {
 	if _, err := m.BeginRun(a, "tsk_a", 2, dirOf("tsk_a-2")); err != nil {
 		t.Fatal(err)
 	}
-	m.EndRun("tsk_a")
+	// A late end of attempt 1 must not revoke attempt 2.
+	m.EndRun("tsk_a", 1)
+	alive := 0
+	for _, tok := range tokensOnDisk(t, runs) {
+		if _, ok := m.Sessions().Lookup(tok); ok {
+			alive++
+		}
+	}
+	if alive != 1 {
+		t.Fatalf("%d tokens work after a late end of attempt 1, want attempt 2's alone", alive)
+	}
+	m.EndRun("tsk_a", 2)
 	for _, tok := range tokensOnDisk(t, runs) {
 		if _, ok := m.Sessions().Lookup(tok); ok {
 			t.Fatal("a token survived EndRun")

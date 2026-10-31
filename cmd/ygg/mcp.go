@@ -86,18 +86,18 @@ func (m *mcpService) BeginRun(a agents.Adapter, task core.TaskID, attempt int, d
 	}
 	path, err := cfg.WriteMCPConfig(dir, url, token)
 	if err != nil {
-		m.Revoke(task)
+		m.Revoke(task, attempt)
 		return "", fmt.Errorf("write the MCP config for task %s: %w", task, err)
 	}
 	return path, nil
 }
 
 // EndRun revokes the task's session.
-func (m *mcpService) EndRun(task core.TaskID) { m.Revoke(task) }
+func (m *mcpService) EndRun(task core.TaskID, attempt int) { m.Revoke(task, attempt) }
 
 // newMCP builds the MCP server over the real services.
 func newMCP(store *db.Store, g *git.Git, buildSvc *builds.Service, hostSvc *hosts.Service, actions *repos.ActionsService,
-	propSvc *proposals.Service, redactor *safety.SecretRedactor, version string) (*mcpService, error) {
+	propSvc *proposals.Service, redactor *safety.SecretRedactor, version, dataDir string) (*mcpService, error) {
 	srv, err := mcp.New(mcp.Config{
 		Workspace:  mcpWorkspace{store: store},
 		Reader:     mcpReader{store: store, git: g},
@@ -109,6 +109,7 @@ func newMCP(store *db.Store, g *git.Git, buildSvc *builds.Service, hostSvc *host
 		Audit:      mcpAudit{store: store, redactor: redactor},
 		Redactor:   redactor,
 		Version:    version,
+		DataDir:    dataDir,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("start the MCP server: %w", err)
@@ -140,10 +141,11 @@ func (w mcpWorkspace) Snapshot(ctx context.Context, id core.TaskID) (mcp.Snapsho
 	}
 	snap := mcp.Snapshot{Project: t.ProjectID, Mode: t.Mode, AgentName: t.Agent}
 	for _, r := range rs {
-		v := mcp.RepoView{ID: r.ID, Name: r.Name, DefaultBranch: r.DefaultBranch, InScope: slices.Contains(t.RepoIDs, r.ID)}
+		v := mcp.RepoView{ID: r.ID, Name: r.Name, DefaultBranch: r.DefaultBranch, InScope: slices.Contains(t.RepoIDs, r.ID), Paths: []string{r.Path}}
 		for _, wt := range wts {
 			if wt.RepoID == r.ID && wt.Status == core.WorktreeActive {
 				v.Worktree, v.WorktreeBranch = wt.ID, wt.Branch
+				v.Paths = append(v.Paths, wt.Path)
 			}
 		}
 		snap.Repos = append(snap.Repos, v)

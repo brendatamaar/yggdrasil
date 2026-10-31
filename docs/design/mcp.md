@@ -50,7 +50,7 @@ type Tool string // closed set, below
 | `list_dev_servers` | 03 | none running (stub until Phase 5) | always |
 | `dev_server_log` | 03 | "no such dev server" until Phase 5 | always |
 | `fetch` | 04 | `git fetch` of a **scope** repo | always |
-| `pull` | 04 | fast-forward-only pull of a **scope** repo's main checkout | always, see open question 1 |
+| `pull` | 04 | fast-forward-only pull of a **scope** repo's main checkout | not in Ask mode (invariant 9); otherwise always, see open question 1 |
 | `propose_commit` | 05 | creates a `Commit` proposal | the repo has a task worktree, or mode is `current_branch` |
 | `propose_push` | 05 | `Push` | same |
 | `propose_merge_request` | 05 | `MergeRequest` | same, and the remote is GitLab |
@@ -214,7 +214,7 @@ Shell:
 
 ## Decisions (approved 2026-10-25)
 
-(1) `pull` stays a direct tool with the four conditions (ff-only, clean tree, no build or editor holds the checkout, audited with old and new commit); the threat model records it as the one explicit reading of invariant 2. (2)-(6) recommendations accepted as written.
+(1) `pull` stays a direct tool with the four conditions (ff-only, clean tree, no build or editor holds the checkout, audited with old and new commit); the threat model records it as the one explicit reading of invariant 2. Ask mode is excluded from this exception: `pull` is neither offered nor authorized there, because it changes a working tree; `fetch` stays (it updates remote refs only). (2)-(6) recommendations accepted as written.
 
 ## Review gate 1 fixes (2026-10-25)
 

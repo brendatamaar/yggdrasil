@@ -21,15 +21,16 @@ type fakeMCP struct {
 	begins   int
 	ends     int
 	live     map[core.TaskID]bool
+	attempt  map[core.TaskID]int
 	beginErr error
 	token    string
 }
 
 func newFakeMCP() *fakeMCP {
-	return &fakeMCP{live: map[core.TaskID]bool{}, token: "ygg-secret-token-0123456789"}
+	return &fakeMCP{live: map[core.TaskID]bool{}, attempt: map[core.TaskID]int{}, token: "ygg-secret-token-0123456789"}
 }
 
-func (f *fakeMCP) BeginRun(_ agents.Adapter, task core.TaskID, _ int, dir string) (string, error) {
+func (f *fakeMCP) BeginRun(_ agents.Adapter, task core.TaskID, attempt int, dir string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.begins++
@@ -37,13 +38,17 @@ func (f *fakeMCP) BeginRun(_ agents.Adapter, task core.TaskID, _ int, dir string
 		return "", f.beginErr
 	}
 	f.live[task] = true
+	f.attempt[task] = attempt
 	return filepath.Join(dir, "mcp.json"), nil
 }
 
-func (f *fakeMCP) EndRun(task core.TaskID) {
+func (f *fakeMCP) EndRun(task core.TaskID, attempt int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ends++
+	if attempt != 0 && f.attempt[task] != attempt {
+		return
+	}
 	delete(f.live, task)
 }
 
@@ -143,7 +148,7 @@ func TestMCPSessionEndsOnRecovery(t *testing.T) {
 	id := h.send(h.msg("ask", "q", 0)).Task.ID
 	waitFor(t, 5*time.Second, func() bool { return isRunning(h.state(id)) }, "running")
 	f.mu.Lock()
-	f.live[id] = true // a session that outlived its run
+	f.live[id], f.attempt[id] = true, 1 // a session that outlived its run
 	f.mu.Unlock()
 	h.restart()
 	h.waitStatus(id, core.TaskFailed)

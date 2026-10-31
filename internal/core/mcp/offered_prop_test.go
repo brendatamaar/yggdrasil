@@ -205,3 +205,24 @@ func TestPropResultCapConstants(t *testing.T) {
 		t.Fatal("a tool cap exceeds the result cap")
 	}
 }
+
+// Invariant 9: in Ask mode pull is never offered and never authorized.
+func TestPropAskModeNeverPulls(t *testing.T) {
+	for seed := int64(1); seed <= 500; seed++ {
+		c := randCtx(rand.New(rand.NewSource(seed)))
+		c.Mode = core.ModeAsk
+		if slices.Contains(Offered(c), ToolPull) {
+			t.Fatalf("seed %d: pull offered in Ask mode", seed)
+		}
+		for _, id := range append(slices.Clone(allRepos), "") {
+			if d := Authorize(c, ToolPull, id); d.Allowed {
+				t.Fatalf("seed %d: pull allowed in Ask mode for %q", seed, id)
+			}
+		}
+		if c.Live {
+			if d := Authorize(c, ToolPull); d.Reason != DenyAskMode {
+				t.Fatalf("seed %d: %+v", seed, d)
+			}
+		}
+	}
+}

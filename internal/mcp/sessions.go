@@ -100,14 +100,23 @@ func (s *Sessions) Live(task core.TaskID) bool {
 	return ok
 }
 
-// Revoke ends the task's session. Revoking an unknown task does nothing.
-func (s *Sessions) Revoke(task core.TaskID) {
+// AnyAttempt as the attempt of Revoke ends the task's session whatever its
+// attempt (recovery, which does not know it).
+const AnyAttempt = 0
+
+// Revoke ends the task's session of that attempt and reports whether it ended
+// one. A session of another attempt stays: a late end of attempt N must not
+// revoke attempt N+1. Revoking an unknown task does nothing.
+func (s *Sessions) Revoke(task core.TaskID, attempt int) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if h, ok := s.byTask[task]; ok {
-		delete(s.byHash, h)
-		delete(s.byTask, task)
+	h, ok := s.byTask[task]
+	if !ok || (attempt != AnyAttempt && s.byHash[h].Attempt != attempt) {
+		return false
 	}
+	delete(s.byHash, h)
+	delete(s.byTask, task)
+	return true
 }
 
 // Count is the number of live sessions.

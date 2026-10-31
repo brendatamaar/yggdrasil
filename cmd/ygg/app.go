@@ -188,7 +188,7 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		return nil, err
 	}
 
-	mcpSvc, err := newMCP(store, g, buildSvc, hostSvc, actions, propSvc, redactor, version)
+	mcpSvc, err := newMCP(store, g, buildSvc, hostSvc, actions, propSvc, redactor, version, cfg.dataDir)
 	if err != nil {
 		_ = d.Close()
 		return nil, err
