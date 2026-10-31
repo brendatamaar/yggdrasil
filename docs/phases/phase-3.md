@@ -310,3 +310,12 @@ Queue (one writing agent at a time): finish FP4 and merge; M1a rest; `needsYouRe
 Merged and verified on `main`: M1a rest (`ParseCall`/`FormatCall`, 23 tools; path/branch/remote rules are copies of `core/proposals/validate.go` and can drift: reviewers to check), `needsYouReason` on board cards (`integrity_violated`, `cap_exceeded`, `pending_proposals`; no `integrity_unverifiable` since core has no such state), SS1 (per-launch UI session; `YGG_INSECURE_NO_SESSION` refused with write modes), FE4 (proposals confirm, trust panel, needs-you notice, settings, composer mount, session page). Web 359/359.
 Open items: `platform.OpenURL` to open the launch link outside the job object (platform-windows) + `scripts/smoke.ps1` to drive `?k=` instead of the insecure flag; FE4 gaps: no cross-task proposals page, board TaskCard lacks the reason, no diff/file list in `ProposalDTO` (only `lines`); threat-model entries for the session (no expiry during a run; token readable from terminal/URL bar).
 Queue: M1b, platform OpenURL, T1, gate 4 round 2, gate 5, threat model, PLAN/CHANGELOG, phase close.
+
+### PAUSED (usage limit) 2026-10-31
+
+Merged on `main` and green (lint, typecheck, Go suite): M1a rest, needsYouReason, SS1, FE4, M1b, M1c, T1.
+Gate review (a4f8c0d..main): fe-reviewer no Blocking/Must-fix; safety-reviewer **FAIL: B1 `pull` offered in Ask mode (invariant 9)**.
+In flight, NOT merged: GF5 (agent `aaa64a11cbc81f2a4`, branch `worktree-agent-aaa64a11cbc81f2a4`) stopped at its turn limit with no report. Scope: B1 (no pull in Ask, property test, design-doc line), revoke window re-check, gate leak, `EndRun/Revoke(task, attempt)` fencing, S1 rule drift (shared or fuzz), S2 sanitize scrubbing, S4 ambiguous repo resolve. Resume: SendMessage it to commit WIP and report; then review diff, merge, re-run both reviewers.
+Deferred Should-fix: DraftAction type for proposals (FE #4), shrinking property tests for core/mcp limiter (FE #5), M7/M9 sanitize property test (in GF5 S2).
+Human decisions pending: (1) cleanup of per-run MCP config files in `<dataDir>/runs/mcp/` (revoked tokens only; a delete needs your OK); (2) run `task license:install` + `task license` (go-sdk v1.8.0 licence unconfirmed).
+Queue: GF5 merge, gate re-run, platform `OpenURL` + smoke.ps1 using `?k=`, threat-model updates (session, MCP, pull exception excl. Ask), PLAN ticks + CHANGELOG, phase close (v0.4.0 proposed, do not tag).
