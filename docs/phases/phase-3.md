@@ -319,3 +319,7 @@ In flight, NOT merged: GF5 (agent `aaa64a11cbc81f2a4`, branch `worktree-agent-aa
 Deferred Should-fix: DraftAction type for proposals (FE #4), shrinking property tests for core/mcp limiter (FE #5), M7/M9 sanitize property test (in GF5 S2).
 Human decisions pending: (1) cleanup of per-run MCP config files in `<dataDir>/runs/mcp/` (revoked tokens only; a delete needs your OK); (2) run `task license:install` + `task license` (go-sdk v1.8.0 licence unconfirmed).
 Queue: GF5 merge, gate re-run, platform `OpenURL` + smoke.ps1 using `?k=`, threat-model updates (session, MCP, pull exception excl. Ask), PLAN ticks + CHANGELOG, phase close (v0.4.0 proposed, do not tag).
+
+### 2026-10-31 (resumed): GF5 merged
+
+GF5 merged and verified on `main` (generate clean, lint, typecheck, Go suite): no `pull` in Ask mode (`DenyAskMode`, `TestPropAskModeNeverPulls`), session re-check before audit+effect, no gate for a revoked session, `EndRun/Revoke(task, attempt)` fencing, sanitize scrubs data/repo folders + rooted paths, ambiguous repo names refused. S1 kept the copies (archtest forbids core cross-imports); drift fuzz targets cover it. Residual: `xE:/tmp` (forward-slash drive glued to a word) not scrubbed. Next: re-run both reviewers on the GF5 delta, then OpenURL + smoke, threat model, PLAN/CHANGELOG, phase close.
