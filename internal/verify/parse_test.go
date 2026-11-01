@@ -116,7 +116,7 @@ func TestVerificationFromRowRejects(t *testing.T) {
 		{"bootstrapping without the verify chain", "bootstrapping", func(r *db.VerificationRow) {
 			r.Plan = json.RawMessage(`{"seq":3,"bootstrap":[{"name":"i","argv":["npm"]}]}`)
 		}},
-		{"verifying without a chain","verifying", func(r *db.VerificationRow) { r.Plan = json.RawMessage(`{"seq":3}`) }},
+		{"verifying without a chain", "verifying", func(r *db.VerificationRow) { r.Plan = json.RawMessage(`{"seq":3}`) }},
 		{"passed without a time", "passed", func(r *db.VerificationRow) { r.At = nil }},
 		{"passed without a build", "passed", func(r *db.VerificationRow) { r.Build = "" }},
 		{"failed without a time", "failed exit", func(r *db.VerificationRow) { r.At = nil }},
