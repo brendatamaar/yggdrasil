@@ -46,6 +46,8 @@ func TestTopicWireStrings(t *testing.T) {
 		{hostsTopic{}, "hosts"},
 		{proposalsTopic{}, "proposals"},
 		{boardTopic{}, "board"},
+		{verificationsTopic{}, "verifications"},
+		{changeSetsTopic{}, "changesets"},
 	}
 	for _, c := range cases {
 		if got := c.topic.String(); got != c.want {

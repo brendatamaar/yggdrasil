@@ -141,6 +141,9 @@ type TaskResponse struct {
 	// Warning is "edits_main_checkout" or "edits_all_repos" when the task edits
 	// main checkouts; empty otherwise.
 	Warning string `json:"warning,omitempty"`
+	// Verification is the worst verification state over the task's repos. It
+	// stays absent until verification is wired (Phase 4).
+	Verification *VerificationSummaryDTO `json:"verification,omitempty"`
 }
 
 // TaskEventsResponse is the body of GET /api/tasks/{id}/events: the events

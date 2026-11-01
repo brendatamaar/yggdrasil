@@ -51,6 +51,9 @@ type BoardCardDTO struct {
 	NeedsYouReason string    `json:"needsYouReason,omitempty"`
 	Usage          UsageDTO  `json:"usage"`
 	UpdatedAt      time.Time `json:"updatedAt"`
+	// Verification is the worst verification state over the task's repos. It
+	// stays absent until verification is wired (Phase 4).
+	Verification *VerificationSummaryDTO `json:"verification,omitempty"`
 }
 
 // RoomHintDTO suggests raising maxAgents; RaiseTo is 0 when there is no
