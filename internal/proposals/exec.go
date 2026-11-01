@@ -46,6 +46,9 @@ func keyOf(a coreprop.Action) string {
 		return targetKey(v.Where)
 	case coreprop.Install:
 		return "repo:" + string(v.Repo)
+	case coreprop.MergeLocal, coreprop.RemoveWorktree:
+		// Their executors land with PX1; until then they never run.
+		return "landing"
 	}
 	return "other"
 }
@@ -193,6 +196,8 @@ func (s *Service) execute(ctx context.Context, p coreprop.Proposal, attempt int)
 		return s.execDelete(ctx, p, a)
 	case coreprop.Install:
 		return s.execInstall(ctx, p, a)
+	case coreprop.MergeLocal, coreprop.RemoveWorktree:
+		return failed(coreprop.FailPrecondition, false, "Merging locally and removing worktrees are not available yet. Nothing was changed.")
 	}
 	return failed(coreprop.FailPrecondition, false, "This kind of proposal cannot run yet.")
 }
