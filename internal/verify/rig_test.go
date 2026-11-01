@@ -106,9 +106,21 @@ func (t tcRef) Commands(d builds.Detection) builds.Commands { return t.p.Command
 func (t tcRef) Artifacts(d builds.Detection) []string       { return t.p.Artifacts(d) }
 func (t tcRef) DepsFiles(d builds.Detection) []string       { return t.p.DepsFiles(d) }
 
+func stepsOf(n int) []builds.Step {
+	out := make([]builds.Step, n)
+	for i := range out {
+		out[i] = step("s", 0)
+	}
+	return out
+}
+
 type testWriter struct{ t *testing.T }
 
 func (w testWriter) Write(p []byte) (int, error) { w.t.Logf("%s", p); return len(p), nil }
+
+func (r *rig) runnerTime() time.Time {
+	return time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC).Add(time.Duration(r.n.Add(1)) * time.Second)
+}
 
 func (r *rig) reconcile() {
 	r.t.Helper()

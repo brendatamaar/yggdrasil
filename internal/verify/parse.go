@@ -226,6 +226,14 @@ func VerificationFromRow(row db.VerificationRow) (Record, error) {
 		if row.Build == "" || row.NextBuild == "" {
 			return bad("a bootstrapping verification needs both build IDs")
 		}
+		if len(pj.Verify) == 0 {
+			// The hop to verifying needs the verify chain.
+			return bad("a bootstrapping verification needs the verify chain too")
+		}
+		if row.Build == row.NextBuild {
+			// The hop to the verify build would never be queued.
+			return bad("a bootstrapping verification needs two different builds")
+		}
 		if since.IsZero() {
 			return bad("a bootstrapping verification needs a start time")
 		}
@@ -283,6 +291,9 @@ func VerificationFromRow(row db.VerificationRow) (Record, error) {
 	}
 	if err := v.Validate(); err != nil {
 		return bad("%v", err)
+	}
+	if !IsLiveCode(row.State) && (len(pj.Bootstrap) > 0 || len(pj.Verify) > 0) {
+		return bad("the row keeps a chain although nothing is running")
 	}
 	// A row must hold exactly the columns of its state: format the parsed
 	// state again and compare, so stray data of another state is refused.
