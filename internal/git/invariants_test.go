@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -63,8 +64,32 @@ func scanWriter(t *testing.T, name string, src any) []string {
 	return scanMode(t, name, src, true, true)
 }
 
+// allowance is an explicit, per-file exception to the word and name bans: the
+// listed function names and the listed exact string literals, nothing else in
+// that file. Every other ban still applies there.
+type allowance struct {
+	funcs   []string
+	strings []string
+}
+
+// allowances are the only exceptions. worktree_prune.go runs `git worktree
+// prune`, which drops git's records of vanished worktrees and deletes no
+// working file; the spike file names the one command it tests to see what git
+// does with a locked file.
+var allowances = map[string]allowance{
+	"worktree_prune.go": {funcs: []string{"WorktreePrune", "WorktreePruneArgv"}, strings: []string{"prune"}},
+	// TestSpikeWorktreeRemoveWithLockedFile is a test (names are not scanned);
+	// the file may spell the git subcommand it exercises.
+	"spike_worktree_windows_test.go": {strings: []string{"remove"}},
+}
+
+func (a allowance) funcOK(n string) bool   { return slices.Contains(a.funcs, n) }
+func (a allowance) stringOK(s string) bool { return slices.Contains(a.strings, s) }
+func baseName(name string) string          { return filepath.Base(name) }
+func allowanceFor(name string) allowance   { return allowances[baseName(name)] }
 func scanMode(t *testing.T, name string, src any, tests, writer bool) []string {
 	t.Helper()
+	allow := allowanceFor(name)
 	file, err := parser.ParseFile(token.NewFileSet(), name, src, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -78,11 +103,11 @@ func scanMode(t *testing.T, name string, src any, tests, writer bool) []string {
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.FuncDecl:
-			if (!tests || writer) && nameForbidden(x.Name.Name, writer) {
+			if (!tests || writer) && !allow.funcOK(x.Name.Name) && nameForbidden(x.Name.Name, writer) {
 				bad = append(bad, name+": forbidden function "+x.Name.Name)
 			}
 		case *ast.TypeSpec:
-			if (!tests || writer) && nameForbidden(x.Name.Name, writer) {
+			if (!tests || writer) && !allow.funcOK(x.Name.Name) && nameForbidden(x.Name.Name, writer) {
 				bad = append(bad, name+": forbidden type "+x.Name.Name)
 			}
 		case *ast.BasicLit:
@@ -94,7 +119,7 @@ func scanMode(t *testing.T, name string, src any, tests, writer bool) []string {
 			if tests {
 				word = testWord
 			}
-			if word.MatchString(s) || forbiddenFlag.MatchString(s) {
+			if !allow.stringOK(s) && (word.MatchString(s) || forbiddenFlag.MatchString(s)) {
 				bad = append(bad, name+": forbidden string "+x.Value)
 			}
 		}
@@ -188,6 +213,45 @@ func TestScanCatchesDestructiveCode(t *testing.T) {
 		if len(scan(t, "bad_test.go", src, true)) == 0 {
 			t.Errorf("%s: scan of a test file found nothing", name)
 		}
+	}
+}
+
+// The allowances are narrow: one file, exact names, exact strings. Anywhere
+// else, and for any other word, the bans hold.
+func TestAllowancesAreNarrow(t *testing.T) {
+	// Allowed where listed.
+	if bad := scanSource(t, "worktree_prune.go", `package p; func WorktreePrune() {}; var a = []string{"worktree", "prune"}`); len(bad) != 0 {
+		t.Errorf("listed allowance flagged: %v", bad)
+	}
+	for name, c := range map[string]struct{ file, src string }{
+		"prune in another file":      {"other.go", `package p; var a = "prune"`},
+		"prune func in another file": {"other.go", `package p; func WorktreePrune() {}`},
+		"remove in the prune file":   {"worktree_prune.go", `package p; var a = []string{"worktree", "remove"}`},
+		"force in the prune file":    {"worktree_prune.go", `package p; var a = "--force"`},
+		"other func in prune file":   {"worktree_prune.go", `package p; func WorktreeRemove() {}`},
+		"prune with a suffix":        {"worktree_prune.go", `package p; var a = "prune --expire=now"`},
+		"os/exec in the prune file":  {"worktree_prune.go", `package p; import "os/exec"; var _ = exec.Command`},
+	} {
+		if len(scanSource(t, c.file, c.src)) == 0 {
+			t.Errorf("%s: scan found nothing", name)
+		}
+	}
+	// The spike test file may spell the one subcommand it tests, no more.
+	if bad := scan(t, "spike_worktree_windows_test.go", `package p; var a = []string{"worktree", "remove"}`, true); len(bad) != 0 {
+		t.Errorf("spike allowance flagged: %v", bad)
+	}
+	for name, src := range map[string]string{
+		"spike force":  `package p; var a = []string{"worktree", "remove", "--force"}`,
+		"spike hard":   `package p; var a = "--hard"`,
+		"spike exec":   `package p; import "os/exec"; var _ = exec.Command`,
+		"spike branch": `package p; var a = []string{"branch", "-D", "x"}`,
+	} {
+		if len(scan(t, "spike_worktree_windows_test.go", src, true)) == 0 {
+			t.Errorf("%s: scan found nothing", name)
+		}
+	}
+	if len(scan(t, "other_test.go", `package p; var a = "remove"`, true)) == 0 {
+		t.Error("the spike allowance leaked to another test file")
 	}
 }
 
