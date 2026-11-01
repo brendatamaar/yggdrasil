@@ -12,8 +12,8 @@ import (
 // verification returns exactly one WriteAudit and one Publish after its
 // effect commands.
 //
-// Turn IDs are compared as strings: they must sort in the order the turns
-// happened (the shell issues time-ordered IDs).
+// A turn is newer when its Seq (the task's turn sequence number) is greater;
+// turn IDs are opaque labels and are never compared.
 func Step(v Verification, in Input) (Verification, []Command) {
 	if v.State == nil {
 		return v, nil
@@ -34,24 +34,24 @@ func Step(v Verification, in Input) (Verification, []Command) {
 		if !live {
 			return v, nil
 		}
-		return finish(v, Cancelled{Turn: turnOf(v.State), Cause: CancelUser, At: in.Now}, []Command{CancelBuild{Build: b}})
+		return finish(v, Cancelled{Turn: turnOf(v.State), TurnSeq: seqOf(v.State), Attempt: attemptOf(v.State), Cause: CancelUser, At: in.Now}, []Command{CancelBuild{Build: b}})
 	case BuildFinished:
 		return stepBuildFinished(v, in)
 	case EnqueueFailed:
 		if b, live := liveBuild(v.State); !live || b != in.Build {
 			return v, nil
 		}
-		return finish(v, Unverifiable{Turn: turnOf(v.State), Reason: UnverifiableCouldNotQueue}, nil)
+		return finish(v, Unverifiable{Turn: turnOf(v.State), TurnSeq: seqOf(v.State), Attempt: attemptOf(v.State), Reason: UnverifiableCouldNotQueue}, nil)
 	}
 	return v, nil
 }
 
 func stepTurnEnded(v Verification, in TurnEnded) (Verification, []Command) {
-	if in.Turn.Validate() != nil || in.Turn <= turnOf(v.State) {
+	if in.Turn.Validate() != nil || in.Seq < 1 || in.Seq <= seqOf(v.State) {
 		return v, nil
 	}
 	next, enq, ok := v.enter(entry{
-		turn: in.Turn, attempt: 1, facts: in.Facts, plan: in.Plan,
+		turn: in.Turn, seq: in.Seq, attempt: 1, facts: in.Facts, plan: in.Plan,
 		bootBuild: in.BootBuild, verifyBuild: in.VerifyBuild, now: in.Now,
 	})
 	if !ok {
@@ -71,20 +71,18 @@ func stepRestart(v Verification, allowed bool, f Facts, p Plan, boot, ver core.B
 		return v, nil
 	}
 	next, enq, ok := v.enter(entry{
-		turn: turnOf(v.State), attempt: attemptOf(v.State) + 1, facts: f, plan: p,
+		turn: turnOf(v.State), seq: seqOf(v.State), attempt: attemptOf(v.State) + 1, facts: f, plan: p,
 		bootBuild: boot, verifyBuild: ver, now: now,
 	})
 	if !ok {
 		return v, nil
 	}
-	// Skipped and Unverifiable carry no attempt: entering the same outcome
-	// again changes nothing. (== is safe: it only runs for these comparable
-	// types, and differing dynamic types compare unequal.)
-	switch next.(type) {
-	case Skipped, Unverifiable:
-		if v.State == next {
-			return v, nil
-		}
+	// Skipped carries no attempt (nothing ran), so a Retry from Skipped
+	// starts at attempt 1, and entering the same Skipped outcome again
+	// changes nothing. (== is safe: Skipped is comparable, and differing
+	// dynamic types compare unequal.)
+	if _, ok := next.(Skipped); ok && v.State == next {
+		return v, nil
 	}
 	return finish(v, next, enq)
 }
@@ -113,14 +111,14 @@ func finishBootstrap(v Verification, s Bootstrapping, in BuildFinished) (Verific
 		}
 		nv := v
 		nv.BootHash = s.DepsHash
-		return finish(nv, Verifying{Turn: s.Turn, Attempt: s.Attempt, Build: s.NextBuild, Plan: s.Plan, Since: in.Now},
+		return finish(nv, Verifying{Turn: s.Turn, TurnSeq: s.TurnSeq, Attempt: s.Attempt, Build: s.NextBuild, Plan: s.Plan, Since: in.Now},
 			[]Command{EnqueueBuild{Build: s.NextBuild, Stage: StageVerify, Spec: BuildSpec{Worktree: v.Worktree, Steps: s.Plan.Verify}}})
 	case BuildFailedAt, BuildStartFailedAt:
-		return failed(v, s.Turn, s.Attempt, StageBootstrap, s.Build, s.Plan.Bootstrap, r, in.Now)
+		return failed(v, s.Turn, s.TurnSeq, s.Attempt, StageBootstrap, s.Build, s.Plan.Bootstrap, r, in.Now)
 	case BuildCancelled:
-		return finish(v, Cancelled{Turn: s.Turn, Cause: CancelExternal, At: in.Now}, nil)
+		return finish(v, Cancelled{Turn: s.Turn, TurnSeq: s.TurnSeq, Attempt: s.Attempt, Cause: CancelExternal, At: in.Now}, nil)
 	case BuildInterrupted:
-		return finish(v, Interrupted{Turn: s.Turn, Attempt: s.Attempt, Stage: StageBootstrap, At: in.Now}, nil)
+		return finish(v, Interrupted{Turn: s.Turn, TurnSeq: s.TurnSeq, Attempt: s.Attempt, Stage: StageBootstrap, At: in.Now}, nil)
 	}
 	return v, nil
 }
@@ -128,20 +126,20 @@ func finishBootstrap(v Verification, s Bootstrapping, in BuildFinished) (Verific
 func finishVerify(v Verification, s Verifying, in BuildFinished) (Verification, []Command) {
 	switch r := in.Result.(type) {
 	case BuildPassed:
-		return finish(v, Passed{Turn: s.Turn, Attempt: s.Attempt, Build: s.Build, At: in.Now}, nil)
+		return finish(v, Passed{Turn: s.Turn, TurnSeq: s.TurnSeq, Attempt: s.Attempt, Build: s.Build, At: in.Now}, nil)
 	case BuildFailedAt, BuildStartFailedAt:
-		return failed(v, s.Turn, s.Attempt, StageVerify, s.Build, s.Plan.Verify, r, in.Now)
+		return failed(v, s.Turn, s.TurnSeq, s.Attempt, StageVerify, s.Build, s.Plan.Verify, r, in.Now)
 	case BuildCancelled:
-		return finish(v, Cancelled{Turn: s.Turn, Cause: CancelExternal, At: in.Now}, nil)
+		return finish(v, Cancelled{Turn: s.Turn, TurnSeq: s.TurnSeq, Attempt: s.Attempt, Cause: CancelExternal, At: in.Now}, nil)
 	case BuildInterrupted:
-		return finish(v, Interrupted{Turn: s.Turn, Attempt: s.Attempt, Stage: StageVerify, At: in.Now}, nil)
+		return finish(v, Interrupted{Turn: s.Turn, TurnSeq: s.TurnSeq, Attempt: s.Attempt, Stage: StageVerify, At: in.Now}, nil)
 	}
 	return v, nil
 }
 
 // failed builds the Failed state from a failure result, or ignores the input
 // when the step index is outside the chain or the reason is malformed (V13).
-func failed(v Verification, turn TurnID, att Attempt, stage Stage, build core.BuildID, chain []StepSpec, res BuildResult, now time.Time) (Verification, []Command) {
+func failed(v Verification, turn TurnID, seq int, att Attempt, stage Stage, build core.BuildID, chain []StepSpec, res BuildResult, now time.Time) (Verification, []Command) {
 	var step int
 	var reason FailReason
 	switch r := res.(type) {
@@ -153,7 +151,7 @@ func failed(v Verification, turn TurnID, att Attempt, stage Stage, build core.Bu
 	if step < 0 || step >= len(chain) || reason == nil || reason.Validate() != nil {
 		return v, nil
 	}
-	return finish(v, Failed{Turn: turn, Attempt: att, Stage: stage, Build: build, Step: step, Reason: reason, At: now}, nil)
+	return finish(v, Failed{Turn: turn, TurnSeq: seq, Attempt: att, Stage: stage, Build: build, Step: step, Reason: reason, At: now}, nil)
 }
 
 // finish sets the new state and appends the audit entry and the publish.
@@ -210,9 +208,37 @@ func turnOf(s State) TurnID {
 	return ""
 }
 
-// attemptOf is the attempt a state carries; states without one report 0.
+// seqOf is the turn sequence number a state is for; None has none (0).
+func seqOf(s State) int {
+	switch s := s.(type) {
+	case Skipped:
+		return s.TurnSeq
+	case Unverifiable:
+		return s.TurnSeq
+	case Bootstrapping:
+		return s.TurnSeq
+	case Verifying:
+		return s.TurnSeq
+	case Passed:
+		return s.TurnSeq
+	case Failed:
+		return s.TurnSeq
+	case Interrupted:
+		return s.TurnSeq
+	case Cancelled:
+		return s.TurnSeq
+	}
+	return 0
+}
+
+// attemptOf is the attempt a state carries; Skipped and None carry none and
+// report 0.
 func attemptOf(s State) Attempt {
 	switch s := s.(type) {
+	case Unverifiable:
+		return s.Attempt
+	case Cancelled:
+		return s.Attempt
 	case Bootstrapping:
 		return s.Attempt
 	case Verifying:

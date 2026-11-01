@@ -59,20 +59,25 @@ type None struct{}
 
 // Skipped: nothing to verify, by rule.
 type Skipped struct {
-	Turn   TurnID
-	Reason SkipReason
+	Turn    TurnID
+	TurnSeq int
+	Reason  SkipReason
 }
 
 // Unverifiable: wanted to verify, could not.
 type Unverifiable struct {
-	Turn   TurnID
-	Reason UnverifiableReason
+	Turn    TurnID
+	TurnSeq int
+	// Attempt continues the count of the turn (see Retry).
+	Attempt Attempt
+	Reason  UnverifiableReason
 }
 
 // Bootstrapping: the bootstrap build runs; Plan is kept so the verify build
 // starts without a new read.
 type Bootstrapping struct {
 	Turn      TurnID
+	TurnSeq   int
 	Attempt   Attempt
 	Build     core.BuildID
 	Plan      Plan
@@ -84,6 +89,7 @@ type Bootstrapping struct {
 // Verifying: the verify build runs.
 type Verifying struct {
 	Turn    TurnID
+	TurnSeq int
 	Attempt Attempt
 	Build   core.BuildID
 	Plan    Plan
@@ -93,6 +99,7 @@ type Verifying struct {
 // Passed: the verify chain succeeded.
 type Passed struct {
 	Turn    TurnID
+	TurnSeq int
 	Attempt Attempt
 	Build   core.BuildID
 	At      time.Time
@@ -101,6 +108,7 @@ type Passed struct {
 // Failed: a step failed.
 type Failed struct {
 	Turn    TurnID
+	TurnSeq int
 	Attempt Attempt
 	Stage   Stage
 	Build   core.BuildID
@@ -113,6 +121,7 @@ type Failed struct {
 // Interrupted: the process was lost (ygg stopped).
 type Interrupted struct {
 	Turn    TurnID
+	TurnSeq int
 	Attempt Attempt
 	Stage   Stage
 	At      time.Time
@@ -120,9 +129,11 @@ type Interrupted struct {
 
 // Cancelled: the build was cancelled.
 type Cancelled struct {
-	Turn  TurnID
-	Cause CancelCause
-	At    time.Time
+	Turn    TurnID
+	TurnSeq int
+	Attempt Attempt
+	Cause   CancelCause
+	At      time.Time
 }
 
 func (None) isState()          {}
@@ -139,10 +150,14 @@ func (Cancelled) isState()     {}
 func (None) Validate() error { return nil }
 
 // Validate checks the turn and reason.
-func (s Skipped) Validate() error { return errors.Join(s.Turn.Validate(), s.Reason.Validate()) }
+func (s Skipped) Validate() error {
+	return errors.Join(s.Turn.Validate(), validSeq(s.TurnSeq), s.Reason.Validate())
+}
 
 // Validate checks the turn and reason.
-func (s Unverifiable) Validate() error { return errors.Join(s.Turn.Validate(), s.Reason.Validate()) }
+func (s Unverifiable) Validate() error {
+	return errors.Join(s.Turn.Validate(), validSeq(s.TurnSeq), s.Attempt.Validate(), s.Reason.Validate())
+}
 
 // Validate checks the turn, attempt, builds and that the plan has a bootstrap
 // chain (V9).
@@ -150,7 +165,7 @@ func (s Bootstrapping) Validate() error {
 	if len(s.Plan.Bootstrap) == 0 {
 		return errors.New("a bootstrapping verification needs bootstrap steps")
 	}
-	return errors.Join(s.Turn.Validate(), s.Attempt.Validate(), s.Build.Validate(), s.NextBuild.Validate(), s.Plan.Validate())
+	return errors.Join(s.Turn.Validate(), validSeq(s.TurnSeq), s.Attempt.Validate(), s.Build.Validate(), s.NextBuild.Validate(), s.Plan.Validate())
 }
 
 // Validate checks the turn, attempt, build and that the plan has a verify
@@ -159,12 +174,12 @@ func (s Verifying) Validate() error {
 	if len(s.Plan.Verify) == 0 {
 		return errors.New("a verifying verification needs verify steps")
 	}
-	return errors.Join(s.Turn.Validate(), s.Attempt.Validate(), s.Build.Validate(), s.Plan.Validate())
+	return errors.Join(s.Turn.Validate(), validSeq(s.TurnSeq), s.Attempt.Validate(), s.Build.Validate(), s.Plan.Validate())
 }
 
 // Validate checks the turn, attempt and build.
 func (s Passed) Validate() error {
-	return errors.Join(s.Turn.Validate(), s.Attempt.Validate(), s.Build.Validate())
+	return errors.Join(s.Turn.Validate(), validSeq(s.TurnSeq), s.Attempt.Validate(), s.Build.Validate())
 }
 
 // Validate checks the identity fields, the step index and the reason.
@@ -175,13 +190,23 @@ func (s Failed) Validate() error {
 	if s.Reason == nil {
 		return errors.New("a failed verification needs a reason")
 	}
-	return errors.Join(s.Turn.Validate(), s.Attempt.Validate(), s.Stage.Validate(), s.Build.Validate(), s.Reason.Validate())
+	return errors.Join(s.Turn.Validate(), validSeq(s.TurnSeq), s.Attempt.Validate(), s.Stage.Validate(), s.Build.Validate(), s.Reason.Validate())
 }
 
 // Validate checks the turn, attempt and stage.
 func (s Interrupted) Validate() error {
-	return errors.Join(s.Turn.Validate(), s.Attempt.Validate(), s.Stage.Validate())
+	return errors.Join(s.Turn.Validate(), validSeq(s.TurnSeq), s.Attempt.Validate(), s.Stage.Validate())
 }
 
 // Validate checks the turn and cause.
-func (s Cancelled) Validate() error { return errors.Join(s.Turn.Validate(), s.Cause.Validate()) }
+func (s Cancelled) Validate() error {
+	return errors.Join(s.Turn.Validate(), validSeq(s.TurnSeq), s.Attempt.Validate(), s.Cause.Validate())
+}
+
+// validSeq reports whether n is a valid turn sequence number (1 or more).
+func validSeq(n int) error {
+	if n < 1 {
+		return fmt.Errorf("turn sequence %d: must be 1 or more", n)
+	}
+	return nil
+}
