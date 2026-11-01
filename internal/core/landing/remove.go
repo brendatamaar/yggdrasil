@@ -76,13 +76,19 @@ type RemoveState interface{ isRemoveState() }
 // RemoveIdle: not started.
 type RemoveIdle struct{}
 
-// RemoveChecking: waiting for RemoveObserved.
-type RemoveChecking struct{ Req RemoveReq }
+// RemoveChecking: waiting for RemoveObserved. Planned is the staging path
+// derived at the start; it is used if the move goes ahead.
+type RemoveChecking struct {
+	Req     RemoveReq
+	Planned StagePath
+}
 
 // Moving: MoveToStaging was emitted.
 type Moving struct {
 	Req    RemoveReq
 	Staged StagePath
+	// OtherPrunable was true at observation: do not prune (R5).
+	OtherPrunable bool
 }
 
 // Deleting: DeleteStaged was emitted.
@@ -110,9 +116,10 @@ type Locked struct {
 
 // Stuck: terminal; the rename worked but the delete is incomplete. Retryable.
 type Stuck struct {
-	Staged  StagePath
-	Class   LockClass
-	Holders []string
+	Staged    StagePath
+	Class     LockClass
+	Holders   []string
+	Remaining int
 }
 
 // RemoveFailed: terminal.
@@ -236,11 +243,5 @@ func (DeleteStaged) isRemoveCommand()    {}
 func (PruneWorktrees) isRemoveCommand()  {}
 func (MarkRemoved) isRemoveCommand()     {}
 
-// StepRemove is (state, input) -> (state, commands): the removal table of
-// docs/design/landing.md. An input it does not handle changes nothing.
-//
-// TODO(CS2): decision logic. Foundations ship the signature only.
-func StepRemove(s RemoveState, in RemoveInput) (RemoveState, []RemoveCommand) {
-	_ = in
-	return s, nil
-}
+// WriteAudit is shared with the merge set: one audit entry per terminal outcome.
+func (WriteAudit) isRemoveCommand() {}
