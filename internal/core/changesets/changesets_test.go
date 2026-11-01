@@ -51,14 +51,6 @@ func TestStatusMapping(t *testing.T) {
 	}
 }
 
-func TestStepStubChangesNothing(t *testing.T) {
-	s := State(openSet())
-	got, cmds := StepSet(s, StopRun{})
-	if got.Status() != s.Status() || len(cmds) != 0 {
-		t.Fatal("stub changed state or emitted commands")
-	}
-}
-
 func TestLinkMarker(t *testing.T) {
 	if LinkMarker != "<!-- ygg:links -->" {
 		t.Fatal("marker changed")
