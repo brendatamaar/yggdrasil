@@ -214,5 +214,10 @@ func stagedInside(root, staged string) bool {
 		return false
 	}
 	rel := s[len(pre):]
+	// A ":" below the staging folder is an alternate data stream (or a drive
+	// spelling) on Windows.
+	if runtime.GOOS == "windows" && strings.Contains(rel, ":") {
+		return false
+	}
 	return rel != "" && rel[0] != filepath.Separator
 }
