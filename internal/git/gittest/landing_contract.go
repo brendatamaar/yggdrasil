@@ -124,9 +124,9 @@ func LandingGitContract(t *testing.T, newWorld func(t *testing.T) (LandingWorld,
 	conflictWorld := func(t *testing.T, h LandingHarness) (tip, mainTip string) {
 		t.Helper()
 		h.CommitMain("f.txt", "base\n")
-		tip = h.CommitOn("feature", "f.txt", "feature side\n")
+		h.CommitOn("feature", "f.txt", "feature side\n")
 		tip = h.CommitOn("feature", "sp ace/b.txt", "feature b\n")
-		mainTip = h.CommitMain("f.txt", "main side\n")
+		h.CommitMain("f.txt", "main side\n")
 		mainTip = h.CommitMain("sp ace/b.txt", "main b\n")
 		return tip, mainTip
 	}

@@ -3,6 +3,9 @@ package git
 import (
 	"context"
 	"path/filepath"
+	"strings"
+
+	"github.com/brendatamaar/yggdrasil/internal/platform"
 )
 
 // WorktreePruneArgv is the argument list of WorktreePrune (after "git").
@@ -18,11 +21,33 @@ func (g *Git) WorktreePrune(ctx context.Context, repoDir string) error {
 	return err
 }
 
-// samePath compares two cleaned paths exactly. A caller on a case-insensitive
-// file system should pass the path as git lists it (platform.CanonicalPath);
-// a difference in case only makes OtherPrunable answer true, which skips the
-// prune and is the safe side.
-func samePath(a, b string) bool { return filepath.Clean(a) == filepath.Clean(b) }
+// samePath compares two paths the way the disk would: the closest existing
+// parent is replaced by the spelling the disk reports (long names, on-disk
+// case), and case is ignored where the file system ignores it. A folder that is
+// already gone keeps its own last segments.
+func samePath(a, b string) bool {
+	x, y := normPath(a), normPath(b)
+	if platform.PathsCaseInsensitive {
+		return strings.EqualFold(x, y)
+	}
+	return x == y
+}
+
+func normPath(p string) string {
+	p = filepath.Clean(p)
+	rest := ""
+	for cur := p; ; {
+		if c, err := platform.CanonicalPath(cur); err == nil {
+			return filepath.Join(c, rest)
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return p
+		}
+		rest = filepath.Join(filepath.Base(cur), rest)
+		cur = parent
+	}
+}
 
 // OtherPrunable reports whether the list has a prunable entry at a path other
 // than path (compared as cleaned paths). The landing executor prunes only when

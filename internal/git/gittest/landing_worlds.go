@@ -193,7 +193,7 @@ func (r *realLanding) MoveFile(dir, from, to string) {
 }
 
 func (r *realLanding) ReadFile(dir, rel string) (string, bool) {
-	b, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel)))
+	b, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel))) //nolint:gosec // test helper reads a temp repo
 	if err != nil {
 		return "", false
 	}
