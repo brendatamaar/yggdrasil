@@ -32,7 +32,7 @@ Yggdrasil is a local server with a browser UI that combines a multi-repo workspa
 
 **No cgo, ever.** `CGO_ENABLED=0` must always build. Don't add a dependency that needs cgo.
 
-**License: Apache-2.0.** Every dependency (Go and npm) must have a compatible license: MIT, BSD, ISC, Apache-2.0, MPL-2.0, 0BSD, CC0-1.0, BlueOak-1.0.0 or Unlicense. No GPL, LGPL or AGPL. `task license` checks production dependencies (what ships in the binary). New source files don't need license headers; the root `LICENSE` and `NOTICE` cover them.
+**License: Apache-2.0.** Every dependency (Go and npm) must have a compatible license: MIT, BSD, ISC, Apache-2.0, MPL-2.0, 0BSD, MIT-0, CC0-1.0, BlueOak-1.0.0 or Unlicense. No GPL, LGPL or AGPL. `task license` checks production dependencies (what ships in the binary). New source files don't need license headers; the root `LICENSE` and `NOTICE` cover them.
 
 ## 3. Commands
 

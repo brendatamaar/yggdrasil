@@ -7,7 +7,7 @@ vars:
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
   # Kept in sync with docs/AGENTS.md section 2.
-  ALLOWED_LICENSES: Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0,0BSD,CC0-1.0,BlueOak-1.0.0,Unlicense
+  ALLOWED_LICENSES: Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0,0BSD,MIT-0,CC0-1.0,BlueOak-1.0.0,Unlicense
   # CI installs this exact version through `task license:install`.
   GO_LICENSES_VERSION: v2.0.0
 
@@ -136,7 +136,9 @@ tasks:
           echo "go-licenses not found: run 'task license:install' (go install github.com/google/go-licenses/v2@{{.GO_LICENSES_VERSION}})" >&2
           exit 1
         fi
-      - go-licenses check ./... --allowed_licenses={{.ALLOWED_LICENSES}}
+      # github.com/segmentio/asm is MIT-0 (MIT No Attribution, allowed); go-licenses
+      # cannot classify that text, so it is ignored by path (pulled in by go-sdk).
+      - go-licenses check ./... --allowed_licenses={{.ALLOWED_LICENSES}} --ignore github.com/segmentio/asm
       - |
         if [ -f web/package.json ]; then
           if ! pnpm -C web install --frozen-lockfile; then
