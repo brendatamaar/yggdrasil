@@ -16,8 +16,8 @@ Core packages: `internal/core/changesets` (set state, order, warnings, link rend
 
 Decision 4 planned a pass 2 that re-pushes earlier branches with a new description. That cannot work: `git push` of a ref the remote already has says "Everything up-to-date" and never contacts `receive-pack`, so push options are never sent, and a changed ref needs a new commit or a forced push (banned). So:
 
-- Each MR proposal's `Description` may contain one marker line, `<!-- ygg:links -->`. The **template** is what the user confirms and what `ActionHash` covers; `Describe` says "links to related merge requests are added here when it is created".
-- At execution time the MR executor replaces the marker with the rendered link block (`RenderLinks`, pure): the set's repos in merge order, each as `repo (branch)` and, **for MRs already created by earlier members of the set, their URL** (checked `SafeWebURL`, same host as the remote). Later MRs are listed by repo and branch only.
+- Each MR proposal's `Description` may contain one inline marker, `<!-- ygg:links -->` (push-option descriptions are one line, so the marker is a token inside that line, not a line of its own). The **template** is what the user confirms and what `ActionHash` covers; `Describe` says "links to related merge requests are added here when it is created".
+- At execution time the MR executor replaces the marker with the rendered link text (`RenderLinks`, pure, one line: entries joined by ` · `): the set's repos in merge order, each as `repo (branch)` and, **for MRs already created by earlier members of the set, their URL** (checked `SafeWebURL`, same host as the remote). Later MRs are listed by repo and branch only.
 - Links therefore point backwards (later MR → earlier MR). The change-set page in Yggdrasil always shows the full linked set. Two-way links need a host API write (token with write scope), which is out of scope for v0.5; recorded as a limitation.
 
 This keeps "what you confirm is what runs": only URLs the user could not have known are filled in, from a closed, validated source.
@@ -255,7 +255,7 @@ Errors are translated at each layer: callers get `core/changesets` and `core/rev
 | `POST confirm` body | `ParseConfirmRun` | `Scope, Seen, Ack` | unknown scope, `Seen` hash not 64 hex, `Seen` ids not in the set, unknown warning code, trailing data |
 | `POST notes` body | `ParseNote` | `Note` | path absolute, with `..`, a drive, a stream (`:`), a device name or `\\?\` (reuse `platform`/`HasShortNameSegment` rules); line < 1 or > `MaxLine`; text empty, over `MaxNoteRunes`, control characters other than newline/tab; side unknown |
 | `proposals` + `change_sets` rows | `StateFromRows` | `State` | member repo outside the set, status/kind unknown, `merge_order` JSON not a permutation |
-| MR description template | existing action validation + `ValidateLinkMarker` | `Description` | more than one marker, marker not on its own line, description over the cap |
+| MR description template | existing action validation + `ValidateLinkMarker` | `Description` | more than one marker, a line break in the description, description over the cap (marker length counted as its rendered maximum) |
 | Push output | existing `ParsePushOutput` | `MRURL` | unsafe or foreign-host URL |
 
 Each parser gets: round trip where a formatter exists, accepted ⇒ valid, one test per rejection rule, and a fuzz target.
