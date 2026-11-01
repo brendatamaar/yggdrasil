@@ -20,9 +20,10 @@ import (
 func main() {
 	out := flag.String("out", "", "output folder, named "+outName+"; it must be empty or missing")
 	ifMissing := flag.Bool("if-missing", false, "do nothing, successfully, when the output folder already has files")
+	scenario := flag.String("scenario", "", "write a named scenario instead of the six-repo project (known: "+scenarioMultiRepo+")")
 	flag.Parse()
 	if *out == "" || flag.NArg() > 0 {
-		fmt.Fprintln(os.Stderr, "usage: go run . -out <path>/"+outName+" [-if-missing]")
+		fmt.Fprintln(os.Stderr, "usage: go run . -out <path>/"+outName+" [-if-missing] [-scenario "+scenarioMultiRepo+"]")
 		os.Exit(2)
 	}
 	if *ifMissing {
@@ -32,7 +33,11 @@ func main() {
 		}
 	}
 
-	root, sums, err := generate(*out)
+	gen := generate
+	if *scenario != "" {
+		gen = func(o string) (string, []repoSummary, error) { return generateScenario(*scenario, o) }
+	}
+	root, sums, err := gen(*out)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "demo-gen:", err)
 		os.Exit(1)
