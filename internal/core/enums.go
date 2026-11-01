@@ -43,9 +43,13 @@ const (
 type WorktreeStatus string
 
 const (
-	WorktreeActive  WorktreeStatus = "active"
-	WorktreeMerged  WorktreeStatus = "merged"
-	WorktreeRemoved WorktreeStatus = "removed"
+	WorktreeActive WorktreeStatus = "active"
+	WorktreeMerged WorktreeStatus = "merged"
+	// WorktreeRemoving: the folder was moved into the staging folder and its
+	// delete is not finished (docs/design/landing.md). Monotone: active,
+	// merged, removing, removed.
+	WorktreeRemoving WorktreeStatus = "removing"
+	WorktreeRemoved  WorktreeStatus = "removed"
 )
 
 // ProposalKind is what a proposal would do once confirmed (RV-02, MCP-05).
@@ -60,6 +64,12 @@ const (
 	ProposalAgentFile    ProposalKind = "agent_file"
 	ProposalDeleteFiles  ProposalKind = "delete_files"
 	ProposalSubtasks     ProposalKind = "subtasks"
+	// ProposalMergeLocal merges the agent branch into the main checkout with
+	// --no-ff and never pushes (RV-05).
+	ProposalMergeLocal ProposalKind = "merge_local"
+	// ProposalRemoveWorktree removes a clean worktree after confirmation
+	// (RV-06).
+	ProposalRemoveWorktree ProposalKind = "remove_worktree"
 )
 
 // ProposalStatus is the lifecycle of a proposal.
@@ -165,7 +175,8 @@ func (s TaskStatus) Terminal() bool {
 func (k ProposalKind) Validate() error {
 	switch k {
 	case ProposalCommit, ProposalPush, ProposalMergeRequest, ProposalInstall,
-		ProposalPublish, ProposalAgentFile, ProposalDeleteFiles, ProposalSubtasks:
+		ProposalPublish, ProposalAgentFile, ProposalDeleteFiles, ProposalSubtasks,
+		ProposalMergeLocal, ProposalRemoveWorktree:
 		return nil
 	}
 	return fmt.Errorf("unknown proposal kind %q", string(k))
@@ -210,7 +221,7 @@ func (o StepOutcome) Validate() error {
 // Validate reports whether s is a known worktree status.
 func (s WorktreeStatus) Validate() error {
 	switch s {
-	case WorktreeActive, WorktreeMerged, WorktreeRemoved:
+	case WorktreeActive, WorktreeMerged, WorktreeRemoving, WorktreeRemoved:
 		return nil
 	}
 	return fmt.Errorf("unknown worktree status %q", string(s))

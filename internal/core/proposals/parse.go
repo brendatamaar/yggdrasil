@@ -18,7 +18,8 @@ func supported(k core.ProposalKind) error {
 	}
 	switch k {
 	case core.ProposalCommit, core.ProposalPush, core.ProposalMergeRequest,
-		core.ProposalAgentFile, core.ProposalDeleteFiles, core.ProposalInstall:
+		core.ProposalAgentFile, core.ProposalDeleteFiles, core.ProposalInstall,
+		core.ProposalMergeLocal, core.ProposalRemoveWorktree:
 		return nil
 	}
 	return fmt.Errorf("%w: %q", ErrUnsupportedKind, string(k))
@@ -69,6 +70,17 @@ type (
 	installArgs struct {
 		Repo string `json:"repo"`
 		Step string `json:"step"`
+	}
+	mergeLocalArgs struct {
+		Repo             string `json:"repo"`
+		Worktree         string `json:"worktree"`
+		Branch           string `json:"branch"`
+		TargetBranch     string `json:"target"`
+		ExpectBranchHead string `json:"expect_branch_head"`
+		Title            string `json:"title"`
+	}
+	removeWorktreeArgs struct {
+		Worktree string `json:"worktree"`
 	}
 )
 
@@ -180,6 +192,18 @@ func parseKind(k core.ProposalKind, data []byte, strict bool) (Action, error) {
 			return nil, err
 		}
 		return buildInstall(v)
+	case core.ProposalMergeLocal:
+		var v mergeLocalArgs
+		if err := decodeStrict(data, &v); err != nil {
+			return nil, err
+		}
+		return buildMergeLocal(v)
+	case core.ProposalRemoveWorktree:
+		var v removeWorktreeArgs
+		if err := decodeStrict(data, &v); err != nil {
+			return nil, err
+		}
+		return buildRemoveWorktree(v)
 	}
 	return nil, fmt.Errorf("%w: %q", ErrUnsupportedKind, string(k))
 }
@@ -295,6 +319,29 @@ func buildInstall(v installArgs) (Action, error) {
 	return Install{Repo: id, Step: v.Step}, nil
 }
 
+func buildMergeLocal(v mergeLocalArgs) (Action, error) {
+	repo := core.RepoID(v.Repo)
+	if err := repo.Validate(); err != nil {
+		return nil, invalid("the repo id is not valid")
+	}
+	a := MergeLocal{
+		Where: MainCheckout{Repo: repo}, Worktree: core.WorktreeID(v.Worktree), Branch: v.Branch,
+		TargetBranch: v.TargetBranch, ExpectBranchHead: v.ExpectBranchHead, Title: v.Title,
+	}
+	if err := a.Validate(); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+func buildRemoveWorktree(v removeWorktreeArgs) (Action, error) {
+	a := RemoveWorktree{Worktree: core.WorktreeID(v.Worktree)}
+	if err := a.Validate(); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
 // ActionFromRow rebuilds an Action from the stored kind and payload, with the
 // same rules as ParseAction. A payload whose shape does not match the kind is
 // rejected like any unknown field.
@@ -348,6 +395,11 @@ func RowOf(a Action) (core.ProposalKind, []byte) {
 		v = deleteArgs{w, r, pathStrings(x.Paths)}
 	case Install:
 		v = installArgs{string(x.Repo), x.Step}
+	case MergeLocal:
+		_, r := targetArgs(x.Where)
+		v = mergeLocalArgs{r, string(x.Worktree), x.Branch, x.TargetBranch, x.ExpectBranchHead, x.Title}
+	case RemoveWorktree:
+		v = removeWorktreeArgs{string(x.Worktree)}
 	default:
 		return "", nil
 	}

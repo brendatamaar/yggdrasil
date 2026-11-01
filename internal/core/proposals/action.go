@@ -83,6 +83,30 @@ type Install struct {
 	Step string
 }
 
+// MergeLocal merges Branch (the worktree's branch, at ExpectBranchHead) into
+// TargetBranch of the repo's main checkout with --no-ff (RV-05). Where is
+// always the main checkout. It is never pushed.
+type MergeLocal struct {
+	Where            Target
+	Worktree         core.WorktreeID
+	Branch           string
+	TargetBranch     string
+	ExpectBranchHead string
+	Title            string
+}
+
+// RemoveWorktree removes one clean, Yggdrasil-created worktree (RV-06). It
+// never removes a branch or a main checkout.
+type RemoveWorktree struct {
+	Worktree core.WorktreeID
+}
+
+func (MergeLocal) Kind() core.ProposalKind     { return core.ProposalMergeLocal }
+func (RemoveWorktree) Kind() core.ProposalKind { return core.ProposalRemoveWorktree }
+
+func (MergeLocal) isAction()     {}
+func (RemoveWorktree) isAction() {}
+
 func (Commit) Kind() core.ProposalKind       { return core.ProposalCommit }
 func (Push) Kind() core.ProposalKind         { return core.ProposalPush }
 func (MergeRequest) Kind() core.ProposalKind { return core.ProposalMergeRequest }
