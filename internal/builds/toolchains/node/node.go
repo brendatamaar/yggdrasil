@@ -22,10 +22,6 @@ func New() Toolchain { return Toolchain{} }
 // Name implements builds.Toolchain.
 func (Toolchain) Name() string { return "node" }
 
-// Env is the environment the Verify chain wants on top of the clean one.
-// builds.Step has no env field, so the caller applies it.
-func Env() []string { return []string{"CI=true"} }
-
 // Detect reads package.json and the lock files. It runs nothing.
 func (Toolchain) Detect(repo fs.FS) (builds.Detection, bool) {
 	dir, file, ok := find.Dir(repo, "package.json")
@@ -76,6 +72,14 @@ func run(d builds.Detection, script string) builds.Step {
 	return builds.Step{Name: script, Argv: []string{d.Runner, "run", script}}
 }
 
+// verifyStep is run with CI=true: test runners and linters then skip watch
+// mode and prompts, so a verification never waits for input (BL-09).
+func verifyStep(d builds.Detection, script string) builds.Step {
+	s := run(d, script)
+	s.Env = []string{"CI=true"}
+	return s
+}
+
 // Commands implements builds.Toolchain. Verify is typecheck, lint, test (each
 // only if the script exists), else build.
 func (Toolchain) Commands(d builds.Detection) builds.Commands {
@@ -87,14 +91,20 @@ func (Toolchain) Commands(d builds.Detection) builds.Commands {
 		c.Install = []builds.Step{{Name: "install", Argv: []string{"npm", "install"}}}
 	case d.Runner == "pnpm" || d.Runner == "yarn":
 		c.Install = []builds.Step{{Name: "install", Argv: []string{d.Runner, "install", "--frozen-lockfile"}}}
+	default:
+		c.Install = []builds.Step{{Name: "install", Argv: []string{"npm", "install"}}}
 	}
+	// Bootstrap restores dependencies in a task worktree (WE-05). It is the
+	// same command as Install, kept apart because Install is a proposal and
+	// Bootstrap runs on its own.
+	c.Bootstrap = []builds.Step{{Name: "Install dependencies", Argv: append([]string(nil), c.Install[0].Argv...)}}
 	for _, s := range []string{"typecheck", "lint", "test"} {
 		if has(d, s) {
-			c.Verify = append(c.Verify, run(d, s))
+			c.Verify = append(c.Verify, verifyStep(d, s))
 		}
 	}
 	if len(c.Verify) == 0 && has(d, "build") {
-		c.Verify = []builds.Step{run(d, "build")}
+		c.Verify = []builds.Step{verifyStep(d, "build")}
 	}
 	if has(d, "build") {
 		c.Build = []builds.Step{run(d, "build")}
@@ -123,4 +133,18 @@ func EnvBuilds(d builds.Detection) []builds.Step {
 // Artifacts implements builds.Toolchain.
 func (Toolchain) Artifacts(d builds.Detection) []string {
 	return []string{find.Join(d.Dir, "dist/**"), find.Join(d.Dir, "build/**"), find.Join(d.Dir, "out/**")}
+}
+
+// DepsFiles implements builds.DepsFiler: the manifest and the lock file of the
+// detected package manager, relative to the repo with forward slashes. The
+// lock file is listed even when absent, so adding one changes the hash.
+func (Toolchain) DepsFiles(d builds.Detection) []string {
+	lock := "package-lock.json"
+	switch d.Runner {
+	case "pnpm":
+		lock = "pnpm-lock.yaml"
+	case "yarn":
+		lock = "yarn.lock"
+	}
+	return []string{find.Join(d.Dir, "package.json"), find.Join(d.Dir, lock)}
 }

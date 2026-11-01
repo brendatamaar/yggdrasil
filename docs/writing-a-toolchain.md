@@ -24,6 +24,43 @@ A toolchain is one language ecosystem (BL-10). Each lives in
   repo has it configured, no step that needs a database or network services.
   `core/builds.Step` stops the chain at the first failure.
 
+## Bootstrap, Env, verify and full tests
+
+- **Bootstrap** (WE-05) prepares a task's own worktree before its first
+  verification: restore dependencies, download the wrapper distribution. It runs
+  automatically, but only inside a task worktree, only for a trusted repo, and
+  through `platform.Start` with the clean environment. It never replaces
+  **Install**, which changes the main checkout and stays a proposal. Give
+  Bootstrap steps plain-language names ("Download Maven and dependencies"): the
+  UI shows them as "bootstrap", apart from the verify chain.
+  - Node: the Install command for the lock file (`npm ci`, `pnpm install
+    --frozen-lockfile`, `yarn install --frozen-lockfile`, or `npm install`).
+  - Maven: `<runner> -B -ntp dependency:go-offline`. It is chosen over
+    `dependency:resolve` because that fails in a multi-module reactor when a
+    module needs a sibling that is not installed.
+  - Gradle: `<runner> --console=plain dependencies`, which downloads the
+    distribution and resolves the root project's configurations.
+  - Custom: `bootstrap` in the custom config, same shape and validation as
+    `install`.
+- **Env.** `Step.Env` is extra `KEY=VALUE` environment for one step, added to the
+  clean environment (never `os.Environ`). Node's verify steps carry `CI=true` so
+  that tools do not watch or prompt. Token-like names are refused.
+- **Verify chain** (docs/PRD.md section 6.3): Node typecheck, lint, test;
+  Maven `test-compile`; Gradle `compileJava compileTestJava`, plus `compileKotlin
+  compileTestKotlin` when a build file mentions Kotlin.
+- **Full tests are opt-in.** A toolchain lists its slow test run in
+  `Commands.FullTests`. A repo's build settings (`fullTests: true`) append it
+  after the verify chain; Node has none because its chain already runs the tests.
+- **Per-repo settings.** `builds.RepoBuildSettings` holds `VerifyOverride`,
+  `FullTests` and `Bootstrap` (default true). `builds.ResolveCommands(det, cmds,
+  settings)` applies them to a toolchain's defaults. Modules do not read
+  settings.
+- **DepsFiles.** Implement `builds.DepsFiler` (`DepsFiles(d) []string`) to list
+  the manifests and lock files that decide the dependencies, relative to the repo
+  with forward slashes. `builds.HashDeps` hashes them so that a bootstrap runs
+  again only when they change. List a lock file even when it is absent, so that
+  adding one changes the hash.
+
 ## Steps
 
 1. Create the package and a `Toolchain` type with `Name()`, `Detect`,
@@ -46,14 +83,15 @@ JSON means no match.
 
 | Purpose | Step |
 |---|---|
-| Install (a proposal, never automatic) | `npm ci` / `pnpm install --frozen-lockfile` / `yarn install --frozen-lockfile` |
-| Verify | `<pm> run typecheck`, `lint`, `test` (each only if the script exists); if none exists, `build` |
+| Install (a proposal, never automatic) | `npm ci` / `pnpm install --frozen-lockfile` / `yarn install --frozen-lockfile`; `npm install` when there is no lock file |
+| Bootstrap (automatic, task worktree only) | the same command as Install |
+| Verify | `<pm> run typecheck`, `lint`, `test` (each only if the script exists, each with `Env: CI=true`); if none exists, `build` |
 | Build | `<pm> run build` |
 | Per-environment builds | `node.EnvBuilds(d)` returns `build:<env>` scripts as named steps |
 | Dev server | `dev`, else `start` |
 
-`builds.Step` has no environment field, so the Verify chain's `CI=true` is
-exposed as `node.Env()` for the runner to apply on top of the clean environment.
+**Dependency files.** `package.json` and the lock file of the detected package
+manager (listed even when absent).
 
 **Artifacts.** `dist/**`, `build/**`, `out/**`, prefixed with `Detection.Dir`
 when the manifest is in a sub folder (forward slashes, relative to the repo).
