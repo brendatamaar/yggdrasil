@@ -65,7 +65,7 @@ type VerificationDTO struct {
 // VerificationsResponse is the body of GET /api/tasks/{id}/verifications and
 // POST /api/tasks/{id}/verify/retry.
 type VerificationsResponse struct {
-	Verifications []VerificationDTO       `json:"verifications"`
+	Verifications []VerificationDTO      `json:"verifications"`
 	Summary       VerificationSummaryDTO `json:"summary"`
 }
 

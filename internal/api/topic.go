@@ -45,7 +45,7 @@ type verificationsTopic struct{} // a verification of any task changed state
 type changeSetsTopic struct{} // a change set or the review notes of a task changed
 
 func (verificationsTopic) isTopic() {}
-func (changeSetsTopic) isTopic()   {}
+func (changeSetsTopic) isTopic()    {}
 
 func (verificationsTopic) String() string { return TopicVerifications }
 func (changeSetsTopic) String() string    { return TopicChangeSets }

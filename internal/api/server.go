@@ -113,10 +113,10 @@ type Server struct {
 	review       ReviewService
 	changeSets   ChangeSetService
 	landing      LandingService
-	composer   ComposerService
-	mcp        MCPService
-	clock      func() time.Time
-	ids        func(prefix string) string
+	composer     ComposerService
+	mcp          MCPService
+	clock        func() time.Time
+	ids          func(prefix string) string
 
 	// ctx is the parent of background work of the handlers; Close cancels it.
 	ctx  context.Context
