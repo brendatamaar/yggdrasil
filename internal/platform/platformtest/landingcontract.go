@@ -3,6 +3,7 @@ package platformtest
 import (
 	"errors"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -52,7 +53,7 @@ func LandingPlatformContract(t *testing.T, l platform.Landing, fx LandingFixture
 	n := 0
 	fresh := func(parent string) string {
 		n++
-		return filepath.Join(parent, "wt"+string(rune('a'+n)))
+		return filepath.Join(parent, "wt"+strconv.Itoa(n))
 	}
 	staged := func(t *testing.T) string {
 		t.Helper()

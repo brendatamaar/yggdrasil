@@ -30,7 +30,7 @@ func osShort(t *testing.T, p string) string {
 		t.Fatal(err)
 	}
 	buf := make([]uint16, 1024)
-	n, err := windows.GetShortPathName(src, &buf[0], uint32(len(buf)))
+	n, err := windows.GetShortPathName(src, &buf[0], uint32(len(buf))) //nolint:gosec // len(buf) is small
 	if err != nil || n == 0 || int(n) > len(buf) {
 		return ""
 	}
