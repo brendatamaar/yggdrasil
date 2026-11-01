@@ -50,8 +50,13 @@ type DiffObserved struct {
 	Now    time.Time
 }
 
-// Recover: startup or reconcile found a note in NoteSending.
-type Recover struct{ Now time.Time }
+// Recover: startup or reconcile found a note in NoteSending. It returns the
+// note to NoteOpen when it has been sending for SendTimeout, or at once when
+// Startup is true (the process that was sending is gone).
+type Recover struct {
+	Startup bool
+	Now     time.Time
+}
 
 func (AddNote) isInput()      {}
 func (EditNote) isInput()     {}
