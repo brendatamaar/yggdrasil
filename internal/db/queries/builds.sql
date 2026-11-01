@@ -26,8 +26,8 @@ WHERE id = ? AND version = ?;
 
 -- name: InsertBuildStepRow :exec
 INSERT INTO build_steps (build_id, idx, repo_id, name, status, exit_code, log_path, started_at, finished_at,
-                         argv, attempt, outcome, start_failure, log_truncated)
-VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?);
+                         argv, attempt, outcome, start_failure, log_truncated, env)
+VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: DeleteBuildStepRows :exec
 DELETE FROM build_steps WHERE build_id = ?;

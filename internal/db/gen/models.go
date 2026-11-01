@@ -65,6 +65,7 @@ type BuildStep struct {
 	Outcome      sql.NullString
 	StartFailure sql.NullString
 	LogTruncated int64
+	Env          string
 }
 
 type ChangeSet struct {
@@ -73,6 +74,8 @@ type ChangeSet struct {
 	Status     string
 	MergeOrder string
 	CreatedAt  string
+	RunResult  string
+	Version    int64
 }
 
 type Project struct {
@@ -116,6 +119,32 @@ type Repo struct {
 	TrustHash     string
 	UntrackedAt   sql.NullString
 	RelPath       string
+}
+
+type RepoBuildSetting struct {
+	RepoID    string
+	Verify    sql.NullString
+	FullTests int64
+	Bootstrap int64
+	Version   int64
+	UpdatedAt string
+}
+
+type ReviewNote struct {
+	ID        string
+	TaskID    string
+	RepoID    string
+	Path      string
+	Line      int64
+	Side      string
+	Text      string
+	DiffHash  string
+	State     string
+	BatchID   string
+	TurnID    string
+	StateAt   sql.NullString
+	Version   int64
+	CreatedAt string
 }
 
 type Setting struct {
@@ -182,6 +211,32 @@ type TaskTurn struct {
 	DurationMs       int64
 }
 
+type Verification struct {
+	ID          string
+	TaskID      string
+	RepoID      string
+	WorktreeID  string
+	Version     int64
+	BootHash    string
+	State       string
+	TurnID      string
+	Attempt     int64
+	Reason      string
+	Stage       string
+	BuildID     string
+	NextBuildID string
+	DepsHash    string
+	FailStep    int64
+	FailKind    string
+	ExitCode    int64
+	FailText    string
+	Plan        string
+	Since       sql.NullString
+	At          sql.NullString
+	CreatedAt   string
+	UpdatedAt   string
+}
+
 type Worktree struct {
 	ID         string
 	RepoID     string
@@ -192,4 +247,5 @@ type Worktree struct {
 	Status     string
 	CreatedAt  string
 	BaseCommit string
+	StagedName string
 }

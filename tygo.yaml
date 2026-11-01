@@ -44,6 +44,10 @@ packages:
       - mcp.go
       - tasks_service.go
       - hubadapter.go
+      - verify.go
+      - review.go
+      - changesets.go
+      - landing.go
     frontmatter: |
       import type * as agents from "./agents.gen";
       import type * as core from "./core.gen";
