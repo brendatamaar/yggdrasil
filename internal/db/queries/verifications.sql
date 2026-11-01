@@ -28,3 +28,14 @@ UPDATE verifications SET
     build_id = ?, next_build_id = ?, deps_hash = ?, fail_step = ?, fail_kind = ?, exit_code = ?, fail_text = ?,
     plan = ?, since = ?, at = ?, updated_at = ?, version = version + 1
 WHERE id = ? AND version = ?;
+
+-- The last turn of every task that is idle in review: the reconcile loop's
+-- trigger for verification (VF-01).
+-- name: ListReviewTurns :many
+SELECT t.id AS task_id, tt.id AS turn_id, tt.seq AS turn_seq
+FROM tasks t
+JOIN task_turns tt ON tt.task_id = t.id
+WHERE t.status = 'review'
+  AND tt.seq = (SELECT MAX(seq) FROM task_turns WHERE task_id = t.id)
+  AND tt.state = 'finished' AND tt.outcome = 'ready_for_review'
+ORDER BY t.id;
