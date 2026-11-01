@@ -194,3 +194,7 @@ Plan drafted 2026-11-01. **Approved 2026-11-01: decisions 1–9 accepted as reco
 - Bootstrap per toolchain (node ci/frozen-lockfile, maven `dependency:go-offline`, gradle `dependencies`, custom `bootstrap`); `CI=true` on node verify; gradle Kotlin compile tasks.
 - `builds.RepoBuildSettings`, `ResolveCommands`, `DepsFiler`/`DepsFiles`, `HashDeps`; `db` build-settings store (raw JSON verify, audited via `Store.Commit`).
 - Carry-ins: VS1 must validate the resolved chain against `MaxSteps` (FullTests append can exceed it); AP1 chooses whether `verify` column holds the command array or full settings JSON.
+
+### TH1 merged (RV-03, RV-04)
+- `hoststest.NewPushHost` (bare remote, push-option recording, fake MR URL line), `hoststest.GitLabStub` (MR create/read/update, pipelines, ordered request log), `demo-gen -scenario multirepo` (acme-shop-platform: shop-core, shop-checkout Maven dep, shop-storefront pnpm, CRLF files).
+- Batch 2 done. Next: gate 1. Note: full hoststest suite not run under -race; multirepo toolchain test takes ~15 s.
