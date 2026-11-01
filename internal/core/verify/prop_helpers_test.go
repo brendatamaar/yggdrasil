@@ -84,7 +84,8 @@ func (g *gen) facts() Facts {
 	return Facts{Enabled: ok(), Trusted: ok(), WorktreeActive: ok(), HasChanges: ok()}
 }
 
-func turnName(n int) TurnID { return TurnID(fmt.Sprintf("t%03d", n)) }
+// turnLabel is an opaque random label: it carries no order.
+func turnLabel(r *rand.Rand) TurnID { return TurnID(fmt.Sprintf("%x", r.Int63())) }
 
 func (g *gen) result(chainLen int) BuildResult {
 	step := g.r.Intn(chainLen+2) - 1 // -1 and chainLen are out of range
@@ -111,12 +112,12 @@ func (g *gen) next(v Verification) Input {
 	switch k := g.r.Intn(12); {
 	case k <= 2:
 		d := g.r.Intn(4) - 1 // -1 stale, 0 same, 1..2 newer
-		g.turn = max(g.turn+max(d, 0), 0)
+		g.turn += max(d, 0)
 		n := g.turn
-		if d < 0 && n > 0 {
+		if d < 0 {
 			n--
 		}
-		in = TurnEnded{Turn: turnName(n), Facts: g.facts(), Plan: g.plan(), BootBuild: g.fresh(), VerifyBuild: g.fresh(), Now: g.tick()}
+		in = TurnEnded{Turn: turnLabel(g.r), Seq: n, Facts: g.facts(), Plan: g.plan(), BootBuild: g.fresh(), VerifyBuild: g.fresh(), Now: g.tick()}
 	case k == 3:
 		in = Retry{Facts: g.facts(), Plan: g.plan(), BootBuild: g.fresh(), VerifyBuild: g.fresh(), Now: g.tick()}
 	case k == 4:
@@ -154,7 +155,7 @@ func (g *gen) next(v Verification) Input {
 // step.
 func run(t *testing.T, r *rand.Rand, check func(t *testing.T, before Verification, in Input, after Verification, cmds []Command)) {
 	t.Helper()
-	g := &gen{r: r, now: epoch}
+	g := &gen{r: r, now: epoch, turn: 1}
 	v := newAggregate()
 	for i := 0; i < propSteps; i++ {
 		in := g.next(v)

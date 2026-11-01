@@ -13,7 +13,10 @@ type Input interface{ isInput() }
 // TurnEnded: the reconcile loop found the task idle in review with a turn
 // newer than the aggregate's.
 type TurnEnded struct {
-	Turn        TurnID
+	Turn TurnID
+	// Seq is the turn's sequence number in its task (1 or more). A turn is
+	// newer than the aggregate's when Seq is greater than its TurnSeq.
+	Seq         int
 	Facts       Facts
 	Plan        Plan
 	BootBuild   core.BuildID

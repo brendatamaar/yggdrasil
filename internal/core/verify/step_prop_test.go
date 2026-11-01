@@ -83,11 +83,11 @@ func TestPropPassedOnlyFromVerify(t *testing.T) {
 // nothing.
 func TestPropTurnMonotonic(t *testing.T) {
 	prop(t, func(t *testing.T, before Verification, in Input, after Verification, cmds []Command) {
-		if turnOf(after.State) < turnOf(before.State) {
-			t.Errorf("turn went from %s to %s", turnOf(before.State), turnOf(after.State))
+		if seqOf(after.State) < seqOf(before.State) {
+			t.Errorf("turn seq went from %d to %d", seqOf(before.State), seqOf(after.State))
 		}
-		if te, ok := in.(TurnEnded); ok && te.Turn <= turnOf(before.State) && (changed(before, after) || len(cmds) != 0) {
-			t.Errorf("TurnEnded %s not newer than %s had an effect", te.Turn, turnOf(before.State))
+		if te, ok := in.(TurnEnded); ok && te.Seq <= seqOf(before.State) && (changed(before, after) || len(cmds) != 0) {
+			t.Errorf("TurnEnded seq %d not newer than %d had an effect", te.Seq, seqOf(before.State))
 		}
 	})
 }
@@ -96,7 +96,7 @@ func TestPropTurnMonotonic(t *testing.T) {
 // Interrupted state below MaxAutoAttempts, by one; Retry is the way past.
 func TestPropAttemptRules(t *testing.T) {
 	prop(t, func(t *testing.T, before Verification, in Input, after Verification, cmds []Command) {
-		if turnOf(before.State) == turnOf(after.State) {
+		if seqOf(before.State) == seqOf(after.State) {
 			a0, a1 := attemptOf(before.State), attemptOf(after.State)
 			if a0 > 0 && a1 > 0 && a1 < a0 {
 				t.Errorf("attempt went from %d to %d", a0, a1)
@@ -111,7 +111,7 @@ func TestPropAttemptRules(t *testing.T) {
 				}
 				return
 			}
-			if a := attemptOf(after.State); a != 0 && a != i.Attempt+1 {
+			if a := attemptOf(after.State); a != 0 && changed(before, after) && a != i.Attempt+1 {
 				t.Errorf("Resume attempt %d -> %d", i.Attempt, a)
 			}
 		case Retry:
@@ -177,7 +177,7 @@ func TestPropTerminalOnlyLeavesByRestartInputs(t *testing.T) {
 		}
 		switch in := in.(type) {
 		case TurnEnded:
-			if in.Turn <= turnOf(before.State) {
+			if in.Seq <= seqOf(before.State) {
 				t.Errorf("terminal %T left by a TurnEnded that is not newer", before.State)
 			}
 		case Retry:
