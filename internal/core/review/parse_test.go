@@ -147,10 +147,10 @@ func TestParseNoteRejectsMore(t *testing.T) {
 	}
 }
 
-// KNOWN BUG (fails on purpose): ParseNote applies plainToken to the note id
+// Regression (gate 1): ParseNote once applied plainToken to the note id
 // and repo but not to the task, and core.TaskID.Validate only refuses ASCII
 // whitespace and slashes. A task id such as "\x00" or "a b" is accepted.
-func TestBugParseNoteTaskControlChars(t *testing.T) {
+func TestParseNoteTaskControlChars(t *testing.T) {
 	for _, task := range []string{"\x00", "t\x1b1", "a b"} {
 		r := rawOK()
 		r.Task = task
@@ -190,7 +190,6 @@ func FuzzParseNote(f *testing.F) {
 		case !noteTokenOK(id) || !noteTokenOK(repo):
 			t.Fatalf("accepted bad id/repo: %q %q", id, repo)
 		case task == "" || strings.ContainsAny(task, " \t\r\n/\\"):
-			// Control characters in task are accepted: see TestBugParseNoteTaskControlChars.
 			t.Fatalf("accepted bad task %q", task)
 		case !notePathOK(path):
 			t.Fatalf("accepted bad path %q", path)

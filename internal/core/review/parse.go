@@ -36,8 +36,8 @@ func ParseNote(raw RawNote, now time.Time) (Note, error) {
 	if err := n.Validate(); err != nil {
 		return Note{}, err
 	}
-	if !plainToken(raw.ID) || !plainToken(raw.Repo) {
-		return Note{}, errors.New("a note id or repo has characters that are not allowed")
+	if !plainToken(raw.ID) || !plainToken(raw.Repo) || !plainToken(raw.Task) {
+		return Note{}, errors.New("a note id, task or repo has characters that are not allowed")
 	}
 	return n, nil
 }
