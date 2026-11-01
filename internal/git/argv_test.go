@@ -14,7 +14,7 @@ var forbiddenFlags = []string{"--force", "-f", "--force-with-lease", "--force-if
 
 var forbiddenSubcommands = []string{"reset", "clean", "rm", "branch", "checkout", "restore", "gc", "prune", "filter-branch", "update-ref"}
 
-var allowedSubcommands = []string{"add", "commit", "push"}
+var allowedSubcommands = []string{"add", "commit", "push", "merge", "worktree", "merge-tree"}
 
 // checkDestructiveFree reports why argv could destroy something, or "".
 func checkDestructiveFree(argv []string) string {
@@ -27,6 +27,9 @@ func checkDestructiveFree(argv []string) string {
 	for i := 0; i < len(head); i++ {
 		a := head[i]
 		switch {
+		case a == "-m" && sub == "merge":
+			i++ // the merge message is a value, never a flag
+			continue
 		case a == "-c" || a == "-o":
 			i++ // the value of -c / -o is not a flag
 			continue
@@ -38,6 +41,9 @@ func checkDestructiveFree(argv []string) string {
 	}
 	if slices.Contains(forbiddenSubcommands, sub) || !slices.Contains(allowedSubcommands, sub) {
 		return "subcommand " + sub
+	}
+	if why := landingFormProblem(head, sub); why != "" {
+		return why
 	}
 	for _, a := range argv {
 		if a == "" || (sub == "push" && (strings.HasPrefix(a, "+") || strings.HasPrefix(a, ":"))) {
@@ -61,6 +67,72 @@ func checkDestructiveFree(argv []string) string {
 	}
 	return ""
 }
+
+// The landing forms are allowed one exact shape each, nothing wider:
+//
+//	merge --no-ff --no-verify -q -m <message> <40/64 hex>
+//	merge --abort
+//	worktree prune
+//	merge-tree --write-tree --name-only -z <rev> <rev>
+//
+// Anything else under these subcommands (--squash, -X, worktree remove, a
+// forced prune, an extra flag) is refused.
+func landingFormProblem(head []string, sub string) string {
+	if sub != "merge" && sub != "worktree" && sub != "merge-tree" {
+		return ""
+	}
+	var flags, pos []string
+	seen := false
+	for i := 0; i < len(head); i++ {
+		a := head[i]
+		switch {
+		case !seen && (a == "-c"):
+			i++
+		case !seen && a == sub:
+			seen = true
+		case !seen:
+			// global flags such as --no-optional-locks before the subcommand
+			if a != "--no-optional-locks" {
+				return "unexpected global option " + a
+			}
+		case a == "-m" && sub == "merge":
+			i++
+			flags = append(flags, "-m")
+		case strings.HasPrefix(a, "-"):
+			flags = append(flags, a)
+		default:
+			pos = append(pos, a)
+		}
+	}
+	sameSet := func(got, want []string) bool {
+		g, w := slices.Clone(got), slices.Clone(want)
+		slices.Sort(g)
+		slices.Sort(w)
+		return slices.Equal(g, w)
+	}
+	hex := func(s string) bool { return isCommitID(s) }
+	switch sub {
+	case "merge":
+		if slices.Equal(flags, []string{"--abort"}) && len(pos) == 0 {
+			return ""
+		}
+		if sameSet(flags, []string{"--no-ff", "--no-verify", "-q", "-m"}) && len(pos) == 1 && hex(pos[0]) {
+			return ""
+		}
+	case "worktree":
+		if len(flags) == 0 && slices.Equal(pos, allowedWorktreeVerb) {
+			return ""
+		}
+	case "merge-tree":
+		if sameSet(flags, []string{"--write-tree", "--name-only", "-z"}) && len(pos) == 2 {
+			return ""
+		}
+	}
+	return "unexpected form of " + sub + ": flags " + strings.Join(flags, " ") + " args " + strings.Join(pos, " ")
+}
+
+// allowedWorktreeVerb is the one worktree verb that may be produced.
+var allowedWorktreeVerb = []string{"prune"}
 
 func randName(r *rand.Rand, alphabet string, n int) string {
 	b := make([]byte, 1+r.Intn(n))
@@ -91,6 +163,16 @@ func TestPropGitArgvHasNoDestructiveForm(t *testing.T) {
 				t.Fatalf("seed %d: push argv %v: %s", seed, PushArgv(req, hooks), why)
 			}
 		}
+		// Landing argv: a hostile message is a value, never a flag.
+		sha := strings.Repeat(string("0123456789abcdef"[r.Intn(16)]), 40)
+		msg := "m" + randName(r, "ab -f-d\t\"'$%", 20)
+		for _, argv := range [][]string{
+			MergeArgv(hooks, sha, msg), MergeAbortArgv(), WorktreePruneArgv(), MergeTreeArgv("main", "feature"),
+		} {
+			if why := checkDestructiveFree(argv); why != "" {
+				t.Fatalf("seed %d: landing argv %v: %s", seed, argv, why)
+			}
+		}
 		if checkPathspecs(paths) == nil {
 			for _, argv := range [][]string{AddArgv(paths), CommitArgv(paths, hooks)} {
 				if why := checkDestructiveFree(argv); why != "" {
@@ -119,6 +201,21 @@ func TestDestructiveCheckerCatchesTheForms(t *testing.T) {
 		{"rm", "--", "a"},
 		{"add", "-A"},
 		{"add", "--all"},
+		// The landing allowances are exact.
+		{"worktree", "remove", "x"},
+		{"worktree", "remove", "--force", "x"},
+		{"worktree", "prune", "--expire=now"},
+		{"worktree", "prune", "x"},
+		{"worktree"},
+		{"merge", "--squash", strings.Repeat("a", 40)},
+		{"merge", "--no-ff", "--no-verify", "-q", "-m", "x", "-X", "theirs", strings.Repeat("a", 40)},
+		{"merge", "--no-ff", "--no-verify", "-q", "-m", "x", "main"},
+		{"merge", "--no-ff", "--no-verify", "-q", "-m", "x"},
+		{"merge", "--no-ff", "--no-verify", "-q", "-m", "x", "-f", strings.Repeat("a", 40)},
+		{"merge", "--abort", "--quit"},
+		{"merge", "--quit"},
+		{"merge-tree", "--write-tree", "--name-only", "-z", "a"},
+		{"merge-tree", "--write-tree", "--name-only", "-z", "a", "b", "c"},
 	}
 	for _, argv := range bad {
 		if checkDestructiveFree(argv) == "" {

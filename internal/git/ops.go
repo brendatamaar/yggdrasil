@@ -141,6 +141,8 @@ type Worktree struct {
 	Detached bool   `json:"detached"`
 	Bare     bool   `json:"bare"`
 	Locked   bool   `json:"locked"`
+	// Prunable: git says the folder is gone (git worktree prune would drop the entry).
+	Prunable bool `json:"prunable"`
 }
 
 // WorktreeAdd creates a worktree at path on a new branch started from
@@ -198,7 +200,7 @@ func parseWorktrees(out string) []Worktree {
 		switch key {
 		case "worktree":
 			res = append(res, Worktree{Path: filepath.Clean(val)})
-		case "HEAD", "branch", "detached", "bare", "locked":
+		case "HEAD", "branch", "detached", "bare", "locked", "prunable":
 			if len(res) == 0 {
 				continue
 			}
@@ -212,6 +214,8 @@ func parseWorktrees(out string) []Worktree {
 				w.Detached = true
 			case "bare":
 				w.Bare = true
+			case "prunable":
+				w.Prunable = true
 			case "locked":
 				w.Locked = true
 			}
