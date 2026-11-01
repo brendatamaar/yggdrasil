@@ -165,6 +165,9 @@ func (s *Service) Run(ctx context.Context) error {
 		t := time.NewTicker(s.d.Interval)
 		defer t.Stop()
 		for {
+			if gctx.Err() != nil {
+				return nil
+			}
 			if err := s.Reconcile(gctx); err != nil && gctx.Err() == nil {
 				s.d.Log.Warn("verification pass failed", "err", err)
 			}
