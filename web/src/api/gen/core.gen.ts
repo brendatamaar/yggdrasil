@@ -48,6 +48,12 @@ export const TaskCancelled: TaskStatus = "cancelled";
 export type WorktreeStatus = string;
 export const WorktreeActive: WorktreeStatus = "active";
 export const WorktreeMerged: WorktreeStatus = "merged";
+/**
+ * WorktreeRemoving: the folder was moved into the staging folder and its
+ * delete is not finished (docs/design/landing.md). Monotone: active,
+ * merged, removing, removed.
+ */
+export const WorktreeRemoving: WorktreeStatus = "removing";
 export const WorktreeRemoved: WorktreeStatus = "removed";
 /**
  * ProposalKind is what a proposal would do once confirmed (RV-02, MCP-05).
@@ -61,6 +67,16 @@ export const ProposalPublish: ProposalKind = "publish";
 export const ProposalAgentFile: ProposalKind = "agent_file";
 export const ProposalDeleteFiles: ProposalKind = "delete_files";
 export const ProposalSubtasks: ProposalKind = "subtasks";
+/**
+ * ProposalMergeLocal merges the agent branch into the main checkout with
+ * --no-ff and never pushes (RV-05).
+ */
+export const ProposalMergeLocal: ProposalKind = "merge_local";
+/**
+ * ProposalRemoveWorktree removes a clean worktree after confirmation
+ * (RV-06).
+ */
+export const ProposalRemoveWorktree: ProposalKind = "remove_worktree";
 /**
  * ProposalStatus is the lifecycle of a proposal.
  */

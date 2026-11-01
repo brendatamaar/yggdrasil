@@ -60,6 +60,42 @@ type StepSpec struct {
 	RepoID core.RepoID
 	Name   string
 	Argv   []string
+	// Env is extra environment for this step on top of the clean one, as
+	// KEY=VALUE entries (for example CI=true). The shell passes it to the
+	// safety env builder, which still refuses token-like names; it never
+	// reads os.Environ. Not offered to users by the request parser.
+	Env []string
+}
+
+// Limits of StepSpec.Env.
+const (
+	MaxEnv         = 32
+	MaxEnvKeyLen   = 128
+	MaxEnvValueLen = 4096
+)
+
+// ParseEnvEntry splits one KEY=VALUE entry. The key must match
+// [A-Za-z_][A-Za-z0-9_]* (at most MaxEnvKeyLen bytes); the value may be empty
+// (at most MaxEnvValueLen bytes) and must not hold NUL or a line break.
+func ParseEnvEntry(e string) (key, value string, err error) {
+	key, value, ok := strings.Cut(e, "=")
+	if !ok || key == "" {
+		return "", "", errors.New("an environment entry must look like NAME=value")
+	}
+	if len(key) > MaxEnvKeyLen || len(value) > MaxEnvValueLen {
+		return "", "", errors.New("an environment entry is too long")
+	}
+	for i := 0; i < len(key); i++ {
+		c := key[i]
+		letter := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_'
+		if !letter && (i == 0 || c < '0' || c > '9') {
+			return "", "", errors.New("an environment name may only use letters, digits and underscore, and not start with a digit")
+		}
+	}
+	if strings.ContainsAny(value, "\x00\r\n") {
+		return "", "", errors.New("an environment value can't hold a NUL or a line break")
+	}
+	return key, value, nil
 }
 
 // Validate checks the shape rules the core can check: the shell parser adds
@@ -78,6 +114,20 @@ func (s StepSpec) Validate() error {
 		if strings.ContainsRune(a, 0) {
 			return fmt.Errorf("step %q has a NUL character in its command", s.Name)
 		}
+	}
+	if len(s.Env) > MaxEnv {
+		return fmt.Errorf("step %q has more than %d environment entries", s.Name, MaxEnv)
+	}
+	seen := make(map[string]struct{}, len(s.Env))
+	for _, e := range s.Env {
+		k, _, err := ParseEnvEntry(e)
+		if err != nil {
+			return fmt.Errorf("step %q: %w", s.Name, err)
+		}
+		if _, dup := seen[k]; dup {
+			return fmt.Errorf("step %q sets %s twice", s.Name, k)
+		}
+		seen[k] = struct{}{}
 	}
 	return nil
 }

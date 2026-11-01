@@ -70,19 +70,34 @@ type Detection struct {
 type Step struct {
 	Name string
 	Argv []string
+	// Env is extra environment for this step as KEY=VALUE entries (for
+	// example "CI=true"), added to the clean environment. It never reaches a
+	// step through os.Environ and token-like names are refused.
+	Env []string
 }
 
 // Spec turns the step into a build step for repo.
 func (s Step) Spec(repo core.RepoID) corebuilds.StepSpec {
-	return corebuilds.StepSpec{RepoID: repo, Name: s.Name, Argv: append([]string(nil), s.Argv...)}
+	return corebuilds.StepSpec{
+		RepoID: repo, Name: s.Name,
+		Argv: append([]string(nil), s.Argv...), Env: append([]string(nil), s.Env...),
+	}
 }
 
 // Commands are the defaults of one toolchain. A list is empty when the repo
 // has nothing configured for that purpose.
 type Commands struct {
-	// Install installs dependencies. It changes the repo, so running it is a
-	// proposal (docs/AGENTS.md section 6, invariant 2), never automatic.
+	// Install installs dependencies in the main checkout. It changes the
+	// repo, so running it is a proposal (docs/AGENTS.md section 6, invariant
+	// 2), never automatic.
 	Install []Step
+	// Bootstrap prepares a task's own worktree before its first verification
+	// (WE-05, docs/design/verify.md): restore dependencies so the verify chain
+	// can run. It is automatic, but only inside a task worktree (never a main
+	// checkout, so invariant 2 does not apply), only for a trusted repo
+	// (SF-09), and through platform.Start with the clean environment.
+	// Install stays a proposal; Bootstrap never replaces it.
+	Bootstrap []Step
 	// Verify is the fast chain (lint, typecheck, unit tests, ...).
 	Verify []Step
 	// FullTests is the slow test run, kept out of Verify.

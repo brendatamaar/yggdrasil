@@ -75,6 +75,15 @@ func canonical(a Action) string {
 	case Install:
 		c.s(string(v.Repo))
 		c.s(v.Step)
+	case MergeLocal:
+		c.target(v.Where)
+		c.s(string(v.Worktree))
+		c.s(v.Branch)
+		c.s(v.TargetBranch)
+		c.s(v.ExpectBranchHead)
+		c.s(v.Title)
+	case RemoveWorktree:
+		c.s(string(v.Worktree))
 	}
 	return c.b.String()
 }
@@ -155,6 +164,15 @@ func Describe(a Action) []Line {
 	case Install:
 		add("Run install step %s in the main checkout of repo %s.", v.Step, v.Repo)
 		add("This can download and run code from the network (package scripts) inside the repo.")
+	case MergeLocal:
+		add("Merge branch %s of worktree %s into %s in %s with a merge commit (--no-ff).", v.Branch, v.Worktree, v.TargetBranch, describeTarget(v.Where))
+		add("Title: %s", v.Title)
+		add("Nothing is pushed. If the merge would conflict, nothing is changed.")
+		add("The main checkout must be clean and on %s. Expected branch tip: %s.", v.TargetBranch, v.ExpectBranchHead)
+	case RemoveWorktree:
+		add("Remove the folder of worktree %s from disk.", v.Worktree)
+		add("Only a worktree Yggdrasil created, with no uncommitted changes and no task or build running in it, can be removed. The branch is kept.")
+		add("If something is using files in the folder, nothing is removed and you can retry after closing it.")
 	default:
 		return nil
 	}

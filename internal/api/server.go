@@ -63,6 +63,14 @@ type Deps struct {
 	// Default false: the lead flips the default after review gate 3.
 	WriteModes bool
 
+	// The services of the Phase 4 areas (verification, review notes, change
+	// sets, landing). Their endpoints are registered whether or not the service
+	// is wired; until AP1 replaces a stub handler it answers 501.
+	Verification VerificationService
+	Review       ReviewService
+	ChangeSets   ChangeSetService
+	Landing      LandingService
+
 	// Clock and IDs are the shell's time and randomness for handlers that
 	// make core inputs (docs/AGENTS.md 5.11). Defaults: time.Now().UTC() and
 	// db.NewID.
@@ -100,10 +108,15 @@ type Server struct {
 	agents     AgentService
 	tasks      TaskService
 	writeModes bool
-	composer   ComposerService
-	mcp        MCPService
-	clock      func() time.Time
-	ids        func(prefix string) string
+
+	verification VerificationService
+	review       ReviewService
+	changeSets   ChangeSetService
+	landing      LandingService
+	composer     ComposerService
+	mcp          MCPService
+	clock        func() time.Time
+	ids          func(prefix string) string
 
 	// ctx is the parent of background work of the handlers; Close cancels it.
 	ctx  context.Context
@@ -160,6 +173,7 @@ func New(d Deps) (*Server, error) {
 	s.worktrees, s.proposals, s.composer, s.mcp = d.Worktrees, d.Proposals, d.Composer, d.MCP
 	s.agents = d.Agents
 	s.tasks, s.writeModes = d.Tasks, d.WriteModes
+	s.verification, s.review, s.changeSets, s.landing = d.Verification, d.Review, d.ChangeSets, d.Landing
 	s.clock, s.ids = d.Clock, d.IDs
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }
@@ -195,6 +209,10 @@ func (s *Server) Handler() http.Handler {
 	s.routesBoard(mux)
 	s.routesComposer(mux)
 	s.routesMCP(mux)
+	s.routesVerify(mux)
+	s.routesReview(mux)
+	s.routesChangeSets(mux)
+	s.routesLanding(mux)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, ErrNotFound, "That API endpoint doesn't exist.", "")
 	})

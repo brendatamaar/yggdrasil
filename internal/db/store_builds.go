@@ -80,7 +80,7 @@ func (tx *Tx) SaveBuild(ctx context.Context, s corebuilds.State, expected int64)
 		if err := tx.q.InsertBuildStepRow(ctx, gen.InsertBuildStepRowParams{
 			BuildID: st.BuildID, Idx: st.Idx, RepoID: st.RepoID, Name: st.Name, Status: st.Status, ExitCode: st.ExitCode,
 			StartedAt: st.StartedAt, FinishedAt: st.FinishedAt, Argv: st.Argv, Attempt: st.Attempt, Outcome: st.Outcome,
-			StartFailure: st.StartFailure, LogTruncated: st.LogTruncated,
+			StartFailure: st.StartFailure, LogTruncated: st.LogTruncated, Env: st.Env,
 		}); err != nil {
 			return 0, fmt.Errorf("%s: %w", what, err)
 		}
@@ -357,8 +357,17 @@ func rowsOf(s corebuilds.State) (gen.Build, []gen.BuildStep, []gen.BuildArtifact
 		if err != nil {
 			return gen.Build{}, nil, nil, fmt.Errorf("encode step %d: %w", i, err)
 		}
+		env := p.spec.Steps[i].Env
+		if env == nil {
+			env = []string{}
+		}
+		envJSON, err := json.Marshal(env)
+		if err != nil {
+			return gen.Build{}, nil, nil, fmt.Errorf("encode step %d environment: %w", i, err)
+		}
 		row := gen.BuildStep{
 			BuildID: b.ID, Idx: int64(i), RepoID: string(p.spec.Steps[i].RepoID), Name: p.spec.Steps[i].Name, Argv: string(argv),
+			Env: string(envJSON),
 		}
 		if err := stepRow(&row, ss); err != nil {
 			return gen.Build{}, nil, nil, fmt.Errorf("step %d: %w", i, err)
@@ -522,7 +531,15 @@ func specFromRows(b gen.Build, steps []gen.BuildStep) (corebuilds.Spec, error) {
 		if err := dec.Decode(&argv); err != nil || dec.More() {
 			return spec, corrupt("step %d: argv is not a JSON list of strings", i)
 		}
-		spec.Steps = append(spec.Steps, corebuilds.StepSpec{RepoID: core.RepoID(r.RepoID), Name: r.Name, Argv: argv})
+		var env []string
+		envDec := json.NewDecoder(bytes.NewReader([]byte(r.Env)))
+		if err := envDec.Decode(&env); err != nil || envDec.More() {
+			return spec, corrupt("step %d: env is not a JSON list of strings", i)
+		}
+		if len(env) == 0 {
+			env = nil
+		}
+		spec.Steps = append(spec.Steps, corebuilds.StepSpec{RepoID: core.RepoID(r.RepoID), Name: r.Name, Argv: argv, Env: env})
 	}
 	if err := spec.Validate(); err != nil {
 		return spec, corrupt("%v", err)

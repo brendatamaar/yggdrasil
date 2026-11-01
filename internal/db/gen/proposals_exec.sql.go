@@ -71,7 +71,7 @@ func (q *Queries) CreateProposalRecord(ctx context.Context, arg CreateProposalRe
 }
 
 const getFirstChangeSetByTask = `-- name: GetFirstChangeSetByTask :one
-SELECT id, task_id, status, merge_order, created_at FROM change_sets WHERE task_id = ? ORDER BY created_at, id LIMIT 1
+SELECT id, task_id, status, merge_order, created_at, run_result, version FROM change_sets WHERE task_id = ? ORDER BY created_at, id LIMIT 1
 `
 
 func (q *Queries) GetFirstChangeSetByTask(ctx context.Context, taskID string) (ChangeSet, error) {
@@ -83,6 +83,8 @@ func (q *Queries) GetFirstChangeSetByTask(ctx context.Context, taskID string) (C
 		&i.Status,
 		&i.MergeOrder,
 		&i.CreatedAt,
+		&i.RunResult,
+		&i.Version,
 	)
 	return i, err
 }

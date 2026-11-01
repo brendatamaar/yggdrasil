@@ -192,8 +192,8 @@ func (q *Queries) InsertBuildRow(ctx context.Context, arg InsertBuildRowParams) 
 
 const insertBuildStepRow = `-- name: InsertBuildStepRow :exec
 INSERT INTO build_steps (build_id, idx, repo_id, name, status, exit_code, log_path, started_at, finished_at,
-                         argv, attempt, outcome, start_failure, log_truncated)
-VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?)
+                         argv, attempt, outcome, start_failure, log_truncated, env)
+VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertBuildStepRowParams struct {
@@ -210,6 +210,7 @@ type InsertBuildStepRowParams struct {
 	Outcome      sql.NullString
 	StartFailure sql.NullString
 	LogTruncated int64
+	Env          string
 }
 
 func (q *Queries) InsertBuildStepRow(ctx context.Context, arg InsertBuildStepRowParams) error {
@@ -227,6 +228,7 @@ func (q *Queries) InsertBuildStepRow(ctx context.Context, arg InsertBuildStepRow
 		arg.Outcome,
 		arg.StartFailure,
 		arg.LogTruncated,
+		arg.Env,
 	)
 	return err
 }
@@ -336,7 +338,7 @@ func (q *Queries) ListBuildIDsFiltered(ctx context.Context, arg ListBuildIDsFilt
 }
 
 const listBuildSteps = `-- name: ListBuildSteps :many
-SELECT build_id, idx, repo_id, name, status, exit_code, log_path, started_at, finished_at, argv, attempt, outcome, start_failure, log_truncated FROM build_steps WHERE build_id = ? ORDER BY idx
+SELECT build_id, idx, repo_id, name, status, exit_code, log_path, started_at, finished_at, argv, attempt, outcome, start_failure, log_truncated, env FROM build_steps WHERE build_id = ? ORDER BY idx
 `
 
 func (q *Queries) ListBuildSteps(ctx context.Context, buildID string) ([]BuildStep, error) {
@@ -363,6 +365,7 @@ func (q *Queries) ListBuildSteps(ctx context.Context, buildID string) ([]BuildSt
 			&i.Outcome,
 			&i.StartFailure,
 			&i.LogTruncated,
+			&i.Env,
 		); err != nil {
 			return nil, err
 		}
