@@ -65,7 +65,7 @@ func enqueue(x Enqueue) (State, []Command) {
 
 func startCmd(id core.BuildID, spec Spec, i int) StartStep {
 	st := spec.Steps[i]
-	return StartStep{BuildID: id, Index: i, Attempt: 1, RepoID: st.RepoID, Target: spec.Target, Argv: slices.Clone(st.Argv)}
+	return StartStep{BuildID: id, Index: i, Attempt: 1, RepoID: st.RepoID, Target: spec.Target, Argv: slices.Clone(st.Argv), Env: slices.Clone(st.Env)}
 }
 
 func admit(q Queued, x Admit) (State, []Command) {

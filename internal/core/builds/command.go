@@ -30,6 +30,8 @@ type StartStep struct {
 	RepoID  core.RepoID
 	Target  Target
 	Argv    []string
+	// Env is the step's extra environment (KEY=VALUE), on top of the clean one.
+	Env []string
 }
 
 // KillStep cancels the step's context. It is a no-op if the step already

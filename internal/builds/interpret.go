@@ -142,7 +142,17 @@ func (s *Service) startStep(ctx context.Context, c corebuilds.StartStep) []msg {
 		return s.startFailed(c, lw, corebuilds.StartDirMissing,
 			"The folder to build in no longer exists. Restore it or pick another worktree.", errors.New("directory missing"))
 	}
-	env, err := s.d.Env.Build(safety.EnvOptions{Extra: map[string]string{"CI": "true"}})
+	// The step's own Env goes on top of the clean environment, through the
+	// same builder (which refuses token-like names). os.Environ is never read.
+	extra := map[string]string{"CI": "true"}
+	for _, e := range c.Env {
+		k, v, perr := corebuilds.ParseEnvEntry(e)
+		if perr != nil {
+			return s.startFailed(c, lw, corebuilds.StartOther, "A build step has an invalid environment entry.", perr)
+		}
+		extra[k] = v
+	}
+	env, err := s.d.Env.Build(safety.EnvOptions{Extra: extra})
 	if err != nil {
 		return s.startFailed(c, lw, corebuilds.StartOther, "Could not prepare the build environment.", err)
 	}

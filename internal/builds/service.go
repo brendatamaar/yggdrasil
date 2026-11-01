@@ -493,6 +493,30 @@ func (s *Service) Enqueue(ctx context.Context, spec corebuilds.Spec, actor coreb
 	return id, nil
 }
 
+// EnqueueWithID is Enqueue with a caller-chosen ID, idempotent by ID: a known
+// ID returns the existing build and creates no second one, even when that
+// build has finished (and whatever spec it was created with). The verify
+// shell uses it so a crash between choosing the ID and storing it cannot start
+// a duplicate build. Inputs are processed one at a time by the owner
+// goroutine, so two calls with one ID cannot race.
+func (s *Service) EnqueueWithID(ctx context.Context, id core.BuildID, spec corebuilds.Spec, actor corebuilds.Actor) (core.BuildID, error) {
+	if err := id.Validate(); err != nil {
+		return "", invalid("That isn't a build ID.", err)
+	}
+	if err := spec.Validate(); err != nil {
+		return "", invalid("The build is not valid.", err)
+	}
+	if err := actor.Validate(); err != nil {
+		return "", invalid("The build has no valid actor.", err)
+	}
+	// Enqueue on a known build changes nothing (Step ignores it, nothing is
+	// saved or audited), so sending it is safe.
+	if _, err := s.send(ctx, id, corebuilds.Enqueue{ID: id, Spec: spec, Actor: actor, Now: s.d.Clock()}); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
 // EnqueueRequest parses a POST /api/builds body against the tracked repos and
 // enqueues it.
 func (s *Service) EnqueueRequest(ctx context.Context, raw []byte, actor corebuilds.Actor) (core.BuildID, error) {
