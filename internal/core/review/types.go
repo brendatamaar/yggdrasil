@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
@@ -50,15 +51,52 @@ func (p RelPath) Validate() error {
 	if s == "" || len(s) > MaxPathBytes {
 		return errors.New("a note path must have 1 to 1024 bytes")
 	}
-	if strings.HasPrefix(s, "/") || strings.ContainsAny(s, `\:`) || strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+	if !utf8.ValidString(s) || strings.HasPrefix(s, "/") || strings.ContainsAny(s, `\:`) ||
+		strings.ContainsFunc(s, func(r rune) bool { return unicode.IsControl(r) || r == ' ' || r == ' ' }) {
 		return fmt.Errorf("the note path %q isn't a repo-relative path", s)
 	}
 	for _, seg := range strings.Split(s, "/") {
-		if seg == "" || seg == "." || seg == ".." {
+		switch {
+		case seg == "" || seg == "." || seg == "..":
 			return fmt.Errorf("the note path %q isn't a repo-relative path", s)
+		case strings.HasSuffix(seg, ".") || strings.HasSuffix(seg, " "):
+			return fmt.Errorf("the note path %q has a part ending in a dot or space, which Windows rewrites", s)
+		case hasShortNameAlias(seg):
+			return fmt.Errorf("the note path %q has a part like NAME~1, which Windows can use as a short name", s)
+		case windowsDevice(seg):
+			return fmt.Errorf("the note path %q uses a reserved Windows device name", s)
 		}
 	}
 	return nil
+}
+
+// hasShortNameAlias reports a "~" followed by a digit: the form of a Windows
+// 8.3 short name.
+func hasShortNameAlias(seg string) bool {
+	for i := 0; i+1 < len(seg); i++ {
+		if seg[i] == '~' && seg[i+1] >= '0' && seg[i+1] <= '9' {
+			return true
+		}
+	}
+	return false
+}
+
+// windowsDevice reports whether a path segment names a Windows device, with
+// or without an extension ("NUL", "con.txt", "COM1").
+func windowsDevice(seg string) bool {
+	stem := seg
+	if i := strings.IndexByte(stem, '.'); i >= 0 {
+		stem = stem[:i]
+	}
+	stem = strings.ToUpper(strings.TrimRight(stem, " "))
+	switch stem {
+	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "CLOCK$":
+		return true
+	}
+	if len(stem) == 4 && (strings.HasPrefix(stem, "COM") || strings.HasPrefix(stem, "LPT")) {
+		return stem[3] >= '0' && stem[3] <= '9'
+	}
+	return strings.ContainsAny(stem, "¹²³") && (strings.HasPrefix(stem, "COM") || strings.HasPrefix(stem, "LPT"))
 }
 
 // Side says which side of the diff a line belongs to.

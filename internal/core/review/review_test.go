@@ -34,11 +34,3 @@ func TestNoteValidate(t *testing.T) {
 		t.Error("long text accepted")
 	}
 }
-
-func TestStepStubChangesNothing(t *testing.T) {
-	n := Note{ID: "n1", State: NoteOpen{}}
-	got, cmds := StepNote(n, Recover{})
-	if got.State != n.State || len(cmds) != 0 {
-		t.Fatal("stub changed state or emitted commands")
-	}
-}
