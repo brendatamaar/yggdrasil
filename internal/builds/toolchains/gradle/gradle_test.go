@@ -25,7 +25,7 @@ func TestKotlin(t *testing.T) {
 	if !ok || d.Runner != "gradle" {
 		t.Fatalf("%+v", d)
 	}
-	if got := New().Commands(d).Verify[0].Argv; !reflect.DeepEqual(got, []string{"gradle", "compileKotlin", "compileTestKotlin"}) {
+	if got := New().Commands(d).Verify[0].Argv; !reflect.DeepEqual(got, []string{"gradle", "compileJava", "compileTestJava", "compileKotlin", "compileTestKotlin"}) {
 		t.Fatal(got)
 	}
 }
