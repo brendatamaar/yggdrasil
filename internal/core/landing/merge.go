@@ -134,10 +134,11 @@ type MergePredicting struct{ Req MergeReq }
 // MergeMerging: RunMerge was emitted; the main checkout may be changing.
 type MergeMerging struct{ Req MergeReq }
 
-// MergeAborting: Abort was emitted after a conflict.
+// MergeAborting: Abort was emitted, after a conflict (Cause AfterConflict) or
+// to undo our own interrupted merge (Cause AfterFailure{interrupted}).
 type MergeAborting struct {
 	Req   MergeReq
-	Files []RelPath
+	Cause Settle
 }
 
 // MergeSettling: looking at the tree once more before deciding.
@@ -304,12 +305,3 @@ func (RunMerge) isMergeCommand()           {}
 func (Abort) isMergeCommand()              {}
 func (MarkWorktreeMerged) isMergeCommand() {}
 func (WriteAudit) isMergeCommand()         {}
-
-// StepMerge is (state, input) -> (state, commands): the merge table of
-// docs/design/landing.md. An input it does not handle changes nothing.
-//
-// TODO(CS2): decision logic. Foundations ship the signature only.
-func StepMerge(s MergeState, in MergeInput) (MergeState, []MergeCommand) {
-	_ = in
-	return s, nil
-}

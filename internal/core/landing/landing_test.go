@@ -78,14 +78,3 @@ func TestReqValidate(t *testing.T) {
 		t.Error("empty lock class accepted")
 	}
 }
-
-func TestStepStubsChangeNothing(t *testing.T) {
-	ms, mc := StepMerge(MergeIdle{}, MergeStart{})
-	if _, ok := ms.(MergeIdle); !ok || len(mc) != 0 {
-		t.Fatal("merge stub changed state")
-	}
-	rs, rc := StepRemove(RemoveIdle{}, RemoveStart{})
-	if _, ok := rs.(RemoveIdle); !ok || len(rc) != 0 {
-		t.Fatal("remove stub changed state")
-	}
-}
