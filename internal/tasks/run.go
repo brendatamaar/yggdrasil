@@ -494,5 +494,11 @@ func (s *Service) beginMCP(id core.TaskID, a agents.Adapter, cmd coretasks.Start
 func (s *Service) endMCP(id core.TaskID, attempt int) {
 	if s.c.MCP != nil {
 		s.c.MCP.EndRun(id, attempt)
+		// The run's own config folder (a revoked token) is Yggdrasil's, made by
+		// beginMCP under RunsDir; remove exactly that one. Attempt 0 (recovery)
+		// names no folder, so nothing is removed.
+		if attempt > 0 && s.c.RunsDir != "" {
+			_ = os.RemoveAll(filepath.Join(s.c.RunsDir, fmt.Sprintf("%s-%d", id, attempt)))
+		}
 	}
 }

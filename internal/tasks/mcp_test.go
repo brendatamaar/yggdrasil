@@ -3,6 +3,7 @@ package tasks
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -110,6 +111,12 @@ func TestMCPSessionLifecycle(t *testing.T) {
 			if b != 1 || e < 1 || f.isLive(id) {
 				t.Errorf("begins=%d ends=%d live=%v", b, e, f.isLive(id))
 			}
+			// The run's own config folder goes with its session.
+			runs := filepath.Join(h.wtRoot, "runs")
+			waitFor(t, 5*time.Second, func() bool {
+				es, _ := os.ReadDir(runs)
+				return len(es) == 0
+			}, "run folder removal")
 			mu.Lock()
 			defer mu.Unlock()
 			if tc.name == "finished" && !seen {
