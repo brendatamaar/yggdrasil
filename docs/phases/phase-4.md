@@ -198,3 +198,9 @@ Plan drafted 2026-11-01. **Approved 2026-11-01: decisions 1–9 accepted as reco
 ### TH1 merged (RV-03, RV-04)
 - `hoststest.NewPushHost` (bare remote, push-option recording, fake MR URL line), `hoststest.GitLabStub` (MR create/read/update, pipelines, ordered request log), `demo-gen -scenario multirepo` (acme-shop-platform: shop-core, shop-checkout Maven dep, shop-storefront pnpm, CRLF files).
 - Batch 2 done. Next: gate 1. Note: full hoststest suite not run under -race; multirepo toolchain test takes ~15 s.
+
+### Gate 1 (safety-reviewer, fe-reviewer on v0.4.0..main)
+- No Blocking. Must-fix: `merge_local`/`remove_worktree` proposals had a misleading "cannot run yet" failure and shared the "other" queue key -> explicit refusal and "landing" key (f291096); PX1 gives them per-checkout keys.
+- Fixed: parser tests were circular (`ParseEnvEntry`, `ParseNote`); new fuzz/rejection tests; found and fixed a real bug: `ParseNote` accepted control characters in the task id. `TestPropStateAlwaysValid` split out.
+- Carry-ins: VS1 must not leave a verification stuck in Verifying/Bootstrapping on a malformed build result; settings service must audit in the same `Commit` (PutBuildSettings is unenforced); consider widening the `os.Remove`/`RemoveAll` archtest ban beyond proposals/git; note the RemoveStaged check-then-delete window in landing.md; validate `MergeDone.Commit`/`MergeConflicted.Files` at the interpreter; Windows CI must not skip the lock clauses of `LandingPlatformContract`.
+- `task lint` runs ~6 min on this machine and hits golangci's default 5 min timeout (0 issues with `--timeout 15m`); suggest `run.timeout` in .golangci.yml.
