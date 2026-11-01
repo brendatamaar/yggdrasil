@@ -191,12 +191,18 @@ func TestPropTerminalOnlyLeavesByRestartInputs(t *testing.T) {
 	})
 }
 
-// V9: a live state never has an empty chain, and every state is valid.
-func TestPropLiveStatesHaveChains(t *testing.T) {
+// V9a: every state a step returns is valid.
+func TestPropStateAlwaysValid(t *testing.T) {
 	prop(t, func(t *testing.T, before Verification, in Input, after Verification, cmds []Command) {
 		if err := after.Validate(); err != nil {
 			t.Errorf("invalid aggregate: %v", err)
 		}
+	})
+}
+
+// V9: a live state never has an empty chain.
+func TestPropLiveStatesHaveChains(t *testing.T) {
+	prop(t, func(t *testing.T, before Verification, in Input, after Verification, cmds []Command) {
 		switch s := after.State.(type) {
 		case Verifying:
 			if len(s.Plan.Verify) == 0 {
