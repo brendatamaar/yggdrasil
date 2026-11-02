@@ -36,7 +36,7 @@ func (r StoreResolver) Worktree(ctx context.Context, id core.WorktreeID) (Worktr
 	if err != nil {
 		return WorktreeInfo{}, fmt.Errorf("read worktree %s: %w", id, err)
 	}
-	return WorktreeInfo{ID: w.ID, Repo: w.RepoID, Task: w.TaskID, Path: w.Path, Branch: w.Branch}, nil
+	return WorktreeInfo{ID: w.ID, Repo: w.RepoID, Task: w.TaskID, Path: w.Path, Branch: w.Branch, Name: w.Name, Status: w.Status}, nil
 }
 
 // Task returns the repos of a task.

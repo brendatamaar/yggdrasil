@@ -15,6 +15,7 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/git"
 	"github.com/brendatamaar/yggdrasil/internal/mainlock"
+	"github.com/brendatamaar/yggdrasil/internal/platform"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
 
@@ -38,6 +39,9 @@ type WorktreeInfo struct {
 	Task   core.TaskID
 	Path   string
 	Branch string
+	// Name is the worktree's folder name; Status its row status.
+	Name   string
+	Status core.WorktreeStatus
 }
 
 // TaskInfo is the scope of a task.
@@ -120,6 +124,20 @@ type Config struct {
 	ExecTimeout time.Duration
 	// InstallTimeout bounds the wait for an install build; default 20 minutes.
 	InstallTimeout time.Duration
+
+	// Landing (merge_local and remove_worktree, RV-05, RV-06). Landing and
+	// Reader default to Git when it implements them; Platform defaults to the
+	// real one. Marks, Live and WorktreeRoot are needed to run these two kinds;
+	// without them the executors refuse and change nothing.
+	Landing      git.LandingGit
+	Reader       LandingReader
+	Platform     platform.Landing
+	Marks        WorktreeMarks
+	Live         LiveProbe
+	WorktreeRoot string
+	// StageID makes the ID of a removal's staging folder (1-64 of
+	// [A-Za-z0-9_-]); default derives one from NewID.
+	StageID func() string
 }
 
 // Service creates, decides and executes proposals (RV-02, GH-03).
@@ -159,6 +177,15 @@ func New(cfg Config) (*Service, error) {
 	if _, ok := cfg.Git.(StagedReader); !ok {
 		return nil, errors.New("proposals: the git writer cannot list staged files")
 	}
+	if cfg.Landing == nil {
+		cfg.Landing, _ = cfg.Git.(git.LandingGit)
+	}
+	if cfg.Reader == nil {
+		cfg.Reader, _ = cfg.Git.(LandingReader)
+	}
+	if cfg.Platform == nil {
+		cfg.Platform = platform.RealLanding{}
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
@@ -170,6 +197,10 @@ func New(cfg Config) (*Service, error) {
 	}
 	if cfg.NewID == nil {
 		cfg.NewID = db.NewID
+	}
+	if cfg.StageID == nil {
+		newID := cfg.NewID
+		cfg.StageID = func() string { return newID("rm") }
 	}
 	if cfg.InstallTimeout <= 0 {
 		cfg.InstallTimeout = 20 * time.Minute
