@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/brendatamaar/yggdrasil/internal/apperr"
 	"github.com/brendatamaar/yggdrasil/internal/builds"
 	"github.com/brendatamaar/yggdrasil/internal/builds/toolchains"
 	"github.com/brendatamaar/yggdrasil/internal/core"
@@ -37,6 +39,19 @@ func (m taskMessenger) SendMessage(ctx context.Context, task core.TaskID, text s
 		return fmt.Errorf("read task %s: %w", task, err)
 	}
 	_, err = m.svc.Message(ctx, tasks.MessageRequest{TaskID: task, Prompt: text, Mode: string(st.Task.Mode)})
+	return verifyRefusal(err)
+}
+
+// verifyRefusal classifies a refusal of the task service (a busy task, a
+// switched-off mode, an unavailable agent) as a Conflict: the verify service
+// treats a classified error other than Unavailable as a certain refusal and
+// clears its send mark. Any other error stays unclassified: the outcome is
+// unknown and the failure is never sent twice.
+func verifyRefusal(err error) error {
+	var rej *tasks.RejectedError
+	if errors.As(err, &rej) {
+		return apperr.New(apperr.Conflict, rej.Message, err)
+	}
 	return err
 }
 

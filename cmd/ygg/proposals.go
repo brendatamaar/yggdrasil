@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/brendatamaar/yggdrasil/internal/api"
 	"github.com/brendatamaar/yggdrasil/internal/builds"
 	"github.com/brendatamaar/yggdrasil/internal/builds/toolchains"
 	"github.com/brendatamaar/yggdrasil/internal/core"
@@ -18,6 +18,7 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/git"
 	"github.com/brendatamaar/yggdrasil/internal/hosts"
 	"github.com/brendatamaar/yggdrasil/internal/mainlock"
+	"github.com/brendatamaar/yggdrasil/internal/platform"
 	"github.com/brendatamaar/yggdrasil/internal/proposals"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
@@ -136,13 +137,20 @@ func (h proposalHosts) Kind(remoteURL string) proposals.HostKind {
 
 // newProposals builds the proposals service. pub is bound to the server after
 // the server exists; lock is the one main-checkout lock shared with tasks,
-// builds and git actions.
-func newProposals(store *db.Store, g *git.Git, lock *mainlock.Registry, buildSvc *builds.Service, hostSvc *hosts.Service, pub *api.ProposalsHub, redactor safety.Redactor) (*proposals.Service, error) {
+// builds and git actions. live answers "is something running in this
+// worktree" for the merge and removal executors; dataDir holds the worktree
+// root the removal executor stays inside (the same DataDir/wt as
+// internal/worktrees).
+func newProposals(store *db.Store, g *git.Git, lock *mainlock.Registry, buildSvc *builds.Service, hostSvc *hosts.Service, pub proposals.Publisher, live proposals.LiveProbe, dataDir string, redactor safety.Redactor) (*proposals.Service, error) {
 	svc, err := proposals.New(proposals.Config{
 		Store: store, Git: g, Resolver: proposals.StoreResolver{Store: store}, Lock: lock,
 		Builds: proposalBuilds{queue: buildSvc, store: store, toolchains: toolchains.All()},
 		Hosts:  proposalHosts{svc: hostSvc}, Publisher: pub, Redactor: redactor,
 		Clock: func() time.Time { return time.Now().UTC() }, NewID: db.NewID,
+		Links:   changeSetLinks{store: store, red: redactor},
+		Landing: g, Reader: g, Platform: platform.RealLanding{},
+		Marks: proposals.DBMarks{}, Live: live, WorktreeRoot: filepath.Join(dataDir, "wt"),
+		StageID: func() string { return db.NewID("rm") },
 	})
 	if err != nil {
 		return nil, fmt.Errorf("start proposals: %w", err)
