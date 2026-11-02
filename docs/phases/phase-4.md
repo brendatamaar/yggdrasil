@@ -237,3 +237,8 @@ Plan drafted 2026-11-01. **Approved 2026-11-01: decisions 1–9 accepted as reco
 - **Lead wiring (app.go):** `proposals.Config{Landing, Reader (default git), Platform (default real), Marks: DBMarks{}, Live, WorktreeRoot (same DataDir/wt as internal/worktrees), StageID, Links: adapter over the change-set store}`; verify and changesets services; Messenger wrapping `ErrAgentBusy`/`ErrQueueFull`.
 - Gaps: no real multi-repo three-MR test on PushHost+GitLabStub (needs wired store: E2E); invariant-4 test covers redaction of the recorded note only, not a token in a URL (T2); no "acknowledged unmerged removal" path (branch kept); proposals tests take 135-210 s.
 - Environment: `go-backend` spawn fails (git-config error) with ~135 stale agent worktrees present; PX1b ran as general-purpose/sonnet in a hand-made worktree (`worktree-px1b`). Pruning the stale worktrees is the human's call.
+
+### AP1 merged (VF-02, VF-03, RV-01, RV-03..06, PL-03)
+- Handlers for verification, notes, change sets, landing (proposal creation only), `GET /api/tasks/{id}/repos/{repo}/diff` (`WorktreeDiffDTO` with per-file hash + eolOnly), board/task `verification` summary, hub relays, `ygg doctor` git merge-tree probe, `srv.SetPhase4Services`.
+- Remaining wiring (WIRE1): adapters + `app.go` for VerificationService/ReviewService/ChangeSetService/LandingService/WorktreeDiffer, verify/changesets services start, proposals Config (Landing, Marks, Live, WorktreeRoot, StageID, Links), Messenger; `verify.Service.FailureDetail` (step + redacted tail) still missing; `SendFailureResponse.turnId` is empty.
+- FE gap: FE1's `loadWorktreeDiff` must call the new endpoint.
