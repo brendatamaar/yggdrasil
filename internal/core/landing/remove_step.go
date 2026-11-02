@@ -1,8 +1,6 @@
 package landing
 
 import (
-	"strings"
-
 	"github.com/brendatamaar/yggdrasil/internal/core"
 )
 
@@ -72,24 +70,14 @@ func removeStart(v RemoveStart) (RemoveState, []RemoveCommand) {
 	return RemoveChecking{Req: v.Req, Planned: planned}, []RemoveCommand{ObserveWorktree{Req: v.Req}}
 }
 
-// stagedBelongs reports whether an observed staged folder is one this
-// worktree's earlier run could have made: same root, a leaf of the form
-// <sanitised name>-<id>, nothing else. The shell's path check is a second
-// line; this keeps DeleteStaged away from any other folder (R3).
-func stagedBelongs(req RemoveReq, p StagePath) bool {
-	if p.Root != req.Root {
-		return false
+// expectedStaged is the one staged folder this removal may own: the leaf the
+// row remembers, else the one planned for this run. No other folder is matched
+// by name, so a worktree can never claim another worktree's leftover (R3).
+func expectedStaged(st RemoveChecking) StagePath {
+	if st.Req.StagedLeaf != "" {
+		return StagePath{Root: st.Req.Root, Leaf: st.Req.StagedLeaf}
 	}
-	probe, err := StagingPath(req.Root, req.Name, "x")
-	if err != nil {
-		return false
-	}
-	prefix := strings.TrimSuffix(probe.Leaf, "x")
-	id, ok := strings.CutPrefix(p.Leaf, prefix)
-	if !ok || id == "" || len(id) > 64 {
-		return false
-	}
-	return strings.Trim(id, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") == ""
+	return st.Planned
 }
 
 // removeChecked applies the guards in the order of the table.
@@ -107,8 +95,13 @@ func removeChecked(st RemoveChecking, o RemoveObserved) (RemoveState, []RemoveCo
 			return Removed{Note: noteAlreadyRemoved}, []RemoveCommand{MarkRemoved{Worktree: req.Worktree}, removeAuditCmd("already_removed")}
 		}
 		return Removed{Note: noteAlreadyRemoved}, removeAudit("already_removed")
+	case o.StagedExists && o.PathExists:
+		// The live folder and a staged one both exist: resuming would mark the row
+		// while the live folder is still there. Only a person can say which is right.
+		return RemoveFailed{Reason: "A folder from an earlier removal and the worktree folder both exist, so nothing was deleted. Check the .removing folder in the worktree root, then ask again.", Retryable: false},
+			removeAudit("failed")
 	case o.StagedExists:
-		if !stagedBelongs(req, o.Staged) {
+		if o.Staged != expectedStaged(st) {
 			return RemoveFailed{Reason: "A folder from an earlier removal could not be matched to this worktree, so nothing was deleted. Check the .removing folder in the worktree root.", Retryable: false},
 				removeAudit("failed")
 		}

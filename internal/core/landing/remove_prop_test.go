@@ -51,7 +51,7 @@ func TestPropDeleteOnlyAfterMove(t *testing.T) {
 				t.Errorf("DeleteStaged from Moving on %T", in)
 			}
 		case RemoveChecking:
-			if o, ok := in.(RemoveObserved); !ok || !o.StagedExists {
+			if o, ok := in.(RemoveObserved); !ok || !o.StagedExists || o.PathExists {
 				t.Errorf("DeleteStaged on %+v without a staged folder", in)
 			}
 		default:
@@ -295,4 +295,40 @@ func TestRemoveGeneratorCoverage(t *testing.T) {
 			t.Errorf("the generator never reached %s", w)
 		}
 	}
+}
+
+// R3b: a staged folder is only resumed when it is exactly the remembered leaf
+// (else the planned one) and the live folder is gone; a name that merely starts
+// with this worktree's name (a vs a-b) is never claimed.
+func TestPropStagedClaimedOnlyExactAndAlone(t *testing.T) {
+	propRemove(t, func(t *testing.T, h *rhist, before RemoveState, in RemoveInput, after RemoveState, cmds []RemoveCommand) {
+		o, ok := in.(RemoveObserved)
+		if _, chk := before.(RemoveChecking); !chk || !ok || !h.haveObs {
+			return
+		}
+		claimed := false
+		for _, c := range cmds {
+			switch v := c.(type) {
+			case DeleteStaged:
+				claimed = claimed || v.Staged == o.Staged
+			case MarkRemoving:
+				if _, moving := after.(Moving); !moving {
+					claimed = true
+				}
+			}
+		}
+		if _, ok := after.(Deleting); !ok && !claimed {
+			return
+		}
+		if _, ok := after.(Deleting); !ok {
+			return
+		}
+		want := expectedStage(h)
+		if h.req.StagedLeaf != "" {
+			want = StagePath{Root: h.req.Root, Leaf: h.req.StagedLeaf}
+		}
+		if !o.StagedExists || o.PathExists || o.Staged != want {
+			t.Errorf("resumed %+v (exists %v, live %v), want exactly %+v", o.Staged, o.StagedExists, o.PathExists, want)
+		}
+	})
 }

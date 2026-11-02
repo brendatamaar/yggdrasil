@@ -232,7 +232,7 @@ func TestMergeGeneratorCoverage(t *testing.T) {
 		"landing.Merged", "landing.AlreadyMerged", "landing.MergeRefused", "landing.Conflicted", "landing.MergeFailed", "landing.NeedsHuman",
 		"landing.Observe", "landing.Predict", "landing.RunMerge", "landing.Abort", "landing.MarkWorktreeMerged", "landing.WriteAudit",
 		"refused:untracked_repo", "refused:merge_in_progress", "refused:wrong_branch", "refused:main_dirty", "refused:stale",
-		"refused:branch_missing", "refused:worktree_dirty",
+		"refused:branch_missing", "refused:worktree_dirty", "refused:worktree_branch",
 		"failed:exec", "failed:identity_missing", "failed:interrupted",
 		"aborting:landing.AfterConflict", "aborting:landing.AfterFailure",
 		"settling:landing.AfterConflict", "settling:landing.AfterFailure",

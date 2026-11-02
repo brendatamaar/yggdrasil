@@ -17,8 +17,8 @@ import (
 
 var (
 	req    = mergeReq
-	goodOb = Observed{Tracked: true, Clean: true, CurrentBranch: "main", Head: hx(3), BranchHead: hx(1), WorktreeClean: true}
-	ownOb  = Observed{Tracked: true, Clean: false, MergeInProgress: true, MergeHead: hx(1), CurrentBranch: "main", BranchHead: hx(1), Head: hx(3), WorktreeClean: true}
+	goodOb = Observed{Tracked: true, Clean: true, CurrentBranch: "main", Head: hx(3), BranchHead: hx(1), WorktreeClean: true, WorktreeBranch: "ygg/t1"}
+	ownOb  = Observed{Tracked: true, Clean: false, MergeInProgress: true, MergeHead: hx(1), CurrentBranch: "main", BranchHead: hx(1), Head: hx(3), WorktreeClean: true, WorktreeBranch: "ygg/t1"}
 )
 
 func aud(outcome string) WriteAudit { return WriteAudit{Action: "landing.merge", Outcome: outcome} }
@@ -57,6 +57,8 @@ func TestStepMergeTable(t *testing.T) {
 		{"branch missing", MergeChecking{Req: req}, with(goodOb, func(o *Observed) { o.BranchHead = "" }), MergeRefused{RefuseBranchMissing}, []MergeCommand{aud("refused_branch_missing")}},
 		{"stale", MergeChecking{Req: req}, with(goodOb, func(o *Observed) { o.BranchHead = hx(2) }), MergeRefused{RefuseStale}, []MergeCommand{aud("refused_stale")}},
 		{"worktree dirty", MergeChecking{Req: req}, with(goodOb, func(o *Observed) { o.WorktreeClean = false }), MergeRefused{RefuseWorktreeDirty}, []MergeCommand{aud("refused_worktree_dirty")}},
+		{"worktree on another branch", MergeChecking{Req: req}, with(goodOb, func(o *Observed) { o.WorktreeBranch = "ygg/other" }), MergeRefused{RefuseWorktreeBranch}, []MergeCommand{aud("refused_worktree_branch")}},
+		{"worktree branch beats already merged", MergeChecking{Req: req}, with(goodOb, func(o *Observed) { o.WorktreeBranch, o.AlreadyMerged = "", true }), MergeRefused{RefuseWorktreeBranch}, []MergeCommand{aud("refused_worktree_branch")}},
 		{"all pass", MergeChecking{Req: req}, goodOb, MergePredicting{Req: req}, []MergeCommand{Predict{Req: req}}},
 		{"checking ignores predicted", MergeChecking{Req: req}, Predicted{Result: PredictClean{}}, MergeChecking{Req: req}, nil},
 
@@ -220,16 +222,18 @@ func TestCommandTypesAreExactlyTheClosedSets(t *testing.T) {
 func raud(outcome string) WriteAudit { return WriteAudit{Action: "landing.remove", Outcome: outcome} }
 
 var (
-	rreq   = removeReq
-	planed = StagePath{Root: `D:\wt`, Leaf: "shop_api-ab12-st9"}
-	oldSt  = StagePath{Root: `D:\wt`, Leaf: "shop_api-ab12-old1"}
-	rGood  = RemoveObserved{UnderRoot: true, RowStatus: core.WorktreeMerged, PathExists: true, Clean: true, StatusReadable: true}
+	rreq    = removeReq
+	planed  = StagePath{Root: `D:\wt`, Leaf: "shop_api-ab12-st9"}
+	oldSt   = StagePath{Root: `D:\wt`, Leaf: "shop_api-ab12-old1"}
+	rreqOld = func() RemoveReq { r := removeReq; r.StagedLeaf = oldSt.Leaf; return r }()
+	rGood   = RemoveObserved{UnderRoot: true, RowStatus: core.WorktreeMerged, PathExists: true, Clean: true, StatusReadable: true}
 )
 
 func rwith(o RemoveObserved, f func(*RemoveObserved)) RemoveObserved { f(&o); return o }
 
 func TestStepRemoveTable(t *testing.T) {
 	chk := RemoveChecking{Req: rreq, Planned: planed}
+	chkOld := RemoveChecking{Req: rreqOld, Planned: planed}
 	refused := func(r RemoveRefuse) RemoveState { return RemoveRefused{Reason: r} }
 	rows := []struct {
 		name string
@@ -249,20 +253,20 @@ func TestStepRemoveTable(t *testing.T) {
 		{"already removed", chk, rwith(rGood, func(o *RemoveObserved) { o.RowStatus, o.PathExists = core.WorktreeRemoved, false }), Removed{Note: noteAlreadyRemoved}, []RemoveCommand{raud("already_removed")}},
 		{"crash after delete, row removing", chk, rwith(rGood, func(o *RemoveObserved) { o.RowStatus, o.PathExists = core.WorktreeRemoving, false }), Removed{Note: noteAlreadyRemoved}, []RemoveCommand{MarkRemoved{Worktree: "w1"}, raud("already_removed")}},
 		{"row removed but path exists", chk, rwith(rGood, func(o *RemoveObserved) { o.RowStatus = core.WorktreeRemoved }), Moving{Req: rreq, Staged: planed}, []RemoveCommand{MoveToStaging{Req: rreq, To: planed}}},
-		{"resume staged, row removing", chk, rwith(rGood, func(o *RemoveObserved) {
+		{"resume staged, row removing", chkOld, rwith(rGood, func(o *RemoveObserved) {
 			o.RowStatus, o.PathExists, o.StagedExists, o.Staged = core.WorktreeRemoving, false, true, oldSt
-		}), Deleting{Req: rreq, Staged: oldSt}, []RemoveCommand{DeleteStaged{Staged: oldSt}}},
-		{"resume staged, crash before MarkRemoving", chk, rwith(rGood, func(o *RemoveObserved) {
+		}), Deleting{Req: rreqOld, Staged: oldSt}, []RemoveCommand{DeleteStaged{Staged: oldSt}}},
+		{"resume staged, crash before MarkRemoving", chkOld, rwith(rGood, func(o *RemoveObserved) {
 			o.PathExists, o.StagedExists, o.Staged, o.OtherPrunable = false, true, oldSt, true
-		}), Deleting{Req: rreq, Staged: oldSt, OtherPrunable: true}, []RemoveCommand{MarkRemoving{Worktree: "w1", Staged: oldSt}, DeleteStaged{Staged: oldSt}}},
-		{"resume beats dirty and task", chk, rwith(rGood, func(o *RemoveObserved) {
-			o.StagedExists, o.Staged, o.Clean, o.TaskLive, o.RowStatus = true, oldSt, false, true, core.WorktreeRemoving
-		}), Deleting{Req: rreq, Staged: oldSt}, []RemoveCommand{DeleteStaged{Staged: oldSt}}},
+		}), Deleting{Req: rreqOld, Staged: oldSt, OtherPrunable: true}, []RemoveCommand{MarkRemoving{Worktree: "w1", Staged: oldSt}, DeleteStaged{Staged: oldSt}}},
+		{"resume beats dirty and task", chkOld, rwith(rGood, func(o *RemoveObserved) {
+			o.StagedExists, o.Staged, o.Clean, o.TaskLive, o.RowStatus, o.PathExists = true, oldSt, false, true, core.WorktreeRemoving, false
+		}), Deleting{Req: rreqOld, Staged: oldSt}, []RemoveCommand{DeleteStaged{Staged: oldSt}}},
 		{"staged of another worktree", chk, rwith(rGood, func(o *RemoveObserved) {
-			o.StagedExists, o.Staged = true, StagePath{Root: `D:\wt`, Leaf: "other-1"}
+			o.StagedExists, o.Staged, o.PathExists = true, StagePath{Root: `D:\wt`, Leaf: "other-1"}, false
 		}), RemoveFailed{Reason: "A folder from an earlier removal could not be matched to this worktree, so nothing was deleted. Check the .removing folder in the worktree root."}, []RemoveCommand{raud("failed")}},
 		{"staged under another root", chk, rwith(rGood, func(o *RemoveObserved) {
-			o.StagedExists, o.Staged = true, StagePath{Root: `E:\x`, Leaf: "shop_api-ab12-1"}
+			o.StagedExists, o.Staged, o.PathExists = true, StagePath{Root: `E:\x`, Leaf: "shop_api-ab12-1"}, false
 		}), RemoveFailed{Reason: "A folder from an earlier removal could not be matched to this worktree, so nothing was deleted. Check the .removing folder in the worktree root."}, []RemoveCommand{raud("failed")}},
 		{"unreadable", chk, rwith(rGood, func(o *RemoveObserved) { o.StatusReadable = false }), refused(RemoveUnreadable), []RemoveCommand{raud("refused_unreadable")}},
 		{"task running", chk, rwith(rGood, func(o *RemoveObserved) { o.TaskLive = true }), refused(RemoveTaskRunning), []RemoveCommand{raud("refused_task_running")}},
@@ -352,21 +356,38 @@ func TestCleanHolders(t *testing.T) {
 	}
 }
 
-func TestStagedBelongs(t *testing.T) {
-	ok := []StagePath{{Root: `D:\wt`, Leaf: "shop_api-ab12-st9"}, {Root: `D:\wt`, Leaf: "shop_api-ab12-1_x-Y"}}
-	bad := []StagePath{
-		{Root: `D:\wt`, Leaf: ""}, {Root: `D:\wt`, Leaf: "shop_api-ab12-"}, {Root: `D:\wt`, Leaf: "shop_api-ab12-a/b"},
-		{Root: `D:\wt`, Leaf: "shop_api-ab12-.."}, {Root: `D:\wt`, Leaf: "other-1"}, {Root: `D:\x`, Leaf: "shop_api-ab12-1"},
-		{Root: `D:\wt`, Leaf: "shop_api-ab12-" + strings.Repeat("a", 65)}, {Root: `D:\wt`, Leaf: `shop_api-ab12-a\b`},
+// A staged folder is claimed only by exact leaf: the remembered one, else the
+// planned one. A prefix match (worktree a vs a-b) never claims.
+func TestStagedExactMatch(t *testing.T) {
+	a := RemoveReq{Worktree: "w1", Repo: "r1", Path: `D:\wt\a`, Root: `D:\wt`, Name: "a"}
+	ab := a
+	ab.Name, ab.Path, ab.Worktree = "a-b", `D:\wt\a-b`, "w2"
+	planA, _ := StagingPath(a.Root, a.Name, "s1")
+	otherLeftover := StagePath{Root: `D:\wt`, Leaf: "a-b-old"} // made by a-b
+	obs := RemoveObserved{UnderRoot: true, RowStatus: core.WorktreeActive, StagedExists: true, Staged: otherLeftover, Clean: true, StatusReadable: true}
+	got, cmds := StepRemove(RemoveChecking{Req: a, Planned: planA}, obs)
+	if _, ok := got.(RemoveFailed); !ok || countOf[DeleteStaged](cmds) != 0 || countOf[MarkRemoving](cmds) != 0 {
+		t.Fatalf("a claimed a-b's leftover: %T %v", got, cmds)
 	}
-	for _, p := range ok {
-		if !stagedBelongs(rreq, p) {
-			t.Errorf("%+v rejected", p)
-		}
+	ab.StagedLeaf = otherLeftover.Leaf
+	got, _ = StepRemove(RemoveChecking{Req: ab, Planned: planA}, obs)
+	if _, ok := got.(Deleting); !ok {
+		t.Fatalf("a-b did not resume its own leftover: %T", got)
 	}
-	for _, p := range bad {
-		if stagedBelongs(rreq, p) {
-			t.Errorf("%+v accepted", p)
-		}
+	bad := a
+	bad.StagedLeaf = "../x"
+	if bad.Validate() == nil {
+		t.Error("a bad remembered leaf was accepted")
+	}
+}
+
+func TestStagedAndLivePathIsNeverResumed(t *testing.T) {
+	chkOld := RemoveChecking{Req: rreqOld, Planned: planed}
+	o := rwith(rGood, func(o *RemoveObserved) {
+		o.StagedExists, o.Staged, o.PathExists, o.RowStatus = true, oldSt, true, core.WorktreeActive
+	})
+	got, cmds := StepRemove(chkOld, o)
+	if f, ok := got.(RemoveFailed); !ok || f.Retryable || countOf[DeleteStaged](cmds) != 0 || countOf[MarkRemoving](cmds) != 0 {
+		t.Fatalf("got %T %v", got, cmds)
 	}
 }

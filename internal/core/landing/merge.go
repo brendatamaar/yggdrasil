@@ -73,13 +73,14 @@ const (
 	RefuseStale           RefuseReason = "stale"
 	RefuseBranchMissing   RefuseReason = "branch_missing"
 	RefuseWorktreeDirty   RefuseReason = "worktree_dirty"
+	RefuseWorktreeBranch  RefuseReason = "worktree_branch"
 )
 
 // Validate reports whether r is known.
 func (r RefuseReason) Validate() error {
 	switch r {
 	case RefuseUntrackedRepo, RefuseMergeInProgress, RefuseWrongBranch, RefuseMainDirty,
-		RefuseStale, RefuseBranchMissing, RefuseWorktreeDirty:
+		RefuseStale, RefuseBranchMissing, RefuseWorktreeDirty, RefuseWorktreeBranch:
 		return nil
 	}
 	return fmt.Errorf("unknown refuse reason %q", string(r))
@@ -204,7 +205,10 @@ type Observed struct {
 	// AlreadyMerged: the branch head is an ancestor of Head.
 	AlreadyMerged bool
 	WorktreeClean bool
-	Now           time.Time
+	// WorktreeBranch is the branch the worktree row names; it must be the
+	// proposed branch.
+	WorktreeBranch string
+	Now            time.Time
 }
 
 // PredictResult is the outcome of the conflict prediction (sealed).
