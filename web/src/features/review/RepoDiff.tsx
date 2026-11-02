@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ReviewNoteDTO } from "../../api/gen/api.gen";
+import type { ReviewNoteDTO, WorktreeDiffFileDTO } from "../../api/gen/api.gen";
 import { describeError } from "../../api/client";
 import { isNotReady, type DiffLoader } from "./api";
 import {
@@ -107,8 +107,10 @@ function FileView({
   editor,
   dispatch,
   onDelete,
+  anchorable,
 }: {
   repoId: string;
+  anchorable: boolean;
   file: FileDiff;
   notes: ReviewNoteDTO[];
   editor: NoteEditor;
@@ -126,6 +128,9 @@ function FileView({
           </span>
         ) : null}
       </div>
+      {anchorable ? null : (
+        <p className="text-xs text-muted">Notes can't be added here: the patch for this file is cut short.</p>
+      )}
       {visible.length === 0 ? (
         <p className="text-sm text-muted">Only line endings changed; there are no other changes to show.</p>
       ) : (
@@ -147,6 +152,7 @@ function FileView({
                       <td className="w-6 px-1">
                         <button
                           type="button"
+                          disabled={!anchorable}
                           aria-label={`Add note on line ${String(a.line)} of ${file.path}`}
                           className="rounded px-1 text-muted hover:bg-surface hover:text-fg focus:bg-surface"
                           onClick={() => {
@@ -214,13 +220,21 @@ export function RepoDiff({
   const m = useReviewMutations(taskId);
   const [editor, setEditor] = useState<NoteEditor>(closedEditor);
   const files = parseFileDiffs(diff.data?.text ?? "");
+  const meta = new Map<string, WorktreeDiffFileDTO>((diff.data?.files ?? []).map((f) => [f.path, f]));
+  const anchorableFile = (f: FileDiff) => {
+    const m = meta.get(f.path);
+    return !m || !(m.binary || m.patchTruncated || m.omitted);
+  };
+  const listed = new Set(files.map((f) => f.path));
+  const unshown = (diff.data?.files ?? []).filter((f) => !listed.has(f.path));
 
   const run = (cmd: SaveCommand) => {
     const file = files.find((f) => f.path === cmd.anchor.path);
+    const serverHash = meta.get(cmd.anchor.path)?.hash;
     void (async () => {
       try {
         const create = file
-          ? { repoId, path: cmd.anchor.path, line: cmd.anchor.line, side: cmd.anchor.side, text: cmd.text, diffHash: await diffHash(file.text) }
+          ? { repoId, path: cmd.anchor.path, line: cmd.anchor.line, side: cmd.anchor.side, text: cmd.text, diffHash: serverHash || (await diffHash(file.text)) }
           : undefined;
         await m.saveNote.mutateAsync({ noteId: cmd.noteId, text: cmd.text, create });
         setEditor((s) => stepNote(s, { type: "saved" })[0]);
@@ -249,9 +263,19 @@ export function RepoDiff({
       {diff.data?.truncated ? <p className="text-sm text-warn">This diff is too large; only the start is shown.</p> : null}
       {diff.data?.binary ? <p className="text-sm text-warn">Binary files can't be shown as text.</p> : null}
       {diff.data && files.length === 0 && !diff.data.binary ? <p className="text-sm text-muted">No changes to show.</p> : null}
+      {unshown.length > 0 ? (
+        <ul aria-label="Files without a text diff" className="text-sm text-muted">
+          {unshown.map((f) => (
+            <li key={f.path}>
+              <span className="font-mono">{f.path}</span>: {f.binary ? "binary file" : "too large to show"}. Notes can't be added on it.
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {files.map((f) => (
         <FileView
           key={f.path}
+          anchorable={anchorableFile(f)}
           repoId={repoId}
           file={f}
           notes={notes.filter((n) => n.path === f.path)}
