@@ -49,6 +49,9 @@ func TestRunConfirmsOneProposalAtATimeInMergeOrder(t *testing.T) {
 		if got := r.confirmedIDs(); !slices.Equal(got, ids[:i+2]) {
 			t.Fatalf("step %d: confirmed %v", i, got)
 		}
+		if n := len(r.api.Calls()); n != i+2 {
+			t.Fatalf("step %d: %d Confirm calls, want one per proposal", i, n)
+		}
 	}
 	r.w.SetStatus(ids[2], core.ProposalExecuted, "")
 	r.reconcile()
@@ -205,16 +208,29 @@ func TestCrashAfterTheConfirmationLandedDoesNotConfirmTwice(t *testing.T) {
 
 func TestResendOfAConfirmationThatHadLandedIsNotARefusal(t *testing.T) {
 	r := newRig(t)
-	ids, seen := threeProposals(r)
+	_, seen := threeProposals(r)
+	r.api.Fail, r.api.FailTimes = errors.New("killed"), 1
 	if _, err := r.confirmAll(seen); err != nil {
 		t.Fatal(err)
 	}
-	// The confirmation landed, but the store of the set still shows pending
-	// (stale read): the resend is "already decided", which must not halt.
-	r.w.SetStatus(ids[0], core.ProposalConfirmed, "")
+	// The first attempt did reach the proposals service, but the set still
+	// shows the proposal as pending (a stale read): the resend is answered
+	// "already decided", which must not halt the run.
+	r.api.Fail, r.api.FailTimes = &changesets.Refused{Message: "decided", AlreadyDecided: true}, 1
+	r.svc = r.newService()
 	r.reconcile()
 	if _, ok := r.view().State.(cs.Confirming); !ok {
 		t.Fatalf("state %T", r.view().State)
+	}
+	// A first-time "already decided" is a real refusal and does halt.
+	r2 := newRig(t)
+	_, seen2 := threeProposals(r2)
+	r2.api.Fail, r2.api.FailTimes = &changesets.Refused{Message: "decided", AlreadyDecided: true}, 1
+	if _, err := r2.confirmAll(seen2); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := openOf(r2.view().State).LastRun.(cs.RunHalted); !ok {
+		t.Fatalf("state %#v", r2.view().State)
 	}
 }
 
