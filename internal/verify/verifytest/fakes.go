@@ -642,6 +642,8 @@ type Messenger struct {
 	Sent []Message
 	// Err, when set, is returned instead of sending.
 	Err error
+	// During runs inside SendMessage (a test hook for crash points).
+	During func()
 }
 
 // Message is one recorded message.
@@ -651,6 +653,9 @@ type Message struct {
 }
 
 func (m *Messenger) SendMessage(_ context.Context, task core.TaskID, text string) error {
+	if m.During != nil {
+		m.During()
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.Err != nil {

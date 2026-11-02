@@ -33,7 +33,10 @@ type Record struct {
 	Note string
 	// Sent says that the failure of a Failed state was sent to the agent; it
 	// is stored with the state and lost with it, so a new attempt can be sent.
-	Sent      bool
+	Sent bool
+	// Sending says that a send was started and its result is not known; the
+	// failure is never sent again for this attempt.
+	Sending   bool
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -95,6 +98,7 @@ type planJSON struct {
 	Seq       int        `json:"seq"`
 	Note      string     `json:"note,omitempty"`
 	Sent      bool       `json:"sent,omitempty"`
+	Sending   bool       `json:"sending,omitempty"`
 	Bootstrap []stepJSON `json:"bootstrap,omitempty"`
 	Verify    []stepJSON `json:"verify,omitempty"`
 }
@@ -127,10 +131,10 @@ func stepsFromJSON(in []stepJSON) []cv.StepSpec {
 // RowFromVerification is the formatter: the row columns of a verification and
 // its note. Version and the row times are the store's.
 func RowFromVerification(v cv.Verification, note string) (db.VerificationRow, error) {
-	return rowFromVerification(v, note, false)
+	return rowFromVerification(v, note, sendMark{})
 }
 
-func rowFromVerification(v cv.Verification, note string, sent bool) (db.VerificationRow, error) {
+func rowFromVerification(v cv.Verification, note string, mark sendMark) (db.VerificationRow, error) {
 	if err := v.Validate(); err != nil {
 		return db.VerificationRow{}, fmt.Errorf("verification %s: %w", v.ID, err)
 	}
@@ -141,10 +145,13 @@ func rowFromVerification(v cv.Verification, note string, sent bool) (db.Verifica
 		ID: string(v.ID), Task: v.Task, Repo: v.Repo, Worktree: v.Worktree, BootHash: v.BootHash,
 		State: StateCode(v.State),
 	}
-	if _, isFailed := v.State.(cv.Failed); sent && !isFailed {
+	if _, isFailed := v.State.(cv.Failed); (mark.Sent || mark.Sending) && !isFailed {
 		return db.VerificationRow{}, errors.New("only a failed verification can be marked as sent")
 	}
-	pj := planJSON{Note: note, Sent: sent}
+	if mark.Sent && mark.Sending {
+		return db.VerificationRow{}, errors.New("a failure cannot be both sent and being sent")
+	}
+	pj := planJSON{Note: note, Sent: mark.Sent, Sending: mark.Sending}
 	var since, at time.Time
 	switch s := v.State.(type) {
 	case cv.None:
@@ -308,14 +315,14 @@ func VerificationFromRow(row db.VerificationRow) (Record, error) {
 	}
 	// A row must hold exactly the columns of its state: format the parsed
 	// state again and compare, so stray data of another state is refused.
-	canon, err := rowFromVerification(v, pj.Note, pj.Sent)
+	canon, err := rowFromVerification(v, pj.Note, sendMark{Sent: pj.Sent, Sending: pj.Sending})
 	if err != nil {
 		return bad("%v", err)
 	}
 	if !sameColumns(canon, row) {
 		return bad("the row holds data that does not belong to the %s state", row.State)
 	}
-	return Record{Verification: v, Version: row.Version, Note: pj.Note, Sent: pj.Sent, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}, nil
+	return Record{Verification: v, Version: row.Version, Note: pj.Note, Sent: pj.Sent, Sending: pj.Sending, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}, nil
 }
 
 // sameColumns compares the state columns of two rows (not version, times
@@ -498,3 +505,7 @@ func TailLog(raw []byte, limit int, redact func(string) string) string {
 	}
 	return text[start:]
 }
+
+// sendMark is the send record of a Failed attempt. Sending is written before
+// the message is handed over, so a crash can lose a send but never repeat one.
+type sendMark struct{ Sent, Sending bool }

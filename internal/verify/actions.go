@@ -182,7 +182,7 @@ func (s *Service) SendFailure(ctx context.Context, id cv.VerificationID) error {
 	if !ok {
 		return apperr.New(apperr.Conflict, "Only a failed check can be sent to the agent.", errors.New("verification has not failed"))
 	}
-	if rec.Sent {
+	if rec.Sent || rec.Sending {
 		return apperr.New(apperr.Conflict, "This failure was already sent to the agent. Verify again to send a new one.", errors.New("failure already sent for this attempt"))
 	}
 	report := cv.FailureReport{
@@ -201,27 +201,72 @@ func (s *Service) SendFailure(ctx context.Context, id cv.VerificationID) error {
 	if err != nil {
 		return apperr.New(apperr.Invalid, "Yggdrasil couldn't write the message for the agent.", err)
 	}
-	if err := s.d.Messenger.SendMessage(ctx, rec.Task, text); err != nil {
-		return err
+	// Redact the whole message, step name included, not only the log tail.
+	text = s.d.Redactor.Redact(text)
+
+	// Mark the attempt as being sent, durably, before the message leaves: a
+	// crash can lose a send but never repeat one.
+	if err := s.markSend(ctx, rec, failed, sendMark{Sending: true}, "verify.send_failure_begin"); err != nil {
+		return apperr.New(apperr.Unavailable, "Yggdrasil couldn't prepare to send the failure. Try again.", err)
 	}
-	// The new turn is audited by tasks; this entry ties it to the verification
-	// and marks the attempt as sent. The message is already sent, so a failure
-	// here is logged loudly, not reported as a failed send.
-	if err := s.markSent(ctx, rec, failed); err != nil {
-		s.d.Log.Error("could not record that a failure was sent; it may be sent again", "verification", rec.ID, "err", err)
+	sendErr := s.sendMessage(ctx, rec.Task, text)
+	cur, gerr := s.Get(ctx, rec.ID)
+	if gerr != nil {
+		s.d.Log.Error("could not reload a verification after sending a failure", "verification", rec.ID, "err", gerr)
+		if sendErr != nil && !isKnownRefusal(sendErr) {
+			return unknownSendError()
+		}
+		return sendErr
 	}
-	return nil
+	switch {
+	case sendErr == nil:
+		if err := s.markSend(ctx, cur, failed, sendMark{Sent: true}, "verify.send_failure"); err != nil {
+			s.d.Log.Error("could not record that a failure was sent; it stays marked as sending", "verification", rec.ID, "err", err)
+		}
+		return nil
+	case isKnownRefusal(sendErr):
+		if err := s.markSend(ctx, cur, failed, sendMark{}, "verify.send_failure_refused"); err != nil {
+			s.d.Log.Error("could not clear the sending mark after a refusal; it stays marked as sending", "verification", rec.ID, "err", err)
+		}
+		return sendErr
+	default:
+		// Unknown outcome: the agent may have received it. Stay marked.
+		s.d.Log.Error("result of sending a failure is unknown; not sending again", "verification", rec.ID, "err", sendErr)
+		return unknownSendError()
+	}
 }
 
-// markSent stores "sent" on the row and the audit entry in one transaction.
-func (s *Service) markSent(ctx context.Context, rec Record, failed cv.Failed) error {
+// isKnownRefusal reports whether the messenger said, for certain, that it did
+// not take the message: a classified error other than Unavailable (a busy
+// task is a conflict). Anything else (timeout, panic, plain error) is unknown.
+func isKnownRefusal(err error) bool {
+	c, ok := apperr.ClassOf(err)
+	return ok && c != apperr.Unavailable
+}
+
+func unknownSendError() error {
+	return apperr.New(apperr.Conflict, "Yggdrasil couldn't tell whether the agent received the failure. Check the agent before sending it again, or verify again to start a new attempt.", errors.New("send result unknown"))
+}
+
+func (s *Service) sendMessage(ctx context.Context, task core.TaskID, text string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("sending a failure panicked: %v", r)
+		}
+	}()
+	return s.d.Messenger.SendMessage(ctx, task, text)
+}
+
+// markSend stores the send mark on the row and the audit entry in one
+// transaction.
+func (s *Service) markSend(ctx context.Context, rec Record, failed cv.Failed, mark sendMark, action string) error {
 	now := s.now()
 	detail, err := json.Marshal(map[string]string{"task": string(rec.Task), "repo": string(rec.Repo), "turn": string(failed.Turn), "outcome": string(failed.Stage)})
 	if err != nil {
 		return fmt.Errorf("audit detail: %w", err)
 	}
-	e := core.AuditEntry{Actor: userActor, Action: "verify.send_failure", Subject: "verification:" + string(rec.ID), Detail: detail}
-	row, err := rowFromVerification(rec.Verification, rec.Note, true)
+	e := core.AuditEntry{Actor: userActor, Action: action, Subject: "verification:" + string(rec.ID), Detail: detail}
+	row, err := rowFromVerification(rec.Verification, rec.Note, mark)
 	if err != nil {
 		return err
 	}

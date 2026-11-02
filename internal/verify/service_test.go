@@ -203,8 +203,8 @@ func TestSendFailureRefusals(t *testing.T) {
 	r2 := newRig(t)
 	r2.tc.verify = []builds.Step{step("test", 3)}
 	r2.settle()
-	r2.msg.Err = errors.New("the task is busy")
-	if err := r2.svc.SendFailure(context.Background(), r2.records()[0].ID); err == nil || err.Error() != "the task is busy" {
+	r2.msg.Err = apperr.New(apperr.Conflict, "the task is busy", nil)
+	if err := r2.svc.SendFailure(context.Background(), r2.records()[0].ID); err == nil || !strings.Contains(err.Error(), "the task is busy") {
 		t.Fatalf("busy task: err = %v", err)
 	}
 	if err := r2.svc.SendFailure(context.Background(), "ver_nope"); err == nil {
