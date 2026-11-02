@@ -123,4 +123,3 @@ type Store interface {
 	NotesInState(ctx context.Context, state string) ([]db.NoteRow, error)
 	TasksWithNotesInState(ctx context.Context, state string) ([]core.TaskID, error)
 }
-
