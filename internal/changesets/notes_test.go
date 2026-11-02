@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brendatamaar/yggdrasil/internal/apperr"
 	"github.com/brendatamaar/yggdrasil/internal/changesets"
 	"github.com/brendatamaar/yggdrasil/internal/changesets/changesetstest"
 	"github.com/brendatamaar/yggdrasil/internal/core"
@@ -184,18 +183,6 @@ func TestBusyAgentReturnsNotesToOpen(t *testing.T) {
 	if err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user"); userMessage(err) != "The agent is busy. Send the notes when it finishes." {
 		t.Fatalf("a full queue is a busy agent: %v", err)
 	}
-	// Any other failure is not "busy": it is unavailable, and the notes stay open.
-	r.msg.Err = errors.New("anything else")
-	err = r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user")
-	if c, ok := apperr.ClassOf(err); !ok || c != apperr.Unavailable {
-		t.Fatalf("a generic failure should be Unavailable: %v", err)
-	}
-	if m, _ := apperr.MessageOf(err); strings.Contains(m, "busy") || m == "" {
-		t.Fatalf("a generic failure was called busy: %v", err)
-	}
-	if stateName(r.notes()[string(a.ID)]) != "open" {
-		t.Fatalf("state %s", stateName(r.notes()[string(a.ID)]))
-	}
 	r.msg.Err = nil
 	if err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user"); err != nil {
 		t.Fatal(err)
@@ -204,8 +191,28 @@ func TestBusyAgentReturnsNotesToOpen(t *testing.T) {
 	for _, e := range r.w.Audit("note:" + string(a.ID)) {
 		actions = append(actions, e.Action)
 	}
-	if strings.Join(actions, ",") != "note.add,note.send,note.send_refused,note.send,note.send_refused,note.send,note.send_refused,note.send,note.sent" {
+	if strings.Join(actions, ",") != "note.add,note.send,note.send_refused,note.send,note.send_refused,note.send,note.sent" {
 		t.Fatalf("audit %v", actions)
+	}
+}
+
+func TestUnknownSendOutcomeLeavesNotesSending(t *testing.T) {
+	r := newRig(t)
+	a := r.addNote("a.go", 1, "first")
+	r.msg.Err = errors.New("timeout waiting for the agent")
+	err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user")
+	if m := userMessage(err); !strings.Contains(m, "couldn't tell") || strings.Contains(strings.ToLower(m), "try again") {
+		t.Fatalf("message %q", m)
+	}
+	if got := stateName(r.notes()[string(a.ID)]); got != "sending" {
+		t.Fatalf("state %s, want sending (never invite a second send)", got)
+	}
+	r.msg.Err = nil
+	if err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user"); err == nil {
+		t.Fatal("notes in Sending must not be sent again")
+	}
+	if len(r.msg.Messages()) != 0 {
+		t.Fatalf("messages %v", r.msg.Messages())
 	}
 }
 

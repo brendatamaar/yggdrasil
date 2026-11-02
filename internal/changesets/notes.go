@@ -286,6 +286,13 @@ func (s *Service) SendNotes(ctx context.Context, task core.TaskID, ids []string,
 	// The notes are marked Sending in the database. From here a failure leaves
 	// them for Recover, never for a silent second send.
 	turn, sendErr := s.sendMessage(ctx, task, text)
+	if sendErr != nil && !isKnownRefusal(sendErr) {
+		// Unknown outcome (timeout, panic, any other error): the agent may have
+		// received the message. Leave the notes Sending for Recover and never
+		// invite a second send.
+		s.d.Log.Error("result of sending notes is unknown; leaving them for recovery", "task", task, "batch", batch, "err", sendErr)
+		return &UserError{Message: "Yggdrasil couldn't tell whether the agent received the notes. They are being checked; don't send them again yet."}
+	}
 	// Reload the versions the first commit wrote rather than assuming them.
 	for i := range changes {
 		cur, err := s.d.Store.Note(ctx, rows[i].ID)
@@ -338,6 +345,17 @@ func (s *Service) sendMessage(ctx context.Context, task core.TaskID, text string
 		}
 	}()
 	return s.d.Messenger.SendMessage(ctx, task, text)
+}
+
+// isKnownRefusal reports whether the messenger said, for certain, that it did
+// not take the message: a busy agent, a full queue, or an error that carries
+// its own user-facing message.
+func isKnownRefusal(err error) bool {
+	var u interface{ UserMessage() string }
+	if errors.As(err, &u) && u.UserMessage() != "" {
+		return true
+	}
+	return errors.Is(err, ErrAgentBusy) || errors.Is(err, ErrQueueFull)
 }
 
 func sendRefusal(err error) error {
