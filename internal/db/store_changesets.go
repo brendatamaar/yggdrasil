@@ -81,7 +81,11 @@ func memberRowsFrom(rows []gen.Proposal) ([]ChangeSetMemberRow, error) {
 	out := make([]ChangeSetMemberRow, 0, len(recs))
 	for _, rec := range recs {
 		p := rec.Proposal
-		m := ChangeSetMemberRow{ID: p.ID, Repo: p.Repo, Kind: p.Action.Kind(), Status: p.State.Status(), Hash: p.ActionHash}
+		hash := p.ActionHash
+		if hash == "" {
+			hash = proposals.Hash(p.Action) // rows from before the hash column
+		}
+		m := ChangeSetMemberRow{ID: p.ID, Repo: p.Repo, Kind: p.Action.Kind(), Status: p.State.Status(), Hash: hash}
 		if ex, ok := p.State.(proposals.Executed); ok {
 			m.MRURL = ex.Result.MRURL
 		}
