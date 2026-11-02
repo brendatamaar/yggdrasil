@@ -50,7 +50,7 @@ func envEntryOK(e string) bool {
 	for j, c := range []byte(k) {
 		isLetter := c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 		isDigit := c >= '0' && c <= '9'
-		if !isLetter && !(isDigit && j > 0) {
+		if !isLetter && (!isDigit || j <= 0) {
 			return false
 		}
 	}

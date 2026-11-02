@@ -115,7 +115,7 @@ func noteHashOK(h string) bool {
 		return false
 	}
 	for i := 0; i < len(h); i++ {
-		if !(h[i] >= '0' && h[i] <= '9' || h[i] >= 'a' && h[i] <= 'f') {
+		if (h[i] < '0' || h[i] > '9') && (h[i] < 'a' || h[i] > 'f') {
 			return false
 		}
 	}
