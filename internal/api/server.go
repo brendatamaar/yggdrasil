@@ -70,6 +70,8 @@ type Deps struct {
 	Review       ReviewService
 	ChangeSets   ChangeSetService
 	Landing      LandingService
+	// WorktreeDiff serves a task worktree's diff for review (RV-01).
+	WorktreeDiff WorktreeDiffer
 
 	// Clock and IDs are the shell's time and randomness for handlers that
 	// make core inputs (docs/AGENTS.md 5.11). Defaults: time.Now().UTC() and
@@ -109,14 +111,11 @@ type Server struct {
 	tasks      TaskService
 	writeModes bool
 
-	verification VerificationService
-	review       ReviewService
-	changeSets   ChangeSetService
-	landing      LandingService
-	composer     ComposerService
-	mcp          MCPService
-	clock        func() time.Time
-	ids          func(prefix string) string
+	p4       atomic.Pointer[Phase4Services]
+	composer ComposerService
+	mcp      MCPService
+	clock    func() time.Time
+	ids      func(prefix string) string
 
 	// ctx is the parent of background work of the handlers; Close cancels it.
 	ctx  context.Context
@@ -173,7 +172,7 @@ func New(d Deps) (*Server, error) {
 	s.worktrees, s.proposals, s.composer, s.mcp = d.Worktrees, d.Proposals, d.Composer, d.MCP
 	s.agents = d.Agents
 	s.tasks, s.writeModes = d.Tasks, d.WriteModes
-	s.verification, s.review, s.changeSets, s.landing = d.Verification, d.Review, d.ChangeSets, d.Landing
+	s.p4.Store(&Phase4Services{Verification: d.Verification, Review: d.Review, ChangeSets: d.ChangeSets, Landing: d.Landing, WorktreeDiff: d.WorktreeDiff})
 	s.clock, s.ids = d.Clock, d.IDs
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }
@@ -213,6 +212,7 @@ func (s *Server) Handler() http.Handler {
 	s.routesReview(mux)
 	s.routesChangeSets(mux)
 	s.routesLanding(mux)
+	s.routesWorktreeDiff(mux)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, ErrNotFound, "That API endpoint doesn't exist.", "")
 	})

@@ -1617,6 +1617,40 @@ export interface SendNotesResponse {
   turnId: string;
   notes: ReviewNoteDTO[];
 }
+/**
+ * WorktreeDiffFileDTO is one changed file of a task's repo. Hash is the
+ * lowercase hex SHA-256 of the file's patch (what a note's diffHash must
+ * equal); for a binary file, a cut patch or an omitted one it never equals a
+ * client's hash of the text, so notes must not anchor there. Status is "A",
+ * "M" or "D".
+ */
+export interface WorktreeDiffFileDTO {
+  path: string;
+  status: string;
+  binary: boolean;
+  added: number /* int */;
+  deleted: number /* int */;
+  eolOnly: boolean;
+  hash: string;
+  patchTruncated: boolean;
+  /**
+   * Omitted: the patch is not in Text because the response hit its size cap.
+   */
+  omitted?: boolean;
+}
+/**
+ * WorktreeDiffDTO is the body of GET /api/tasks/{id}/repos/{repo}/diff: the
+ * unified diff of the repo's worktree against its base (commits, uncommitted
+ * changes and untracked files together). Text is the patches of Files in path
+ * order. Truncated is set when a patch was cut, files were left out or the
+ * size cap was hit. Binary is set when any file is binary.
+ */
+export interface WorktreeDiffDTO {
+  text: string;
+  truncated: boolean;
+  binary: boolean;
+  files: WorktreeDiffFileDTO[];
+}
 
 //////////
 // source: types_search.go
@@ -1782,6 +1816,11 @@ export interface VerificationDTO {
   since?: string;
   at?: string;
   canSendFailure?: boolean;
+  /**
+   * CancelCause is set on a cancelled verification: "user", "external" or
+   * "not_trusted" (the repo stopped being trusted while it ran).
+   */
+  cancelCause?: string;
 }
 /**
  * VerificationsResponse is the body of GET /api/tasks/{id}/verifications and

@@ -65,7 +65,7 @@ func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, TaskResponse{Task: task})
+	writeJSON(w, http.StatusOK, TaskResponse{Task: task, Verification: s.verificationSummary(r.Context(), task.ID)})
 }
 
 // lookupTask reads the {id} of the path and loads the task.

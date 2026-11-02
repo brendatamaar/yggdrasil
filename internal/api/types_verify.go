@@ -60,6 +60,9 @@ type VerificationDTO struct {
 	Since          *time.Time   `json:"since,omitempty"`
 	At             *time.Time   `json:"at,omitempty"`
 	CanSendFailure bool         `json:"canSendFailure,omitempty"`
+	// CancelCause is set on a cancelled verification: "user", "external" or
+	// "not_trusted" (the repo stopped being trusted while it ran).
+	CancelCause string `json:"cancelCause,omitempty"`
 }
 
 // VerificationsResponse is the body of GET /api/tasks/{id}/verifications and

@@ -198,6 +198,7 @@ func defaultProbes(cfg config, env []string) []probe {
 		probes = append(probes, toolProbe(t, env))
 	}
 	probes = append(probes, dataDirProbe(cfg.dataDir))
+	probes = append(probes, gitMergeTreeProbe(env))
 	probes = append(probes, agentProbe("Claude Code", claudecode.New(claudecode.Options{}).Check))
 	for _, t := range tools[1:] {
 		probes = append(probes, toolProbe(t, env))

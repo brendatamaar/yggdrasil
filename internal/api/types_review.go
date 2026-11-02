@@ -65,3 +65,33 @@ type SendNotesResponse struct {
 	TurnID string          `json:"turnId"`
 	Notes  []ReviewNoteDTO `json:"notes"`
 }
+
+// WorktreeDiffFileDTO is one changed file of a task's repo. Hash is the
+// lowercase hex SHA-256 of the file's patch (what a note's diffHash must
+// equal); for a binary file, a cut patch or an omitted one it never equals a
+// client's hash of the text, so notes must not anchor there. Status is "A",
+// "M" or "D".
+type WorktreeDiffFileDTO struct {
+	Path           string `json:"path"`
+	Status         string `json:"status"`
+	Binary         bool   `json:"binary"`
+	Added          int    `json:"added"`
+	Deleted        int    `json:"deleted"`
+	EOLOnly        bool   `json:"eolOnly"`
+	Hash           string `json:"hash"`
+	PatchTruncated bool   `json:"patchTruncated"`
+	// Omitted: the patch is not in Text because the response hit its size cap.
+	Omitted bool `json:"omitted,omitempty"`
+}
+
+// WorktreeDiffDTO is the body of GET /api/tasks/{id}/repos/{repo}/diff: the
+// unified diff of the repo's worktree against its base (commits, uncommitted
+// changes and untracked files together). Text is the patches of Files in path
+// order. Truncated is set when a patch was cut, files were left out or the
+// size cap was hit. Binary is set when any file is binary.
+type WorktreeDiffDTO struct {
+	Text      string                `json:"text"`
+	Truncated bool                  `json:"truncated"`
+	Binary    bool                  `json:"binary"`
+	Files     []WorktreeDiffFileDTO `json:"files"`
+}
