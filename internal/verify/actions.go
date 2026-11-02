@@ -188,15 +188,7 @@ func (s *Service) SendFailure(ctx context.Context, id cv.VerificationID) error {
 	report := cv.FailureReport{
 		Repo: rec.Repo, Stage: failed.Stage, Step: fmt.Sprintf("step %d", failed.Step+1), Reason: failed.Reason,
 	}
-	if st, gerr := s.d.Builds.Get(ctx, failed.Build); gerr == nil {
-		if fin, isFin := st.(corebuilds.Finished); isFin && failed.Step >= 0 && failed.Step < len(fin.Spec.Steps) {
-			report.Step = fin.Spec.Steps[failed.Step].Name
-		}
-	}
-	if _, isExit := failed.Reason.(cv.ExitCode); isExit && s.d.Logs != nil {
-		raw, cut := s.readLogTail(ctx, failed.Build, failed.Step)
-		report.LogTail = s.redactedTail(raw, cut)
-	}
+	report.Step, report.LogTail = s.failureParts(ctx, failed, report.Step)
 	text, err := cv.ComposeFailure(report)
 	if err != nil {
 		return apperr.New(apperr.Invalid, "Yggdrasil couldn't write the message for the agent.", err)
@@ -329,4 +321,31 @@ func (s *Service) readLogTail(ctx context.Context, build core.BuildID, step int)
 		after = next
 	}
 	return buf, cut
+}
+
+// failureParts returns the name of the failed step (fallback when the build
+// is not readable) and, for a non-zero exit, the redacted tail of its log.
+func (s *Service) failureParts(ctx context.Context, failed cv.Failed, fallback string) (step, tail string) {
+	step = fallback
+	if st, gerr := s.d.Builds.Get(ctx, failed.Build); gerr == nil {
+		if fin, isFin := st.(corebuilds.Finished); isFin && failed.Step >= 0 && failed.Step < len(fin.Spec.Steps) {
+			step = fin.Spec.Steps[failed.Step].Name
+		}
+	}
+	if _, isExit := failed.Reason.(cv.ExitCode); isExit && s.d.Logs != nil {
+		raw, cut := s.readLogTail(ctx, failed.Build, failed.Step)
+		tail = s.redactedTail(raw, cut)
+	}
+	return step, tail
+}
+
+// FailureDetail gives the name of the failed step and the redacted tail of
+// its log, for display (VF-02). Both are empty for a record that has not
+// failed; the step is empty when the build can no longer be read.
+func (s *Service) FailureDetail(ctx context.Context, rec Record) (step, tail string) {
+	failed, ok := rec.State.(cv.Failed)
+	if !ok {
+		return "", ""
+	}
+	return s.failureParts(ctx, failed, "")
 }
