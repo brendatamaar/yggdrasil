@@ -47,7 +47,7 @@ export function RunSection({ cs, nameOf }: { cs: ChangeSetDTO; nameOf: (repoId: 
   // If the set changes while the dialog is open, nothing is sent until the person looks again.
   useEffect(() => {
     const cur = ref.current;
-    if (cur.tag === "reviewing" || cur.tag === "loading") dispatch({ tag: "seen", items: runItems(cs, cur.scope) });
+    if (cur.tag === "reviewing" || cur.tag === "loading" || cur.tag === "preflightFailed") dispatch({ tag: "seen", items: runItems(cs, cur.scope) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cs.members]);
 
@@ -191,6 +191,11 @@ function RunDialog({ flow, nameOf, dispatch }: { flow: RunFlow; nameOf: (repoId:
               </label>
             </div>
           ))}
+          {flow.tag === "preflightFailed" ? (
+            <p role="alert" className="text-sm text-danger">
+              {flow.message} Nothing can be confirmed until this check works.
+            </p>
+          ) : null}
           {flow.tag === "reviewing" && flow.error ? (
             <p role="alert" className="text-sm text-danger">
               {flow.error}
@@ -200,7 +205,17 @@ function RunDialog({ flow, nameOf, dispatch }: { flow: RunFlow; nameOf: (repoId:
             <button id="cs-run-cancel" type="button" className="rounded border border-line px-3 py-1 text-sm" onClick={() => { dispatch({ tag: "cancel" }); }}>
               {flow.tag === "changed" ? "Close" : "Cancel"}
             </button>
-            {flow.tag !== "changed" ? (
+            {flow.tag === "preflightFailed" ? (
+              <button
+                type="button"
+                className="rounded bg-accent px-3 py-1 text-sm font-medium text-canvas"
+                onClick={() => {
+                  dispatch({ tag: "retry" });
+                }}
+              >
+                Retry
+              </button>
+            ) : flow.tag !== "changed" ? (
               <button
                 type="button"
                 disabled={!canSubmit(flow)}

@@ -45,20 +45,35 @@ func (p *liveProbe) TaskLive(ctx context.Context, task core.TaskID) (bool, error
 	if err != nil {
 		return false, fmt.Errorf("read task %s: %w", task, err)
 	}
-	switch t.Status {
-	case core.TaskQueued, core.TaskRunning, core.TaskNeedsYou:
-		return true, nil
-	}
-	return false, nil
+	return taskStatusLive(t.Status), nil
 }
+
+// taskStatusLive: the statuses in which the task's agent process may be alive.
+func taskStatusLive(s core.TaskStatus) bool {
+	switch s {
+	case core.TaskQueued, core.TaskRunning, core.TaskNeedsYou:
+		return true
+	}
+	return false
+}
+
+// buildListLimit is the most builds one status listing returns. A full list
+// might hide a live build, so it fails closed (the removal is not allowed).
+const buildListLimit = 1000
+
+// listFull reports whether a listing may have been cut off by its limit.
+func listFull(n int) bool { return n >= buildListLimit }
 
 // BuildLive: a build is queued or running in the worktree, or a verification
 // of it is bootstrapping or verifying.
 func (p *liveProbe) BuildLive(ctx context.Context, wt core.WorktreeID) (bool, error) {
 	for _, status := range []core.BuildStatus{core.BuildQueued, core.BuildRunning} {
-		list, err := p.builds.List(ctx, db.BuildFilter{Status: status, Limit: 1000})
+		list, err := p.builds.List(ctx, db.BuildFilter{Status: status, Limit: buildListLimit})
 		if err != nil {
 			return false, fmt.Errorf("list %s builds: %w", status, err)
+		}
+		if listFull(len(list)) {
+			return false, fmt.Errorf("too many %s builds to tell whether this worktree is in use; wait for some to finish", status)
 		}
 		for _, st := range list {
 			if buildTargets(st, wt) {

@@ -54,6 +54,7 @@ export const warningCodes = (ws: readonly WarningDTO[]) => [...new Set(ws.map((w
 export type RunFlow =
   | { tag: "idle" }
   | { tag: "loading"; scope: ScopeDTO; items: RunItem[] }
+  | { tag: "preflightFailed"; scope: ScopeDTO; items: RunItem[]; message: string }
   | { tag: "reviewing"; scope: ScopeDTO; items: RunItem[]; warnings: WarningDTO[]; acked: string[]; error?: string }
   | { tag: "sending"; scope: ScopeDTO; items: RunItem[]; warnings: WarningDTO[]; acked: string[] }
   | { tag: "changed"; scope: ScopeDTO };
@@ -62,6 +63,7 @@ export type RunInput =
   | { tag: "open"; scope: ScopeDTO; items: RunItem[] }
   | { tag: "preflighted"; warnings: WarningDTO[] }
   | { tag: "preflightFailed"; message: string }
+  | { tag: "retry" }
   | { tag: "ack"; code: string; on: boolean }
   | { tag: "seen"; items: RunItem[] }
   | { tag: "submit" }
@@ -90,14 +92,18 @@ export function stepRun(s: RunFlow, i: RunInput): [RunFlow, RunCommand[]] {
       return [{ tag: "reviewing", scope: s.scope, items: s.items, warnings: i.warnings, acked: [] }, []];
     case "preflightFailed":
       if (s.tag !== "loading") return [s, []];
-      return [{ tag: "reviewing", scope: s.scope, items: s.items, warnings: [], acked: [], error: i.message }, []];
+      // Without the warnings nothing can be confirmed: only a retry is offered.
+      return [{ tag: "preflightFailed", scope: s.scope, items: s.items, message: i.message }, []];
+    case "retry":
+      if (s.tag !== "preflightFailed") return [s, []];
+      return [{ tag: "loading", scope: s.scope, items: s.items }, [{ tag: "preflight", scope: s.scope }]];
     case "ack": {
       if (s.tag !== "reviewing") return [s, []];
       const rest = s.acked.filter((c) => c !== i.code);
       return [{ ...s, acked: i.on ? [...rest, i.code] : rest }, []];
     }
     case "seen":
-      if (s.tag !== "reviewing" && s.tag !== "loading") return [s, []];
+      if (s.tag !== "reviewing" && s.tag !== "loading" && s.tag !== "preflightFailed") return [s, []];
       return sameItems(s.items, i.items) ? [s, []] : [{ tag: "changed", scope: s.scope }, []];
     case "submit": {
       if (s.tag !== "reviewing" || !canSubmit(s)) return [s, []];

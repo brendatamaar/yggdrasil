@@ -271,3 +271,17 @@ func TestShutdownStopsPhase4LoopsBeforeTheStoreCloses(t *testing.T) {
 		t.Fatalf("the store should be closed after run, got %v", err)
 	}
 }
+
+// Pins which task statuses count as a live agent, and that a full build list
+// fails closed.
+func TestLiveProbeStatusesAndFullListFailClosed(t *testing.T) {
+	want := map[core.TaskStatus]bool{core.TaskQueued: true, core.TaskRunning: true, core.TaskNeedsYou: true}
+	for _, st := range []core.TaskStatus{core.TaskDraft, core.TaskQueued, core.TaskRunning, core.TaskNeedsYou, core.TaskReview, core.TaskDone, core.TaskFailed, core.TaskCancelled} {
+		if got := taskStatusLive(st); got != want[st] {
+			t.Errorf("taskStatusLive(%s) = %v", st, got)
+		}
+	}
+	if listFull(buildListLimit-1) || !listFull(buildListLimit) {
+		t.Error("a list at the limit must count as possibly cut off")
+	}
+}

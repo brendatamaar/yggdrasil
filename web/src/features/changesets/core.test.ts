@@ -97,6 +97,17 @@ describe("confirm-run flow", () => {
     expect(canSubmit(s)).toBe(false);
   });
 
+  it("a failed preflight cannot be submitted; only a retry is offered", () => {
+    let [s] = stepRun({ tag: "idle" }, { tag: "open", scope: all, items });
+    [s] = stepRun(s, { tag: "preflightFailed", message: "no" });
+    expect(s.tag).toBe("preflightFailed");
+    expect(canSubmit(s)).toBe(false);
+    expect(stepRun(s, { tag: "submit" })).toEqual([s, []]);
+    const [again, cmds] = stepRun(s, { tag: "retry" });
+    expect(again.tag).toBe("loading");
+    expect(cmds).toEqual([{ tag: "preflight", scope: all }]);
+  });
+
   it("a changed set or hash goes to changed and sends nothing", () => {
     const [s] = stepRun(reviewing([]), { tag: "seen", items: items.map((it, i) => (i === 0 ? { ...it, hash: "other" } : it)) });
     expect(s.tag).toBe("changed");
@@ -131,7 +142,7 @@ describe("confirm-run flow", () => {
         case 5: return { tag: "submit" };
         case 6: return { tag: "accepted" };
         case 7: return { tag: "rejected", conflict: rand() < 0.3, message: "no" };
-        case 8: return { tag: "cancel" };
+        case 8: return rand() < 0.3 ? { tag: "retry" } : { tag: "cancel" };
         default: return { tag: "submit" };
       }
     };
@@ -142,6 +153,7 @@ describe("confirm-run flow", () => {
         const input = gen();
         const before = s;
         const [next, cmds] = stepRun(s, input);
+        if (next.tag === "preflightFailed") expect(canSubmit(next)).toBe(false);
         const confirms = cmds.filter((c: RunCommand) => c.tag === "confirm");
         if (confirms.length > 0) {
           expect(input.tag).toBe("submit");
