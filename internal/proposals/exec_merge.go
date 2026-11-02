@@ -393,4 +393,3 @@ func (s *Service) reconcileMerge(ctx context.Context, p coreprop.Proposal, a cor
 	}
 	return coreprop.ReconcileNotDone, coreprop.Result{}
 }
-

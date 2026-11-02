@@ -184,8 +184,11 @@ func (r *removeRun) observe(ctx context.Context) (landing.RemoveObserved, error)
 		return o, fmt.Errorf("check builds: %w", err)
 	}
 	// Prune only when ours is the only prunable record; unknown means "do not".
-	list, err := s.cfg.Reader.WorktreeList(ctx, r.repoDir)
-	o.OtherPrunable = err != nil || git.OtherPrunable(list, r.req.Path)
+	if list, lerr := s.cfg.Reader.WorktreeList(ctx, r.repoDir); lerr != nil {
+		o.OtherPrunable = true
+	} else {
+		o.OtherPrunable = git.OtherPrunable(list, r.req.Path)
+	}
 	o.Now = s.now()
 	return o, nil
 }
