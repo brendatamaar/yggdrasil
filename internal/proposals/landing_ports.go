@@ -34,3 +34,22 @@ type LiveProbe interface {
 	// BuildLive: a build or verification is queued or running in the worktree.
 	BuildLive(ctx context.Context, wt core.WorktreeID) (bool, error)
 }
+
+// DBMarks is the WorktreeMarks over *db.Tx: the status change runs in the
+// same transaction as the audit entry.
+type DBMarks struct{}
+
+// MarkMerged implements WorktreeMarks.
+func (DBMarks) MarkMerged(ctx context.Context, tx *db.Tx, id core.WorktreeID) error {
+	return tx.MarkWorktreeMerged(ctx, id)
+}
+
+// MarkRemoving implements WorktreeMarks.
+func (DBMarks) MarkRemoving(ctx context.Context, tx *db.Tx, id core.WorktreeID, stagedLeaf string) error {
+	return tx.MarkWorktreeRemoving(ctx, id, stagedLeaf)
+}
+
+// MarkRemoved implements WorktreeMarks.
+func (DBMarks) MarkRemoved(ctx context.Context, tx *db.Tx, id core.WorktreeID) error {
+	return tx.MarkWorktreeRemoved(ctx, id)
+}

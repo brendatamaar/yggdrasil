@@ -15,6 +15,9 @@ type pushPlan struct {
 	remote     string
 	expectHead string
 	mr         *git.MROptions
+	// template is the confirmed MR description; its link marker is filled in
+	// at execution (fillLinks).
+	template string
 }
 
 // pushNote is the result of a push that found the work already on the remote.
@@ -61,6 +64,12 @@ func (s *Service) runPush(ctx context.Context, p coreprop.Proposal, plan pushPla
 	if tip, err := s.cfg.Git.LsRemote(ctx, wd.dir, plan.remote, plan.branch); err == nil && tip != "" && tip == plan.expectHead {
 		return done(coreprop.Result{Note: alreadyPushed + mrHint(plan)})
 	}
+	linksNote := ""
+	if plan.mr != nil {
+		mr := *plan.mr
+		mr.Description, linksNote = s.fillLinks(ctx, p, plan.template, host)
+		plan.mr = &mr
+	}
 	res, err := s.cfg.Git.Push(ctx, wd.dir, git.PushRequest{
 		Remote: plan.remote, Branch: plan.branch, ExpectHead: plan.expectHead, DefaultBranch: defBranch, MR: plan.mr,
 	})
@@ -75,7 +84,7 @@ func (s *Service) runPush(ctx context.Context, p coreprop.Proposal, plan pushPla
 		// Pushed, but no link we trust: still a success (docs/design/proposals.md).
 		return done(coreprop.Result{Note: "Pushed; open the merge request from the repo page."})
 	}
-	r.Note = "Pushed and opened a merge request."
+	r.Note = "Pushed and opened a merge request." + linksNote
 	return done(r)
 }
 
