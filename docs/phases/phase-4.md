@@ -208,3 +208,10 @@ Plan drafted 2026-11-01. **Approved 2026-11-01: decisions 1–9 accepted as reco
 ### VS1 merged (VF-01..03, WE-05, BL-09)
 - `internal/verify` shell (service, reconcile + 5 s poll, watchdog, parsers, store), `db/store_verify.go`, `cmd/ygg/verify.go` helpers (not yet wired), contract suites `BuildRunnerContract`/`VerifyStoreContract` (fake + real).
 - Carry-ins: **lead wires** `newVerifyService`/`startVerify` and `wakeOnBuild` in `cmd/ygg/app.go` (batch 4, with AP1); AP1: `*api.Server` implements `verify.Publisher`, adapter over `verify.Service{List,Retry,Cancel,SendFailure}`; setting key `verify.auto` (unset = on). `turn_seq` and `note` live inside the `plan` JSON column (no column; consider migration). Arch rule workaround: `var _ = audit.Prepare` in store.go and verifytest/contract.go. Unparseable live rows are only logged.
+
+### CSS1 merged (RV-01, RV-03, RV-04)
+- `internal/changesets` shell (confirm run persisted in `run_result`, order + warnings, notes with Sending mark, recover at startup, reconcile 5 s / 30 s), `db/store_changesets.go`, `cmd/ygg/changesets.go` helpers (not wired), contract suites `ProposalsAPIContract` (fake + stub adapter) and `ChangeSetStoreContract` (fake + SQLite).
+- Lead wires in `app.go` (batch 4): `newChangeSetsService`, `startChangeSets`, hub forward of the `proposals` topic to `svc.OnProposalChanged`.
+- AP1 calls: Get, ForTask, Preflight, SetOrder, ConfirmRun (returns at once), StopRun, Close, AddNote/ListNotes/EditNote/DeleteNote/SendNotes; strict body parsers `Decode*`.
+- PX1: `exec_mr` reads executed MR members' URLs from the same change set; uses RenderLinks + ValidateLinkMarker.
+- Gaps to cover in T2: no real `proposals.Service` run of `ProposalsAPIContract` (only stub adapter); `ToolchainDeps`/`EdgesFromModules` untested; `changeSetDiffs` never run against a real worktree. `OpenRepo` uses `store.GetRepo` (check it excludes untracked repos, invariant 6).
