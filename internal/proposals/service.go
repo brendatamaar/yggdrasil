@@ -42,6 +42,8 @@ type WorktreeInfo struct {
 	// Name is the worktree's folder name; Status its row status.
 	Name   string
 	Status core.WorktreeStatus
+	// StagedLeaf is the staged folder leaf a removal remembered ("" if none).
+	StagedLeaf string
 }
 
 // TaskInfo is the scope of a task.
@@ -420,6 +422,14 @@ func (e errRefused) Error() string { return e.r.Error() }
 func (s *Service) Create(ctx context.Context, req CreateRequest) (View, error) {
 	if req.Action == nil {
 		return View{}, refusal(coreprop.RefuseUnsupported, "")
+	}
+	if _, agent := req.Source.(coreprop.AgentSource); agent {
+		// Only a person lands or removes a worktree; MCP cannot create these
+		// either. Defence in depth (invariant 2).
+		switch req.Action.(type) {
+		case coreprop.MergeLocal, coreprop.RemoveWorktree:
+			return View{}, refusal(coreprop.RefuseUnsupported, "An agent cannot propose this. Merging and removing a worktree are started from the change set.")
+		}
 	}
 	if err := req.Task.Validate(); err != nil {
 		return View{}, refusal(coreprop.RefuseBadFacts, "The task for this proposal is not valid.")
