@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/brendatamaar/yggdrasil/internal/apperr"
+	"github.com/brendatamaar/yggdrasil/internal/audit"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	corebuilds "github.com/brendatamaar/yggdrasil/internal/core/builds"
 	cv "github.com/brendatamaar/yggdrasil/internal/core/verify"
@@ -66,7 +67,7 @@ func (s *Service) readInputs(ctx context.Context, rec Record) (cv.Facts, cv.Plan
 	settings, perr := ParseSettings(srec)
 	if perr != nil {
 		// A domain outcome, not a retry: no verify chain, with a plain note.
-		return facts, cv.Plan{}, NoteBadSettings, nil
+		return facts, cv.Plan{}, NoteBadSettings, nil //nolint:nilerr // invalid settings are a domain outcome, not a retryable error
 	}
 	plan, note := ResolvePlan(s.d.OpenFS(dir), s.d.Toolchains, settings)
 	return facts, plan, note, nil
@@ -204,7 +205,7 @@ func (s *Service) auditSent(ctx context.Context, rec Record, failed cv.Failed) e
 	}
 	e := core.AuditEntry{Actor: userActor, Action: "verify.send_failure", Subject: "verification:" + string(rec.ID), Detail: detail}
 	err = s.d.Store.Commit(ctx, func(tx Tx) error {
-		pe, perr := prepareAudit(s, e, now)
+		pe, perr := audit.Prepare(e, s.d.Redactor, core.AuditID(s.d.IDs("aud")), now)
 		if perr != nil {
 			return perr
 		}

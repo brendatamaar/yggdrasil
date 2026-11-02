@@ -172,7 +172,7 @@ func checkAccepted(t *testing.T, row db.VerificationRow) {
 	if err != nil {
 		return
 	}
-	if err := rec.Verification.Validate(); err != nil {
+	if err := rec.Validate(); err != nil {
 		t.Fatalf("accepted an invalid verification: %v\nrow %+v", err, row)
 	}
 	again, err := verify.RowFromVerification(rec.Verification, rec.Note)
