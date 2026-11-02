@@ -25,36 +25,51 @@ import (
 )
 
 // fakeMarks records worktree status changes and mirrors them into the resolver.
+// It has the semantics of the real marks (WorktreeMarks contract): monotone,
+// idempotent, a wrong status is a no-op, a missing worktree is db.ErrNotFound.
 type fakeMarks struct {
-	mu  sync.Mutex
-	res *fakeResolver
-	log []string
+	mu      sync.Mutex
+	res     *fakeResolver
+	log     []string
+	failN   int // the next failN calls fail, as a database error would
+	failTag string
 }
 
-func (m *fakeMarks) set(id core.WorktreeID, st core.WorktreeStatus, tag string) {
+func (m *fakeMarks) mark(id core.WorktreeID, from []core.WorktreeStatus, to core.WorktreeStatus, tag, leaf string) error {
 	m.mu.Lock()
 	m.log = append(m.log, tag)
+	if m.failN > 0 || (m.failTag != "" && m.failTag == tag) {
+		m.failN = max(m.failN-1, 0)
+		m.mu.Unlock()
+		return errors.New("disk I/O error")
+	}
 	m.mu.Unlock()
 	m.res.mu.Lock()
-	w := m.res.wts[id]
-	w.Status = st
-	m.res.wts[id] = w
-	m.res.mu.Unlock()
+	defer m.res.mu.Unlock()
+	w, ok := m.res.wts[id]
+	if !ok {
+		return db.ErrNotFound
+	}
+	if slices.Contains(from, w.Status) {
+		w.Status = to
+		if leaf != "" {
+			w.StagedLeaf = leaf
+		}
+		m.res.wts[id] = w
+	}
+	return nil
 }
 
 func (m *fakeMarks) MarkMerged(_ context.Context, _ *db.Tx, id core.WorktreeID) error {
-	m.set(id, core.WorktreeMerged, "merged")
-	return nil
+	return m.mark(id, []core.WorktreeStatus{core.WorktreeActive}, core.WorktreeMerged, "merged", "")
 }
 
 func (m *fakeMarks) MarkRemoving(_ context.Context, _ *db.Tx, id core.WorktreeID, leaf string) error {
-	m.set(id, core.WorktreeRemoving, "removing:"+leaf)
-	return nil
+	return m.mark(id, []core.WorktreeStatus{core.WorktreeActive, core.WorktreeMerged, core.WorktreeRemoving}, core.WorktreeRemoving, "removing:"+leaf, leaf)
 }
 
 func (m *fakeMarks) MarkRemoved(_ context.Context, _ *db.Tx, id core.WorktreeID) error {
-	m.set(id, core.WorktreeRemoved, "removed")
-	return nil
+	return m.mark(id, []core.WorktreeStatus{core.WorktreeRemoving}, core.WorktreeRemoved, "removed", "")
 }
 
 func (m *fakeMarks) entries() []string {
@@ -217,7 +232,7 @@ func (w *landWorld) merge(id core.WorktreeID, name, expect string) coreprop.Merg
 
 func (w *landWorld) create(a coreprop.Action) View {
 	w.t.Helper()
-	v, err := w.svc.Create(w.ctx, CreateRequest{Task: w.task, Action: a, Summary: "because", Source: coreprop.AgentSource{Task: w.task}})
+	v, err := w.svc.Create(w.ctx, CreateRequest{Task: w.task, Action: a, Summary: "because", Source: coreprop.UserSource{}})
 	if err != nil {
 		w.t.Fatalf("create %T: %v", a, err)
 	}
@@ -661,6 +676,11 @@ func TestRemoveWorktreeResumesAHalfStagedRemoval(t *testing.T) {
 	if err := os.Rename(dir, staged); err != nil {
 		t.Fatal(err)
 	}
+	w.res.mu.Lock()
+	row := w.res.wts[id]
+	row.Status, row.StagedLeaf = core.WorktreeRemoving, "wt-m-oldrun"
+	w.res.wts[id] = row
+	w.res.mu.Unlock()
 	w.run(coreprop.RemoveWorktree{Worktree: id}, core.ProposalExecuted)
 	if _, err := os.Stat(staged); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("the staged folder is still there")

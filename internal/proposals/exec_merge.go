@@ -48,9 +48,6 @@ func (s *Service) execMerge(ctx context.Context, p coreprop.Proposal, a coreprop
 	if out != nil {
 		return *out
 	}
-	if wt.Branch != a.Branch {
-		return failed(coreprop.FailPrecondition, false, "The worktree is now on another branch than the one proposed. Ask for a new proposal.")
-	}
 	mode := landing.ModeFresh
 	if attempt > 1 {
 		mode = landing.ModeRecovering
@@ -127,8 +124,15 @@ func (r *mergeRun) run(ctx context.Context) outcome {
 			}
 		}
 		if len(batch) > 0 {
-			if err := r.persist(ctx, batch); err != nil {
+			err := r.persist(ctx, batch)
+			if err != nil {
+				err = r.persist(ctx, batch) // once more: the effect already ran
+			}
+			if err != nil {
 				r.s.cfg.Logger.Error("could not record a landing step", "proposal", r.p.ID, "error", r.s.redact(err.Error()))
+				// Retryable: the next run is a recovering run that sees the branch
+				// already merged and writes the same marks again.
+				return failed(coreprop.FailExec, true, "The merge is done on disk, but Yggdrasil could not record it. Retry; nothing will be merged twice.")
 			}
 		}
 		if out, ok := r.finished(st); ok {
@@ -191,7 +195,7 @@ func (r *mergeRun) observe(ctx context.Context) (landing.Observed, error) {
 
 func (r *mergeRun) observeOnce(ctx context.Context) (landing.Observed, error) {
 	s, lg, rd := r.s, r.s.cfg.Landing, r.s.cfg.Reader
-	o := landing.Observed{Tracked: s.repoTracked(ctx, r.req.Repo)}
+	o := landing.Observed{Tracked: s.repoTracked(ctx, r.req.Repo), WorktreeBranch: r.wt.Branch}
 	st, err := rd.Status(ctx, r.req.Path)
 	if err != nil {
 		return o, fmt.Errorf("read the main checkout: %w", err)
@@ -325,6 +329,8 @@ func refusedMerge(reason landing.RefuseReason, req landing.MergeReq) outcome {
 		return failed(coreprop.FailPrecondition, true, "The main checkout has uncommitted or untracked files. Commit or move them, then retry. Nothing was changed.")
 	case landing.RefuseStale:
 		return failed(coreprop.FailStale, false, "The branch has new commits since this was proposed. Ask for a new proposal. Nothing was changed.")
+	case landing.RefuseWorktreeBranch:
+		return failed(coreprop.FailPrecondition, false, "The worktree is now on another branch than the one proposed. Ask for a new proposal. Nothing was changed.")
 	case landing.RefuseBranchMissing:
 		return failed(coreprop.FailPrecondition, false, "The branch no longer exists. Nothing was changed.")
 	case landing.RefuseWorktreeDirty:

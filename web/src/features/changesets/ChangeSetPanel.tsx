@@ -1,4 +1,5 @@
 import { describeError } from "../../api/client";
+import { SafeLink } from "../../components/SafeLink";
 import type { ChangeSetDTO } from "../../api/gen/api.gen";
 import { describeProposal, kindLabel } from "../proposals/core";
 import { isNotReady } from "./api";
@@ -171,9 +172,9 @@ function Loaded({ cs }: { cs: ChangeSetDTO }) {
                 <li key={`${l.repoId}-${String(i)}`}>
                   {nameOf(l.repoId)}:{" "}
                   {l.url ? (
-                    <a href={l.url} target="_blank" rel="noreferrer noopener" className="underline">
+                    <SafeLink href={l.url} className="underline">
                       {l.url}
-                    </a>
+                    </SafeLink>
                   ) : (
                     "created"
                   )}

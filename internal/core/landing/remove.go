@@ -3,6 +3,7 @@ package landing
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
@@ -20,12 +21,27 @@ type RemoveReq struct {
 	// Root is the worktree root; Name the worktree's folder name.
 	Root string
 	Name string
+	// StagedLeaf is the staged folder leaf the row remembers from an earlier
+	// attempt ("" on a first attempt). It is the only staged folder this
+	// removal may resume: no other folder is ever matched by name.
+	StagedLeaf string
+}
+
+// validStagedLeaf reports whether a leaf could have been made by StagingPath.
+func validStagedLeaf(leaf string) bool {
+	if leaf == "" || len(leaf) > 200 || leaf[0] == '.' {
+		return false
+	}
+	return strings.Trim(leaf, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.") == ""
 }
 
 // Validate checks the IDs and the non-empty strings.
 func (r RemoveReq) Validate() error {
 	if r.Path == "" || r.Root == "" || r.Name == "" {
 		return errors.New("a removal needs a path, a root and a name")
+	}
+	if r.StagedLeaf != "" && !validStagedLeaf(r.StagedLeaf) {
+		return errors.New("the remembered staged folder name is not valid")
 	}
 	return errors.Join(r.Worktree.Validate(), r.Repo.Validate())
 }

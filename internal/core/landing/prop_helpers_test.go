@@ -67,18 +67,22 @@ func (g *mgen) tick() time.Time {
 func (g *mgen) observed() Observed {
 	r := g.r
 	o := Observed{
-		Tracked:       pct(r, 90),
-		Clean:         pct(r, 90),
-		DetachedHead:  pct(r, 6),
-		CurrentBranch: "main",
-		Head:          hx(3),
-		BranchHead:    hx(1),
-		AlreadyMerged: pct(r, 8),
-		WorktreeClean: pct(r, 92),
-		Now:           g.tick(),
+		Tracked:        pct(r, 90),
+		Clean:          pct(r, 90),
+		DetachedHead:   pct(r, 6),
+		CurrentBranch:  "main",
+		Head:           hx(3),
+		BranchHead:     hx(1),
+		AlreadyMerged:  pct(r, 8),
+		WorktreeClean:  pct(r, 92),
+		WorktreeBranch: mergeReq.Branch,
+		Now:            g.tick(),
 	}
 	if pct(r, 8) {
 		o.CurrentBranch = "dev"
+	}
+	if pct(r, 4) {
+		o.WorktreeBranch = "ygg/other"
 	}
 	switch k := r.Intn(100); {
 	case k < 6:
@@ -298,7 +302,7 @@ func (g *rgen) observed() RemoveObserved {
 		Now:            g.tick(),
 	}
 	if o.StagedExists {
-		o.Staged = StagePath{Root: removeReq.Root, Leaf: "shop_api-ab12-" + pick(r, "st9", "old1")}
+		o.Staged = StagePath{Root: removeReq.Root, Leaf: "shop_api-ab12-" + pick(r, "st9", "old1", "2-old1", "2-st9")}
 		switch k := r.Intn(100); {
 		case k < 10:
 			o.Staged.Root = `E:\elsewhere`
@@ -330,6 +334,9 @@ func (g *rgen) expected(s RemoveState) RemoveInput {
 	switch s.(type) {
 	case RemoveIdle:
 		req := removeReq
+		if pct(r, 40) {
+			req.StagedLeaf = "shop_api-ab12-old1"
+		}
 		id := "st9"
 		if pct(r, 4) {
 			id = "a/b"

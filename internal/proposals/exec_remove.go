@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,7 +53,7 @@ func (s *Service) execRemove(ctx context.Context, p coreprop.Proposal, a corepro
 	if r.pathErr != nil {
 		reqPath = wt.Path // refused as outside the root below
 	}
-	r.req = landing.RemoveReq{Worktree: a.Worktree, Repo: p.Repo, Path: reqPath, Branch: wt.Branch, Root: r.root, Name: name}
+	r.req = landing.RemoveReq{Worktree: a.Worktree, Repo: p.Repo, Path: reqPath, Branch: wt.Branch, Root: r.root, Name: name, StagedLeaf: wt.StagedLeaf}
 	return r.run(ctx)
 }
 
@@ -65,25 +66,41 @@ type removeRun struct {
 
 	root, path       string
 	rootErr, pathErr error
-	moved            bool // the folder was renamed: finish the delete whatever happens
+	stageID          string
+	lstat            func(string) (fs.FileInfo, error) // os.Lstat; replaced in tests
 }
+
+func (r *removeRun) stat(p string) (fs.FileInfo, error) {
+	if r.lstat != nil {
+		return r.lstat(p)
+	}
+	return os.Lstat(p)
+}
+
+const notRecordedMsg = "The worktree folder was removed on disk, but Yggdrasil could not record it. Retry; nothing more will be deleted."
 
 func (r *removeRun) run(ctx context.Context) outcome {
 	var st landing.RemoveState = landing.RemoveIdle{}
-	var in landing.RemoveInput = landing.RemoveStart{Req: r.req, StageID: r.s.cfg.StageID(), Now: r.s.now()}
+	r.stageID = r.s.cfg.StageID()
+	var in landing.RemoveInput = landing.RemoveStart{Req: r.req, StageID: r.stageID, Now: r.s.now()}
 	for range maxLoopSteps {
 		var cmds []landing.RemoveCommand
 		st, cmds = landing.StepRemove(st, in)
 		in = nil
 		var batch []landing.RemoveCommand
-		flush := func() {
+		flush := func() error {
 			if len(batch) == 0 {
-				return
+				return nil
 			}
-			if err := r.persist(ctx, batch); err != nil {
-				r.s.cfg.Logger.Error("could not record a removal step", "proposal", r.p.ID, "error", r.s.redact(err.Error()))
+			err := r.persist(ctx, batch)
+			if err != nil {
+				err = r.persist(ctx, batch) // once more: the effect already ran
 			}
 			batch = nil
+			if err != nil {
+				r.s.cfg.Logger.Error("could not record a removal step", "proposal", r.p.ID, "error", r.s.redact(err.Error()))
+			}
+			return err
 		}
 		for _, c := range cmds {
 			switch v := c.(type) {
@@ -96,7 +113,9 @@ func (r *removeRun) run(ctx context.Context) outcome {
 			case landing.MoveToStaging:
 				in = r.move(v)
 			case landing.DeleteStaged:
-				flush() // MarkRemoving, if any, comes before the first deletion
+				if flush() != nil { // MarkRemoving, if any, comes before the first deletion
+					return failed(coreprop.FailExec, true, "%s", notRecordedMsg)
+				}
 				in = r.deleteStaged(v)
 			case landing.PruneWorktrees:
 				in = r.prune(ctx)
@@ -104,7 +123,9 @@ func (r *removeRun) run(ctx context.Context) outcome {
 				batch = append(batch, c)
 			}
 		}
-		flush()
+		if flush() != nil {
+			return failed(coreprop.FailExec, true, "%s", notRecordedMsg)
+		}
 		if out, ok := r.finished(st); ok {
 			return out
 		}
@@ -122,7 +143,9 @@ func (r *removeRun) persist(ctx context.Context, cmds []landing.RemoveCommand) e
 			var err error
 			switch v := c.(type) {
 			case landing.MarkRemoving:
-				err = r.s.cfg.Marks.MarkRemoving(ctx, tx, v.Worktree, v.Staged.Leaf)
+				if err = r.s.cfg.Marks.MarkRemoving(ctx, tx, v.Worktree, v.Staged.Leaf); err == nil {
+					err = r.s.landingAudit(ctx, tx, r.p, landing.WriteAudit{Action: "landing.remove", Outcome: "removing"})
+				}
 			case landing.MarkRemoved:
 				err = r.s.cfg.Marks.MarkRemoved(ctx, tx, v.Worktree)
 			case landing.WriteAudit:
@@ -169,10 +192,24 @@ func (r *removeRun) observe(ctx context.Context) (landing.RemoveObserved, error)
 		return o, fmt.Errorf("read the worktree row: %w", err)
 	}
 	o.RowStatus = cur.Status
-	_, statErr := os.Lstat(r.req.Path)
-	o.PathExists = statErr == nil
-	o.Staged, o.StagedExists = r.findStaged()
-	if o.PathExists {
+	// Only "does not exist" means absent; any other error leaves the fact
+	// unreadable, so the core refuses (RemoveUnreadable).
+	unreadable := false
+	switch _, statErr := r.stat(r.req.Path); {
+	case statErr == nil:
+		o.PathExists = true
+	case !errors.Is(statErr, fs.ErrNotExist):
+		o.PathExists, unreadable = true, true
+	}
+	var stagedErr error
+	o.Staged, o.StagedExists, stagedErr = r.findStaged()
+	if stagedErr != nil {
+		o.PathExists, unreadable = true, true
+		o.StagedExists = false
+	}
+	if unreadable {
+		o.StatusReadable = false
+	} else if o.PathExists {
 		st, err := s.cfg.Reader.Status(ctx, r.req.Path)
 		o.StatusReadable = err == nil
 		o.Clean = err == nil && st.Staged+st.Unstaged+st.Untracked+st.Conflicted == 0
@@ -193,24 +230,33 @@ func (r *removeRun) observe(ctx context.Context) (landing.RemoveObserved, error)
 	return o, nil
 }
 
-// findStaged looks in <root>/.removing for a folder an earlier run of this
-// worktree's removal made (name-<id>). The core checks it belongs.
-func (r *removeRun) findStaged() (landing.StagePath, bool) {
-	probe, err := landing.StagingPath(r.req.Root, r.req.Name, "x")
+// stagedLeaf is the one leaf this removal may own: the remembered one, else the
+// one planned from this worktree's name and this run's stage ID.
+func (r *removeRun) stagedLeaf() (landing.StagePath, error) {
+	if r.req.StagedLeaf != "" {
+		return landing.StagePath{Root: r.req.Root, Leaf: r.req.StagedLeaf}, nil
+	}
+	return landing.StagingPath(r.req.Root, r.req.Name, r.stageID)
+}
+
+// findStaged checks that exact staged folder; it never scans the staging
+// folder. Only "does not exist" means nothing is staged.
+func (r *removeRun) findStaged() (landing.StagePath, bool, error) {
+	if r.req.StagedLeaf == "" && r.stageID == "" {
+		return landing.StagePath{}, false, nil // nothing remembered, nothing planned
+	}
+	p, err := r.stagedLeaf()
 	if err != nil {
-		return landing.StagePath{}, false
+		return landing.StagePath{}, false, err
 	}
-	prefix := strings.TrimSuffix(probe.Leaf, "x")
-	entries, err := os.ReadDir(filepath.Join(r.req.Root, landing.StagingDir))
-	if err != nil {
-		return landing.StagePath{}, false
+	fi, err := r.stat(stagedDir(p))
+	switch {
+	case err == nil && fi.IsDir():
+		return p, true, nil
+	case err == nil || errors.Is(err, fs.ErrNotExist):
+		return landing.StagePath{}, false, nil
 	}
-	for _, e := range entries {
-		if e.IsDir() && strings.HasPrefix(e.Name(), prefix) {
-			return landing.StagePath{Root: r.req.Root, Leaf: e.Name()}, true
-		}
-	}
-	return landing.StagePath{}, false
+	return landing.StagePath{}, false, err
 }
 
 func stagedDir(p landing.StagePath) string {
@@ -226,7 +272,6 @@ func (r *removeRun) move(c landing.MoveToStaging) landing.RemoveInput {
 	}
 	err := pl.MoveDir(c.Req.Path, stagedDir(c.To))
 	if err == nil {
-		r.moved = true
 		return landing.Moved{Now: r.s.now()}
 	}
 	class := pl.ClassifyLock(err)
@@ -321,10 +366,10 @@ func (s *Service) reconcileRemove(ctx context.Context, p coreprop.Proposal, a co
 	if name == "" {
 		name = filepath.Base(wt.Path)
 	}
-	r := &removeRun{req: landing.RemoveReq{Name: name, Root: root}}
-	_, staged := r.findStaged()
+	r := &removeRun{req: landing.RemoveReq{Name: name, Root: root, StagedLeaf: wt.StagedLeaf}}
+	_, staged, serr := r.findStaged()
 	_, statErr := os.Lstat(wt.Path)
-	if statErr != nil && errors.Is(statErr, os.ErrNotExist) && !staged && (wt.Status == core.WorktreeRemoving || wt.Status == core.WorktreeRemoved) {
+	if serr == nil && statErr != nil && errors.Is(statErr, os.ErrNotExist) && !staged && (wt.Status == core.WorktreeRemoving || wt.Status == core.WorktreeRemoved) {
 		return coreprop.ReconcileDone, coreprop.Result{Note: "The worktree folder was removed. The branch was kept."}
 	}
 	return coreprop.ReconcileNotDone, coreprop.Result{}

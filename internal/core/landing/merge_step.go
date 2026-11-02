@@ -75,6 +75,8 @@ func mergeChecked(st MergeChecking, o Observed) (MergeState, []MergeCommand) {
 	switch {
 	case !o.Tracked:
 		return refuse(RefuseUntrackedRepo)
+	case o.WorktreeBranch != req.Branch:
+		return refuse(RefuseWorktreeBranch)
 	case o.AlreadyMerged:
 		return AlreadyMerged{Head: o.Head}, []MergeCommand{MarkWorktreeMerged{Worktree: req.Worktree}, mergeAudit("already_merged")}
 	case st.Mode == ModeRecovering && o.MergeInProgress && o.MergeHead != "" &&
