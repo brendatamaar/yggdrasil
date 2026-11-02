@@ -215,3 +215,8 @@ Plan drafted 2026-11-01. **Approved 2026-11-01: decisions 1–9 accepted as reco
 - AP1 calls: Get, ForTask, Preflight, SetOrder, ConfirmRun (returns at once), StopRun, Close, AddNote/ListNotes/EditNote/DeleteNote/SendNotes; strict body parsers `Decode*`.
 - PX1: `exec_mr` reads executed MR members' URLs from the same change set; uses RenderLinks + ValidateLinkMarker.
 - Gaps to cover in T2: no real `proposals.Service` run of `ProposalsAPIContract` (only stub adapter); `ToolchainDeps`/`EdgesFromModules` untested; `changeSetDiffs` never run against a real worktree. `OpenRepo` uses `store.GetRepo` (check it excludes untracked repos, invariant 6).
+
+### FE1 merged (VF-02, VF-03, RV-01, PL-03)
+- `web/src/features/review` + `routes/tasks/TaskPage.tsx` (Transcript/Review tabs). Vitest: 386 pass (one load-induced failure on first run, green on rerun).
+- **Backend gaps for AP1:** (1) no endpoint for a task worktree's diff (`loadWorktreeDiff` returns "not ready"): needs per-repo-per-task multi-file unified diff (`text`, `truncated`, `binary`); (2) note `diffHash` must match the server's `git.DiffAgainstBase` per-file hash: publish per-file hashes with the diff; (3) `VerificationDTO.message` must carry the failing step's log tail (redacted); `canSendFailure` flag drives the button.
+- No screenshots yet (needs diff endpoint).
