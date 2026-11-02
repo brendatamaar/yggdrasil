@@ -1,5 +1,5 @@
 import { createMemoryHistory } from "@tanstack/react-router";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { App } from "../../App";
 import { WSClient } from "../../api/ws";
@@ -35,6 +35,17 @@ function renderTask(status: string, reason?: string) {
   const router = createAppRouter(createMemoryHistory({ initialEntries: ["/tasks/t1"] }));
   render(<App router={router} socket={new WSClient({ url: "ws://x/ws", socketCtor: FakeSocket, baseDelayMs: 1 })} />);
 }
+
+describe("task page: Review tab", () => {
+  it("opens the Review tab with the arrow key and shows calm 'not available yet' states", async () => {
+    renderTask("review");
+    const transcript = await screen.findByRole("tab", { name: "Transcript" });
+    fireEvent.keyDown(transcript, { key: "ArrowRight" });
+    expect(screen.getByRole("tab", { name: "Review" }).getAttribute("aria-selected")).toBe("true");
+    expect(await screen.findByRole("button", { name: "Verify again" })).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: "Next message" })).toBeNull();
+  });
+});
 
 describe("task page: next message and Needs you", () => {
   it("mounts the message composer when the task is waiting for the next message", async () => {

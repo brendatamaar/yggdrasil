@@ -1,10 +1,12 @@
 import type { Capabilities } from "../../api/gen/agents.gen";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { describeError } from "../../api/client";
 import { cancelTask, taskKeys, useTask } from "../../api/queries";
 import { useBoard } from "../../features/board";
 import { MessageComposer, type Mode } from "../../features/composer";
 import { ProposalsPanel } from "../../features/proposals";
+import { ReviewPanel } from "../../features/review";
 import { NeedsYouNotice, TrustPanel } from "../../features/trust";
 import { StatusLine, Transcript, UsageSummary, taskUsage, useTranscript } from "../../features/transcript";
 import { statusLabel } from "../../stores/notifications";
@@ -13,6 +15,12 @@ import { statusLabel } from "../../stores/notifications";
 const capabilities: Capabilities | undefined = undefined;
 const idleStatuses = new Set(["needs_you", "review", "done"]);
 const cancellable = new Set(["queued", "running"]);
+
+type Tab = "transcript" | "review";
+const tabs: { id: Tab; label: string }[] = [
+  { id: "transcript", label: "Transcript" },
+  { id: "review", label: "Review" },
+];
 
 /** One task: its status, its totals and the live transcript. */
 export function TaskPage({ taskId }: { taskId: string }) {
@@ -24,6 +32,7 @@ export function TaskPage({ taskId }: { taskId: string }) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: taskKeys.all }),
   });
 
+  const [tab, setTab] = useState<Tab>("transcript");
   const board = useBoard();
   const reason = board.data?.cards.find((c) => c.taskId === taskId)?.needsYouReason;
   const status = task.data?.status;
@@ -74,18 +83,52 @@ export function TaskPage({ taskId }: { taskId: string }) {
           {describeError(cancel.error)}
         </p>
       ) : null}
-      {transcript.loaded ? (
-        <Transcript events={transcript.events} capabilities={capabilities} />
+      <div role="tablist" aria-label="Task views" className="flex gap-1 border-b border-line">
+        {tabs.map((t, i) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            id={`tab-${t.id}`}
+            aria-selected={tab === t.id}
+            aria-controls={`panel-${t.id}`}
+            tabIndex={tab === t.id ? 0 : -1}
+            className={`px-3 py-1 text-sm ${tab === t.id ? "border-b-2 border-accent font-medium" : "text-muted"}`}
+            onClick={() => {
+              setTab(t.id);
+            }}
+            onKeyDown={(e) => {
+              if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+              const next = tabs[(i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
+              if (!next) return;
+              setTab(next.id);
+              document.getElementById(`tab-${next.id}`)?.focus();
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {tab === "review" ? (
+        <div role="tabpanel" id="panel-review" aria-labelledby="tab-review">
+          {task.data ? <ReviewPanel taskId={taskId} repoIds={task.data.repoIds} /> : null}
+        </div>
       ) : (
-        <p className="text-sm text-muted">Loading the transcript…</p>
+        <div role="tabpanel" id="panel-transcript" aria-labelledby="tab-transcript" className="space-y-4">
+          {transcript.loaded ? (
+            <Transcript events={transcript.events} capabilities={capabilities} />
+          ) : (
+            <p className="text-sm text-muted">Loading the transcript…</p>
+          )}
+          {task.data && idleStatuses.has(task.data.status) ? (
+            <MessageComposer
+              taskId={taskId}
+              currentMode={task.data.mode as Mode}
+              writeMode={task.data.mode === "ask" ? undefined : (task.data.mode as Mode)}
+            />
+          ) : null}
+        </div>
       )}
-      {task.data && idleStatuses.has(task.data.status) ? (
-        <MessageComposer
-          taskId={taskId}
-          currentMode={task.data.mode as Mode}
-          writeMode={task.data.mode === "ask" ? undefined : (task.data.mode as Mode)}
-        />
-      ) : null}
     </section>
   );
 }
