@@ -465,7 +465,9 @@ type fakeVBackend struct {
 	err  error
 }
 
-func (f *fakeVBackend) List(context.Context, core.TaskID) ([]vsvc.Record, error) { return f.recs, f.err }
+func (f *fakeVBackend) List(context.Context, core.TaskID) ([]vsvc.Record, error) {
+	return f.recs, f.err
+}
 func (f *fakeVBackend) Retry(context.Context, core.TaskID) ([]vsvc.Record, error) {
 	return f.recs, f.err
 }
