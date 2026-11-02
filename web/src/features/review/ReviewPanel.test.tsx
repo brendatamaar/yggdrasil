@@ -1,3 +1,4 @@
+import type { WorktreeDiffFileDTO } from "../../api/gen/api.gen";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
@@ -33,6 +34,7 @@ interface Setup {
   verifications?: unknown[];
   notes?: unknown[];
   diff?: string;
+  files?: WorktreeDiffFileDTO[];
   extra?: Handler;
 }
 
@@ -46,7 +48,7 @@ function setup(o: Setup = {}) {
   });
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <ReviewPanel taskId="t1" repoIds={["r1"]} loadDiff={() => Promise.resolve({ text: o.diff ?? mixedDiff, truncated: false, binary: false })} />
+      <ReviewPanel taskId="t1" repoIds={["r1"]} loadDiff={() => Promise.resolve({ text: o.diff ?? mixedDiff, truncated: false, binary: false, files: o.files ?? [] })} />
     </QueryClientProvider>,
   );
   return api;
@@ -181,5 +183,56 @@ describe("not ready", () => {
     expect(await screen.findByText("Notes aren't available yet.")).toBeTruthy();
     expect(await screen.findByText("Changes for this repo aren't available yet.")).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+const fileDto = (over: Partial<WorktreeDiffFileDTO> = {}): WorktreeDiffFileDTO => ({
+  path: "src/a.ts",
+  status: "M",
+  binary: false,
+  added: 1,
+  deleted: 1,
+  eolOnly: false,
+  hash: "a".repeat(64),
+  patchTruncated: false,
+  ...over,
+});
+
+describe("server diff", () => {
+  it("anchors a note on the server's per-file hash", async () => {
+    const api = setup({
+      files: [fileDto()],
+      extra: (c) => (c.method === "POST" && c.path === "/api/tasks/t1/notes" ? { body: note() } : undefined),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Add note on line 10 of src/a.ts" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Note" }), { target: { value: "x" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save note" }));
+    await waitFor(() => {
+      const post = api.calls.find((c) => c.method === "POST" && c.path === "/api/tasks/t1/notes");
+      expect((post?.body as { diffHash: string }).diffHash).toBe("a".repeat(64));
+    });
+  });
+
+  it("does not allow notes on a cut patch, and lists binary files as not anchorable", async () => {
+    setup({ files: [fileDto({ patchTruncated: true }), fileDto({ path: "logo.png", binary: true })] });
+    const add = await screen.findByRole<HTMLButtonElement>("button", { name: "Add note on line 10 of src/a.ts" });
+    expect(add.disabled).toBe(true);
+    expect(screen.getByText(/patch for this file is cut short/)).toBeTruthy();
+    expect(screen.getByText(/binary file/).textContent).toContain("Notes can't be added on it");
+  });
+
+  it("calls the worktree diff endpoint", async () => {
+    const { loadWorktreeDiff } = await import("./api");
+    const api = stubApi((c) => (c.path === "/api/tasks/t1/repos/r1/diff" ? { body: { text: "", truncated: false, binary: false, files: [] } } : undefined));
+    await loadWorktreeDiff("t1", "r1");
+    expect(api.calls[0]?.path).toBe("/api/tasks/t1/repos/r1/diff");
+  });
+});
+
+describe("cancel cause", () => {
+  it("says the repo is no longer trusted and keeps Verify again", async () => {
+    setup({ verifications: [verif({ state: "cancelled", cancelCause: "not_trusted", reason: "x" })] });
+    expect(await screen.findByText("Stopped: this repo is no longer trusted")).toBeTruthy();
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Verify again" }).disabled).toBe(false);
   });
 });

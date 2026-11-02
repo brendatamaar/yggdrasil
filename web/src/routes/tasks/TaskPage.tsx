@@ -5,6 +5,7 @@ import { describeError } from "../../api/client";
 import { cancelTask, taskKeys, useTask } from "../../api/queries";
 import { useBoard } from "../../features/board";
 import { MessageComposer, type Mode } from "../../features/composer";
+import { ChangeSetPanel } from "../../features/changesets";
 import { ProposalsPanel } from "../../features/proposals";
 import { ReviewPanel } from "../../features/review";
 import { NeedsYouNotice, TrustPanel } from "../../features/trust";
@@ -16,10 +17,11 @@ const capabilities: Capabilities | undefined = undefined;
 const idleStatuses = new Set(["needs_you", "review", "done"]);
 const cancellable = new Set(["queued", "running"]);
 
-type Tab = "transcript" | "review";
+type Tab = "transcript" | "review" | "changeset";
 const tabs: { id: Tab; label: string }[] = [
   { id: "transcript", label: "Transcript" },
   { id: "review", label: "Review" },
+  { id: "changeset", label: "Change set" },
 ];
 
 /** One task: its status, its totals and the live transcript. */
@@ -109,7 +111,11 @@ export function TaskPage({ taskId }: { taskId: string }) {
           </button>
         ))}
       </div>
-      {tab === "review" ? (
+      {tab === "changeset" ? (
+        <div role="tabpanel" id="panel-changeset" aria-labelledby="tab-changeset">
+          <ChangeSetPanel taskId={taskId} />
+        </div>
+      ) : tab === "review" ? (
         <div role="tabpanel" id="panel-review" aria-labelledby="tab-review">
           {task.data ? <ReviewPanel taskId={taskId} repoIds={task.data.repoIds} /> : null}
         </div>

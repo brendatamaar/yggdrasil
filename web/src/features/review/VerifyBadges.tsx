@@ -1,25 +1,12 @@
 import type { VerificationDTO } from "../../api/gen/api.gen";
 import { describeError } from "../../api/client";
-import { badgeFor, isRunning } from "./core";
+import { VerifyStateBadge } from "../../components/VerifyStateBadge";
+import { isRunning } from "./core";
 import { useReviewMutations } from "./hooks";
-
-const tone: Record<string, string> = {
-  ok: "border-ok text-ok",
-  danger: "border-danger text-danger",
-  warn: "border-warn text-warn",
-  muted: "border-line text-muted",
-  busy: "border-accent text-accent",
-};
 
 /** One repo's verification state: a badge with its attempt number. */
 export function VerifyBadge({ v }: { v: VerificationDTO }) {
-  const b = badgeFor(v.state);
-  return (
-    <span className={`rounded-full border px-2 py-0.5 text-xs ${tone[b.tone] ?? ""}`} data-state={v.state}>
-      {b.label}
-      {v.attempt && v.attempt > 0 ? ` · attempt ${String(v.attempt)}` : ""}
-    </span>
-  );
+  return <VerifyStateBadge state={v.state} suffix={v.attempt && v.attempt > 0 ? ` · attempt ${String(v.attempt)}` : ""} />;
 }
 
 function Row({ v, taskId }: { v: VerificationDTO; taskId: string }) {
@@ -31,7 +18,11 @@ function Row({ v, taskId }: { v: VerificationDTO; taskId: string }) {
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <span className="font-medium">{name}</span>
         <VerifyBadge v={v} />
-        {v.reason ? <span className="text-muted">{v.reason}</span> : null}
+        {v.state === "cancelled" && v.cancelCause === "not_trusted" ? (
+          <span className="text-warn">Stopped: this repo is no longer trusted</span>
+        ) : v.reason ? (
+          <span className="text-muted">{v.reason}</span>
+        ) : null}
         {isRunning(v) ? (
           <button
             type="button"

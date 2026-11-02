@@ -108,3 +108,34 @@ describe("ProposalsPanel", () => {
     expect(document.querySelector("img")).toBeNull();
   });
 });
+
+describe("landing proposals", () => {
+  it("titles a merge_local proposal and shows its failure text with the file list", async () => {
+    setup(() => [
+      proposal({
+        kind: "merge_local",
+        status: "failed",
+        failKind: "exec",
+        message: "The merge would conflict in:\nsrc/cart.ts\nsrc/total.ts",
+        retryable: false,
+        summary: "",
+      }),
+    ]);
+    expect(await screen.findByText("Merge into the main checkout")).toBeTruthy();
+    expect(screen.getByText("Not merged")).toBeTruthy();
+    expect(screen.getByText(/src\/cart\.ts/).textContent).toContain("src/total.ts");
+  });
+
+  it("shows the lock holder for a remove_worktree and offers Retry", async () => {
+    const api = setup(
+      () => [proposal({ kind: "remove_worktree", status: "failed", failKind: "exec", retryable: true, message: "In use by: terminal (pid 4242)." })],
+      (c) => (c.method === "POST" && c.path === "/api/proposals/p1/retry" ? { body: proposal({ kind: "remove_worktree", status: "confirmed" }) } : undefined),
+    );
+    expect(await screen.findByText("Remove worktree")).toBeTruthy();
+    expect(screen.getByText(/In use by: terminal \(pid 4242\)\./)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => {
+      expect(api.calls).toContainEqual(expect.objectContaining({ method: "POST", path: "/api/proposals/p1/retry" }));
+    });
+  });
+});
