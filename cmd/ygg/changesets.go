@@ -69,9 +69,27 @@ func (m noteMessenger) SendMessage(ctx context.Context, task core.TaskID, text s
 	}
 	res, err := m.svc.Message(ctx, tasks.MessageRequest{TaskID: task, Prompt: text, Mode: string(st.Task.Mode)})
 	if err != nil {
-		return "", err
+		return "", noteRefusal(err)
 	}
 	return string(res.Turn), nil
+}
+
+// noteRefusal wraps the refusals that mean "the agent did not take it because
+// it is busy or the queue is full", which the change-set service shows as
+// such. Any other refusal keeps its own plain-language message; an error
+// that is not a refusal stays an unknown outcome.
+func noteRefusal(err error) error {
+	var rej *tasks.RejectedError
+	if !errors.As(err, &rej) {
+		return err
+	}
+	switch rej.Reason {
+	case "task_busy":
+		return fmt.Errorf("%w: %w", changesets.ErrAgentBusy, err)
+	case "queue_full":
+		return fmt.Errorf("%w: %w", changesets.ErrQueueFull, err)
+	}
+	return err
 }
 
 // changeSetDiffs gives the per-file diff hashes of a task's active worktree in

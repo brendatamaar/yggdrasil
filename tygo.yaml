@@ -55,6 +55,8 @@ packages:
       - phase4.go
       - ids.go
       - worktree_diff.go
+      - changesets_adapter.go
+      - landing_adapter.go
     frontmatter: |
       import type * as agents from "./agents.gen";
       import type * as core from "./core.gen";
