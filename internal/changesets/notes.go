@@ -174,7 +174,7 @@ func (s *Service) auditNotes(ctx context.Context, tx Tx, actor string, n review.
 			return fmt.Errorf("audit detail: %w", err)
 		}
 		e := core.AuditEntry{Actor: actor, Action: w.Action, Subject: "note:" + string(w.Note), Detail: detail}
-		if err := tx.AppendAudit(ctx, e, now); err != nil {
+		if err := tx.WriteAudit(ctx, e, now); err != nil {
 			return err
 		}
 	}

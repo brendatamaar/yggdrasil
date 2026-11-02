@@ -154,10 +154,7 @@ func ParseRun(raw json.RawMessage) (last cs.RunResult, run *cs.Confirming, err e
 // a member with a bad ID, kind, status or hash, a run in a set that is not
 // open. Links hold the MR URL of each executed merge_request member only.
 func StateFromRows(row db.ChangeSetRow, taskRepos []core.RepoID, members []db.ChangeSetMemberRow) (cs.State, error) {
-	var repos []core.RepoID
-	for _, r := range taskRepos {
-		repos = append(repos, r)
-	}
+	repos := slices.Clone(taskRepos)
 	for _, m := range members {
 		repos = append(repos, m.Repo)
 	}

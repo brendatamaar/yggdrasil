@@ -232,7 +232,7 @@ func (t *fakeTx) DeleteNote(_ context.Context, id string) error {
 	return nil
 }
 
-func (t *fakeTx) AppendAudit(_ context.Context, e core.AuditEntry, now time.Time) error {
+func (t *fakeTx) WriteAudit(_ context.Context, e core.AuditEntry, now time.Time) error {
 	t.w.nextAudit++
 	p, err := audit.Prepare(e, safety.NewRedactor(), core.AuditID(fmt.Sprintf("aud_%04d", t.w.nextAudit)), now)
 	if err != nil {

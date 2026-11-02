@@ -96,9 +96,9 @@ type Tx interface {
 	// DeleteNote removes an open or outdated note; any other is db.ErrNotFound.
 	DeleteNote(ctx context.Context, id string) error
 
-	// AppendAudit prepares the entry (checks it, redacts it, gives it an ID and
+	// WriteAudit prepares the entry (checks it, redacts it, gives it an ID and
 	// the time) and writes it. Actor, Action, Subject and Detail are used.
-	AppendAudit(ctx context.Context, e core.AuditEntry, now time.Time) error
+	WriteAudit(ctx context.Context, e core.AuditEntry, now time.Time) error
 }
 
 // Store is what the service needs from storage. *SQLiteStore implements it

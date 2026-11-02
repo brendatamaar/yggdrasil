@@ -95,6 +95,9 @@ func New(d Deps) (*Service, error) {
 // reconciles change sets and notes until ctx is done. Both loops are owned by
 // ctx through an errgroup.
 func (s *Service) Run(ctx context.Context) error {
+	if ctx.Err() != nil {
+		return nil //nolint:nilerr // shutting down is not an error
+	}
 	if err := s.RecoverNotes(ctx, true); err != nil && ctx.Err() == nil {
 		s.d.Log.Warn("recover review notes failed", "err", err)
 	}
@@ -250,7 +253,7 @@ func (s *Service) commitSet(ctx context.Context, rec setRec, next cs.State, cmds
 				return fmt.Errorf("audit detail: %w", err)
 			}
 			e := core.AuditEntry{Actor: actor, Action: w.Action, Subject: "changeset:" + string(w.Set), Detail: detail}
-			if err := tx.AppendAudit(ctx, e, now); err != nil {
+			if err := tx.WriteAudit(ctx, e, now); err != nil {
 				return err
 			}
 		}

@@ -63,7 +63,7 @@ func (t sqliteTx) DeleteNote(ctx context.Context, id string) error {
 	return t.tx.DeleteNoteRow(ctx, id)
 }
 
-func (t sqliteTx) AppendAudit(ctx context.Context, e core.AuditEntry, now time.Time) error {
+func (t sqliteTx) WriteAudit(ctx context.Context, e core.AuditEntry, now time.Time) error {
 	p, err := audit.Prepare(e, t.red, core.AuditID(t.ids("aud")), now)
 	if err != nil {
 		return err

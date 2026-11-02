@@ -44,7 +44,7 @@ func ProposalsAPIContract(t *testing.T, mk func(t *testing.T) APIHarness) {
 	t.Run("a wrong hash is refused and nothing changes", func(t *testing.T) {
 		h := mk(t)
 		id, _ := h.NewPending(t)
-		refused(t, h.API.Confirm(ctx, id, Hash(999), "user:test"))
+		_ = refused(t, h.API.Confirm(ctx, id, Hash(999), "user:test"))
 		if got := h.Status(t, id); got != core.ProposalPending {
 			t.Fatalf("status after a refusal: %s", got)
 		}
@@ -71,7 +71,7 @@ func ProposalsAPIContract(t *testing.T, mk func(t *testing.T) APIHarness) {
 	})
 	t.Run("an unknown proposal is refused", func(t *testing.T) {
 		h := mk(t)
-		refused(t, h.API.Confirm(ctx, "prp_does_not_exist", Hash(1), "user:test"))
+		_ = refused(t, h.API.Confirm(ctx, "prp_does_not_exist", Hash(1), "user:test"))
 	})
 	t.Run("a confirmed proposal reaches a terminal status", func(t *testing.T) {
 		h := mk(t)
@@ -97,7 +97,6 @@ type StoreHarness struct {
 	OtherSet  core.ChangeSetID
 	Members   [2]core.ProposalID
 	Other     core.ProposalID
-	// NoteRepo is a repo of Task (notes need an existing task and repo).
 	// Audit returns the audit entries of a subject.
 	Audit func(subject string) []core.AuditEntry
 }
@@ -204,7 +203,7 @@ func ChangeSetStoreContract(t *testing.T, mk func(t *testing.T) StoreHarness) {
 			if _, err := tx.SaveSet(ctx, row, 0); err != nil {
 				return err
 			}
-			if err := tx.AppendAudit(ctx, entry, time.Now()); err != nil {
+			if err := tx.WriteAudit(ctx, entry, time.Now()); err != nil {
 				return err
 			}
 			return boom
@@ -220,7 +219,7 @@ func ChangeSetStoreContract(t *testing.T, mk func(t *testing.T) StoreHarness) {
 			if _, err := tx.SaveSet(ctx, row, 0); err != nil {
 				return err
 			}
-			return tx.AppendAudit(ctx, entry, time.Now())
+			return tx.WriteAudit(ctx, entry, time.Now())
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -233,7 +232,7 @@ func ChangeSetStoreContract(t *testing.T, mk func(t *testing.T) StoreHarness) {
 	t.Run("an audit entry with no subject is refused", func(t *testing.T) {
 		h := mk(t)
 		err := h.Store.Commit(ctx, func(tx changesets.Tx) error {
-			return tx.AppendAudit(ctx, core.AuditEntry{Actor: "user", Action: "x"}, time.Now())
+			return tx.WriteAudit(ctx, core.AuditEntry{Actor: "user", Action: "x"}, time.Now())
 		})
 		if err == nil {
 			t.Fatal("accepted")

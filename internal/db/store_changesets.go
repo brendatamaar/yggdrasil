@@ -249,8 +249,8 @@ func (s *Store) ListNoteRowsByState(ctx context.Context, state string) ([]NoteRo
 	return noteRowsFrom(rows)
 }
 
-// CountOpenNotes counts the open and outdated notes of a task.
-func (s *Store) CountOpenNotes(ctx context.Context, task core.TaskID) (int, error) {
+// GetOpenNoteCount counts the open and outdated notes of a task.
+func (s *Store) GetOpenNoteCount(ctx context.Context, task core.TaskID) (int, error) {
 	n, err := s.db.reader().CountOpenReviewNotesByTask(ctx, string(task))
 	if err != nil {
 		return 0, fmt.Errorf("count notes of %s: %w", task, err)
