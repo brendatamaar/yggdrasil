@@ -101,11 +101,14 @@ type Deps struct {
 }
 
 const (
-	systemActor     = "system"
-	userActor       = "user"
-	enqueueTries    = 3
-	maxRunAttempts  = 4
-	logReadLimit    = 10000
+	systemActor    = "system"
+	userActor      = "user"
+	enqueueTries   = 3
+	maxRunAttempts = 4
+	logReadLimit   = 10000
+	// logCutMargin is longer than any secret: dropped from a cut log that has
+	// no line break.
+	logCutMargin    = 1024
 	failureLogWatch = 3
 	// buildIDPrefix starts the ID of every build verification queues, so the
 	// sweep for orphaned builds knows which builds are its own.

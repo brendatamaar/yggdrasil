@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/brendatamaar/yggdrasil/internal/apperr"
 	"github.com/brendatamaar/yggdrasil/internal/audit"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	corebuilds "github.com/brendatamaar/yggdrasil/internal/core/builds"
 	cv "github.com/brendatamaar/yggdrasil/internal/core/verify"
+	"github.com/brendatamaar/yggdrasil/internal/db"
 )
 
 // readInputs reads the facts and the plan for a record at the boundary. It
@@ -164,6 +166,11 @@ func (s *Service) Cancel(ctx context.Context, id cv.VerificationID) (Record, err
 // log, and hands it to the task as a new message. It is not an input of Step:
 // the tasks service owns the new turn and its audit. A busy task is the
 // messenger's refusal, passed on unchanged.
+//
+// A failed attempt is sent once: the send is recorded in the verification's
+// row, together with its audit entry, so a second call (a double click, two
+// requests at once) is a conflict and sends nothing. A new attempt is a new
+// state and can be sent again.
 func (s *Service) SendFailure(ctx context.Context, id cv.VerificationID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -175,6 +182,9 @@ func (s *Service) SendFailure(ctx context.Context, id cv.VerificationID) error {
 	if !ok {
 		return apperr.New(apperr.Conflict, "Only a failed check can be sent to the agent.", errors.New("verification has not failed"))
 	}
+	if rec.Sent {
+		return apperr.New(apperr.Conflict, "This failure was already sent to the agent. Verify again to send a new one.", errors.New("failure already sent for this attempt"))
+	}
 	report := cv.FailureReport{
 		Repo: rec.Repo, Stage: failed.Stage, Step: fmt.Sprintf("step %d", failed.Step+1), Reason: failed.Reason,
 	}
@@ -184,7 +194,8 @@ func (s *Service) SendFailure(ctx context.Context, id cv.VerificationID) error {
 		}
 	}
 	if _, isExit := failed.Reason.(cv.ExitCode); isExit && s.d.Logs != nil {
-		report.LogTail = TailLog(s.readLogTail(ctx, failed.Build, failed.Step), cv.MaxFailureLogBytes, s.d.Redactor.Redact)
+		raw, cut := s.readLogTail(ctx, failed.Build, failed.Step)
+		report.LogTail = s.redactedTail(raw, cut)
 	}
 	text, err := cv.ComposeFailure(report)
 	if err != nil {
@@ -193,35 +204,69 @@ func (s *Service) SendFailure(ctx context.Context, id cv.VerificationID) error {
 	if err := s.d.Messenger.SendMessage(ctx, rec.Task, text); err != nil {
 		return err
 	}
-	// The new turn is audited by tasks; this entry ties it to the verification.
-	return s.auditSent(ctx, rec, failed)
+	// The new turn is audited by tasks; this entry ties it to the verification
+	// and marks the attempt as sent. The message is already sent, so a failure
+	// here is logged loudly, not reported as a failed send.
+	if err := s.markSent(ctx, rec, failed); err != nil {
+		s.d.Log.Error("could not record that a failure was sent; it may be sent again", "verification", rec.ID, "err", err)
+	}
+	return nil
 }
 
-func (s *Service) auditSent(ctx context.Context, rec Record, failed cv.Failed) error {
+// markSent stores "sent" on the row and the audit entry in one transaction.
+func (s *Service) markSent(ctx context.Context, rec Record, failed cv.Failed) error {
 	now := s.now()
 	detail, err := json.Marshal(map[string]string{"task": string(rec.Task), "repo": string(rec.Repo), "turn": string(failed.Turn), "outcome": string(failed.Stage)})
 	if err != nil {
 		return fmt.Errorf("audit detail: %w", err)
 	}
 	e := core.AuditEntry{Actor: userActor, Action: "verify.send_failure", Subject: "verification:" + string(rec.ID), Detail: detail}
-	err = s.d.Store.Commit(ctx, func(tx Tx) error {
+	row, err := rowFromVerification(rec.Verification, rec.Note, true)
+	if err != nil {
+		return err
+	}
+	return s.d.Store.Commit(ctx, func(tx Tx) error {
+		cur, lerr := tx.LoadByTaskRepo(ctx, rec.Task, rec.Repo)
+		if lerr != nil {
+			return lerr
+		}
+		if cur.Version != rec.Version {
+			return fmt.Errorf("verification %s moved to version %d: %w", rec.ID, cur.Version, db.ErrConflict)
+		}
 		pe, perr := audit.Prepare(e, s.d.Redactor, core.AuditID(s.d.IDs("aud")), now)
 		if perr != nil {
 			return perr
 		}
+		if _, serr := tx.Save(ctx, row, rec.Version, now); serr != nil {
+			return serr
+		}
 		return tx.AppendAudit(ctx, pe)
 	})
-	if err != nil {
-		// The message is already sent; do not report the send as failed.
-		s.d.Log.Error("could not audit a sent failure", "verification", rec.ID, "err", err)
-	}
-	return nil
 }
 
-// readLogTail reads a step's log, keeping only the last bytes.
-func (s *Service) readLogTail(ctx context.Context, build core.BuildID, step int) []byte {
+// redactedTail redacts the whole bounded read first, then drops the start of a
+// cut log, then keeps the last MaxFailureLogBytes. The start of a cut log may
+// hold the end of a secret whose beginning was dropped, which the redactor
+// cannot recognize. It lies before any match, so it is at the same place in
+// the redacted text: the partial first line is dropped (or, in a log without a
+// line break, the first logCutMargin bytes).
+func (s *Service) redactedTail(raw []byte, cut bool) string {
+	text := s.d.Redactor.Redact(strings.ToValidUTF8(string(raw), "�"))
+	if cut {
+		head := text[:min(len(text), logCutMargin*8)]
+		if nl := strings.IndexByte(head, '\n'); nl >= 0 {
+			text = text[nl+1:]
+		} else {
+			text = text[min(len(text), logCutMargin):]
+		}
+	}
+	return TailLog([]byte(text), cv.MaxFailureLogBytes, nil)
+}
+
+// readLogTail reads a step's log, keeping only the last 2*MaxFailureLogBytes.
+// cut says that the log was longer than that.
+func (s *Service) readLogTail(ctx context.Context, build core.BuildID, step int) (buf []byte, cut bool) {
 	keep := 2 * cv.MaxFailureLogBytes
-	var buf []byte
 	var after int64
 	for i := 0; i < logReadLimit; i++ {
 		chunk, next, err := s.d.Logs.StepLog(ctx, build, step, after)
@@ -231,11 +276,12 @@ func (s *Service) readLogTail(ctx context.Context, build core.BuildID, step int)
 		buf = append(buf, chunk...)
 		if len(buf) > keep {
 			buf = append([]byte(nil), buf[len(buf)-keep:]...)
+			cut = true
 		}
 		if len(chunk) == 0 || next <= after {
 			break
 		}
 		after = next
 	}
-	return buf
+	return buf, cut
 }
