@@ -242,9 +242,12 @@ func (r *removeRun) stagedLeaf() (landing.StagePath, error) {
 // findStaged checks that exact staged folder; it never scans the staging
 // folder. Only "does not exist" means nothing is staged.
 func (r *removeRun) findStaged() (landing.StagePath, bool, error) {
+	if r.req.StagedLeaf == "" && r.stageID == "" {
+		return landing.StagePath{}, false, nil // nothing remembered, nothing planned
+	}
 	p, err := r.stagedLeaf()
 	if err != nil {
-		return landing.StagePath{}, false, nil
+		return landing.StagePath{}, false, err
 	}
 	fi, err := r.stat(stagedDir(p))
 	switch {
