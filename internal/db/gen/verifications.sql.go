@@ -282,6 +282,47 @@ func (q *Queries) ListLiveVerifications(ctx context.Context) ([]Verification, er
 	return items, nil
 }
 
+const listReviewTurns = `-- name: ListReviewTurns :many
+SELECT t.id AS task_id, tt.id AS turn_id, tt.seq AS turn_seq
+FROM tasks t
+JOIN task_turns tt ON tt.task_id = t.id
+WHERE t.status = 'review'
+  AND tt.seq = (SELECT MAX(seq) FROM task_turns WHERE task_id = t.id)
+  AND tt.state = 'finished' AND tt.outcome = 'ready_for_review'
+ORDER BY t.id
+`
+
+type ListReviewTurnsRow struct {
+	TaskID  string
+	TurnID  string
+	TurnSeq int64
+}
+
+// The last turn of every task that is idle in review: the reconcile loop's
+// trigger for verification (VF-01).
+func (q *Queries) ListReviewTurns(ctx context.Context) ([]ListReviewTurnsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listReviewTurns)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListReviewTurnsRow{}
+	for rows.Next() {
+		var i ListReviewTurnsRow
+		if err := rows.Scan(&i.TaskID, &i.TurnID, &i.TurnSeq); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listVerificationsByTask = `-- name: ListVerificationsByTask :many
 SELECT id, task_id, repo_id, worktree_id, version, boot_hash, state, turn_id, attempt, reason, stage, build_id, next_build_id, deps_hash, fail_step, fail_kind, exit_code, fail_text, "plan", since, at, created_at, updated_at FROM verifications WHERE task_id = ? ORDER BY repo_id
 `
