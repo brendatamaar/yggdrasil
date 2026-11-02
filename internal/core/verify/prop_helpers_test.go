@@ -124,6 +124,9 @@ func (g *gen) next(v Verification) Input {
 		in = Resume{Facts: g.facts(), Plan: g.plan(), BootBuild: g.fresh(), VerifyBuild: g.fresh(), Now: g.tick()}
 	case k == 5:
 		in = Cancel{Now: g.tick()}
+		if g.r.Intn(2) == 0 {
+			in = Cancel{Now: g.tick(), Cause: CancelNotTrusted}
+		}
 	case k == 6:
 		b := core.BuildID("nope")
 		if isLive && g.r.Intn(2) == 0 {

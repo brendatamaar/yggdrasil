@@ -210,6 +210,15 @@ func TestCancelAndEnqueueFailed(t *testing.T) {
 	if got, cmds := Step(got, Cancel{Now: epoch}); changed(got, got) || len(cmds) != 0 {
 		t.Error("Cancel on a finished state had an effect")
 	}
+	nt, _ := Step(agg(boot), Cancel{Now: epoch, Cause: CancelNotTrusted})
+	if c, ok := nt.State.(Cancelled); !ok || c.Cause != CancelNotTrusted {
+		t.Errorf("Cancel with CancelNotTrusted: %#v", nt.State)
+	}
+	// Only a loss of trust changes the cause; other values count as the user.
+	ex, _ := Step(agg(boot), Cancel{Now: epoch, Cause: CancelExternal})
+	if c, ok := ex.State.(Cancelled); !ok || c.Cause != CancelUser {
+		t.Errorf("Cancel with another cause: %#v", ex.State)
+	}
 	got, cmds = Step(agg(boot), EnqueueFailed{Build: "boot1", Reason: "x", Now: epoch})
 	if !reflect.DeepEqual(got.State, Unverifiable{Turn: "t1", TurnSeq: 1, Attempt: 1, Reason: UnverifiableCouldNotQueue}) || len(cmds) != 2 {
 		t.Fatalf("EnqueueFailed: %#v %#v", got.State, cmds)

@@ -294,6 +294,9 @@ func (s *Service) sweepOrphanBuilds(ctx context.Context) {
 		}
 	}
 	for _, status := range []core.BuildStatus{core.BuildQueued, core.BuildRunning} {
+		// At most 1000 builds per status are examined each pass: builds run one
+		// at a time, so a queue this long is not expected, and anything beyond
+		// the limit is swept by a later pass once the earlier ones finish.
 		states, lerr := lister.List(ctx, db.BuildFilter{Status: status, Limit: 1000})
 		if lerr != nil {
 			s.d.Log.Warn("could not list builds for the build sweep", "err", lerr)

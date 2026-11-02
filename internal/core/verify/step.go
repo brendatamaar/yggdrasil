@@ -34,7 +34,7 @@ func Step(v Verification, in Input) (Verification, []Command) {
 		if !live {
 			return v, nil
 		}
-		return finish(v, Cancelled{Turn: turnOf(v.State), TurnSeq: seqOf(v.State), Attempt: attemptOf(v.State), Cause: CancelUser, At: in.Now}, []Command{CancelBuild{Build: b}})
+		return finish(v, Cancelled{Turn: turnOf(v.State), TurnSeq: seqOf(v.State), Attempt: attemptOf(v.State), Cause: cancelCause(in.Cause), At: in.Now}, []Command{CancelBuild{Build: b}})
 	case BuildFinished:
 		return stepBuildFinished(v, in)
 	case EnqueueFailed:
@@ -272,4 +272,13 @@ func restartable(s State) bool {
 		return true
 	}
 	return false
+}
+
+// cancelCause is the cause a Cancel input records: a loss of trust is its own
+// cause; anything else is the user.
+func cancelCause(c CancelCause) CancelCause {
+	if c == CancelNotTrusted {
+		return CancelNotTrusted
+	}
+	return CancelUser
 }

@@ -42,8 +42,12 @@ type Resume struct {
 	Now         time.Time
 }
 
-// Cancel: the user cancelled.
-type Cancel struct{ Now time.Time }
+// Cancel: the user cancelled, or (Cause CancelNotTrusted) the repo stopped
+// being trusted while its chain ran. An empty Cause is CancelUser.
+type Cancel struct {
+	Now   time.Time
+	Cause CancelCause
+}
 
 // BuildFinished: the builds service reports a terminal build (at least once).
 type BuildFinished struct {

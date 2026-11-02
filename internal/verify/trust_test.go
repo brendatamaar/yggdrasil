@@ -19,8 +19,8 @@ func TestTrustRevokedBetweenStagesQueuesNoSecondStage(t *testing.T) {
 	if got := r.runner.Enqueued(); len(got) != 1 || got[0] != boot.Build {
 		t.Fatalf("builds = %v, want only the bootstrap build", got)
 	}
-	if _, ok := r.state().(cv.Cancelled); !ok {
-		t.Fatalf("state = %#v, want the chain stopped", r.state())
+	if c, ok := r.state().(cv.Cancelled); !ok || c.Cause != cv.CancelNotTrusted {
+		t.Fatalf("state = %#v, want the chain stopped with cause not_trusted", r.state())
 	}
 }
 
