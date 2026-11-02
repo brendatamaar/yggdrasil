@@ -107,12 +107,14 @@ type CancelCause string
 const (
 	CancelUser     CancelCause = "user"
 	CancelExternal CancelCause = "external"
+	// CancelNotTrusted: the repo stopped being trusted while the chain ran.
+	CancelNotTrusted CancelCause = "not_trusted"
 )
 
 // Validate reports whether c is known.
 func (c CancelCause) Validate() error {
 	switch c {
-	case CancelUser, CancelExternal:
+	case CancelUser, CancelExternal, CancelNotTrusted:
 		return nil
 	}
 	return fmt.Errorf("unknown cancel cause %q", string(c))

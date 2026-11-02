@@ -6,7 +6,7 @@ func TestEnumsValidate(t *testing.T) {
 	for _, ok := range []interface{ Validate() error }{
 		SkipNoChanges, SkipDisabled, UnverifiableNoCommand, UnverifiableNotTrusted,
 		UnverifiableWorktreeMissing, UnverifiableCouldNotQueue, StageBootstrap, StageVerify,
-		CancelUser, CancelExternal, Attempt(1), TurnID("t1"), StartFailure("npm was not found"), ExitCode{Code: 1},
+		CancelUser, CancelExternal, CancelNotTrusted, Attempt(1), TurnID("t1"), StartFailure("npm was not found"), ExitCode{Code: 1},
 	} {
 		if err := ok.Validate(); err != nil {
 			t.Errorf("%#v: %v", ok, err)

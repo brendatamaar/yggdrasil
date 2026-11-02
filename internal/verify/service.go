@@ -403,13 +403,13 @@ func (s *Service) enqueue(ctx context.Context, rec Record, c cv.EnqueueBuild) {
 	}
 	if !trusted {
 		// The core has no "not trusted" input for a run that already started,
-		// so the chain is stopped with Cancel.
+		// so the chain is stopped with Cancel and its own cause.
 		s.d.Log.Warn("repo is no longer trusted; stopping its verification", "verification", rec.ID, "build", c.Build)
 		_, _, rerr := s.run(ctx, keyOf(rec), systemActor, func(r Record) (cv.Input, string, bool, error) {
 			if b, _, live := liveOf(r.State); !live || b != c.Build {
 				return nil, "", false, nil
 			}
-			return cv.Cancel{Now: s.now()}, "", true, nil
+			return cv.Cancel{Now: s.now(), Cause: cv.CancelNotTrusted}, "", true, nil
 		})
 		if rerr != nil && ctx.Err() == nil {
 			s.d.Log.Error("could not stop the verification of an untrusted repo", "verification", rec.ID, "err", rerr)
