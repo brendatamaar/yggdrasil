@@ -35,6 +35,10 @@ func subjectOf(a coreprop.Action) (subject, error) {
 		return subject{where: v.Where, paths: v.Paths}, nil
 	case coreprop.Install:
 		return subject{repo: v.Repo}, nil
+	case coreprop.MergeLocal:
+		return subject{where: v.Where}, nil
+	case coreprop.RemoveWorktree:
+		return subject{where: coreprop.InWorktree{ID: v.Worktree}}, nil
 	}
 	return subject{}, fmt.Errorf("unsupported proposal kind %T", a)
 }

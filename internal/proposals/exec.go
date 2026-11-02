@@ -46,11 +46,20 @@ func keyOf(a coreprop.Action) string {
 		return targetKey(v.Where)
 	case coreprop.Install:
 		return "repo:" + string(v.Repo)
-	case coreprop.MergeLocal, coreprop.RemoveWorktree:
-		// Their executors land with PX1; until then they never run.
-		return "landing"
+	case coreprop.MergeLocal:
+		return targetKey(v.Where)
 	}
 	return "other"
+}
+
+// queueKey is keyOf with the proposal at hand: a removal names a worktree, whose
+// repo is the proposal's, so it queues behind commits and pushes of the same
+// main checkout.
+func queueKey(p coreprop.Proposal, a coreprop.Action) string {
+	if _, ok := a.(coreprop.RemoveWorktree); ok {
+		return "repo:" + string(p.Repo)
+	}
+	return keyOf(a)
 }
 
 func targetKey(t coreprop.Target) string {
@@ -110,9 +119,9 @@ func (s *Service) dispatch(p coreprop.Proposal, cmds []coreprop.Command) {
 	for _, c := range cmds {
 		switch v := c.(type) {
 		case coreprop.Execute:
-			s.enqueue(keyOf(v.Action), func() { s.runExecute(p, v) })
+			s.enqueue(queueKey(p, v.Action), func() { s.runExecute(p, v) })
 		case coreprop.Reconcile:
-			s.enqueue(keyOf(v.Action), func() { s.runReconcile(p, v) })
+			s.enqueue(queueKey(p, v.Action), func() { s.runReconcile(p, v) })
 		}
 	}
 }
@@ -196,8 +205,10 @@ func (s *Service) execute(ctx context.Context, p coreprop.Proposal, attempt int)
 		return s.execDelete(ctx, p, a)
 	case coreprop.Install:
 		return s.execInstall(ctx, p, a)
-	case coreprop.MergeLocal, coreprop.RemoveWorktree:
-		return failed(coreprop.FailPrecondition, false, "Merging locally and removing worktrees are not available yet. Nothing was changed.")
+	case coreprop.MergeLocal:
+		return s.execMerge(ctx, p, a, attempt)
+	case coreprop.RemoveWorktree:
+		return s.execRemove(ctx, p, a)
 	}
 	return failed(coreprop.FailPrecondition, false, "This kind of proposal cannot run yet.")
 }
