@@ -149,6 +149,9 @@ func (s *Service) gatherFacts(ctx context.Context, req CreateRequest) (coreprop.
 			}
 		}
 		if mr, ok := req.Action.(coreprop.MergeRequest); ok {
+			if why := validateMRDescription(mr.Description); why != "" {
+				return bad(why)
+			}
 			url, err := s.cfg.Git.RemoteURL(ctx, dir, mr.Remote)
 			if err != nil || s.cfg.Hosts.Kind(url) != HostGitLab {
 				f.RemoteSupported = false

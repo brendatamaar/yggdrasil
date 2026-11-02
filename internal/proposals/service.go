@@ -112,6 +112,8 @@ type Config struct {
 	Lock     mainlock.MainLock
 	Builds   Builds
 	Hosts    Hosts
+	// Links reads the linked-MR facts of a change set (RV-03); nil = no links.
+	Links ChangeSetLinks
 
 	Publisher Publisher
 	Logger    *slog.Logger
