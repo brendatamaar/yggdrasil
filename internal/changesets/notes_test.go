@@ -3,10 +3,13 @@ package changesets_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/brendatamaar/yggdrasil/internal/apperr"
+	"github.com/brendatamaar/yggdrasil/internal/changesets"
 	"github.com/brendatamaar/yggdrasil/internal/changesets/changesetstest"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	"github.com/brendatamaar/yggdrasil/internal/core/review"
@@ -177,9 +180,21 @@ func TestBusyAgentReturnsNotesToOpen(t *testing.T) {
 	if stateName(r.notes()[string(a.ID)]) != "open" {
 		t.Fatalf("state %s", stateName(r.notes()[string(a.ID)]))
 	}
+	r.msg.Err = fmt.Errorf("send: %w", changesets.ErrQueueFull)
+	if err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user"); userMessage(err) != "The agent is busy. Send the notes when it finishes." {
+		t.Fatalf("a full queue is a busy agent: %v", err)
+	}
+	// Any other failure is not "busy": it is unavailable, and the notes stay open.
 	r.msg.Err = errors.New("anything else")
-	if err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user"); userMessage(err) == "" {
-		t.Fatalf("a generic refusal has no message: %v", err)
+	err = r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user")
+	if c, ok := apperr.ClassOf(err); !ok || c != apperr.Unavailable {
+		t.Fatalf("a generic failure should be Unavailable: %v", err)
+	}
+	if m, _ := apperr.MessageOf(err); strings.Contains(m, "busy") || m == "" {
+		t.Fatalf("a generic failure was called busy: %v", err)
+	}
+	if stateName(r.notes()[string(a.ID)]) != "open" {
+		t.Fatalf("state %s", stateName(r.notes()[string(a.ID)]))
 	}
 	r.msg.Err = nil
 	if err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user"); err != nil {
@@ -189,7 +204,7 @@ func TestBusyAgentReturnsNotesToOpen(t *testing.T) {
 	for _, e := range r.w.Audit("note:" + string(a.ID)) {
 		actions = append(actions, e.Action)
 	}
-	if strings.Join(actions, ",") != "note.add,note.send,note.send_refused,note.send,note.send_refused,note.send,note.sent" {
+	if strings.Join(actions, ",") != "note.add,note.send,note.send_refused,note.send,note.send_refused,note.send,note.send_refused,note.send,note.sent" {
 		t.Fatalf("audit %v", actions)
 	}
 }

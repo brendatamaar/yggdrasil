@@ -94,6 +94,24 @@ func (w *World) SetStatus(id core.ProposalID, st core.ProposalStatus, mrURL stri
 	p.m.Status, p.m.MRURL = st, mrURL
 }
 
+// BumpNoteVersion raises a note's stored version without changing it, as a
+// write by another process would.
+func (w *World) BumpNoteVersion(id string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n := w.notes[id]
+	n.Version++
+	w.notes[id] = n
+}
+
+// SetHash changes the action hash of a proposal, as an edit of the proposal
+// after the user reviewed it would.
+func (w *World) SetHash(id core.ProposalID, hash string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.props[id].m.Hash = hash
+}
+
 // Status returns a proposal's status.
 func (w *World) Status(id core.ProposalID) core.ProposalStatus {
 	w.mu.Lock()
@@ -380,6 +398,9 @@ type API struct {
 	FailTimes int
 	// OnConfirm runs after a successful confirmation, under no lock.
 	OnConfirm func(id core.ProposalID)
+	// OnFail runs each time Fail is returned, with the number of failures so far.
+	OnFail func(id core.ProposalID, n int)
+	nFail  int
 
 	mu    sync.Mutex
 	calls []Call
@@ -420,7 +441,12 @@ func (a *API) confirm(id core.ProposalID, hash string) error {
 	if a.Fail != nil && a.FailTimes > 0 {
 		a.FailTimes--
 		err := a.Fail
+		a.nFail++
+		n := a.nFail
 		a.mu.Unlock()
+		if a.OnFail != nil {
+			a.OnFail(id, n)
+		}
 		return err
 	}
 	a.mu.Unlock()

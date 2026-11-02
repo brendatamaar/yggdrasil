@@ -229,6 +229,26 @@ func (s *Service) commitSet(ctx context.Context, rec setRec, next cs.State, cmds
 	if err != nil {
 		return rec, err
 	}
+	if c, ok := next.(cs.Confirming); ok {
+		// Remember the hash the user saw for Current: the one this step sends,
+		// else the one already stored for the same proposal.
+		seen := ""
+		for _, cmd := range cmds {
+			if cc, ok := cmd.(cs.ConfirmProposal); ok && cc.ID == c.Current {
+				seen = cc.Hash
+			}
+		}
+		if seen == "" {
+			if prev, ok := rec.St.(cs.Confirming); ok && prev.Current == c.Current {
+				seen = SeenCurrentHash(rec.Row.RunResult)
+			}
+		}
+		if seen != "" {
+			if row.RunResult, err = withCurrentHash(row.RunResult, seen); err != nil {
+				return rec, err
+			}
+		}
+	}
 	now := s.now()
 	err = s.d.Store.Commit(ctx, func(tx Tx) error {
 		cur, err := tx.LoadSet(ctx, rec.Row.ID)
@@ -313,9 +333,25 @@ func (s *Service) confirm(ctx context.Context, set core.ChangeSetID, c cs.Confir
 		s.d.Log.Warn("could not confirm a proposal of a run", "set", set, "proposal", c.ID, "tries", s.failures[key], "err", err)
 		if s.failures[key] >= confirmTries {
 			delete(s.failures, key)
+			// A late error after the proposal moved on must not halt the run.
+			if !s.stillPending(ctx, set, c.ID) {
+				s.Wake()
+				return
+			}
 			s.halt(ctx, set, c.ID, "the proposal could not be confirmed; try again")
 		}
 	}
+}
+
+// stillPending re-reads the set and says whether the member is still pending.
+// When the set cannot be read it answers true: halting is the safe side.
+func (s *Service) stillPending(ctx context.Context, set core.ChangeSetID, id core.ProposalID) bool {
+	rec, err := s.loadSet(ctx, set)
+	if err != nil {
+		return true
+	}
+	m, ok := findMember(openOf(rec.St).Members, id)
+	return !ok || m.Status == core.ProposalPending
 }
 
 func (s *Service) halt(ctx context.Context, set core.ChangeSetID, id core.ProposalID, reason string) {
@@ -347,7 +383,13 @@ func (s *Service) refresh(ctx context.Context, id core.ChangeSetID) error {
 	// the members read above are older than that confirmation.
 	if c, ok := rec.St.(cs.Confirming); ok && !hasConfirm(cmds) {
 		if m, found := findMember(c.Members, c.Current); found && m.Status == core.ProposalPending {
-			s.confirm(ctx, id, cs.ConfirmProposal{ID: m.ID, Hash: m.Hash}, true)
+			// Verify against the hash the user saw, not the one just loaded.
+			seen := SeenCurrentHash(rec.Row.RunResult)
+			if seen == "" || seen != m.Hash {
+				s.halt(ctx, id, m.ID, "the proposal changed after you reviewed it; review it again")
+				return nil
+			}
+			s.confirm(ctx, id, cs.ConfirmProposal{ID: m.ID, Hash: seen}, true)
 		}
 	}
 	return nil
