@@ -2,7 +2,7 @@ import type { ReviewNoteDTO, VerificationDTO } from "../../api/gen/api.gen";
 
 // ---- Verification badges -------------------------------------------------
 
-export { badgeFor, type BadgeInfo } from "../../components/VerifyStateBadge";
+export { badgeFor, type BadgeInfo } from "../../components/verifyBadge";
 
 export const isRunning = (v: VerificationDTO) => v.state === "bootstrapping" || v.state === "verifying";
 

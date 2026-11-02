@@ -233,6 +233,6 @@ describe("cancel cause", () => {
   it("says the repo is no longer trusted and keeps Verify again", async () => {
     setup({ verifications: [verif({ state: "cancelled", cancelCause: "not_trusted", reason: "x" })] });
     expect(await screen.findByText("Stopped: this repo is no longer trusted")).toBeTruthy();
-    expect((screen.getByRole("button", { name: "Verify again" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Verify again" }).disabled).toBe(false);
   });
 });
