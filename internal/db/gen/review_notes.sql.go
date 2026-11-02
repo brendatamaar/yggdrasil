@@ -184,6 +184,33 @@ func (q *Queries) ListReviewNotesByTask(ctx context.Context, taskID string) ([]R
 	return items, nil
 }
 
+const listTasksWithReviewNotesInState = `-- name: ListTasksWithReviewNotesInState :many
+SELECT DISTINCT task_id FROM review_notes WHERE state = ? ORDER BY task_id
+`
+
+func (q *Queries) ListTasksWithReviewNotesInState(ctx context.Context, state string) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listTasksWithReviewNotesInState, state)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var task_id string
+		if err := rows.Scan(&task_id); err != nil {
+			return nil, err
+		}
+		items = append(items, task_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateReviewNote = `-- name: UpdateReviewNote :execrows
 UPDATE review_notes SET text = ?, state = ?, batch_id = ?, turn_id = ?, state_at = ?, version = version + 1
 WHERE id = ? AND version = ?
