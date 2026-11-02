@@ -288,7 +288,7 @@ func (s *Service) SendNotes(ctx context.Context, task core.TaskID, ids []string,
 	turn, sendErr := s.sendMessage(ctx, task, text)
 	// Reload the versions the first commit wrote rather than assuming them.
 	for i := range changes {
-		cur, err := s.d.Store.Note(ctx, string(rows[i].ID))
+		cur, err := s.d.Store.Note(ctx, rows[i].ID)
 		if err != nil {
 			s.d.Log.Error("could not reload notes after marking them sending", "task", task, "batch", batch, "err", err)
 			if sendErr == nil {
