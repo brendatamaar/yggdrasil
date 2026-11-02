@@ -2,6 +2,7 @@ package verify_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -172,7 +173,7 @@ func checkAccepted(t *testing.T, row db.VerificationRow) {
 	if err != nil {
 		return
 	}
-	if err := rec.Validate(); err != nil {
+	if err := rowProblem(row, rec); err != nil {
 		t.Fatalf("accepted an invalid verification: %v\nrow %+v", err, row)
 	}
 	again, err := verify.RowFromVerification(rec.Verification, rec.Note)
@@ -421,10 +422,59 @@ func FuzzParseSettings(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if err := s.Validate(); err != nil {
+		if err := settingsProblem(s); err != nil {
 			t.Fatalf("accepted invalid settings: %v", err)
 		}
 	})
+}
+
+// settingsProblem states the rules of an accepted verify override without
+// calling Validate (which ParseSettings itself calls): at most MaxSteps steps,
+// a name of 1 to MaxNameRunes characters that is not blank, a program in
+// argv[0], no NUL anywhere. The flags come through unchanged.
+func settingsProblem(s builds.RepoBuildSettings) error {
+	if !s.Bootstrap || s.FullTests {
+		return fmt.Errorf("flags changed on the way: %+v", s)
+	}
+	if len(s.VerifyOverride) > corebuilds.MaxSteps {
+		return fmt.Errorf("accepted %d steps", len(s.VerifyOverride))
+	}
+	for i, c := range s.VerifyOverride {
+		if strings.TrimSpace(c.Name) == "" || utf8.RuneCountInString(c.Name) > corebuilds.MaxNameRunes {
+			return fmt.Errorf("step %d: accepted name %q", i, c.Name)
+		}
+		if len(c.Argv) == 0 || c.Argv[0] == "" {
+			return fmt.Errorf("step %d: accepted an empty command", i)
+		}
+		for _, a := range append([]string{c.Name}, c.Argv...) {
+			if strings.ContainsRune(a, 0) {
+				return fmt.Errorf("step %d: accepted a NUL character", i)
+			}
+		}
+	}
+	return nil
+}
+
+// The independent predicate must be able to fail, or the fuzz target proves
+// nothing.
+func TestSettingsPredicateCanFail(t *testing.T) {
+	cmd := func(name string, argv ...string) []builds.Command { return []builds.Command{{Name: name, Argv: argv}} }
+	if err := settingsProblem(builds.RepoBuildSettings{Bootstrap: true, VerifyOverride: cmd("a", "x")}); err != nil {
+		t.Fatalf("good settings: %v", err)
+	}
+	for name, s := range map[string]builds.RepoBuildSettings{
+		"blank name": {Bootstrap: true, VerifyOverride: cmd(" ", "x")},
+		"no argv":    {Bootstrap: true, VerifyOverride: cmd("a")},
+		"empty prog": {Bootstrap: true, VerifyOverride: cmd("a", "")},
+		"nul":        {Bootstrap: true, VerifyOverride: cmd("a", "x", "a\x00")},
+		"long name":  {Bootstrap: true, VerifyOverride: cmd(strings.Repeat("n", corebuilds.MaxNameRunes+1), "x")},
+		"too many":   {Bootstrap: true, VerifyOverride: make([]builds.Command, corebuilds.MaxSteps+1)},
+		"flags":      {VerifyOverride: cmd("a", "x")},
+	} {
+		if settingsProblem(s) == nil {
+			t.Errorf("%s: the predicate accepts it", name)
+		}
+	}
 }
 
 func TestParseReviewTurn(t *testing.T) {
