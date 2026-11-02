@@ -12,6 +12,7 @@ package changesets
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
@@ -50,6 +51,14 @@ type ProposalsAPI interface {
 	// *Refused for a "no", any other error for a transient failure.
 	Confirm(ctx context.Context, id core.ProposalID, hash, by string) error
 }
+
+// ErrAgentBusy and ErrQueueFull are what a Messenger wraps when the task is
+// working or the queue has no room. Only these get the "agent is busy" text;
+// any other failure is reported as unavailable.
+var (
+	ErrAgentBusy = errors.New("the agent is busy")
+	ErrQueueFull = errors.New("the message queue is full")
+)
 
 // Messenger sends text to the task's agent as a new message in the same mode
 // (RV-01). It returns the new turn. It is not idempotent. A busy task, a full

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/brendatamaar/yggdrasil/internal/apperr"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	"github.com/brendatamaar/yggdrasil/internal/core/review"
 	"github.com/brendatamaar/yggdrasil/internal/db"
@@ -139,7 +140,7 @@ func (s *Service) AddNote(ctx context.Context, task core.TaskID, raw review.RawN
 	if err != nil {
 		return review.Note{}, err
 	}
-	if len(repos) > 0 && !slices.Contains(repos, note.Repo) {
+	if !slices.Contains(repos, note.Repo) {
 		return review.Note{}, &UserError{Message: "That repo isn't part of this task."}
 	}
 	var added review.Note
@@ -285,8 +286,17 @@ func (s *Service) SendNotes(ctx context.Context, task core.TaskID, ids []string,
 	// The notes are marked Sending in the database. From here a failure leaves
 	// them for Recover, never for a silent second send.
 	turn, sendErr := s.sendMessage(ctx, task, text)
+	// Reload the versions the first commit wrote rather than assuming them.
 	for i := range changes {
-		changes[i].before = &db.NoteRow{ID: rows[i].ID, Version: rows[i].Version + 1}
+		cur, err := s.d.Store.Note(ctx, string(rows[i].ID))
+		if err != nil {
+			s.d.Log.Error("could not reload notes after marking them sending", "task", task, "batch", batch, "err", err)
+			if sendErr == nil {
+				return nil // sent; the notes stay Sending until recovery
+			}
+			return sendRefusal(sendErr)
+		}
+		changes[i].before = &cur
 	}
 	var in review.Input
 	if sendErr == nil {
@@ -335,7 +345,10 @@ func sendRefusal(err error) error {
 	if errors.As(err, &u) && u.UserMessage() != "" {
 		return &UserError{Message: u.UserMessage()}
 	}
-	return &UserError{Message: "The agent is busy. Send the notes when it finishes."}
+	if errors.Is(err, ErrAgentBusy) || errors.Is(err, ErrQueueFull) {
+		return &UserError{Message: "The agent is busy. Send the notes when it finishes."}
+	}
+	return apperr.New(apperr.Unavailable, "Yggdrasil couldn't send the notes to the agent. Your notes are still here; try again in a moment.", err)
 }
 
 func normalizeText(t string) string {

@@ -94,11 +94,11 @@ func (d changeSetDiffs) FileHashes(ctx context.Context, task core.TaskID, repo c
 		if err != nil {
 			return nil, err
 		}
-		diff, err := d.git.DiffAgainstBase(ctx, w.Path, base, git.BaseDiffOptions{PatchLimit: 1})
+		diff, err := d.git.DiffAgainstBase(ctx, w.Path, base, git.BaseDiffOptions{})
 		if err != nil {
 			return nil, err
 		}
-		if diff.Truncated {
+		if diff.FilesTruncated {
 			return nil, errors.New("too many files changed to judge notes")
 		}
 		out := make(map[review.RelPath]string, len(diff.Files))

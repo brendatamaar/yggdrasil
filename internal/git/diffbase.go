@@ -40,10 +40,15 @@ type BaseFile struct {
 	Deleted int `json:"deleted"`
 	// EOLOnly: the whole change is a line-ending change (PL-03).
 	EOLOnly bool `json:"eolOnly"`
-	// Hash fingerprints this file's change: the sha256 of its patch. When the
-	// patch is not usable (binary, or cut at the limit) it is made from the
-	// file's content hash instead. It changes when the change changes, so a
-	// review note can tell it has gone stale.
+	// Hash fingerprints this file's change. For a text file whose patch fits
+	// the limit it is the lowercase hex SHA-256 of exactly the bytes of Patch
+	// (nothing else mixed in), so a client holding the patch computes the same
+	// value. When the patch is not usable (binary, cut at the limit, or an
+	// untracked file too big to diff) it is made from the git hash of the
+	// file's current content instead (never equal to a client's hash of the
+	// cut patch). It changes when the change changes, so a review note can
+	// tell it has gone stale. A line-ending-only change alters the patch, so
+	// it alters the hash.
 	Hash string `json:"hash"`
 	// Patch is the unified diff of the file, cut at the limit. Empty for a
 	// binary file.
@@ -57,7 +62,11 @@ type BaseDiff struct {
 	HasChanges bool       `json:"hasChanges"`
 	Files      []BaseFile `json:"files"` // sorted by path
 	// Truncated: more files changed than MaxFiles; the rest are not listed.
+	// It is also set when a patch was cut; see FilesTruncated.
 	Truncated bool `json:"truncated"`
+	// FilesTruncated: only the file list was cut at MaxFiles. A cut patch
+	// does not set it.
+	FilesTruncated bool `json:"filesTruncated"`
 }
 
 // BaseDiffOptions bound the size of the answer. Zero values mean the defaults.
@@ -141,6 +150,7 @@ func (g *Git) DiffAgainstBase(ctx context.Context, dir, base string, opts BaseDi
 	res := BaseDiff{HasChanges: len(files) > 0}
 	if len(files) > maxFiles {
 		files, res.Truncated = files[:maxFiles], true
+		res.FilesTruncated = true
 	}
 	trackedSet := make(map[string]bool, len(tracked))
 	for _, t := range tracked {
@@ -238,7 +248,8 @@ func (g *Git) fillPatch(ctx context.Context, dir, base string, f *BaseFile, trac
 		f.Hash = g.contentHash(ctx, dir, f, patch)
 		return nil
 	}
-	f.Hash = fileHash(f.Status, f.Path, "patch:"+patch)
+	sum := sha256.Sum256([]byte(patch))
+	f.Hash = hex.EncodeToString(sum[:])
 	return nil
 }
 

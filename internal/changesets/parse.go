@@ -51,6 +51,30 @@ type runJSON struct {
 	Repo    string        `json:"repo,omitempty"`
 	Queue   []plannedJSON `json:"queue,omitempty"`
 	Current string        `json:"current,omitempty"`
+	// CurrentHash is the hash the user saw for Current, kept so a resend of
+	// the confirmation checks the same hash (the core state drops it).
+	CurrentHash string `json:"currentHash,omitempty"`
+}
+
+// SeenCurrentHash returns the hash the user saw for the current proposal of a
+// stored run, or "" when none is recorded.
+func SeenCurrentHash(raw json.RawMessage) string {
+	var j runJSON
+	if json.Unmarshal(raw, &j) != nil || j.Kind != "confirming" || !isHex64(j.CurrentHash) {
+		return ""
+	}
+	return j.CurrentHash
+}
+
+// withCurrentHash records the seen hash of the current proposal in a stored
+// confirming run.
+func withCurrentHash(raw json.RawMessage, hash string) (json.RawMessage, error) {
+	var j runJSON
+	if err := json.Unmarshal(raw, &j); err != nil {
+		return nil, fmt.Errorf("run result: %w", err)
+	}
+	j.CurrentHash = hash
+	return json.Marshal(j)
 }
 
 // FormatRun encodes what a state must remember about runs: the result of the
@@ -130,6 +154,9 @@ func ParseRun(raw json.RawMessage) (last cs.RunResult, run *cs.Confirming, err e
 			c.Scope = cs.ScopeRepo{Repo: core.RepoID(j.Repo)}
 		default:
 			return nil, nil, fmt.Errorf("run result: unknown scope %q", j.Scope)
+		}
+		if j.CurrentHash != "" && !isHex64(j.CurrentHash) {
+			return nil, nil, errors.New("run result: the current hash is not valid")
 		}
 		if err := errors.Join(c.Scope.Validate(), c.Current.Validate()); err != nil {
 			return nil, nil, fmt.Errorf("run result: %w", err)
