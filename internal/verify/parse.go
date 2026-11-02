@@ -30,7 +30,10 @@ type Record struct {
 	// Note explains an Unverifiable result caused by the repo's own
 	// configuration (for example a chain with too many steps). It never holds
 	// a token or a path.
-	Note      string
+	Note string
+	// Sent says that the failure of a Failed state was sent to the agent; it
+	// is stored with the state and lost with it, so a new attempt can be sent.
+	Sent      bool
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -91,6 +94,7 @@ type stepJSON struct {
 type planJSON struct {
 	Seq       int        `json:"seq"`
 	Note      string     `json:"note,omitempty"`
+	Sent      bool       `json:"sent,omitempty"`
 	Bootstrap []stepJSON `json:"bootstrap,omitempty"`
 	Verify    []stepJSON `json:"verify,omitempty"`
 }
@@ -123,6 +127,10 @@ func stepsFromJSON(in []stepJSON) []cv.StepSpec {
 // RowFromVerification is the formatter: the row columns of a verification and
 // its note. Version and the row times are the store's.
 func RowFromVerification(v cv.Verification, note string) (db.VerificationRow, error) {
+	return rowFromVerification(v, note, false)
+}
+
+func rowFromVerification(v cv.Verification, note string, sent bool) (db.VerificationRow, error) {
 	if err := v.Validate(); err != nil {
 		return db.VerificationRow{}, fmt.Errorf("verification %s: %w", v.ID, err)
 	}
@@ -133,7 +141,10 @@ func RowFromVerification(v cv.Verification, note string) (db.VerificationRow, er
 		ID: string(v.ID), Task: v.Task, Repo: v.Repo, Worktree: v.Worktree, BootHash: v.BootHash,
 		State: StateCode(v.State),
 	}
-	pj := planJSON{Note: note}
+	if _, isFailed := v.State.(cv.Failed); sent && !isFailed {
+		return db.VerificationRow{}, errors.New("only a failed verification can be marked as sent")
+	}
+	pj := planJSON{Note: note, Sent: sent}
 	var since, at time.Time
 	switch s := v.State.(type) {
 	case cv.None:
@@ -297,14 +308,14 @@ func VerificationFromRow(row db.VerificationRow) (Record, error) {
 	}
 	// A row must hold exactly the columns of its state: format the parsed
 	// state again and compare, so stray data of another state is refused.
-	canon, err := RowFromVerification(v, pj.Note)
+	canon, err := rowFromVerification(v, pj.Note, pj.Sent)
 	if err != nil {
 		return bad("%v", err)
 	}
 	if !sameColumns(canon, row) {
 		return bad("the row holds data that does not belong to the %s state", row.State)
 	}
-	return Record{Verification: v, Version: row.Version, Note: pj.Note, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}, nil
+	return Record{Verification: v, Version: row.Version, Note: pj.Note, Sent: pj.Sent, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}, nil
 }
 
 // sameColumns compares the state columns of two rows (not version, times

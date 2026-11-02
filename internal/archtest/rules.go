@@ -159,6 +159,20 @@ func storeAllowed(name string) bool {
 		strings.HasPrefix(name, "Get") || strings.HasPrefix(name, "List")
 }
 
+// auditForwarders are the files that call AppendAudit without making an entry
+// themselves, so audit.Prepare does not apply to them (invariant 4):
+//   - internal/verify/store.go only forwards the call of the service, whose
+//     entries are made with audit.Prepare in service.go and actions.go;
+//   - internal/verify/verifytest/contract.go writes fixture entries to the
+//     store under test, to check that the store keeps them as given.
+//
+// Every other file stays under the rule. Production files are not exempted
+// without a reason written here.
+var auditForwarders = map[string]bool{
+	"internal/verify/store.go":               true,
+	"internal/verify/verifytest/contract.go": true,
+}
+
 // storeWrites forbids an exported write method on db.Store other than the
 // allowed set. Together with "db/gen only from db" and the unexported DB
 // pools, no package outside internal/db can write without Store.Commit.
@@ -214,7 +228,7 @@ var rules = []rule{
 	// and the audit package (which calls Prepare unqualified), a file that
 	// appends audit entries must make them with audit.Prepare.
 	banOutside("AppendAudit", "calls AppendAudit without audit.Prepare, which redacts", func(f file) bool {
-		return f.calls("AppendAudit") && !f.uses1(internalPrefix+"audit.Prepare")
+		return f.calls("AppendAudit") && !f.uses1(internalPrefix+"audit.Prepare") && !auditForwarders[f.dir+"/"+f.name]
 	}, "internal/db", "internal/audit"),
 
 	// Invariant 8: every write of state goes through Store.Commit, with its

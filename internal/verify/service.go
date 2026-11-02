@@ -45,6 +45,13 @@ type BuildRunner interface {
 	Get(ctx context.Context, id core.BuildID) (corebuilds.State, error)
 }
 
+// BuildLister is optional: a BuildRunner that also lists builds (*builds.Service
+// does) lets the reconcile pass cancel builds that verification started and no
+// verification waits for any more (a lost cancel).
+type BuildLister interface {
+	List(ctx context.Context, f db.BuildFilter) ([]corebuilds.State, error)
+}
+
 // LogReader reads the log of one build step (*builds.Service satisfies it):
 // the bytes from offset after and the offset to ask for next.
 type LogReader interface {
@@ -94,12 +101,18 @@ type Deps struct {
 }
 
 const (
-	systemActor     = "system"
-	userActor       = "user"
-	enqueueTries    = 3
-	maxRunAttempts  = 4
-	logReadLimit    = 10000
+	systemActor    = "system"
+	userActor      = "user"
+	enqueueTries   = 3
+	maxRunAttempts = 4
+	logReadLimit   = 10000
+	// logCutMargin is longer than any secret: dropped from a cut log that has
+	// no line break.
+	logCutMargin    = 1024
 	failureLogWatch = 3
+	// buildIDPrefix starts the ID of every build verification queues, so the
+	// sweep for orphaned builds knows which builds are its own.
+	buildIDPrefix = "vbld"
 )
 
 // Service runs verifications.
@@ -377,6 +390,32 @@ func (s *Service) interpret(ctx context.Context, rec Record, cmds []cv.Command) 
 // errors. A spec the builds service rejects, or a persistent error, becomes an
 // EnqueueFailed input.
 func (s *Service) enqueue(ctx context.Context, rec Record, c cv.EnqueueBuild) {
+	// Trust (SF-09, invariant 10) is checked again at every enqueue, not only
+	// when the run starts: it may have been revoked while the first stage ran.
+	// A read error is not a "no": nothing is queued now, and the next pass
+	// queues the same build again.
+	trusted, terr := s.d.Store.RepoTrusted(ctx, rec.Repo)
+	if terr != nil {
+		if ctx.Err() == nil {
+			s.d.Log.Warn("could not read repo trust; the build is queued on a later pass", "verification", rec.ID, "err", terr)
+		}
+		return
+	}
+	if !trusted {
+		// The core has no "not trusted" input for a run that already started,
+		// so the chain is stopped with Cancel.
+		s.d.Log.Warn("repo is no longer trusted; stopping its verification", "verification", rec.ID, "build", c.Build)
+		_, _, rerr := s.run(ctx, keyOf(rec), systemActor, func(r Record) (cv.Input, string, bool, error) {
+			if b, _, live := liveOf(r.State); !live || b != c.Build {
+				return nil, "", false, nil
+			}
+			return cv.Cancel{Now: s.now()}, "", true, nil
+		})
+		if rerr != nil && ctx.Err() == nil {
+			s.d.Log.Error("could not stop the verification of an untrusted repo", "verification", rec.ID, "err", rerr)
+		}
+		return
+	}
 	spec, err := buildSpec(c.Spec.Worktree, rec.Repo, c.Spec.Steps)
 	if err == nil {
 		wait := s.d.EnqueueBackoff

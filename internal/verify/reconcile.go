@@ -3,9 +3,12 @@ package verify
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
+	corebuilds "github.com/brendatamaar/yggdrasil/internal/core/builds"
 	cv "github.com/brendatamaar/yggdrasil/internal/core/verify"
+	"github.com/brendatamaar/yggdrasil/internal/db"
 )
 
 // turnSeq is the turn sequence number a state is for (0 for None).
@@ -70,6 +73,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	}
 	s.pollLive(ctx)
 	s.resumeInterrupted(ctx, inReview)
+	s.sweepOrphanBuilds(ctx)
 	return ctx.Err()
 }
 
@@ -112,7 +116,7 @@ func (s *Service) triggerTask(ctx context.Context, task core.TaskID, turn cv.Tur
 				}
 				return cv.TurnEnded{
 					Turn: turn, Seq: seq, Facts: facts, Plan: plan,
-					BootBuild: core.BuildID(s.d.IDs("bld")), VerifyBuild: core.BuildID(s.d.IDs("bld")), Now: s.now(),
+					BootBuild: core.BuildID(s.d.IDs(buildIDPrefix)), VerifyBuild: core.BuildID(s.d.IDs(buildIDPrefix)), Now: s.now(),
 				}, note, true, nil
 			})
 			s.noteFactResult(k, rerr)
@@ -252,10 +256,76 @@ func (s *Service) resumeInterrupted(ctx context.Context, inReview map[core.TaskI
 					return nil, "", false, ferr
 				}
 				return cv.Resume{
-					Facts: facts, Plan: plan, BootBuild: core.BuildID(s.d.IDs("bld")), VerifyBuild: core.BuildID(s.d.IDs("bld")), Now: s.now(),
+					Facts: facts, Plan: plan, BootBuild: core.BuildID(s.d.IDs(buildIDPrefix)), VerifyBuild: core.BuildID(s.d.IDs(buildIDPrefix)), Now: s.now(),
 				}, note, true, nil
 			})
 			s.noteFactResult(k, rerr)
 		})
 	}
+}
+
+// sweepOrphanBuilds cancels the builds verification started that no live
+// verification waits for: a cancel that was lost to a crash after the commit
+// of Cancel or of a superseding TurnEnded, or to a transient error. Builds run
+// one at a time, so such a build would hold up the queue. Cancel is
+// idempotent, and an error is retried by the next pass.
+func (s *Service) sweepOrphanBuilds(ctx context.Context) {
+	lister, ok := s.d.Builds.(BuildLister)
+	if !ok {
+		return
+	}
+	rows, err := s.d.Store.ListLive(ctx)
+	if err != nil {
+		s.d.Log.Warn("could not list running verifications for the build sweep", "err", err)
+		return
+	}
+	wanted := map[core.BuildID]bool{}
+	for _, row := range rows {
+		rec, perr := VerificationFromRow(row)
+		if perr != nil {
+			// Unknown which build it waits for: cancel nothing this pass.
+			s.d.Log.Warn("skipping the build sweep: a running verification cannot be read", "verification", row.ID, "err", perr)
+			return
+		}
+		b, _, _ := liveOf(rec.State)
+		wanted[b] = true
+		if boot, isBoot := rec.State.(cv.Bootstrapping); isBoot {
+			wanted[boot.NextBuild] = true
+		}
+	}
+	for _, status := range []core.BuildStatus{core.BuildQueued, core.BuildRunning} {
+		states, lerr := lister.List(ctx, db.BuildFilter{Status: status, Limit: 1000})
+		if lerr != nil {
+			s.d.Log.Warn("could not list builds for the build sweep", "err", lerr)
+			return
+		}
+		for _, st := range states {
+			id, ours := orphanCandidate(st)
+			if !ours || wanted[id] {
+				continue
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			s.d.Log.Info("cancelling a verification build nobody waits for", "build", id)
+			if cerr := s.d.Builds.Cancel(ctx, id, systemActor); cerr != nil && ctx.Err() == nil {
+				s.d.Log.Warn("cancel verification build failed; trying again next pass", "build", id, "err", cerr)
+			}
+		}
+	}
+}
+
+// orphanCandidate returns the ID of an unfinished build that verification
+// started (by its ID prefix).
+func orphanCandidate(st corebuilds.State) (core.BuildID, bool) {
+	var id core.BuildID
+	switch st := st.(type) {
+	case corebuilds.Queued:
+		id = st.ID
+	case corebuilds.Running:
+		id = st.ID
+	default:
+		return "", false
+	}
+	return id, strings.HasPrefix(string(id), buildIDPrefix+"_")
 }
