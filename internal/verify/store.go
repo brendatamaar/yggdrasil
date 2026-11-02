@@ -4,15 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/brendatamaar/yggdrasil/internal/audit"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	"github.com/brendatamaar/yggdrasil/internal/db"
 )
-
-// The entries this adapter forwards are prepared (redacted, given an ID) by
-// the service with audit.Prepare before they reach AppendAudit; the reference
-// keeps the audit rule of internal/archtest honest about it.
-var _ = audit.Prepare
 
 // Tx is the unit of work of Store.Commit: the verification row and its audit
 // entries are written together or not at all (invariant 8).

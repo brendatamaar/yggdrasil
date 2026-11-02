@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/apperr"
-	auditpkg "github.com/brendatamaar/yggdrasil/internal/audit"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	corebuilds "github.com/brendatamaar/yggdrasil/internal/core/builds"
 	cv "github.com/brendatamaar/yggdrasil/internal/core/verify"
@@ -190,10 +189,6 @@ func verifying() cv.State {
 		Plan: cv.Plan{Verify: []cv.StepSpec{{Name: "test", Argv: []string{"go", "test"}}}},
 	}
 }
-
-// Contract entries are fixtures written straight to the store under test; the
-// service's own entries go through audit.Prepare.
-var _ = auditpkg.Prepare
 
 func audit(id, subject string) core.AuditEntry {
 	return core.AuditEntry{ID: core.AuditID(id), At: contractNow, Actor: "system", Action: "verify.test", Subject: subject}
