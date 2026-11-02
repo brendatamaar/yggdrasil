@@ -21,3 +21,6 @@ WHERE id = ? AND version = ?;
 
 -- name: DeleteReviewNote :execrows
 DELETE FROM review_notes WHERE id = ? AND state IN ('open', 'outdated');
+
+-- name: ListTasksWithReviewNotesInState :many
+SELECT DISTINCT task_id FROM review_notes WHERE state = ? ORDER BY task_id;
