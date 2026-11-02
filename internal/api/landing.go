@@ -32,13 +32,3 @@ func (s *Server) routesLanding(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/worktrees/{id}/merge-local", s.handleProposeMergeLocal)
 	mux.HandleFunc("POST /api/worktrees/{id}/remove", s.handleProposeRemoveWorktree)
 }
-
-// TODO(AP1): handlers.
-
-func (s *Server) handleProposeMergeLocal(w http.ResponseWriter, _ *http.Request) {
-	notReady(w, "Merging a branch into the main checkout")
-}
-
-func (s *Server) handleProposeRemoveWorktree(w http.ResponseWriter, _ *http.Request) {
-	notReady(w, "Removing a worktree")
-}

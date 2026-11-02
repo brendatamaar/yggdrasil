@@ -48,6 +48,13 @@ packages:
       - review.go
       - changesets.go
       - landing.go
+      - landing_handlers.go
+      - review_handlers.go
+      - changesets_handlers.go
+      - verify_adapter.go
+      - phase4.go
+      - ids.go
+      - worktree_diff.go
     frontmatter: |
       import type * as agents from "./agents.gen";
       import type * as core from "./core.gen";

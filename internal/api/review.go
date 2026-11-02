@@ -33,25 +33,3 @@ func (s *Server) routesReview(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/notes/{id}", s.handleEditNote)
 	mux.HandleFunc("DELETE /api/notes/{id}", s.handleDeleteNote)
 }
-
-// TODO(AP1): handlers.
-
-func (s *Server) handleListNotes(w http.ResponseWriter, _ *http.Request) {
-	notReady(w, "Review notes")
-}
-
-func (s *Server) handleCreateNote(w http.ResponseWriter, _ *http.Request) {
-	notReady(w, "Adding a review note")
-}
-
-func (s *Server) handleSendNotes(w http.ResponseWriter, _ *http.Request) {
-	notReady(w, "Sending review notes to the agent")
-}
-
-func (s *Server) handleEditNote(w http.ResponseWriter, _ *http.Request) {
-	notReady(w, "Editing a review note")
-}
-
-func (s *Server) handleDeleteNote(w http.ResponseWriter, _ *http.Request) {
-	notReady(w, "Deleting a review note")
-}

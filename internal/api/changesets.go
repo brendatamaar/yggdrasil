@@ -40,33 +40,3 @@ func (s *Server) routesChangeSets(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/changesets/{id}/stop", s.handleStopChangeSet)
 	mux.HandleFunc("POST /api/changesets/{id}/close", s.handleCloseChangeSet)
 }
-
-// TODO(AP1): handlers.
-
-func (s *Server) handleGetChangeSet(w http.ResponseWriter, _ *http.Request) {
-	notReady(w, "The change set")
-}
-
-func (s *Server) handleTaskChangeSet(w http.ResponseWriter, _ *http.Request) {
-	notReady(w, "The change set of a task")
-}
-
-func (s *Server) handleSetChangeSetOrder(w http.ResponseWriter, _ *http.Request) {
-	notReady(w, "Changing the merge order")
-}
-
-func (s *Server) handlePreflightChangeSet(w http.ResponseWriter, _ *http.Request) {
-	notReady(w, "The change-set check")
-}
-
-func (s *Server) handleConfirmChangeSet(w http.ResponseWriter, _ *http.Request) {
-	notReady(w, "Confirming a change set")
-}
-
-func (s *Server) handleStopChangeSet(w http.ResponseWriter, _ *http.Request) {
-	notReady(w, "Stopping a change-set run")
-}
-
-func (s *Server) handleCloseChangeSet(w http.ResponseWriter, _ *http.Request) {
-	notReady(w, "Closing a change set")
-}
