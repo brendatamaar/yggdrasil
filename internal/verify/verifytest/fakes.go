@@ -396,6 +396,11 @@ type Runner struct {
 	EnqueueErr func(n int, id core.BuildID) error
 	// GetErr, when set and non-nil, fails Get.
 	GetErr func(id core.BuildID) error
+	// ListErr, when set, fails List.
+	ListErr error
+	// CancelErr, when set, is called for every Cancel; a non-nil result fails
+	// the call and the build stays as it is.
+	CancelErr func(id core.BuildID) error
 	// Cancelled lists the IDs Cancel was called for.
 	Cancelled []core.BuildID
 }
@@ -561,10 +566,40 @@ func (r *Runner) Cancel(_ context.Context, id core.BuildID, actor corebuilds.Act
 		return apperr.New(apperr.Invalid, "The cancel has no valid actor.", err)
 	}
 	r.Cancelled = append(r.Cancelled, id)
+	if r.CancelErr != nil {
+		if err := r.CancelErr(id); err != nil {
+			return err
+		}
+	}
 	if q, ok := r.builds[id].(corebuilds.Queued); ok {
 		r.builds[id] = r.finishLocked(q, "cancel")
 	}
 	return nil
+}
+
+// List returns the queued and running builds with the status of the filter
+// (the other filter fields are ignored), in creation order. It makes Runner a
+// verify.BuildLister.
+func (r *Runner) List(_ context.Context, f db.BuildFilter) ([]corebuilds.State, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.ListErr != nil {
+		return nil, r.ListErr
+	}
+	var out []corebuilds.State
+	for _, id := range r.order {
+		switch st := r.builds[id].(type) {
+		case corebuilds.Queued:
+			if f.Status == core.BuildQueued {
+				out = append(out, st)
+			}
+		case corebuilds.Running:
+			if f.Status == core.BuildRunning {
+				out = append(out, st)
+			}
+		}
+	}
+	return out, nil
 }
 
 func (r *Runner) Get(_ context.Context, id core.BuildID) (corebuilds.State, error) {
@@ -598,6 +633,7 @@ func (r *Runner) StepLog(_ context.Context, id core.BuildID, step int, after int
 var (
 	_ verify.BuildRunner = (*Runner)(nil)
 	_ verify.LogReader   = (*Runner)(nil)
+	_ verify.BuildLister = (*Runner)(nil)
 )
 
 // Messenger records the messages sent to agents.

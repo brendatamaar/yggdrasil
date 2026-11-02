@@ -125,7 +125,7 @@ func (s *Service) Retry(ctx context.Context, task core.TaskID) ([]Record, error)
 				return nil, "", false, ferr
 			}
 			return cv.Retry{
-				Facts: facts, Plan: plan, BootBuild: core.BuildID(s.d.IDs("bld")), VerifyBuild: core.BuildID(s.d.IDs("bld")), Now: s.now(),
+				Facts: facts, Plan: plan, BootBuild: core.BuildID(s.d.IDs(buildIDPrefix)), VerifyBuild: core.BuildID(s.d.IDs(buildIDPrefix)), Now: s.now(),
 			}, note, true, nil
 		})
 		if rerr != nil {

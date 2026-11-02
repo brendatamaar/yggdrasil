@@ -45,6 +45,13 @@ type BuildRunner interface {
 	Get(ctx context.Context, id core.BuildID) (corebuilds.State, error)
 }
 
+// BuildLister is optional: a BuildRunner that also lists builds (*builds.Service
+// does) lets the reconcile pass cancel builds that verification started and no
+// verification waits for any more (a lost cancel).
+type BuildLister interface {
+	List(ctx context.Context, f db.BuildFilter) ([]corebuilds.State, error)
+}
+
 // LogReader reads the log of one build step (*builds.Service satisfies it):
 // the bytes from offset after and the offset to ask for next.
 type LogReader interface {
@@ -100,6 +107,9 @@ const (
 	maxRunAttempts  = 4
 	logReadLimit    = 10000
 	failureLogWatch = 3
+	// buildIDPrefix starts the ID of every build verification queues, so the
+	// sweep for orphaned builds knows which builds are its own.
+	buildIDPrefix = "vbld"
 )
 
 // Service runs verifications.
