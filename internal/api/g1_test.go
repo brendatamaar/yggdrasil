@@ -23,7 +23,9 @@ type fakeWtGit struct {
 	st        map[string]git.Status
 }
 
-func (f fakeWtGit) CurrentBranch(context.Context, string) (string, error) { return f.branch, f.branchErr }
+func (f fakeWtGit) CurrentBranch(context.Context, string) (string, error) {
+	return f.branch, f.branchErr
+}
 func (f fakeWtGit) Status(_ context.Context, dir string) (git.Status, error) {
 	st, ok := f.st[dir]
 	if !ok {
