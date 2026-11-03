@@ -379,22 +379,18 @@ func TestPhase4EndToEnd(t *testing.T) {
 
 	// Send the failure: exactly one agent message, with the (redacted) tail.
 	eventsBefore := e.taskMessages()
-	code, body := e.do(http.MethodPost, "/api/verifications/"+failed.ID+"/send-failure", map[string]string{}, nil)
-	if code >= 300 {
-		// KNOWN BUG: taskMessenger (cmd/ygg/verify.go) sends the failure in the
-		// task's own mode without the opt-in, which project mode (the only
-		// multi-repo mode) always demands, so "Send failure to agent" can
-		// never work for a multi-repo task. The test then sends the same text
-		// as an ordinary message with the opt-in, so the remaining steps run.
-		t.Errorf("KNOWN BUG: send-failure on a project-mode task = %d %s (taskMessenger passes no opt-in)", code, body)
-		e.must(http.MethodPost, "/api/tasks/"+string(e.task)+"/messages", api.MessageRequest{
-			Mode: core.ModeProject, OptIn: true, Prompt: "The verification of shop-checkout failed:\n" + failed.Message,
-		}, nil)
-	} else {
-		// A second click must not send the failure twice.
-		if code, _ := e.do(http.MethodPost, "/api/verifications/"+failed.ID+"/send-failure", map[string]string{}, nil); code < 400 {
-			t.Errorf("a second send-failure was accepted (%d)", code)
-		}
+	// Without the opt-in the project-mode task refuses, nothing is sent and the
+	// failure stays sendable; the click then carries the opt-in.
+	if code, body := e.do(http.MethodPost, "/api/verifications/"+failed.ID+"/send-failure", map[string]string{}, nil); code != http.StatusConflict || !strings.Contains(string(body), "needs_opt_in") {
+		t.Errorf("send-failure without the opt-in = %d %s, want 409 needs_opt_in", code, body)
+	}
+	if n := len(e.taskMessages()); n != len(eventsBefore) {
+		t.Errorf("a refused send-failure added %d message(s)", n-len(eventsBefore))
+	}
+	e.must(http.MethodPost, "/api/verifications/"+failed.ID+"/send-failure", api.SendFailureRequest{OptIn: true}, nil)
+	// A second click must not send the failure twice: once per attempt.
+	if code, body := e.do(http.MethodPost, "/api/verifications/"+failed.ID+"/send-failure", api.SendFailureRequest{OptIn: true}, nil); code != http.StatusConflict {
+		t.Errorf("a second send-failure = %d %s, want 409 conflict", code, body)
 	}
 	e.wait("the failure message in the transcript", 30*time.Second, func() (bool, string) {
 		return len(e.taskMessages()) > len(eventsBefore), ""
