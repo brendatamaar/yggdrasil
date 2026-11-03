@@ -56,6 +56,18 @@ describe("task page", () => {
     expect(screen.getByText("1.0k tokens · $0.0100 · 2 turns")).toBeTruthy();
   });
 
+  it("shows the verification badge in the header", async () => {
+    renderTask("review", (c) =>
+      c.path === "/api/tasks/t1"
+        ? { body: { task: task("review"), verification: { state: "failed", total: 2, passed: 1, failed: 1, running: 0 } } }
+        : undefined,
+    );
+    await screen.findByTestId("task-status");
+    await waitFor(() => {
+      expect(document.querySelector('[data-state="failed"]')).toBeTruthy();
+    });
+  });
+
   it("offers Cancel while the task runs and posts it", async () => {
     const api = renderTask("running");
     fireEvent.click(await screen.findByRole("button", { name: "Cancel task" }));

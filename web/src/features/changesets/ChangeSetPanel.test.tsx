@@ -296,6 +296,15 @@ describe("landing dialogs", () => {
     expect(api.calls.some((c) => c.path.includes("/confirm"))).toBe(false);
   });
 
+  it("names the target branch in the merge dialog and shows clean status in the remove dialog", async () => {
+    setup({ worktrees: [worktree({ targetBranch: "develop", clean: false })] });
+    fireEvent.click(await screen.findByRole("button", { name: "Merge shop-core into main checkout" }));
+    expect((await screen.findByRole("dialog")).textContent).toContain("develop");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Remove shop-core worktree" }));
+    expect((await screen.findByRole("dialog")).textContent).toContain("has uncommitted changes");
+  });
+
   it("remove creates a remove_worktree proposal request and says the branch is kept", async () => {
     const api = setup({
       worktrees: [worktree({ status: "merged" })],
