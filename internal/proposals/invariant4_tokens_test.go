@@ -86,12 +86,12 @@ func TestInvariant_4_tokens_never_reach_stored_proposal_data(t *testing.T) {
 	})
 }
 
-// KNOWN BUG (low severity, reported by test-engineer T2): fillLinks redacts the
-// note it records but not the description it pushes to the host, so a secret
+// Regression (found by test-engineer T2, fixed): fillLinks once redacted the
+// note it records but not the description it pushed to the host, so a secret
 // that is part of a branch name in the change set is sent as MR text. Branch
 // names come from the host or the agent, so a token there is unlikely, but the
-// description is the one outgoing text that skips s.redact. Fails today.
-func TestBugMRDescriptionIsNotRedactedBeforeTheyPush(t *testing.T) {
+// description was the one outgoing text that skipped s.redact.
+func TestMRDescriptionIsRedactedBeforeItIsPushed(t *testing.T) {
 	w := newWorld(t, testToken)
 	w.withLinks(fakeLinks{sl: SetLinks{
 		Order:    []core.RepoID{"shop-web", w.repo.ID},

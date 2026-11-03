@@ -74,7 +74,7 @@ func (s *Service) fillLinks(ctx context.Context, p coreprop.Proposal, template, 
 	if len(order) == 0 {
 		order = []core.RepoID{p.Repo}
 	}
-	desc := changesets.RenderLinks(template, order, sl.Branches, links, host)
+	desc := s.redact(changesets.RenderLinks(template, order, sl.Branches, links, host))
 	text := changesets.RenderLinks(changesets.LinkMarker, order, sl.Branches, links, host)
 	return desc, s.redact(fmt.Sprintf(" Links added to the description: %s", text))
 }
