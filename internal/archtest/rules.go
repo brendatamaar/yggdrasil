@@ -191,9 +191,10 @@ var storeWrites = rule{name: "Store exports no un-audited write", check: func(f 
 }}
 
 // deleteFreeDirs are the Phase 4 surfaces (verification, landing, change sets,
-// API, MCP, wiring) where no code deletes anything. The one deletion in the
-// product is platform.RemoveStaged, below <root>/.removing/<leaf>.
-var deleteFreeDirs = []string{"internal/verify", "internal/core", "internal/api", "internal/mcp", "internal/db", "cmd/ygg"}
+// API, MCP, wiring) where no code deletes anything. internal/proposals and
+// internal/git have their own older rule. The one deletion in the product is
+// platform.RemoveStaged, below <root>/.removing/<leaf>.
+var deleteFreeDirs = []string{"internal/verify", "internal/changesets", "internal/composer", "internal/core", "internal/api", "internal/mcp", "internal/db", "cmd/ygg"}
 
 // deleteAllowed are production files in those dirs with a documented reason
 // to remove a file of their own.
