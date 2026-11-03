@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -177,6 +176,9 @@ func TestPhase4EndToEnd(t *testing.T) {
 		e.git(r.dir, "config", "user.name", "Ada Test")
 		e.git(r.dir, "config", "user.email", "ada@example.test")
 		e.git(r.dir, "config", "commit.gpgsign", "false")
+		// The app reads the machine's git config too; keep line endings exactly as
+		// committed so the CRLF checks mean what they say.
+		e.git(r.dir, "config", "core.autocrlf", "false")
 		r.host.MustGit(r.dir, "push", "-q", r.host.URL(), "main")
 		e.repos[name] = r
 	}
@@ -189,21 +191,32 @@ func TestPhase4EndToEnd(t *testing.T) {
 	e.cfg = config{addr: "127.0.0.1:0", dataDir: dataDir, writeModes: true, mockDelay: 300 * time.Millisecond, mockEnforcement: agents.EnforcementHook}
 	e.a, e.base = startFullApp(t, e.cfg)
 
-	var seedOut bytes.Buffer
-	if err := seed(context.Background(), &seedOut, e.cfg, projectDir, ""); err != nil {
-		t.Fatal(err)
+	// Track the project through the API, as the start page does.
+	var preview api.PreviewResponse
+	e.must(http.MethodPost, "/api/projects/preview", api.PreviewRequest{Path: projectDir}, &preview)
+	var picks []api.PickDTO
+	for _, c := range preview.Candidates {
+		picks = append(picks, api.PickDTO{RelPath: c.RelPath, Name: c.Name})
 	}
-	if m := regexp.MustCompile(`Project\s+\S+\s+(prj_[0-9a-f]+)`).FindStringSubmatch(seedOut.String()); m != nil {
-		e.project = core.ProjectID(m[1])
-	} else {
-		t.Fatalf("seed output has no project: %s", seedOut.String())
+	if len(picks) != 3 {
+		t.Fatalf("preview of the demo project = %+v, want its 3 repos", preview)
+	}
+	var tracked api.TrackResponse
+	e.must(http.MethodPost, "/api/projects", api.TrackProjectRequest{Path: projectDir, Name: "acme-shop-platform", Picks: picks}, &tracked)
+	e.project = tracked.ProjectID
+	for _, id := range tracked.Added {
+		r, err := e.a.store.GetRepo(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rp, ok := e.repos[r.Name]; ok {
+			rp.id = id
+		}
 	}
 	for _, name := range order {
-		m := regexp.MustCompile(`Repo\s+` + regexp.QuoteMeta(name) + `\s+(rep_[0-9a-f]+)`).FindStringSubmatch(seedOut.String())
-		if m == nil {
-			t.Fatalf("seed output has no repo %s: %s", name, seedOut.String())
+		if e.repos[name].id == "" {
+			t.Fatalf("repo %s was not tracked: %+v", name, tracked)
 		}
-		e.repos[name].id = core.RepoID(m[1])
 	}
 
 	// The hosts service links each repo to the GitLab instance of the stub (the
