@@ -43,8 +43,6 @@ type Store interface {
 	// BuildSettings returns the repo's settings (defaults when none are
 	// stored).
 	BuildSettings(ctx context.Context, repo core.RepoID) (db.BuildSettingsRecord, error)
-	// RepoTrusted reports SF-09 trust.
-	RepoTrusted(ctx context.Context, repo core.RepoID) (bool, error)
 	// AutoVerify is the project switch "run verification automatically"
 	// (setting verify.auto); on when it was never set.
 	AutoVerify(ctx context.Context) (bool, error)
@@ -124,11 +122,6 @@ func (a *SQLiteStore) BaseCommit(ctx context.Context, wt core.WorktreeID) (strin
 
 func (a *SQLiteStore) BuildSettings(ctx context.Context, repo core.RepoID) (db.BuildSettingsRecord, error) {
 	return a.S.GetBuildSettings(ctx, repo)
-}
-
-func (a *SQLiteStore) RepoTrusted(ctx context.Context, repo core.RepoID) (bool, error) {
-	trusted, _, err := a.S.GetRepoTrust(ctx, repo)
-	return trusted, err
 }
 
 func (a *SQLiteStore) AutoVerify(ctx context.Context) (bool, error) {

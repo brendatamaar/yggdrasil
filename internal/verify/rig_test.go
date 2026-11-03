@@ -80,7 +80,7 @@ func newRig(t *testing.T) *rig {
 func (r *rig) newService() *verify.Service {
 	r.t.Helper()
 	svc, err := verify.New(verify.Deps{
-		Store: r.store, Builds: r.runner, Logs: r.runner, Messenger: r.msg, Probe: r.probe,
+		Store: r.store, Trust: r.store, Builds: r.runner, Logs: r.runner, Messenger: r.msg, Probe: r.probe,
 		Toolchains: []builds.Toolchain{tcRef{r.tc}}, Hub: r.hub, Redactor: safety.NewRedactor(secret),
 		OpenFS: func(string) fs.FS { return r.files },
 		Clock: func() time.Time {

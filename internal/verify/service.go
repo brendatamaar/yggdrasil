@@ -81,6 +81,7 @@ type Publisher interface {
 // Toolchains are required.
 type Deps struct {
 	Store      Store
+	Trust      TrustSource // required
 	Builds     BuildRunner
 	Logs       LogReader // optional: without it "send failure" has no log tail
 	Messenger  TaskMessenger
@@ -136,6 +137,8 @@ func New(d Deps) (*Service, error) {
 	switch {
 	case d.Store == nil:
 		return nil, errors.New("verify: a store is required")
+	case d.Trust == nil:
+		return nil, errors.New("verify: a trust source is required")
 	case d.Builds == nil:
 		return nil, errors.New("verify: a build runner is required")
 	case d.Messenger == nil:
@@ -394,7 +397,7 @@ func (s *Service) enqueue(ctx context.Context, rec Record, c cv.EnqueueBuild) {
 	// when the run starts: it may have been revoked while the first stage ran.
 	// A read error is not a "no": nothing is queued now, and the next pass
 	// queues the same build again.
-	trusted, terr := s.d.Store.RepoTrusted(ctx, rec.Repo)
+	trusted, terr := s.repoTrusted(ctx, rec.Repo)
 	if terr != nil {
 		if ctx.Err() == nil {
 			s.d.Log.Warn("could not read repo trust; the build is queued on a later pass", "verification", rec.ID, "err", terr)

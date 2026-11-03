@@ -16,6 +16,7 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/apperr"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	corebuilds "github.com/brendatamaar/yggdrasil/internal/core/builds"
+	"github.com/brendatamaar/yggdrasil/internal/core/guard"
 	cv "github.com/brendatamaar/yggdrasil/internal/core/verify"
 	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/verify"
@@ -29,6 +30,8 @@ type Store struct {
 
 	// FailGet makes the read methods fail while it returns an error.
 	FailGet func() error
+	// TrustErr makes TrustView fail while it returns an error.
+	TrustErr func() error
 	// FailCommit makes Commit fail before running fn while it returns an error.
 	FailCommit func() error
 }
@@ -39,7 +42,7 @@ type data struct {
 	turns     map[core.TaskID]db.ReviewTurn
 	worktrees []fakeWorktree
 	base      map[core.WorktreeID]string
-	trusted   map[core.RepoID]bool
+	trusted   map[core.RepoID]guard.TrustView
 	settings  map[core.RepoID]db.BuildSettingsRecord
 	noAuto    bool
 }
@@ -51,7 +54,7 @@ type fakeWorktree struct {
 func (d data) clone() data {
 	out := data{
 		rows: map[string]db.VerificationRow{}, audit: slices.Clone(d.audit), turns: map[core.TaskID]db.ReviewTurn{},
-		worktrees: slices.Clone(d.worktrees), base: map[core.WorktreeID]string{}, trusted: map[core.RepoID]bool{},
+		worktrees: slices.Clone(d.worktrees), base: map[core.WorktreeID]string{}, trusted: map[core.RepoID]guard.TrustView{},
 		settings: map[core.RepoID]db.BuildSettingsRecord{}, noAuto: d.noAuto,
 	}
 	for k, v := range d.rows {
@@ -76,7 +79,7 @@ func (d data) clone() data {
 func NewStore() *Store {
 	return &Store{data: data{
 		rows: map[string]db.VerificationRow{}, turns: map[core.TaskID]db.ReviewTurn{}, base: map[core.WorktreeID]string{},
-		trusted: map[core.RepoID]bool{}, settings: map[core.RepoID]db.BuildSettingsRecord{},
+		trusted: map[core.RepoID]guard.TrustView{}, settings: map[core.RepoID]db.BuildSettingsRecord{},
 	}}
 }
 
@@ -113,8 +116,18 @@ func (s *Store) SetReview(task core.TaskID, turn string, seq int) {
 	s.data.turns[task] = db.ReviewTurn{Task: task, Turn: turn, Seq: seq}
 }
 
-// SetTrusted sets the trust of a repo.
+// SetTrusted sets the trust of a repo: true is the view trusted, false is
+// untrusted.
 func (s *Store) SetTrusted(repo core.RepoID, v bool) {
+	if v {
+		s.SetTrustView(repo, guard.TrustTrusted)
+		return
+	}
+	s.SetTrustView(repo, guard.TrustUntrusted)
+}
+
+// SetTrustView sets the live trust view of a repo.
+func (s *Store) SetTrustView(repo core.RepoID, v guard.TrustView) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.data.trusted[repo] = v
@@ -357,13 +370,23 @@ func (s *Store) BuildSettings(_ context.Context, repo core.RepoID) (db.BuildSett
 	return db.DefaultBuildSettingsRecord(repo), nil
 }
 
-func (s *Store) RepoTrusted(_ context.Context, repo core.RepoID) (bool, error) {
+// TrustView implements verify.TrustSource. An unset repo is untrusted; an
+// injected read error is returned.
+func (s *Store) TrustView(_ context.Context, repo core.RepoID) (guard.TrustView, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.read(); err != nil {
-		return false, err
+	if s.TrustErr != nil {
+		if err := s.TrustErr(); err != nil {
+			return guard.TrustUntrusted, err
+		}
 	}
-	return s.data.trusted[repo], nil
+	if err := s.read(); err != nil {
+		return guard.TrustUntrusted, err
+	}
+	if v, ok := s.data.trusted[repo]; ok {
+		return v, nil
+	}
+	return guard.TrustUntrusted, nil
 }
 
 func (s *Store) AutoVerify(context.Context) (bool, error) {
