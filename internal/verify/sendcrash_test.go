@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/brendatamaar/yggdrasil/internal/apperr"
+	"github.com/brendatamaar/yggdrasil/internal/builds"
 	cv "github.com/brendatamaar/yggdrasil/internal/core/verify"
 	"github.com/brendatamaar/yggdrasil/internal/verify"
 )
@@ -104,15 +105,36 @@ func TestSendMarkRoundTripAndRejections(t *testing.T) {
 	}
 }
 
+// The composed message is redacted as a whole: the secret is in the step name
+// (not only in the log tail, which has its own redaction), in the log and in
+// the failure reason's place. The control checks the message really contains
+// the step and the log, so an empty message cannot pass.
 func TestSendFailureRedactsTheWholeMessage(t *testing.T) {
-	r := failedRig(t)
-	id := r.records()[0].ID
-	if err := r.svc.SendFailure(context.Background(), id); err != nil {
+	r := newRig(t)
+	r.tc.verify = []builds.Step{step("lint", 0), step("test "+secret, 3)}
+	r.settle()
+	rec := r.records()[0]
+	f, ok := rec.State.(cv.Failed)
+	if !ok {
+		t.Fatalf("state = %#v", rec.State)
+	}
+	r.runner.SetLog(f.Build, 1, "FAIL widget_test.go\nusing "+secret+" as key\nexit status 3\n")
+	if err := r.svc.SendFailure(context.Background(), rec.ID); err != nil {
 		t.Fatal(err)
 	}
-	for _, m := range r.msg.Messages() {
-		if strings.Contains(m.Text, secret) {
-			t.Fatal("secret in the message")
+	msgs := r.msg.Messages()
+	if len(msgs) != 1 {
+		t.Fatalf("%d messages, want 1", len(msgs))
+	}
+	text := msgs[0].Text
+	for _, frag := range []string{secret, "4711", "sentinel"} {
+		if strings.Contains(text, frag) {
+			t.Fatalf("the message leaks %q: %.400s", frag, text)
+		}
+	}
+	for _, want := range []string{"test ", "widget_test.go", "exit status 3"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the message lost %q (the control that it is a real message): %.400s", want, text)
 		}
 	}
 }
