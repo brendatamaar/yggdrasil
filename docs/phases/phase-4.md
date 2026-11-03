@@ -259,3 +259,10 @@ Plan drafted 2026-11-01. **Approved 2026-11-01: decisions 1–9 accepted as reco
 - Round 2 (safety PASS, fe no Blocking/Must-fix) plus follow-ups merged: deterministic stage ID (`proposals.StageIDFor`, derived from the proposal ID; retry/restart resumes a staged removal; the earlier residual is closed), non-directory at the staged leaf = unreadable, accurate merge "not recorded" message, `WorktreeMarks` contract checks leaf memory (first leaf wins; SQL changed so `MarkRemoving` keeps an existing `staged_name`), double-audit comment, dead test code removed.
 - Left for T2: named property that `RunMerge` is only emitted when `WorktreeBranch == Branch`; plus the Deferred list under 'FE2 merged; Gate 3'.
 - Next: batch 5 (T2 test maps + safety matrix, E2E multi-repo on the test host), then phase close. Waiting for the human.
+
+### Phase close
+- Final reviews (b23dca2..main): safety PASS, fe baseline: one fix-now (duplicated trust predicate) done (`guard.TrustView.Admissible`, shared by admission and verify); archtest delete-free rule widened to changesets and composer.
+- Opt-in decision (human, "ask at the click"): `optIn` travels with Send failure / Send notes; never defaulted.
+- Verification trust = admission view (None|Trusted); config-free repos verify.
+- Evidence on main: `golangci-lint` 0 issues; web 443 tests pass; `TestPhase4EndToEnd` passes (142 s); core, verify, archtest pass; Go packages passed in the batch runs (load flakes: claudecode TestAdapterContract, platform editor/PTY, cmd/ygg app tests pass alone).
+- Open for the human: ~140 stale agent worktrees under .claude/worktrees (pruning deletes folders); test-only `config.mockEnforcement` knob; `.functional-effect.json` globs match 0 files on Windows; deferred list above (merge reconcile into core, shared refusal classifier, `Kind` explicit, whyNoRun into core, per-repo build settings endpoint, global git config leakage).

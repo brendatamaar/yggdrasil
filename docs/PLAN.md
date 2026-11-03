@@ -126,16 +126,16 @@ Goal: the agent half matches the personal tool, with stronger enforcement.
 
 Goal: prompt → isolated work → verified → reviewed → shipped, across repos.
 
-- [ ] Fast verify chains for Node, Maven, Gradle and custom commands, with per-repo override and full-test opt-in (BL-08, D8).
-- [ ] Builds inside worktrees (BL-09).
-- [ ] Toolchain bootstrap for new worktrees, Node, Maven and Gradle first (WE-05).
-- [ ] Automatic verification; pass/fail on task card and in Review; "Send failure to agent" (VF-01–VF-03).
-- [ ] Review tab with diffs and inline notes back to the agent (RV-01).
-- [ ] Change sets: grouped proposals, confirm all or per repo, linked MRs (RV-03).
-- [ ] Merge order with dependency warnings (RV-04).
-- [ ] Local `--no-ff` merge, aborted on conflict (RV-05).
-- [ ] Safe worktree removal with Windows file-lock handling (RV-06, PL-03).
-- [ ] CRLF handling in agent diffs (PL-03).
+- [x] Fast verify chains for Node, Maven, Gradle and custom commands, with per-repo override and full-test opt-in (BL-08, D8).
+- [x] Builds inside worktrees (BL-09).
+- [x] Toolchain bootstrap for new worktrees, Node, Maven and Gradle first (WE-05).
+- [x] Automatic verification; pass/fail on task card and in Review; "Send failure to agent" (VF-01–VF-03).
+- [x] Review tab with diffs and inline notes back to the agent (RV-01).
+- [x] Change sets: grouped proposals, confirm all or per repo, linked MRs (RV-03).
+- [x] Merge order with dependency warnings (RV-04).
+- [x] Local `--no-ff` merge, aborted on conflict (RV-05).
+- [x] Safe worktree removal with Windows file-lock handling (RV-06, PL-03).
+- [x] CRLF handling in agent diffs (PL-03).
 
 **Exit:** a multi-repo task on the demo project runs end to end with automatic verification and a change set shipped as linked MRs against a test host.
 
