@@ -8,21 +8,22 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/agents"
 	"github.com/brendatamaar/yggdrasil/internal/api"
+	"github.com/brendatamaar/yggdrasil/internal/audit"
 	"github.com/brendatamaar/yggdrasil/internal/builds"
 	"github.com/brendatamaar/yggdrasil/internal/core"
+	"github.com/brendatamaar/yggdrasil/internal/core/guard"
 	"github.com/brendatamaar/yggdrasil/internal/db"
-	"github.com/brendatamaar/yggdrasil/internal/db/dbtest"
 	"github.com/brendatamaar/yggdrasil/internal/hosts/hoststest"
 	"github.com/brendatamaar/yggdrasil/internal/platform"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 	"github.com/brendatamaar/yggdrasil/internal/search/searchtest"
-	"github.com/brendatamaar/yggdrasil/internal/verify"
 )
 
 // Phase 4 exit criterion: a multi-repo task on the demo project runs end to
@@ -233,12 +234,8 @@ func TestPhase4EndToEnd(t *testing.T) {
 			return h.Linked, fmt.Sprintf("%+v", h)
 		})
 	}
-
-	// Trust (SF-09). These repos ship no agent config, so the API shows state
-	// "none" with no hash the user could confirm, yet verification needs the
-	// repo to be trusted (see TestBugVerifyRefusesAConfigFreeRepo). The test
-	// stores the trust the way the trust service does, with the hash of the
-	// (empty) scan, so nothing resets it when a turn starts.
+	// Trust (SF-09). These repos ship no agent config: the trust view is none,
+	// which the admission guard and verification both accept.
 	for _, name := range order {
 		var tr api.TrustDTO
 		e.must(http.MethodGet, "/api/repos/"+string(e.repos[name].id)+"/trust", nil, &tr)
@@ -246,45 +243,6 @@ func TestPhase4EndToEnd(t *testing.T) {
 			t.Fatalf("trust of %s = %+v, want state none (no agent config in the demo repo)", name, tr)
 		}
 	}
-	// An empty scan cannot match a stored hash, so the task service clears the
-	// trust of a config-free repo each time a turn is admitted. The test marks
-	// the repos trusted again once the turn runs (the worktrees exist), which
-	// is before the turn ends and verification starts.
-	trustAll := func() {
-		t.Helper()
-		for _, name := range order {
-			id := e.repos[name].id
-			if err := e.a.store.Commit(context.Background(), func(tx *db.Tx) error {
-				return tx.SetRepoTrust(context.Background(), id, true, strings.Repeat("a", 64))
-			}); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-
-	// The admission also runs when a turn starts, after any single call above,
-	// so a keeper re-marks the repos every 100 ms until the test ends
-	// (verification only starts once a turn has ended, seconds later).
-	keepCtx, stopKeeper := context.WithCancel(context.Background())
-	keeperDone := make(chan struct{})
-	go func() {
-		defer close(keeperDone)
-		for keepCtx.Err() == nil {
-			for _, name := range order {
-				id := e.repos[name].id
-				if err := e.a.store.Commit(keepCtx, func(tx *db.Tx) error {
-					return tx.SetRepoTrust(keepCtx, id, true, strings.Repeat("a", 64))
-				}); err != nil && keepCtx.Err() == nil {
-					t.Logf("keeper: %v", err)
-				}
-			}
-			select {
-			case <-keepCtx.Done():
-			case <-time.After(100 * time.Millisecond):
-			}
-		}
-	}()
-	t.Cleanup(func() { stopKeeper(); <-keeperDone })
 
 	// Per-repo verify overrides with portable commands. There is no HTTP
 	// endpoint for build settings (reported), so they go through the store
@@ -302,7 +260,11 @@ func TestPhase4EndToEnd(t *testing.T) {
 			if err := tx.PutBuildSettings(context.Background(), db.BuildSettingsRecord{Repo: id, Verify: raw, Bootstrap: false, UpdatedAt: now}); err != nil {
 				return err
 			}
-			return tx.AppendAudit(context.Background(), core.AuditEntry{ID: core.AuditID(db.NewID("aud")), At: now, Actor: "user", Action: "build_settings.update", Subject: "repo:" + string(id), Detail: []byte(`{}`)})
+			ent, perr := audit.Prepare(core.AuditEntry{ID: core.AuditID(db.NewID("aud")), At: now, Actor: "user", Action: "build_settings.update", Subject: "repo:" + string(id), Detail: []byte(`{}`)}, safety.NewRedactor(), core.AuditID(db.NewID("aud")), now)
+			if perr != nil {
+				return perr
+			}
+			return tx.AppendAudit(context.Background(), ent)
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -327,7 +289,6 @@ func TestPhase4EndToEnd(t *testing.T) {
 		e.do(http.MethodGet, "/api/tasks/"+string(e.task)+"/worktrees", nil, &wts)
 		return len(wts.Worktrees) == 3, fmt.Sprintf("%+v", wts)
 	})
-	trustAll()
 	stored, err := e.a.store.ListWorktrees(context.Background(), e.task)
 	if err != nil {
 		t.Fatal(err)
@@ -446,14 +407,12 @@ func TestPhase4EndToEnd(t *testing.T) {
 		t.Error("the host token is in the failure message")
 	}
 
-	// Second turn: the agent fixes the whitespace. The turn has been admitted
-	// (which cleared the stored trust) once the task runs; trust again then.
+	// Second turn: the agent fixes the whitespace.
 	e.wait("the second turn to run", 60*time.Second, func() (bool, string) {
 		var tk struct{ Task core.Task }
 		e.do(http.MethodGet, "/api/tasks/"+string(e.task), nil, &tk)
 		return tk.Task.Status == core.TaskRunning, string(tk.Task.Status)
 	})
-	trustAll()
 	write(co, p4CheckoutPath, strings.ReplaceAll(checkoutBad, "   \n", " // currency from the order\n"))
 	waitTask(core.TaskReview)
 	allPassed := func() (bool, string) {
@@ -505,33 +464,38 @@ func (e *p4) taskMessages() []string {
 	return out
 }
 
-// KNOWN BUG (found by TestPhase4EndToEnd): a repo that ships no agent config
-// (the trust state is "none", which the task service admits in every mode) is
-// never "trusted" in the repos table, and the trust API offers no hash the
-// user could confirm. Automatic verification reads that column
-// (internal/verify/actions.go RepoTrusted via verify/store.go:129), so every
-// verification of such a repo ends "Unverifiable: not trusted. Trust it first"
-// and the user has no way to fix it. A repo with nothing to trust must not
-// block verification. This test fails until that is fixed.
-func TestBugVerifyRefusesAConfigFreeRepo(t *testing.T) {
+// Regression (found by TestPhase4EndToEnd): a repo that ships no agent config
+// has the trust view none, which admission accepts. Verification used to read
+// the stored flag, which such a repo never has, and ended "Unverifiable: not
+// trusted" with nothing the user could do. It now reads the live view the
+// admission guard reads: none, and an agent config the user has not trusted
+// is untrusted.
+func TestRegressionVerifyTrustIsTheAdmissionView(t *testing.T) {
+	cfg := config{addr: "127.0.0.1:0", dataDir: t.TempDir(), writeModes: true}
+	a, _ := startFullApp(t, cfg)
+	env := searchtest.GitEnv(t)
+	repoDir := searchtest.InitRepo(t, env, map[string]string{"README.md": "# shop-api\n"})
+	var out bytes.Buffer
+	if err := seed(context.Background(), &out, cfg, repoDir, ""); err != nil {
+		t.Fatal(err)
+	}
+	ids := regexp.MustCompile(`(prj|rep)_[0-9a-f]+`).FindAllString(out.String(), -1)
+	repo := core.RepoID(ids[1])
+	src := trustSource{svc: a.tasks}
 	ctx := context.Background()
-	d, err := db.Open(ctx, filepath.Join(t.TempDir(), "y.db"))
-	if err != nil {
+	if v, err := src.TrustView(ctx, repo); err != nil || v != guard.TrustNone {
+		t.Fatalf("view of a repo with no agent config = %q, %v; want none", v, err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoDir, ".claude"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = d.Close() })
-	store := db.NewStore(d, safety.NewRedactor().Redact)
-	proj := dbtest.Project(t, store, core.Project{Name: "acme-shop", Path: t.TempDir()})
-	repo := dbtest.Repo(t, store, core.Repo{ProjectID: proj.ID, Name: "shop-core", Path: filepath.Join(proj.Path, "shop-core")})
-	scan, err := safety.FSScanner{}.Scan(ctx, t.TempDir(), nil, nil)
-	if err != nil || !scan.Empty() {
-		t.Fatalf("scan of an empty folder = %+v, %v", scan, err)
-	}
-	trusted, err := verify.NewSQLiteStore(store).RepoTrusted(ctx, repo.ID)
-	if err != nil {
+	if err := os.WriteFile(filepath.Join(repoDir, ".claude", "settings.json"), []byte(`{"hooks":{}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if !trusted {
-		t.Error("KNOWN BUG: verification treats a repo with no agent config as untrusted, and the user cannot trust it (trust state \"none\" has no hash)")
+	if v, err := src.TrustView(ctx, repo); err != nil || v != guard.TrustUntrusted {
+		t.Fatalf("view of a repo with untrusted agent config = %q, %v; want untrusted", v, err)
+	}
+	if _, err := src.TrustView(ctx, core.RepoID("rep_missing")); err == nil {
+		t.Fatal("an unknown repo must be an error (fail closed), not a view")
 	}
 }

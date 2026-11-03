@@ -12,6 +12,7 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/builds"
 	"github.com/brendatamaar/yggdrasil/internal/builds/toolchains"
 	"github.com/brendatamaar/yggdrasil/internal/core"
+	"github.com/brendatamaar/yggdrasil/internal/core/guard"
 	cv "github.com/brendatamaar/yggdrasil/internal/core/verify"
 	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/git"
@@ -98,7 +99,7 @@ func (w *wakeOnBuild) PublishBuildLog(id core.BuildID, step, attempt int, line s
 // be a *lateVerifyHub.
 func newVerifyService(store *db.Store, bld *builds.Service, tsk *tasks.Service, g *git.Git, red safety.Redactor, hub verify.Publisher) (*verify.Service, error) {
 	svc, err := verify.New(verify.Deps{
-		Store: verify.NewSQLiteStore(store), Builds: bld, Logs: bld, Messenger: taskMessenger{svc: tsk, store: store},
+		Store: verify.NewSQLiteStore(store), Trust: trustSource{svc: tsk}, Builds: bld, Logs: bld, Messenger: taskMessenger{svc: tsk, store: store},
 		Probe: g, Toolchains: toolchains.All(), Hub: hub, Redactor: red,
 	})
 	if err != nil {
@@ -111,4 +112,17 @@ func newVerifyService(store *db.Store, bld *builds.Service, tsk *tasks.Service, 
 // done; the loop's goroutine is owned by ctx inside Run.
 func startVerify(g *errgroup.Group, ctx context.Context, svc *verify.Service) {
 	g.Go(func() error { return svc.Run(ctx) })
+}
+
+// trustSource gives verification the live trust view the admission guard uses:
+// the task service scans the repo's agent config, so a repo with none is
+// guard.TrustNone and needs no stored trust.
+type trustSource struct{ svc *tasks.Service }
+
+func (t trustSource) TrustView(ctx context.Context, repo core.RepoID) (guard.TrustView, error) {
+	st, err := t.svc.TrustStatus(ctx, repo)
+	if err != nil {
+		return guard.TrustUntrusted, err
+	}
+	return guard.View(st), nil
 }

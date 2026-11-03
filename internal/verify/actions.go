@@ -42,7 +42,7 @@ func (s *Service) readInputs(ctx context.Context, rec Record) (cv.Facts, cv.Plan
 	if !facts.WorktreeActive {
 		return facts, cv.Plan{}, "", nil
 	}
-	trusted, err := s.d.Store.RepoTrusted(ctx, rec.Repo)
+	trusted, err := s.repoTrusted(ctx, rec.Repo)
 	if err != nil {
 		return facts, cv.Plan{}, "", fmt.Errorf("read trust of %s: %w", rec.Repo, err)
 	}
