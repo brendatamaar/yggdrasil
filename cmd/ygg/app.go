@@ -121,7 +121,7 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	adapters := adapterRegistry{
 		// The demo agent replays a recorded session with nested sub-agents. It
 		// starts no process and reads nothing, so it is always on.
-		"mock":        mock.New(mock.Options{Fixture: "subagents", Delay: cfg.mockDelay}),
+		"mock":        mock.New(mock.Options{Fixture: "subagents", Delay: cfg.mockDelay, Enforcement: cfg.mockEnforcement}),
 		"claude-code": claudecode.New(claudecode.Options{HookExecutable: self, TempDir: runs}),
 	}
 

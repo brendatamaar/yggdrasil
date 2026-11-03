@@ -24,6 +24,10 @@ type Options struct {
 	Fixture string
 	// Delay is the pause before each event. Zero by default, so tests are fast.
 	Delay time.Duration
+	// Enforcement overrides the enforcement level the adapter claims (default
+	// limited, the truth). Only a test that has to pass the project-mode
+	// admission of the task service sets it; nothing else may.
+	Enforcement agents.Enforcement
 }
 
 // Adapter replays fixtures.
@@ -39,14 +43,18 @@ func New(opts Options) *Adapter {
 
 func (*Adapter) Name() string { return "mock" }
 
-func (*Adapter) Capabilities() agents.Capabilities {
+func (a *Adapter) Capabilities() agents.Capabilities {
 	// Only what the mock really does: it replays nested events, tags a resumed
 	// session and reports cost. It enforces nothing, so claiming hooks or
 	// sub-agent limits would let later safety tests pass against a false claim.
+	enforcement := agents.EnforcementLimited
+	if a.opts.Enforcement != "" {
+		enforcement = a.opts.Enforcement
+	}
 	return agents.Capabilities{
 		Resume:        true,
 		CostReporting: true,
-		Enforcement:   agents.EnforcementLimited,
+		Enforcement:   enforcement,
 		Subagents:     agents.SubagentsNested,
 	}
 }

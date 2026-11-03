@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/brendatamaar/yggdrasil/internal/agents"
 )
 
 const defaultAddr = "127.0.0.1:4747"
@@ -22,6 +24,9 @@ type config struct {
 	level   slog.Level
 	// mockDelay paces the demo agent so a transcript visibly streams.
 	mockDelay time.Duration
+	// mockEnforcement is set by tests only (never by loadConfig): the level the
+	// demo agent claims, so a multi-repo (project mode) task can be admitted.
+	mockEnforcement agents.Enforcement
 	// writeModes allows task modes other than Ask (YGG_WRITE_MODES). Off by
 	// default.
 	writeModes bool
