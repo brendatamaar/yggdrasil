@@ -3,14 +3,27 @@ import { describeError } from "../../api/client";
 import { VerifyStateBadge } from "../../components/VerifyStateBadge";
 import { isRunning } from "./core";
 import { useReviewMutations } from "./hooks";
+import { isNeedsOptIn, useOptInGate } from "./optin";
+import type { Mode } from "../composer";
 
 /** One repo's verification state: a badge with its attempt number. */
 export function VerifyBadge({ v }: { v: VerificationDTO }) {
   return <VerifyStateBadge state={v.state} suffix={v.attempt && v.attempt > 0 ? ` · attempt ${String(v.attempt)}` : ""} />;
 }
 
-function Row({ v, taskId }: { v: VerificationDTO; taskId: string }) {
+function Row({ v, taskId, mode }: { v: VerificationDTO; taskId: string; mode?: Mode }) {
   const m = useReviewMutations(taskId);
+  const gate = useOptInGate(mode);
+  const send = (optIn: boolean) => {
+    m.sendFailure.mutate(
+      { id: v.id, optIn },
+      {
+        onError: (e) => {
+          if (isNeedsOptIn(e)) gate.retry(send);
+        },
+      },
+    );
+  };
   const name = v.repoName || v.repoId;
   const err = m.sendFailure.error ?? m.cancel.error;
   return (
@@ -55,7 +68,7 @@ function Row({ v, taskId }: { v: VerificationDTO; taskId: string }) {
               className="rounded border border-line px-2 py-0.5 hover:bg-surface"
               disabled={m.sendFailure.isPending}
               onClick={() => {
-                m.sendFailure.mutate(v.id);
+                gate.request(send);
               }}
             >
               Send failure to agent
@@ -69,16 +82,17 @@ function Row({ v, taskId }: { v: VerificationDTO; taskId: string }) {
           {describeError(err)}
         </p>
       ) : null}
+      {gate.dialog}
     </li>
   );
 }
 
 /** The verification badges of every repo of the task. */
-export function VerifyBadges({ taskId, items }: { taskId: string; items: VerificationDTO[] }) {
+export function VerifyBadges({ taskId, items, mode }: { taskId: string; items: VerificationDTO[]; mode?: Mode }) {
   return (
     <ul className="space-y-2">
       {items.map((v) => (
-        <Row key={v.id} v={v} taskId={taskId} />
+        <Row key={v.id} v={v} taskId={taskId} mode={mode} />
       ))}
     </ul>
   );

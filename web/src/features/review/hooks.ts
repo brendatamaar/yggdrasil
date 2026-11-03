@@ -50,8 +50,8 @@ export function useReviewMutations(taskId: string) {
   return {
     retry: useMutation({ mutationFn: () => api.retryVerification(taskId), ...done }),
     cancel: useMutation({ mutationFn: (id: string) => api.cancelVerification(id), ...done }),
-    sendFailure: useMutation({ mutationFn: (id: string) => api.sendFailure(id), ...done }),
-    sendNotes: useMutation({ mutationFn: (ids: string[]) => api.sendNotes(taskId, ids), ...done }),
+    sendFailure: useMutation({ mutationFn: (v: { id: string; optIn: boolean }) => api.sendFailure(v.id, v.optIn), ...done }),
+    sendNotes: useMutation({ mutationFn: (v: { ids: string[]; optIn: boolean }) => api.sendNotes(taskId, v.ids, v.optIn), ...done }),
     deleteNote: useMutation({ mutationFn: (id: string) => api.deleteNote(id), ...done }),
     saveNote: useMutation({
       mutationFn: (v: { noteId?: string; text: string; create?: Parameters<typeof api.createNote>[1] }) =>
