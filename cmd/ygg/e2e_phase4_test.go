@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -19,10 +18,12 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/builds"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	"github.com/brendatamaar/yggdrasil/internal/db"
+	"github.com/brendatamaar/yggdrasil/internal/db/dbtest"
 	"github.com/brendatamaar/yggdrasil/internal/hosts/hoststest"
 	"github.com/brendatamaar/yggdrasil/internal/platform"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 	"github.com/brendatamaar/yggdrasil/internal/search/searchtest"
+	"github.com/brendatamaar/yggdrasil/internal/verify"
 )
 
 // Phase 4 exit criterion: a multi-repo task on the demo project runs end to
@@ -205,15 +206,72 @@ func TestPhase4EndToEnd(t *testing.T) {
 		e.repos[name].id = core.RepoID(m[1])
 	}
 
-	// Trust (SF-09): review what each repo would run, then trust it.
+	// The hosts service links each repo to the GitLab instance of the stub (the
+	// merge request tool is only offered for a linked GitLab remote).
+	e.do(http.MethodPost, "/api/repos/refresh", map[string]string{}, nil)
+	for _, name := range order {
+		id := e.repos[name].id
+		e.wait("host link of "+name, 90*time.Second, func() (bool, string) {
+			var h api.RepoHostResponse
+			e.do(http.MethodGet, "/api/repos/"+string(id)+"/host", nil, &h)
+			if !h.Linked {
+				e.do(http.MethodPost, "/api/hosts/refresh", map[string]string{}, nil)
+			}
+			return h.Linked, fmt.Sprintf("%+v", h)
+		})
+	}
+
+	// Trust (SF-09). These repos ship no agent config, so the API shows state
+	// "none" with no hash the user could confirm, yet verification needs the
+	// repo to be trusted (see TestBugVerifyRefusesAConfigFreeRepo). The test
+	// stores the trust the way the trust service does, with the hash of the
+	// (empty) scan, so nothing resets it when a turn starts.
 	for _, name := range order {
 		var tr api.TrustDTO
 		e.must(http.MethodGet, "/api/repos/"+string(e.repos[name].id)+"/trust", nil, &tr)
-		if tr.State != "trusted" && tr.Hash != "" {
-			e.must(http.MethodPost, "/api/repos/"+string(e.repos[name].id)+"/trust", api.TrustRequest{Hash: tr.Hash}, &tr)
+		if tr.State != "none" {
+			t.Fatalf("trust of %s = %+v, want state none (no agent config in the demo repo)", name, tr)
 		}
-		t.Logf("trust %s: state=%s why=%q", name, tr.State, tr.Why)
 	}
+	// An empty scan cannot match a stored hash, so the task service clears the
+	// trust of a config-free repo each time a turn is admitted. The test marks
+	// the repos trusted again once the turn runs (the worktrees exist), which
+	// is before the turn ends and verification starts.
+	trustAll := func() {
+		t.Helper()
+		for _, name := range order {
+			id := e.repos[name].id
+			if err := e.a.store.Commit(context.Background(), func(tx *db.Tx) error {
+				return tx.SetRepoTrust(context.Background(), id, true, strings.Repeat("a", 64))
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	// The admission also runs when a turn starts, after any single call above,
+	// so a keeper re-marks the repos every 100 ms until the test ends
+	// (verification only starts once a turn has ended, seconds later).
+	keepCtx, stopKeeper := context.WithCancel(context.Background())
+	keeperDone := make(chan struct{})
+	go func() {
+		defer close(keeperDone)
+		for keepCtx.Err() == nil {
+			for _, name := range order {
+				id := e.repos[name].id
+				if err := e.a.store.Commit(keepCtx, func(tx *db.Tx) error {
+					return tx.SetRepoTrust(keepCtx, id, true, strings.Repeat("a", 64))
+				}); err != nil && keepCtx.Err() == nil {
+					t.Logf("keeper: %v", err)
+				}
+			}
+			select {
+			case <-keepCtx.Done():
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+	}()
+	t.Cleanup(func() { stopKeeper(); <-keeperDone })
 
 	// Per-repo verify overrides with portable commands. There is no HTTP
 	// endpoint for build settings (reported), so they go through the store
@@ -256,7 +314,12 @@ func TestPhase4EndToEnd(t *testing.T) {
 		e.do(http.MethodGet, "/api/tasks/"+string(e.task)+"/worktrees", nil, &wts)
 		return len(wts.Worktrees) == 3, fmt.Sprintf("%+v", wts)
 	})
-	for _, w := range wts.Worktrees {
+	trustAll()
+	stored, err := e.a.store.ListWorktrees(context.Background(), e.task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range stored {
 		for _, r := range e.repos {
 			if r.id == w.RepoID {
 				r.wt, r.wtDir, r.branch = w.ID, w.Path, w.Branch
@@ -279,16 +342,12 @@ func TestPhase4EndToEnd(t *testing.T) {
 		}
 	}
 	core1, co, sf := e.repos["shop-core"], e.repos["shop-checkout"], e.repos["shop-storefront"]
-	const moneyPath = "src/main/java/com/example/acme/core/Money.java"
-	const checkoutPath = "src/main/java/com/example/acme/checkout/Checkout.java"
-	const notesPath = "docs/RELEASE-NOTES.txt"
 	moneyV1 := "package com.example.acme.core;\n\npublic record Money(long cents, String currency) {\n    public String label() {\n        return currency + \" \" + cents;\n    }\n}\n"
-	write(core1, moneyPath, moneyV1)
+	write(core1, p4MoneyPath, moneyV1)
 	// Trailing whitespace on purpose: the first verification of shop-checkout fails.
 	checkoutBad := "package com.example.acme.checkout;\n\nimport com.example.acme.core.Money;\n\npublic class Checkout {\n    public Money total() {\n        return new Money(0, \"EUR\");   \n    }\n}\n"
-	write(co, checkoutPath, checkoutBad)
-	notesV1 := "Release notes\r\n\r\n0.1.0\r\n- first storefront build\r\n- currency shown in the cart\r\n"
-	write(sf, notesPath, notesV1)
+	write(co, p4CheckoutPath, checkoutBad)
+	write(sf, p4NotesPath, p4NotesV1)
 
 	waitTask := func(want core.TaskStatus) {
 		t.Helper()
@@ -346,14 +405,22 @@ func TestPhase4EndToEnd(t *testing.T) {
 
 	// Send the failure: exactly one agent message, with the (redacted) tail.
 	eventsBefore := e.taskMessages()
-	var sent api.SendFailureResponse
-	e.must(http.MethodPost, "/api/verifications/"+failed.ID+"/send-failure", map[string]string{}, &sent)
-	if sent.TaskID != e.task {
-		t.Errorf("send-failure = %+v", sent)
-	}
-	// A second click must not send the failure twice.
-	if code, _ := e.do(http.MethodPost, "/api/verifications/"+failed.ID+"/send-failure", map[string]string{}, nil); code < 400 {
-		t.Errorf("a second send-failure was accepted (%d)", code)
+	code, body := e.do(http.MethodPost, "/api/verifications/"+failed.ID+"/send-failure", map[string]string{}, nil)
+	if code >= 300 {
+		// KNOWN BUG: taskMessenger (cmd/ygg/verify.go) sends the failure in the
+		// task's own mode without the opt-in, which project mode (the only
+		// multi-repo mode) always demands, so "Send failure to agent" can
+		// never work for a multi-repo task. The test then sends the same text
+		// as an ordinary message with the opt-in, so the remaining steps run.
+		t.Errorf("KNOWN BUG: send-failure on a project-mode task = %d %s (taskMessenger passes no opt-in)", code, body)
+		e.must(http.MethodPost, "/api/tasks/"+string(e.task)+"/messages", api.MessageRequest{
+			Mode: core.ModeProject, OptIn: true, Prompt: "The verification of shop-checkout failed:\n" + failed.Message,
+		}, nil)
+	} else {
+		// A second click must not send the failure twice.
+		if code, _ := e.do(http.MethodPost, "/api/verifications/"+failed.ID+"/send-failure", map[string]string{}, nil); code < 400 {
+			t.Errorf("a second send-failure was accepted (%d)", code)
+		}
 	}
 	e.wait("the failure message in the transcript", 30*time.Second, func() (bool, string) {
 		return len(e.taskMessages()) > len(eventsBefore), ""
@@ -366,8 +433,15 @@ func TestPhase4EndToEnd(t *testing.T) {
 		t.Error("the host token is in the failure message")
 	}
 
-	// Second turn: the agent fixes the whitespace (the turn is running now).
-	write(co, checkoutPath, strings.ReplaceAll(checkoutBad, "   \n", "\n"))
+	// Second turn: the agent fixes the whitespace. The turn has been admitted
+	// (which cleared the stored trust) once the task runs; trust again then.
+	e.wait("the second turn to run", 60*time.Second, func() (bool, string) {
+		var tk struct{ Task core.Task }
+		e.do(http.MethodGet, "/api/tasks/"+string(e.task), nil, &tk)
+		return tk.Task.Status == core.TaskRunning, string(tk.Task.Status)
+	})
+	trustAll()
+	write(co, p4CheckoutPath, strings.ReplaceAll(checkoutBad, "   \n", " // currency from the order\n"))
 	waitTask(core.TaskReview)
 	allPassed := func() (bool, string) {
 		e.do(http.MethodGet, "/api/tasks/"+string(e.task)+"/verifications", nil, &vs)
@@ -377,45 +451,74 @@ func TestPhase4EndToEnd(t *testing.T) {
 				n++
 			}
 		}
-		return n == 3 && len(vs.Verifications) == 3, fmt.Sprintf("%+v", vs)
+		dbg := ""
+		for _, name := range order {
+			tr, h, _ := e.a.store.GetRepoTrust(context.Background(), e.repos[name].id)
+			dbg += fmt.Sprintf(" trust[%s]=%v/%d", name, tr, len(h))
+		}
+		turns := e.taskMessages()
+		for _, v := range vs.Verifications {
+			dbg += fmt.Sprintf("\n  %s %s turn=%s reason=%q", v.RepoName, v.State, v.Turn, v.Reason)
+		}
+		return n == 3 && len(vs.Verifications) == 3, fmt.Sprintf("turns=%d%s", len(turns), dbg)
 	}
 	// The end of the second turn verifies again on its own; "Verify again" is
 	// the manual way and must land on the same result.
-	e.wait("all three passed after the fix", 120*time.Second, allPassed)
+	e.wait("all three passed after the fix", 40*time.Second, allPassed)
 	e.must(http.MethodPost, "/api/tasks/"+string(e.task)+"/verify/retry", map[string]string{}, nil)
 	e.wait("all three passed after Verify again", 120*time.Second, allPassed)
 
-	e.reviewStep(core1, co, sf, notesPath, checkoutPath, write)
+	e.reviewStep(core1, sf, write)
 	e.shipStep(order)
 	e.landStep(core1)
 }
 
-// taskMessages lists the user-role messages of the task's transcript.
+// taskMessages lists the prompt of every turn of the task, oldest first: the
+// messages the agent was sent (the transcript does not echo the user's text).
 func (e *p4) taskMessages() []string {
 	e.t.Helper()
-	var ev struct {
-		Events []struct {
-			Kind string
-			Role string
-			Text string
-		}
+	turns, err := e.a.store.ListTaskTurns(context.Background(), e.task)
+	if err != nil {
+		e.t.Fatal(err)
 	}
-	e.must(http.MethodGet, "/api/tasks/"+string(e.task)+"/events", nil, &ev)
 	var out []string
-	for _, x := range ev.Events {
-		if x.Kind == "message" && x.Role == "user" {
-			out = append(out, x.Text)
+	for _, tr := range turns {
+		p, err := e.a.store.GetTurnPrompt(context.Background(), tr.ID)
+		if err != nil {
+			e.t.Fatal(err)
 		}
+		out = append(out, p)
 	}
 	return out
 }
 
-func (e *p4) reviewStep(core1, co, sf *p4Repo, notesPath, checkoutPath string, write func(*p4Repo, string, string)) {
-	e.t.Helper()
+// KNOWN BUG (found by TestPhase4EndToEnd): a repo that ships no agent config
+// (the trust state is "none", which the task service admits in every mode) is
+// never "trusted" in the repos table, and the trust API offers no hash the
+// user could confirm. Automatic verification reads that column
+// (internal/verify/actions.go RepoTrusted via verify/store.go:129), so every
+// verification of such a repo ends "Unverifiable: not trusted. Trust it first"
+// and the user has no way to fix it. A repo with nothing to trust must not
+// block verification. This test fails until that is fixed.
+func TestBugVerifyRefusesAConfigFreeRepo(t *testing.T) {
+	ctx := context.Background()
+	d, err := db.Open(ctx, filepath.Join(t.TempDir(), "y.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	store := db.NewStore(d, safety.NewRedactor().Redact)
+	proj := dbtest.Project(t, store, core.Project{Name: "acme-shop", Path: t.TempDir()})
+	repo := dbtest.Repo(t, store, core.Repo{ProjectID: proj.ID, Name: "shop-core", Path: filepath.Join(proj.Path, "shop-core")})
+	scan, err := safety.FSScanner{}.Scan(ctx, t.TempDir(), nil, nil)
+	if err != nil || !scan.Empty() {
+		t.Fatalf("scan of an empty folder = %+v, %v", scan, err)
+	}
+	trusted, err := verify.NewSQLiteStore(store).RepoTrusted(ctx, repo.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !trusted {
+		t.Error("KNOWN BUG: verification treats a repo with no agent config as untrusted, and the user cannot trust it (trust state \"none\" has no hash)")
+	}
 }
-
-func (e *p4) shipStep(order []string) { e.t.Helper() }
-
-func (e *p4) landStep(r *p4Repo) { e.t.Helper() }
-
-var _ = url.Parse
