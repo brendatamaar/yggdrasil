@@ -306,20 +306,6 @@ func TestPropStagedClaimedOnlyExactAndAlone(t *testing.T) {
 		if _, chk := before.(RemoveChecking); !chk || !ok || !h.haveObs {
 			return
 		}
-		claimed := false
-		for _, c := range cmds {
-			switch v := c.(type) {
-			case DeleteStaged:
-				claimed = claimed || v.Staged == o.Staged
-			case MarkRemoving:
-				if _, moving := after.(Moving); !moving {
-					claimed = true
-				}
-			}
-		}
-		if _, ok := after.(Deleting); !ok && !claimed {
-			return
-		}
 		if _, ok := after.(Deleting); !ok {
 			return
 		}
