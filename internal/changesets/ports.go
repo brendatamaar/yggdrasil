@@ -80,7 +80,7 @@ var (
 // queue or any other refusal is an error; if it has a UserMessage method the
 // text is shown, else a generic sentence is.
 type Messenger interface {
-	SendMessage(ctx context.Context, task core.TaskID, text string) (turn string, err error)
+	SendMessage(ctx context.Context, task core.TaskID, text string, optIn bool) (turn string, err error)
 }
 
 // DepSource reads the dependency edges between repos from their manifests

@@ -29,7 +29,7 @@ type VerificationService interface {
 	// SendFailure sends a failed verification to the agent as a new message
 	// (VF-03). A busy task is a conflict, not an error to retry silently. An
 	// unknown outcome is a conflict too: the failure is never sent twice.
-	SendFailure(ctx context.Context, id verify.VerificationID) (SendFailureResponse, error)
+	SendFailure(ctx context.Context, id verify.VerificationID, optIn bool) (SendFailureResponse, error)
 }
 
 // routesVerify registers the verification endpoints. They are registered
@@ -111,7 +111,11 @@ func (s *Server) handleSendFailure(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	out, err := svc.SendFailure(r.Context(), id)
+	var req SendFailureRequest
+	if !decodeOptionalBody(w, r, &req) {
+		return
+	}
+	out, err := svc.SendFailure(r.Context(), id, req.OptIn)
 	if err != nil {
 		// A conflict (agent busy, already sent, result unknown) carries the
 		// service's own plain-language message to the UI.

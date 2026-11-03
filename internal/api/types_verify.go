@@ -90,3 +90,11 @@ type SendFailureResponse struct {
 	TaskID core.TaskID `json:"taskId"`
 	TurnID string      `json:"turnId"`
 }
+
+// SendFailureRequest is the optional body of
+// POST /api/verifications/{id}/send-failure. OptIn is the person's
+// confirmation of the project-mode warning, given at the click; absent or an
+// empty body means false.
+type SendFailureRequest struct {
+	OptIn bool `json:"optIn,omitempty"`
+}

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 
@@ -41,6 +42,10 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 	case apperr.NotFound:
 		writeError(w, http.StatusNotFound, ErrNotFound, msg, "Refresh the page and try again.")
 	case apperr.Conflict:
+		if errors.Is(err, apperr.ErrNeedsOptIn) {
+			writeError(w, http.StatusConflict, ErrNeedsOptIn, msg, "Confirm the warning for this mode, then send again.")
+			return
+		}
 		writeError(w, http.StatusConflict, ErrConflict, msg, "Reload the page to see the current state, then try again.")
 	case apperr.Invalid:
 		writeError(w, http.StatusBadRequest, ErrBadRequest, msg, "Check the values you sent and try again.")
@@ -73,3 +78,12 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 }
 
 const maxBody = 1 << 20
+
+// decodeOptionalBody is decodeBody for a request whose body may be absent or
+// empty (the fields then keep their zero values).
+func decodeOptionalBody(w http.ResponseWriter, r *http.Request, v any) bool {
+	if r.Body == nil || r.Body == http.NoBody || r.ContentLength == 0 {
+		return true
+	}
+	return decodeBody(w, r, v)
+}

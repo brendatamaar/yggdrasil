@@ -25,10 +25,10 @@ func failedRig(t *testing.T) *rig {
 func TestSendFailureIsOncePerAttempt(t *testing.T) {
 	r := failedRig(t)
 	id := r.records()[0].ID
-	if err := r.svc.SendFailure(context.Background(), id); err != nil {
+	if err := r.svc.SendFailure(context.Background(), id, false); err != nil {
 		t.Fatal(err)
 	}
-	err := r.svc.SendFailure(context.Background(), id)
+	err := r.svc.SendFailure(context.Background(), id, false)
 	if c, ok := apperr.ClassOf(err); !ok || c != apperr.Conflict {
 		t.Fatalf("second send = %v, want a conflict", err)
 	}
@@ -40,7 +40,7 @@ func TestSendFailureIsOncePerAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.settle()
-	if err := r.svc.SendFailure(context.Background(), id); err != nil {
+	if err := r.svc.SendFailure(context.Background(), id, false); err != nil {
 		t.Fatalf("send of a new attempt: %v", err)
 	}
 	if n := len(r.msg.Messages()); n != 2 {
@@ -52,11 +52,11 @@ func TestSendFailureRefusedSendIsNotRecorded(t *testing.T) {
 	r := failedRig(t)
 	id := r.records()[0].ID
 	r.msg.Err = apperr.New(apperr.Conflict, "the task is busy", nil)
-	if err := r.svc.SendFailure(context.Background(), id); err == nil {
+	if err := r.svc.SendFailure(context.Background(), id, false); err == nil {
 		t.Fatal("want the refusal")
 	}
 	r.msg.Err = nil
-	if err := r.svc.SendFailure(context.Background(), id); err != nil {
+	if err := r.svc.SendFailure(context.Background(), id, false); err != nil {
 		t.Fatalf("send after a refusal: %v", err)
 	}
 }
@@ -70,7 +70,7 @@ func TestSendFailureParallelCallsSendOne(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if r.svc.SendFailure(context.Background(), id) == nil {
+			if r.svc.SendFailure(context.Background(), id, false) == nil {
 				ok.Add(1)
 			}
 		}()

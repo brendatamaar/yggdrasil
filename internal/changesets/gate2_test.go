@@ -31,7 +31,7 @@ func TestSendRecordsItsResultWhenTheVersionMovedMeanwhile(t *testing.T) {
 	r := newRig(t)
 	a := r.addNote("a.go", 1, "first")
 	r.msg.During = func() { r.w.BumpNoteVersion(string(a.ID)) }
-	if err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user"); err != nil {
+	if err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user", false); err != nil {
 		t.Fatal(err)
 	}
 	if got := stateName(r.notes()[string(a.ID)]); got != "sent" {

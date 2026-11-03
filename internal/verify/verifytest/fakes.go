@@ -673,9 +673,11 @@ type Messenger struct {
 type Message struct {
 	Task core.TaskID
 	Text string
+	// OptIn is the opt-in the send carried.
+	OptIn bool
 }
 
-func (m *Messenger) SendMessage(_ context.Context, task core.TaskID, text string) error {
+func (m *Messenger) SendMessage(_ context.Context, task core.TaskID, text string, optIn bool) error {
 	if m.During != nil {
 		m.During()
 	}
@@ -684,7 +686,7 @@ func (m *Messenger) SendMessage(_ context.Context, task core.TaskID, text string
 	if m.Err != nil {
 		return m.Err
 	}
-	m.Sent = append(m.Sent, Message{task, text})
+	m.Sent = append(m.Sent, Message{task, text, optIn})
 	return nil
 }
 

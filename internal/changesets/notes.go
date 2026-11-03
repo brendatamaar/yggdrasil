@@ -21,6 +21,7 @@ type noteChange struct {
 	after   review.Note
 	deleted bool
 	audits  []review.WriteAudit
+	optIn   bool // the send was made with the user's project-mode opt-in (audit only)
 }
 
 // commitNotes writes the changed notes and their audit entries in one
@@ -49,7 +50,7 @@ func (s *Service) commitNotes(ctx context.Context, actor string, changes []noteC
 					return err
 				}
 			}
-			if err := s.auditNotes(ctx, tx, actor, c.after, c.audits); err != nil {
+			if err := s.auditNotes(ctx, tx, actor, c.after, c.audits, c.optIn); err != nil {
 				return err
 			}
 		}
@@ -157,7 +158,7 @@ func (s *Service) AddNote(ctx context.Context, task core.TaskID, raw review.RawN
 		if err := tx.InsertNote(ctx, RowOfNote(added)); err != nil {
 			return err
 		}
-		return s.auditNotes(ctx, tx, actor, added, auditsOf(cmds))
+		return s.auditNotes(ctx, tx, actor, added, auditsOf(cmds), false)
 	})
 	if err != nil {
 		return review.Note{}, err
@@ -167,10 +168,14 @@ func (s *Service) AddNote(ctx context.Context, task core.TaskID, raw review.RawN
 }
 
 // auditNotes writes the audit entries of one note inside tx.
-func (s *Service) auditNotes(ctx context.Context, tx Tx, actor string, n review.Note, ws []review.WriteAudit) error {
+func (s *Service) auditNotes(ctx context.Context, tx Tx, actor string, n review.Note, ws []review.WriteAudit, optIn bool) error {
 	now := s.now()
 	for _, w := range ws {
-		detail, err := json.Marshal(map[string]string{"task": string(n.Task), "repo": string(n.Repo), "outcome": w.Outcome})
+		fields := map[string]any{"task": string(n.Task), "repo": string(n.Repo), "outcome": w.Outcome}
+		if w.Action == "note.send" {
+			fields["optIn"] = optIn
+		}
+		detail, err := json.Marshal(fields)
 		if err != nil {
 			return fmt.Errorf("audit detail: %w", err)
 		}
@@ -247,7 +252,7 @@ func (s *Service) DeleteNote(ctx context.Context, task core.TaskID, id, actor st
 // (committed first, so a crash can lose a send but never repeat one silently)
 // and hands the message to the task's agent. A refusal returns the notes to
 // open and says why.
-func (s *Service) SendNotes(ctx context.Context, task core.TaskID, ids []string, actor string) error {
+func (s *Service) SendNotes(ctx context.Context, task core.TaskID, ids []string, actor string, optIn bool) error {
 	s.nmu.Lock()
 	defer s.nmu.Unlock()
 	nids, err := ParseNoteIDs(ids)
@@ -275,7 +280,7 @@ func (s *Service) SendNotes(ctx context.Context, task core.TaskID, ids []string,
 	for i := range sending {
 		changes[i] = noteChange{
 			before: &rows[i], after: sending[i],
-			audits: []review.WriteAudit{{Action: "note.send", Outcome: "ok", Note: sending[i].ID}},
+			audits: []review.WriteAudit{{Action: "note.send", Outcome: "ok", Note: sending[i].ID}}, optIn: optIn,
 		}
 	}
 	if err := s.commitNotes(ctx, actor, changes); err != nil {
@@ -285,7 +290,7 @@ func (s *Service) SendNotes(ctx context.Context, task core.TaskID, ids []string,
 
 	// The notes are marked Sending in the database. From here a failure leaves
 	// them for Recover, never for a silent second send.
-	turn, sendErr := s.sendMessage(ctx, task, text)
+	turn, sendErr := s.sendMessage(ctx, task, text, optIn)
 	if sendErr != nil && !isKnownRefusal(sendErr) {
 		// Unknown outcome (timeout, panic, any other error): the agent may have
 		// received the message. Leave the notes Sending for Recover and never
@@ -338,13 +343,13 @@ func (s *Service) SendNotes(ctx context.Context, task core.TaskID, ids []string,
 	return nil
 }
 
-func (s *Service) sendMessage(ctx context.Context, task core.TaskID, text string) (turn string, err error) {
+func (s *Service) sendMessage(ctx context.Context, task core.TaskID, text string, optIn bool) (turn string, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			turn, err = "", fmt.Errorf("sending notes panicked: %v", r)
 		}
 	}()
-	return s.d.Messenger.SendMessage(ctx, task, text)
+	return s.d.Messenger.SendMessage(ctx, task, text, optIn)
 }
 
 // isKnownRefusal reports whether the messenger said, for certain, that it did
@@ -359,6 +364,14 @@ func isKnownRefusal(err error) bool {
 }
 
 func sendRefusal(err error) error {
+	if errors.Is(err, apperr.ErrNeedsOptIn) {
+		msg, _ := apperr.MessageOf(err)
+		var u interface{ UserMessage() string }
+		if msg == "" && errors.As(err, &u) {
+			msg = u.UserMessage()
+		}
+		return apperr.NeedsOptIn(msg, err)
+	}
 	var u interface{ UserMessage() string }
 	if errors.As(err, &u) && u.UserMessage() != "" {
 		return &UserError{Message: u.UserMessage()}

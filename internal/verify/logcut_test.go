@@ -20,7 +20,7 @@ func TestSendFailureLogCutThroughASecretLeaksNothing(t *testing.T) {
 	// Many secrets so redaction shrinks the text below the limit; the cut of
 	// the kept bytes falls inside one of them.
 	r.runner.SetLog(f.Build, 1, strings.Repeat("x", 10)+strings.Repeat(secret, 3000))
-	if err := r.svc.SendFailure(context.Background(), rec.ID); err != nil {
+	if err := r.svc.SendFailure(context.Background(), rec.ID, false); err != nil {
 		t.Fatal(err)
 	}
 	text := r.msg.Messages()[0].Text

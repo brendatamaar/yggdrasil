@@ -57,6 +57,9 @@ type EditNoteRequest struct {
 // SendNotesRequest is the body of POST /api/tasks/{id}/notes/send.
 type SendNotesRequest struct {
 	IDs []string `json:"ids"`
+	// OptIn is the person's confirmation of the project-mode warning, given at
+	// the click. Absent means false.
+	OptIn bool `json:"optIn,omitempty"`
 }
 
 // SendNotesResponse is the body of a successful send: the notes now belong to

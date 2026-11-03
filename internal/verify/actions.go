@@ -171,7 +171,7 @@ func (s *Service) Cancel(ctx context.Context, id cv.VerificationID) (Record, err
 // row, together with its audit entry, so a second call (a double click, two
 // requests at once) is a conflict and sends nothing. A new attempt is a new
 // state and can be sent again.
-func (s *Service) SendFailure(ctx context.Context, id cv.VerificationID) error {
+func (s *Service) SendFailure(ctx context.Context, id cv.VerificationID, optIn bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, err := s.Get(ctx, id)
@@ -198,10 +198,10 @@ func (s *Service) SendFailure(ctx context.Context, id cv.VerificationID) error {
 
 	// Mark the attempt as being sent, durably, before the message leaves: a
 	// crash can lose a send but never repeat one.
-	if err := s.markSend(ctx, rec, failed, sendMark{Sending: true}, "verify.send_failure_begin"); err != nil {
+	if err := s.markSend(ctx, rec, failed, sendMark{Sending: true}, "verify.send_failure_begin", optIn); err != nil {
 		return apperr.New(apperr.Unavailable, "Yggdrasil couldn't prepare to send the failure. Try again.", err)
 	}
-	sendErr := s.sendMessage(ctx, rec.Task, text)
+	sendErr := s.sendMessage(ctx, rec.Task, text, optIn)
 	cur, gerr := s.Get(ctx, rec.ID)
 	if gerr != nil {
 		s.d.Log.Error("could not reload a verification after sending a failure", "verification", rec.ID, "err", gerr)
@@ -212,12 +212,12 @@ func (s *Service) SendFailure(ctx context.Context, id cv.VerificationID) error {
 	}
 	switch {
 	case sendErr == nil:
-		if err := s.markSend(ctx, cur, failed, sendMark{Sent: true}, "verify.send_failure"); err != nil {
+		if err := s.markSend(ctx, cur, failed, sendMark{Sent: true}, "verify.send_failure", optIn); err != nil {
 			s.d.Log.Error("could not record that a failure was sent; it stays marked as sending", "verification", rec.ID, "err", err)
 		}
 		return nil
 	case isKnownRefusal(sendErr):
-		if err := s.markSend(ctx, cur, failed, sendMark{}, "verify.send_failure_refused"); err != nil {
+		if err := s.markSend(ctx, cur, failed, sendMark{}, "verify.send_failure_refused", optIn); err != nil {
 			s.d.Log.Error("could not clear the sending mark after a refusal; it stays marked as sending", "verification", rec.ID, "err", err)
 		}
 		return sendErr
@@ -240,20 +240,20 @@ func unknownSendError() error {
 	return apperr.New(apperr.Conflict, "Yggdrasil couldn't tell whether the agent received the failure. Check the agent before sending it again, or verify again to start a new attempt.", errors.New("send result unknown"))
 }
 
-func (s *Service) sendMessage(ctx context.Context, task core.TaskID, text string) (err error) {
+func (s *Service) sendMessage(ctx context.Context, task core.TaskID, text string, optIn bool) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("sending a failure panicked: %v", r)
 		}
 	}()
-	return s.d.Messenger.SendMessage(ctx, task, text)
+	return s.d.Messenger.SendMessage(ctx, task, text, optIn)
 }
 
 // markSend stores the send mark on the row and the audit entry in one
 // transaction.
-func (s *Service) markSend(ctx context.Context, rec Record, failed cv.Failed, mark sendMark, action string) error {
+func (s *Service) markSend(ctx context.Context, rec Record, failed cv.Failed, mark sendMark, action string, optIn bool) error {
 	now := s.now()
-	detail, err := json.Marshal(map[string]string{"task": string(rec.Task), "repo": string(rec.Repo), "turn": string(failed.Turn), "outcome": string(failed.Stage)})
+	detail, err := json.Marshal(map[string]any{"task": string(rec.Task), "repo": string(rec.Repo), "turn": string(failed.Turn), "outcome": string(failed.Stage), "optIn": optIn})
 	if err != nil {
 		return fmt.Errorf("audit detail: %w", err)
 	}

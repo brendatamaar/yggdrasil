@@ -27,19 +27,19 @@ import (
 // startVerify to the app errgroup.
 
 // taskMessenger sends a failure to the task's agent as a new message in the
-// mode of the task. Worktrees exist only for Code mode, so the message never
-// asks for the opt-in that current-branch or project modes need.
+// mode of the task. A mode that edits main checkouts or the whole project needs
+// the opt-in on every message: it comes from the click (optIn), never a default.
 type taskMessenger struct {
 	svc   *tasks.Service
 	store *db.Store
 }
 
-func (m taskMessenger) SendMessage(ctx context.Context, task core.TaskID, text string) error {
+func (m taskMessenger) SendMessage(ctx context.Context, task core.TaskID, text string, optIn bool) error {
 	st, err := m.store.GetTaskState(ctx, task)
 	if err != nil {
 		return fmt.Errorf("read task %s: %w", task, err)
 	}
-	_, err = m.svc.Message(ctx, tasks.MessageRequest{TaskID: task, Prompt: text, Mode: string(st.Task.Mode)})
+	_, err = m.svc.Message(ctx, tasks.MessageRequest{TaskID: task, Prompt: text, Mode: string(st.Task.Mode), OptIn: optIn})
 	return verifyRefusal(err)
 }
 
@@ -51,6 +51,9 @@ func (m taskMessenger) SendMessage(ctx context.Context, task core.TaskID, text s
 func verifyRefusal(err error) error {
 	var rej *tasks.RejectedError
 	if errors.As(err, &rej) {
+		if rej.Reason == string(guard.ReasonNeedsOptIn) {
+			return apperr.NeedsOptIn(rej.Message, err)
+		}
 		return apperr.New(apperr.Conflict, rej.Message, err)
 	}
 	return err

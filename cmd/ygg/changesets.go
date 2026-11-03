@@ -11,9 +11,11 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/brendatamaar/yggdrasil/internal/apperr"
 	"github.com/brendatamaar/yggdrasil/internal/builds/toolchains"
 	"github.com/brendatamaar/yggdrasil/internal/changesets"
 	"github.com/brendatamaar/yggdrasil/internal/core"
+	"github.com/brendatamaar/yggdrasil/internal/core/guard"
 	"github.com/brendatamaar/yggdrasil/internal/core/review"
 	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/git"
@@ -62,12 +64,12 @@ type noteMessenger struct {
 	store *db.Store
 }
 
-func (m noteMessenger) SendMessage(ctx context.Context, task core.TaskID, text string) (string, error) {
+func (m noteMessenger) SendMessage(ctx context.Context, task core.TaskID, text string, optIn bool) (string, error) {
 	st, err := m.store.GetTaskState(ctx, task)
 	if err != nil {
 		return "", fmt.Errorf("read task %s: %w", task, err)
 	}
-	res, err := m.svc.Message(ctx, tasks.MessageRequest{TaskID: task, Prompt: text, Mode: string(st.Task.Mode)})
+	res, err := m.svc.Message(ctx, tasks.MessageRequest{TaskID: task, Prompt: text, Mode: string(st.Task.Mode), OptIn: optIn})
 	if err != nil {
 		return "", noteRefusal(err)
 	}
@@ -84,6 +86,8 @@ func noteRefusal(err error) error {
 		return err
 	}
 	switch rej.Reason {
+	case string(guard.ReasonNeedsOptIn):
+		return fmt.Errorf("%w: %w", apperr.ErrNeedsOptIn, err)
 	case "task_busy":
 		return fmt.Errorf("%w: %w", changesets.ErrAgentBusy, err)
 	case "queue_full":

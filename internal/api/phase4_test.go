@@ -28,9 +28,10 @@ var (
 
 // fakeP4 implements every Phase 4 service interface and counts calls.
 type fakeP4 struct {
-	mu    sync.Mutex
-	calls []string
-	err   error // returned by every method when set
+	mu     sync.Mutex
+	calls  []string
+	err    error  // returned by every method when set
+	optIns []bool // the optIn of each send-failure and send-notes call
 }
 
 func (f *fakeP4) rec(s string) error {
@@ -51,7 +52,10 @@ func (f *fakeP4) Retry(_ context.Context, task core.TaskID) (VerificationsRespon
 func (f *fakeP4) Cancel(_ context.Context, id cv.VerificationID) (VerificationDTO, error) {
 	return VerificationDTO{ID: string(id), State: VerifyCancelled}, f.rec("verify.cancel")
 }
-func (f *fakeP4) SendFailure(_ context.Context, id cv.VerificationID) (SendFailureResponse, error) {
+func (f *fakeP4) SendFailure(_ context.Context, id cv.VerificationID, optIn bool) (SendFailureResponse, error) {
+	f.mu.Lock()
+	f.optIns = append(f.optIns, optIn)
+	f.mu.Unlock()
 	return SendFailureResponse{TaskID: "tsk_1", TurnID: "t2"}, f.rec("verify.send")
 }
 
@@ -67,7 +71,10 @@ func (f fakeReview) Edit(_ context.Context, id review.NoteID, req EditNoteReques
 	return ReviewNoteDTO{ID: string(id), Text: req.Text}, f.rec("notes.edit")
 }
 func (f fakeReview) Delete(context.Context, review.NoteID) error { return f.rec("notes.delete") }
-func (f fakeReview) Send(context.Context, core.TaskID, SendNotesRequest) (SendNotesResponse, error) {
+func (f fakeReview) Send(_ context.Context, _ core.TaskID, req SendNotesRequest) (SendNotesResponse, error) {
+	f.mu.Lock()
+	f.optIns = append(f.optIns, req.OptIn)
+	f.mu.Unlock()
 	return SendNotesResponse{TurnID: "t3"}, f.rec("notes.send")
 }
 
@@ -477,7 +484,7 @@ func (f *fakeVBackend) Get(context.Context, cv.VerificationID) (vsvc.Record, err
 func (f *fakeVBackend) Cancel(context.Context, cv.VerificationID) (vsvc.Record, error) {
 	return f.recs[0], f.err
 }
-func (f *fakeVBackend) SendFailure(_ context.Context, id cv.VerificationID) error {
+func (f *fakeVBackend) SendFailure(_ context.Context, id cv.VerificationID, optIn bool) error {
 	f.sent = append(f.sent, id)
 	return f.err
 }
@@ -497,13 +504,13 @@ func TestVerificationAdapter(t *testing.T) {
 	if v.Message != "redacted tail" || v.FailedStep != "test" || v.RepoName != "shop-api" || !v.CanSendFailure || out.Summary.State != VerifyFailed {
 		t.Errorf("dto = %+v summary = %+v", v, out.Summary)
 	}
-	resp, err := svc.SendFailure(context.Background(), "v1")
+	resp, err := svc.SendFailure(context.Background(), "v1", false)
 	if err != nil || resp.TaskID != "tsk_1" || len(b.sent) != 1 {
 		t.Errorf("send = %+v %v", resp, err)
 	}
 	// A failed send passes the service's error through untouched.
 	b.err = apperr.New(apperr.Conflict, "unknown outcome", errors.New("x"))
-	if _, err := svc.SendFailure(context.Background(), "v1"); !errors.Is(err, b.err) {
+	if _, err := svc.SendFailure(context.Background(), "v1", false); !errors.Is(err, b.err) {
 		t.Errorf("send error = %v", err)
 	}
 	// The board summary.
