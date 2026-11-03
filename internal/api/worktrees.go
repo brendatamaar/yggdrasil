@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/brendatamaar/yggdrasil/internal/git"
+
 	"github.com/brendatamaar/yggdrasil/internal/core"
 )
 
@@ -27,6 +29,10 @@ type WorktreeView struct {
 	RepoName string
 	// BaseCommit is the commit the worktree started from.
 	BaseCommit string
+	// TargetBranch is the main checkout's current branch; "" when unknown.
+	TargetBranch string
+	// Clean is nil when unknown.
+	Clean *bool
 }
 
 // worktreeReads is the part of db.Store the worktree service reads.
@@ -37,11 +43,27 @@ type worktreeReads interface {
 	GetRepo(ctx context.Context, id core.RepoID) (core.Repo, error)
 }
 
-type dbWorktrees struct{ store worktreeReads }
+// WorktreeGit is what the service reads from git (*git.Git satisfies it).
+type WorktreeGit interface {
+	CurrentBranch(ctx context.Context, dir string) (string, error)
+	Status(ctx context.Context, dir string) (git.Status, error)
+}
+
+type dbWorktrees struct {
+	store worktreeReads
+	git   WorktreeGit
+}
 
 // NewWorktreeService serves GET /api/tasks/{id}/worktrees from the database.
 // The folder on disk is dropped here, so no caller can leak it.
 func NewWorktreeService(store worktreeReads) WorktreeService { return dbWorktrees{store: store} }
+
+// NewWorktreeServiceWithGit also reports the main checkout's branch and
+// whether each worktree is clean. What git cannot tell is left out; it never
+// fails the list.
+func NewWorktreeServiceWithGit(store worktreeReads, g WorktreeGit) WorktreeService {
+	return dbWorktrees{store: store, git: g}
+}
 
 func (d dbWorktrees) ForTask(ctx context.Context, task core.TaskID) ([]WorktreeView, error) {
 	if _, err := d.store.GetTask(ctx, task); err != nil {
@@ -52,23 +74,44 @@ func (d dbWorktrees) ForTask(ctx context.Context, task core.TaskID) ([]WorktreeV
 		return nil, fmt.Errorf("list worktrees of task %s: %w", task, err)
 	}
 	names := map[core.RepoID]string{}
+	targets := map[core.RepoID]string{}
 	out := make([]WorktreeView, 0, len(list))
 	for _, w := range list {
 		name, ok := names[w.RepoID]
 		if !ok {
 			if r, err := d.store.GetRepo(ctx, w.RepoID); err == nil {
 				name = r.Name
+				if d.git != nil {
+					if b, err := d.git.CurrentBranch(ctx, r.Path); err == nil {
+						targets[w.RepoID] = b
+					}
+				}
 			}
 			names[w.RepoID] = name
 		}
+		clean := d.clean(ctx, w)
 		base, err := d.store.GetWorktreeBaseCommit(ctx, w.ID)
 		if err != nil {
 			return nil, fmt.Errorf("read base commit of worktree %s: %w", w.ID, err)
 		}
 		w.Path = ""
-		out = append(out, WorktreeView{Worktree: w, RepoName: name, BaseCommit: base})
+		out = append(out, WorktreeView{Worktree: w, RepoName: name, BaseCommit: base, TargetBranch: targets[w.RepoID], Clean: clean})
 	}
 	return out, nil
+}
+
+// clean reads whether the folder of a worktree that still exists has no
+// changes. nil when git is not wired, the folder is gone or git cannot say.
+func (d dbWorktrees) clean(ctx context.Context, w core.Worktree) *bool {
+	if d.git == nil || w.Path == "" || (w.Status != core.WorktreeActive && w.Status != core.WorktreeMerged) {
+		return nil
+	}
+	st, err := d.git.Status(ctx, w.Path)
+	if err != nil {
+		return nil
+	}
+	c := st.Staged+st.Unstaged+st.Untracked+st.Conflicted == 0
+	return &c
 }
 
 // routesWorktrees registers the worktree endpoints.
@@ -100,6 +143,7 @@ func (s *Server) handleTaskWorktrees(w http.ResponseWriter, r *http.Request) {
 		out.Worktrees = append(out.Worktrees, WorktreeDTO{
 			ID: wt.ID, RepoID: wt.RepoID, RepoName: v.RepoName, TaskID: wt.TaskID, Name: wt.Name,
 			Branch: wt.Branch, BaseCommit: v.BaseCommit, Status: wt.Status, CreatedAt: wt.CreatedAt,
+			TargetBranch: v.TargetBranch, Clean: v.Clean,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

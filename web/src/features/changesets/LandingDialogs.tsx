@@ -119,12 +119,21 @@ function LandingDialog({ flow, worktree, dispatch }: { flow: LandingFlow; worktr
               {kind === "merge_local" ? (
                 <div>
                   <dt className="inline text-muted">Into: </dt>
-                  <dd className="inline">the branch checked out in the main checkout of {worktree.repoName}</dd>
+                  <dd className="inline">{worktree.targetBranch ? (
+                      <>
+                        <span className="font-mono">{worktree.targetBranch}</span> (checked out in the main checkout of {worktree.repoName})
+                      </>
+                    ) : (
+                      `the branch checked out in the main checkout of ${worktree.repoName}`
+                    )}</dd>
                 </div>
               ) : (
                 <div>
                   <dt className="inline text-muted">Status: </dt>
                   <dd className="inline">{worktree.status === "merged" ? "merged" : "not merged yet"}</dd>
+                  {worktree.clean === undefined ? null : (
+                    <dd className="inline">{worktree.clean ? ", no uncommitted changes" : ", has uncommitted changes that will be lost"}</dd>
+                  )}
                 </div>
               )}
             </dl>

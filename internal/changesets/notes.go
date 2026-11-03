@@ -152,7 +152,7 @@ func (s *Service) AddNote(ctx context.Context, task core.TaskID, raw review.RawN
 		var cmds []review.Command
 		added, cmds = review.StepNote(review.Note{}, review.AddNote{Note: note, OpenCount: count, Now: s.now()})
 		if len(cmds) == 0 {
-			return &UserError{Message: fmt.Sprintf("This task has %d notes waiting. Send or delete some first.", review.MaxNotesPerTask)}
+			return &UserError{Message: fmt.Sprintf("This task has %d notes waiting. Send or delete some first.", review.MaxNotesPerTask), Kind: KindConflict}
 		}
 		if err := tx.InsertNote(ctx, RowOfNote(added)); err != nil {
 			return err
@@ -226,7 +226,7 @@ func (s *Service) EditNote(ctx context.Context, task core.TaskID, id, text, acto
 	n, changed, err := s.stepOne(ctx, task, id, actor, review.EditNote{Text: normalizeText(text), Now: s.now()})
 	if err == nil && !changed {
 		if _, open := n.State.(review.NoteOpen); !open {
-			return n, &UserError{Message: "Only a note that hasn't been sent can be edited."}
+			return n, &UserError{Message: "Only a note that hasn't been sent can be edited.", Kind: KindConflict}
 		}
 	}
 	return n, err
@@ -238,7 +238,7 @@ func (s *Service) DeleteNote(ctx context.Context, task core.TaskID, id, actor st
 	defer s.nmu.Unlock()
 	_, changed, err := s.stepOne(ctx, task, id, actor, review.DeleteNote{Now: s.now()})
 	if err == nil && !changed {
-		return &UserError{Message: "Only a note that hasn't been sent can be deleted."}
+		return &UserError{Message: "Only a note that hasn't been sent can be deleted.", Kind: KindConflict}
 	}
 	return err
 }
@@ -269,7 +269,7 @@ func (s *Service) SendNotes(ctx context.Context, task core.TaskID, ids []string,
 	now := s.now()
 	sending, cmds := review.StepBatch(notes, review.SendNotes{Batch: batch, Text: text, Now: now})
 	if len(cmds) == 0 {
-		return &UserError{Message: "These notes can't be sent. Reload and try again."}
+		return &UserError{Message: "These notes can't be sent. Reload and try again.", Kind: KindConflict}
 	}
 	changes := make([]noteChange, len(sending))
 	for i := range sending {
@@ -364,7 +364,7 @@ func sendRefusal(err error) error {
 		return &UserError{Message: u.UserMessage()}
 	}
 	if errors.Is(err, ErrAgentBusy) || errors.Is(err, ErrQueueFull) {
-		return &UserError{Message: "The agent is busy. Send the notes when it finishes."}
+		return &UserError{Message: "The agent is busy. Send the notes when it finishes.", Kind: KindConflict}
 	}
 	return apperr.New(apperr.Unavailable, "Yggdrasil couldn't send the notes to the agent. Your notes are still here; try again in a moment.", err)
 }

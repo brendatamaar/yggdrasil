@@ -23,6 +23,7 @@ func TestChangeSetErrMapsEachRefusalToAClass(t *testing.T) {
 		{"version", fmt.Errorf("save: %w", db.ErrConflict), apperr.Conflict},
 		{"refused", &changesets.Refused{Message: "stale"}, apperr.Conflict},
 		{"user mistake", &changesets.UserError{Message: "fix it"}, apperr.Invalid},
+		{"user state conflict", &changesets.UserError{Message: "run in progress", Kind: changesets.KindConflict}, apperr.Conflict},
 		{"already classified", classed, apperr.Unavailable},
 	}
 	for _, c := range cases {

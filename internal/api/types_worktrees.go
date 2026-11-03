@@ -20,7 +20,13 @@ type WorktreeDTO struct {
 	BaseCommit string              `json:"baseCommit"`
 	Path       string              `json:"path,omitempty"`
 	Status     core.WorktreeStatus `json:"status"`
-	CreatedAt  time.Time           `json:"createdAt"`
+	// TargetBranch is the branch the main checkout has checked out now: what a
+	// merge of this worktree would go into. Omitted when unknown.
+	TargetBranch string `json:"targetBranch,omitempty"`
+	// Clean is true when the worktree has no uncommitted or untracked files.
+	// Omitted when unknown or when the folder is gone.
+	Clean     *bool     `json:"clean,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 // WorktreesResponse is the body of GET /api/tasks/{id}/worktrees.

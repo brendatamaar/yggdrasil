@@ -128,7 +128,7 @@ type worktreeDiffAdapter struct {
 }
 
 // NewWorktreeDiffer serves GET /api/tasks/{id}/repos/{repo}/diff: what the
-// agent changed in the task's active worktree of a tracked repo, against the
+// agent changed in the task's active or merged worktree of a tracked repo, against the
 // commit the worktree started from.
 func NewWorktreeDiffer(store LandingStore, g LandingGit) WorktreeDiffer {
 	return &worktreeDiffAdapter{store: store, git: g}
@@ -149,7 +149,7 @@ func (a *worktreeDiffAdapter) DiffWorktree(ctx context.Context, task core.TaskID
 		return git.BaseDiff{}, fmt.Errorf("list worktrees of task %s: %w", task, err)
 	}
 	for _, w := range wts {
-		if w.RepoID != repo || w.Status != core.WorktreeActive {
+		if w.RepoID != repo || (w.Status != core.WorktreeActive && w.Status != core.WorktreeMerged) {
 			continue
 		}
 		base, err := a.store.GetWorktreeBaseCommit(ctx, w.ID)
@@ -162,5 +162,5 @@ func (a *worktreeDiffAdapter) DiffWorktree(ctx context.Context, task core.TaskID
 		}
 		return bd, nil
 	}
-	return git.BaseDiff{}, none(fmt.Errorf("no active worktree of task %s in repo %s", task, repo))
+	return git.BaseDiff{}, none(fmt.Errorf("no active or merged worktree of task %s in repo %s", task, repo))
 }

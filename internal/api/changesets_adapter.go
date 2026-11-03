@@ -57,6 +57,8 @@ func changeSetErr(err error) error {
 	var user *changesets.UserError
 	var refused *changesets.Refused
 	switch {
+	case errors.As(err, &user) && user.Kind == changesets.KindConflict:
+		return apperr.New(apperr.Conflict, user.Message, err)
 	case errors.As(err, &user):
 		return apperr.New(apperr.Invalid, user.Message, err)
 	case errors.As(err, &refused):

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { describeError } from "../../api/client";
 import { cancelTask, taskKeys, useTask } from "../../api/queries";
 import { useBoard } from "../../features/board";
+import { VerifyStateBadge } from "../../components/VerifyStateBadge";
 import { MessageComposer, type Mode } from "../../features/composer";
 import { ChangeSetPanel } from "../../features/changesets";
 import { ProposalsPanel } from "../../features/proposals";
@@ -52,6 +53,7 @@ export function TaskPage({ taskId }: { taskId: string }) {
               {statusLabel(status)}
             </span>
           ) : null}
+          {task.data?.verification ? <VerifyStateBadge state={task.data.verification.state} /> : null}
           {status && cancellable.has(status) ? (
             <button
               type="button"

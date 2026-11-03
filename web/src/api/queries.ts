@@ -7,6 +7,7 @@ import type {
   TaskEventsResponse,
   TaskListResponse,
   TaskResponse,
+  VerificationSummaryDTO,
 } from "./gen/api.gen";
 import type { Task } from "./gen/core.gen";
 
@@ -28,10 +29,16 @@ export function useRunningTasks() {
   });
 }
 
+/** A task with the verification summary the server sends beside it. */
+export type TaskWithVerification = Task & { verification?: VerificationSummaryDTO };
+
 export function useTask(id: string) {
   return useQuery({
     queryKey: taskKeys.one(id),
-    queryFn: async (): Promise<Task> => (await apiFetch<TaskResponse>(taskPath(id))).task,
+    queryFn: async (): Promise<TaskWithVerification> => {
+      const r = await apiFetch<TaskResponse>(taskPath(id));
+      return { ...r.task, verification: r.verification };
+    },
   });
 }
 
