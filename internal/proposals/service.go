@@ -139,9 +139,9 @@ type Config struct {
 	Marks        WorktreeMarks
 	Live         LiveProbe
 	WorktreeRoot string
-	// StageID makes the ID of a removal's staging folder (1-64 of
-	// [A-Za-z0-9_-]); default derives one from NewID.
-	StageID func() string
+	// StageID derives the ID of a removal's staging folder from its proposal (1-64 of
+	// [A-Za-z0-9_-]). It must be deterministic, so a retry plans the same folder; default StageIDFor.
+	StageID func(core.ProposalID) string
 }
 
 // Service creates, decides and executes proposals (RV-02, GH-03).
@@ -203,8 +203,7 @@ func New(cfg Config) (*Service, error) {
 		cfg.NewID = db.NewID
 	}
 	if cfg.StageID == nil {
-		newID := cfg.NewID
-		cfg.StageID = func() string { return newID("rm") }
+		cfg.StageID = StageIDFor
 	}
 	if cfg.InstallTimeout <= 0 {
 		cfg.InstallTimeout = 20 * time.Minute

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
+	"github.com/brendatamaar/yggdrasil/internal/core/landing"
 	coreprop "github.com/brendatamaar/yggdrasil/internal/core/proposals"
 	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/platform"
@@ -161,7 +162,7 @@ func TestAgentCannotCreateLandingProposals(t *testing.T) {
 
 // WorktreeMarks contract: monotone, idempotent, a wrong status is a no-op, a
 // missing worktree is db.ErrNotFound. Run against the fake and the real one.
-func runMarksContract(t *testing.T, m WorktreeMarks, commit func(func(tx *db.Tx) error) error, status func() core.WorktreeStatus, missing, id core.WorktreeID) {
+func runMarksContract(t *testing.T, m WorktreeMarks, commit func(func(tx *db.Tx) error) error, status func() core.WorktreeStatus, leaf func() string, missing, id core.WorktreeID) {
 	t.Helper()
 	ctx := context.Background()
 	if err := commit(func(tx *db.Tx) error { return m.MarkRemoved(ctx, tx, id) }); err != nil || status() != core.WorktreeActive {
@@ -176,6 +177,12 @@ func runMarksContract(t *testing.T, m WorktreeMarks, commit func(func(tx *db.Tx)
 		if err := commit(func(tx *db.Tx) error { return m.MarkRemoving(ctx, tx, id, "stage_1") }); err != nil || status() != core.WorktreeRemoving {
 			t.Fatalf("removing: %v %s", err, status())
 		}
+	}
+	if got := leaf(); got != "stage_1" {
+		t.Fatalf("MarkRemoving must remember the leaf, got %q", got)
+	}
+	if err := commit(func(tx *db.Tx) error { return m.MarkRemoving(ctx, tx, id, "stage_other") }); err != nil || status() != core.WorktreeRemoving || leaf() != "stage_1" {
+		t.Fatalf("a repeated MarkRemoving must keep the first leaf: %v %s %q", err, status(), leaf())
 	}
 	if err := commit(func(tx *db.Tx) error { return m.MarkMerged(ctx, tx, id) }); err != nil || status() != core.WorktreeRemoving {
 		t.Fatalf("merged must not move backwards: %v %s", err, status())
@@ -204,7 +211,8 @@ func TestWorktreeMarksContractFake(t *testing.T) {
 	w := newLandWorld(t)
 	id, _, _ := w.worktree("c", false)
 	runMarksContract(t, w.marks, func(f func(tx *db.Tx) error) error { return f(nil) },
-		func() core.WorktreeStatus { w.res.mu.Lock(); defer w.res.mu.Unlock(); return w.res.wts[id].Status }, "wt_missing", id)
+		func() core.WorktreeStatus { w.res.mu.Lock(); defer w.res.mu.Unlock(); return w.res.wts[id].Status },
+		func() string { w.res.mu.Lock(); defer w.res.mu.Unlock(); return w.res.wts[id].StagedLeaf }, "wt_missing", id)
 }
 
 func TestWorktreeMarksContractDB(t *testing.T) {
@@ -224,5 +232,169 @@ func TestWorktreeMarksContractDB(t *testing.T) {
 				t.Fatal(err)
 			}
 			return g.Status
+		},
+		func() string {
+			n, err := w.store.GetWorktreeStagedName(ctx, wt.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return n
 		}, "wt_missing", wt.ID)
+}
+
+func (w *landWorld) plannedLeaf(t *testing.T, name string, pid core.ProposalID) string {
+	t.Helper()
+	root, err := platform.ResolveRoot(w.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sp, err := landing.StagingPath(root, name, StageIDFor(pid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sp.Leaf
+}
+
+// A crash between the rename and MarkRemoving leaves the folder staged under
+// the leaf this proposal plans; the confirmed run resumes and finishes.
+func TestRemoveResumesAfterCrashBetweenRenameAndMark(t *testing.T) {
+	t.Parallel()
+	w := newLandWorld(t)
+	id, dir, _ := w.worktree("a", true)
+	other := w.stagedDirFor(t, "wt-a-b-old1") // someone else's leftover
+	v := w.create(coreprop.RemoveWorktree{Worktree: id})
+	staged := w.stagedDirFor(t, w.plannedLeaf(t, "wt-a", v.ID))
+	if err := os.RemoveAll(dir); err != nil { // the rename already happened
+		t.Fatal(err)
+	}
+	if _, err := w.svc.Confirm(w.ctx, v.ID, v.ActionHash, "user"); err != nil {
+		t.Fatal(err)
+	}
+	w.settle(v.ID, core.ProposalExecuted)
+	if _, err := os.Stat(staged); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the staged folder should be deleted")
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Fatalf("another folder was touched: %v", err)
+	}
+	w.res.mu.Lock()
+	defer w.res.mu.Unlock()
+	if w.res.wts[id].Status != core.WorktreeRemoved {
+		t.Fatalf("status = %s", w.res.wts[id].Status)
+	}
+}
+
+// MarkRemoving failing on both tries leaves the folder staged and the row
+// untouched; the retry plans the same leaf and resumes.
+func TestRemoveResumesWhenMarkRemovingFailedTwice(t *testing.T) {
+	t.Parallel()
+	w := newLandWorld(t)
+	id, dir, _ := w.worktree("a", true)
+	w.marks.mu.Lock()
+	w.marks.failN = 2 // exactly the two persist attempts
+	w.marks.mu.Unlock()
+	v := w.run(coreprop.RemoveWorktree{Worktree: id}, core.ProposalFailed)
+	if !v.Retryable {
+		t.Fatalf("failure = %+v", v)
+	}
+	staged := filepath.Join(w.rootResolved(t), landingStagingDir, w.plannedLeaf(t, "wt-a", v.ID))
+	if _, err := os.Stat(staged); err != nil {
+		t.Fatalf("the folder should be staged: %v", err)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the live folder should be gone")
+	}
+	if _, err := w.svc.Retry(w.ctx, v.ID, "user"); err != nil {
+		t.Fatal(err)
+	}
+	w.settle(v.ID, core.ProposalExecuted)
+	if _, err := os.Stat(staged); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the staged folder should be deleted")
+	}
+	w.res.mu.Lock()
+	defer w.res.mu.Unlock()
+	if w.res.wts[id].Status != core.WorktreeRemoved {
+		t.Fatalf("status = %s", w.res.wts[id].Status)
+	}
+}
+
+func (w *landWorld) rootResolved(t *testing.T) string {
+	t.Helper()
+	root, err := platform.ResolveRoot(w.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func TestStageIDForIsDeterministicDistinctAndValid(t *testing.T) {
+	t.Parallel()
+	ids := []core.ProposalID{"prop_1", "prop_2", "a/b", "a_b", "a b", "", "  ", "é", "x", core.ProposalID(strings.Repeat("z", 100)), core.ProposalID(strings.Repeat("z", 101))}
+	seen := map[string]core.ProposalID{}
+	for _, id := range ids {
+		s := StageIDFor(id)
+		if s != StageIDFor(id) {
+			t.Fatalf("%q: not deterministic", id)
+		}
+		if _, err := landing.StagingPath("root", "n", s); err != nil {
+			t.Fatalf("%q -> %q invalid: %v", id, s, err)
+		}
+		if prev, dup := seen[s]; dup {
+			t.Fatalf("%q and %q share %q", prev, id, s)
+		}
+		seen[s] = id
+	}
+}
+
+// Two proposals get different leaves, so names a and a-b stay apart.
+func TestTwoRemovalsGetDifferentLeaves(t *testing.T) {
+	t.Parallel()
+	w := newLandWorld(t)
+	if a, b := w.plannedLeaf(t, "wt-a", "prop_1"), w.plannedLeaf(t, "wt-a", "prop_2"); a == b {
+		t.Fatalf("same leaf %q", a)
+	}
+	if a, b := w.plannedLeaf(t, "wt-a", "prop_1"), w.plannedLeaf(t, "wt-a-b", "prop_1"); a == b {
+		t.Fatalf("same leaf %q", a)
+	}
+}
+
+// A symlink or file at the staged leaf is unreadable, not absent.
+func TestFindStagedNonDirectoryIsUnreadable(t *testing.T) {
+	t.Parallel()
+	r := &removeRun{stageID: "id1"}
+	r.req.Root, r.req.Name = filepath.Join(t.TempDir(), "root"), "a"
+	r.lstat = func(string) (fs.FileInfo, error) { return fakeInfo{dir: false}, nil }
+	if _, ok, err := r.findStaged(); ok || err == nil {
+		t.Fatalf("non-dir: ok=%v err=%v", ok, err)
+	}
+	r.lstat = func(string) (fs.FileInfo, error) { return fakeInfo{dir: true}, nil }
+	if _, ok, err := r.findStaged(); !ok || err != nil {
+		t.Fatalf("dir: ok=%v err=%v", ok, err)
+	}
+}
+
+// A remembered leaf that is not valid is refused before the disk is touched.
+func TestFindStagedRejectsInvalidRememberedLeaf(t *testing.T) {
+	t.Parallel()
+	r := &removeRun{lstat: func(string) (fs.FileInfo, error) { t.Fatal("touched the disk"); return nil, nil }}
+	r.req.Root, r.req.Name, r.req.StagedLeaf = t.TempDir(), "a", "../evil"
+	if _, ok, err := r.findStaged(); ok || err == nil {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+}
+
+type fakeInfo struct {
+	fs.FileInfo
+	dir bool
+}
+
+func (f fakeInfo) IsDir() bool { return f.dir }
+
+func TestUnrecordedMergeMessage(t *testing.T) {
+	t.Parallel()
+	with := unrecordedMergeMsg([]landing.MergeCommand{landing.WriteAudit{}, landing.MarkWorktreeMerged{}})
+	without := unrecordedMergeMsg([]landing.MergeCommand{landing.WriteAudit{}})
+	if !strings.Contains(with, "done on disk") || strings.Contains(without, "done on disk") || strings.Contains(without, "merged twice") {
+		t.Fatalf("with=%q without=%q", with, without)
+	}
 }

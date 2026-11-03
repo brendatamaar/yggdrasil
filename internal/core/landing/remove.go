@@ -261,3 +261,7 @@ func (MarkRemoved) isRemoveCommand()     {}
 
 // WriteAudit is shared with the merge set: one audit entry per terminal outcome.
 func (WriteAudit) isRemoveCommand() {}
+
+// ValidStagedLeaf reports whether leaf could have been made by StagingPath, so
+// the shell can check a remembered leaf before it touches the disk.
+func ValidStagedLeaf(leaf string) bool { return validStagedLeaf(leaf) }

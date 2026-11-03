@@ -52,7 +52,7 @@ func (m *fakeMarks) mark(id core.WorktreeID, from []core.WorktreeStatus, to core
 	}
 	if slices.Contains(from, w.Status) {
 		w.Status = to
-		if leaf != "" {
+		if leaf != "" && w.StagedLeaf == "" { // the first remembered leaf wins
 			w.StagedLeaf = leaf
 		}
 		m.res.wts[id] = w

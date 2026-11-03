@@ -6,7 +6,8 @@
 UPDATE worktrees SET status = 'merged' WHERE id = ? AND status = 'active';
 
 -- name: MarkWorktreeRemoving :execrows
-UPDATE worktrees SET status = 'removing', staged_name = ?
+UPDATE worktrees SET status = 'removing',
+  staged_name = CASE WHEN status = 'removing' AND staged_name <> '' THEN staged_name ELSE ? END
 WHERE id = ? AND status IN ('active', 'merged', 'removing');
 
 -- name: MarkWorktreeRemoved :execrows
