@@ -150,7 +150,6 @@ func newProposals(store *db.Store, g *git.Git, lock *mainlock.Registry, buildSvc
 		Links:   changeSetLinks{store: store, red: redactor},
 		Landing: g, Reader: g, Platform: platform.RealLanding{},
 		Marks: proposals.DBMarks{}, Live: live, WorktreeRoot: filepath.Join(dataDir, "wt"),
-		StageID: func() string { return db.NewID("rm") },
 	})
 	if err != nil {
 		return nil, fmt.Errorf("start proposals: %w", err)

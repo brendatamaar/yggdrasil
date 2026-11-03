@@ -81,7 +81,7 @@ const notRecordedMsg = "The worktree folder was removed on disk, but Yggdrasil c
 
 func (r *removeRun) run(ctx context.Context) outcome {
 	var st landing.RemoveState = landing.RemoveIdle{}
-	r.stageID = r.s.cfg.StageID()
+	r.stageID = r.s.cfg.StageID(r.p.ID) // deterministic: a retry plans the same folder
 	var in landing.RemoveInput = landing.RemoveStart{Req: r.req, StageID: r.stageID, Now: r.s.now()}
 	for range maxLoopSteps {
 		var cmds []landing.RemoveCommand
@@ -231,9 +231,12 @@ func (r *removeRun) observe(ctx context.Context) (landing.RemoveObserved, error)
 }
 
 // stagedLeaf is the one leaf this removal may own: the remembered one, else the
-// one planned from this worktree's name and this run's stage ID.
+// one planned from this worktree's name and the stage ID derived from the proposal.
 func (r *removeRun) stagedLeaf() (landing.StagePath, error) {
 	if r.req.StagedLeaf != "" {
+		if !landing.ValidStagedLeaf(r.req.StagedLeaf) {
+			return landing.StagePath{}, errors.New("the remembered staged folder name is not valid")
+		}
 		return landing.StagePath{Root: r.req.Root, Leaf: r.req.StagedLeaf}, nil
 	}
 	return landing.StagingPath(r.req.Root, r.req.Name, r.stageID)
@@ -253,7 +256,10 @@ func (r *removeRun) findStaged() (landing.StagePath, bool, error) {
 	switch {
 	case err == nil && fi.IsDir():
 		return p, true, nil
-	case err == nil || errors.Is(err, fs.ErrNotExist):
+	case err == nil:
+		// A symlink or file at the leaf is not ours to read or delete: unreadable, not absent.
+		return landing.StagePath{}, false, errors.New("the staged folder is not a plain folder")
+	case errors.Is(err, fs.ErrNotExist):
 		return landing.StagePath{}, false, nil
 	}
 	return landing.StagePath{}, false, err
@@ -366,7 +372,7 @@ func (s *Service) reconcileRemove(ctx context.Context, p coreprop.Proposal, a co
 	if name == "" {
 		name = filepath.Base(wt.Path)
 	}
-	r := &removeRun{req: landing.RemoveReq{Name: name, Root: root, StagedLeaf: wt.StagedLeaf}}
+	r := &removeRun{req: landing.RemoveReq{Name: name, Root: root, StagedLeaf: wt.StagedLeaf}, stageID: s.cfg.StageID(p.ID)}
 	_, staged, serr := r.findStaged()
 	_, statErr := os.Lstat(wt.Path)
 	if serr == nil && statErr != nil && errors.Is(statErr, os.ErrNotExist) && !staged && (wt.Status == core.WorktreeRemoving || wt.Status == core.WorktreeRemoved) {

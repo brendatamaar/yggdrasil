@@ -126,13 +126,16 @@ func (r *mergeRun) run(ctx context.Context) outcome {
 		if len(batch) > 0 {
 			err := r.persist(ctx, batch)
 			if err != nil {
-				err = r.persist(ctx, batch) // once more: the effect already ran
+				// Once more: the effect already ran. If the first commit actually
+				// succeeded but reported an error, the audit entry of this batch
+				// can be written twice (the marks are idempotent, the audit is not).
+				err = r.persist(ctx, batch)
 			}
 			if err != nil {
 				r.s.cfg.Logger.Error("could not record a landing step", "proposal", r.p.ID, "error", r.s.redact(err.Error()))
 				// Retryable: the next run is a recovering run that sees the branch
 				// already merged and writes the same marks again.
-				return failed(coreprop.FailExec, true, "The merge is done on disk, but Yggdrasil could not record it. Retry; nothing will be merged twice.")
+				return failed(coreprop.FailExec, true, "%s", unrecordedMergeMsg(batch))
 			}
 		}
 		if out, ok := r.finished(st); ok {
@@ -398,4 +401,15 @@ func (s *Service) reconcileMerge(ctx context.Context, p coreprop.Proposal, a cor
 		}
 	}
 	return coreprop.ReconcileNotDone, coreprop.Result{}
+}
+
+// unrecordedMergeMsg words the failure to persist a batch. "Done on disk" is
+// only true when the batch carries the merged mark, i.e. the merge happened.
+func unrecordedMergeMsg(batch []landing.MergeCommand) string {
+	for _, c := range batch {
+		if _, ok := c.(landing.MarkWorktreeMerged); ok {
+			return "The merge is done on disk, but Yggdrasil could not record it. Retry; nothing will be merged twice."
+		}
+	}
+	return "Yggdrasil could not record the result of this step. Check the main checkout with git status, then retry."
 }
