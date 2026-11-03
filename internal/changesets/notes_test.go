@@ -2,12 +2,14 @@ package changesets_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/brendatamaar/yggdrasil/internal/apperr"
 	"github.com/brendatamaar/yggdrasil/internal/changesets"
 	"github.com/brendatamaar/yggdrasil/internal/changesets/changesetstest"
 	"github.com/brendatamaar/yggdrasil/internal/core"
@@ -119,7 +121,7 @@ func TestSendNotesMarksThemSendingBeforeTheMessageAndSentAfter(t *testing.T) {
 			duringStates = append(duringStates, stateName(n))
 		}
 	}
-	if err := r.svc.SendNotes(ctx, task, []string{string(a.ID), string(b.ID)}, "user"); err != nil {
+	if err := r.svc.SendNotes(ctx, task, []string{string(a.ID), string(b.ID)}, "user", false); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Join(duringStates, ",") != "sending,sending" {
@@ -135,7 +137,7 @@ func TestSendNotesMarksThemSendingBeforeTheMessageAndSentAfter(t *testing.T) {
 		}
 	}
 	// A sent note is final.
-	if err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user"); err == nil {
+	if err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user", false); err == nil {
 		t.Fatal("a sent note was sent again")
 	}
 	if err := r.svc.DeleteNote(ctx, task, string(a.ID), "user"); err == nil {
@@ -172,7 +174,7 @@ func TestBusyAgentReturnsNotesToOpen(t *testing.T) {
 	r := newRig(t)
 	a := r.addNote("a.go", 1, "first")
 	r.msg.Err = userMsgErr{}
-	err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user")
+	err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user", false)
 	if userMessage(err) != "The agent is busy. Send the notes when it finishes." {
 		t.Fatalf("error %v", err)
 	}
@@ -180,11 +182,11 @@ func TestBusyAgentReturnsNotesToOpen(t *testing.T) {
 		t.Fatalf("state %s", stateName(r.notes()[string(a.ID)]))
 	}
 	r.msg.Err = fmt.Errorf("send: %w", changesets.ErrQueueFull)
-	if err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user"); userMessage(err) != "The agent is busy. Send the notes when it finishes." {
+	if err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user", false); userMessage(err) != "The agent is busy. Send the notes when it finishes." {
 		t.Fatalf("a full queue is a busy agent: %v", err)
 	}
 	r.msg.Err = nil
-	if err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user"); err != nil {
+	if err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user", false); err != nil {
 		t.Fatal(err)
 	}
 	var actions []string
@@ -200,7 +202,7 @@ func TestUnknownSendOutcomeLeavesNotesSending(t *testing.T) {
 	r := newRig(t)
 	a := r.addNote("a.go", 1, "first")
 	r.msg.Err = errors.New("timeout waiting for the agent")
-	err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user")
+	err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user", false)
 	if m := userMessage(err); !strings.Contains(m, "couldn't tell") || strings.Contains(strings.ToLower(m), "try again") {
 		t.Fatalf("message %q", m)
 	}
@@ -208,7 +210,7 @@ func TestUnknownSendOutcomeLeavesNotesSending(t *testing.T) {
 		t.Fatalf("state %s, want sending (never invite a second send)", got)
 	}
 	r.msg.Err = nil
-	if err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user"); err == nil {
+	if err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user", false); err == nil {
 		t.Fatal("notes in Sending must not be sent again")
 	}
 	if len(r.msg.Messages()) != 0 {
@@ -221,7 +223,7 @@ func TestCrashWhileSendingNeverSendsTwiceAndIsRecovered(t *testing.T) {
 	a := r.addNote("a.go", 1, "first")
 	// The process dies inside the call: the second commit never happens.
 	r.msg.During = func() { r.w.FailCommits = 1 }
-	err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user")
+	err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user", false)
 	if err != nil {
 		t.Fatalf("the message was sent; the user must not be told it failed: %v", err)
 	}
@@ -229,7 +231,7 @@ func TestCrashWhileSendingNeverSendsTwiceAndIsRecovered(t *testing.T) {
 		t.Fatalf("state %s", stateName(r.notes()[string(a.ID)]))
 	}
 	// A note in Sending cannot be sent again.
-	if err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user"); err == nil || len(r.msg.Messages()) != 1 {
+	if err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user", false); err == nil || len(r.msg.Messages()) != 1 {
 		t.Fatalf("sent a note that is being sent: %v", err)
 	}
 	// Reconcile before the timeout keeps it; the startup pass returns it.
@@ -246,7 +248,7 @@ func TestStartupRecoverReturnsSendingNotesAtOnce(t *testing.T) {
 	r := newRig(t)
 	a := r.addNote("a.go", 1, "first")
 	r.msg.During = func() { r.w.FailCommits = 1 }
-	_ = r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user")
+	_ = r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user", false)
 	r.svc = r.newService()
 	if err := r.svc.RecoverNotes(ctx, true); err != nil {
 		t.Fatal(err)
@@ -286,7 +288,7 @@ func TestNotesGoStaleWhenTheFileChangesAndAreLeftAloneOnReadFailure(t *testing.T
 		t.Fatalf("states %s %s", stateName(ns[string(a.ID)]), stateName(ns[string(b.ID)]))
 	}
 	// An outdated note is not sendable but can be deleted.
-	if err := r.svc.SendNotes(ctx, task, []string{string(b.ID)}, "user"); err == nil {
+	if err := r.svc.SendNotes(ctx, task, []string{string(b.ID)}, "user", false); err == nil {
 		t.Fatal("an outdated note was sent")
 	}
 	if err := r.svc.DeleteNote(ctx, task, string(b.ID), "user"); err != nil {
@@ -300,10 +302,67 @@ func TestNotesOfAnotherTaskAreNotFound(t *testing.T) {
 	if err := r.svc.DeleteNote(ctx, "tsk_other", string(a.ID), "user"); !errors.Is(err, db.ErrNotFound) {
 		t.Fatalf("deleted through another task: %v", err)
 	}
-	if err := r.svc.SendNotes(ctx, "tsk_other", []string{string(a.ID)}, "user"); !errors.Is(err, db.ErrNotFound) {
+	if err := r.svc.SendNotes(ctx, "tsk_other", []string{string(a.ID)}, "user", false); !errors.Is(err, db.ErrNotFound) {
 		t.Fatalf("sent through another task: %v", err)
 	}
 	if _, err := r.svc.ListNotes(ctx, core.TaskID("tsk_other")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSendNotesCarriesTheOptIn(t *testing.T) {
+	for _, optIn := range []bool{false, true} {
+		r := newRig(t)
+		a := r.addNote("a.go", 1, "first")
+		if err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user", optIn); err != nil {
+			t.Fatal(err)
+		}
+		if m := r.msg.Messages(); len(m) != 1 || m[0].OptIn != optIn {
+			t.Fatalf("optIn=%v: messages %+v", optIn, m)
+		}
+		seen := 0
+		for _, e := range r.w.Audit("note:" + string(a.ID)) {
+			if e.Action != "note.send" {
+				continue
+			}
+			var d map[string]any
+			if err := json.Unmarshal(e.Detail, &d); err != nil {
+				t.Fatal(err)
+			}
+			if got, ok := d["optIn"].(bool); !ok || got != optIn {
+				t.Errorf("audit detail %s, want optIn=%v", e.Detail, optIn)
+			}
+			seen++
+		}
+		if seen != 1 {
+			t.Errorf("%d note.send entries", seen)
+		}
+	}
+}
+
+type needsOptInErr struct{}
+
+func (needsOptInErr) Error() string { return "rejected" }
+func (needsOptInErr) Unwrap() error { return apperr.ErrNeedsOptIn }
+func (needsOptInErr) UserMessage() string {
+	return "This mode edits your main checkout directly. Turn on the opt-in to use it."
+}
+
+// Without the opt-in the notes return to Open and the error says why, with
+// the mark the API turns into a 409 needs_opt_in. A second try with it works.
+func TestSendNotesNeedsOptInReturnsNotesToOpen(t *testing.T) {
+	r := newRig(t)
+	a := r.addNote("a.go", 1, "first")
+	r.msg.Err = needsOptInErr{}
+	err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user", false)
+	if !errors.Is(err, apperr.ErrNeedsOptIn) {
+		t.Fatalf("err = %v", err)
+	}
+	if stateName(r.notes()[string(a.ID)]) != "open" {
+		t.Fatalf("state %s", stateName(r.notes()[string(a.ID)]))
+	}
+	r.msg.Err = nil
+	if err := r.svc.SendNotes(ctx, task, []string{string(a.ID)}, "user", true); err != nil {
 		t.Fatal(err)
 	}
 }

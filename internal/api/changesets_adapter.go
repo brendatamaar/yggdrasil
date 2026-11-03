@@ -35,7 +35,7 @@ type ReviewBackend interface {
 	AddNote(ctx context.Context, task core.TaskID, raw review.RawNote, actor string) (review.Note, error)
 	EditNote(ctx context.Context, task core.TaskID, id, text, actor string) (review.Note, error)
 	DeleteNote(ctx context.Context, task core.TaskID, id, actor string) error
-	SendNotes(ctx context.Context, task core.TaskID, ids []string, actor string) error
+	SendNotes(ctx context.Context, task core.TaskID, ids []string, actor string, optIn bool) error
 }
 
 // NoteReader finds the task of a note (*db.Store satisfies it).
@@ -286,7 +286,7 @@ func (a *reviewAdapter) Send(ctx context.Context, task core.TaskID, req SendNote
 	if _, err := changesets.ParseNoteIDs(req.IDs); err != nil {
 		return SendNotesResponse{}, apperr.New(apperr.Invalid, err.Error(), err)
 	}
-	if err := a.b.SendNotes(ctx, task, req.IDs, uiActor); err != nil {
+	if err := a.b.SendNotes(ctx, task, req.IDs, uiActor, req.OptIn); err != nil {
 		return SendNotesResponse{}, changeSetErr(err)
 	}
 	all, err := a.b.ListNotes(ctx, task)

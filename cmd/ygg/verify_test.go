@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/brendatamaar/yggdrasil/internal/apperr"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	cv "github.com/brendatamaar/yggdrasil/internal/core/verify"
+	"github.com/brendatamaar/yggdrasil/internal/tasks"
 )
 
 type recHub struct {
@@ -71,5 +74,27 @@ func TestVerifyServiceStartsAndStops(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the verify loop did not stop")
+	}
+}
+
+// A refusal for the missing opt-in is a known refusal in both shells and
+// carries the needs-opt-in mark for the API's 409.
+func TestOptInRefusalIsKnownAndMarked(t *testing.T) {
+	rej := &tasks.RejectedError{Reason: "needs_opt_in", Message: "This mode edits your main checkout directly. Turn on the opt-in to use it."}
+	got := verifyRefusal(rej)
+	if c, ok := apperr.ClassOf(got); !ok || c != apperr.Conflict || !errors.Is(got, apperr.ErrNeedsOptIn) {
+		t.Errorf("verifyRefusal = %v", got)
+	}
+	if m, _ := apperr.MessageOf(got); m != rej.Message {
+		t.Errorf("message = %q", m)
+	}
+	n := noteRefusal(rej)
+	var u interface{ UserMessage() string }
+	if !errors.Is(n, apperr.ErrNeedsOptIn) || !errors.As(n, &u) || u.UserMessage() != rej.Message {
+		t.Errorf("noteRefusal = %v", n)
+	}
+	// Other refusals are not marked.
+	if errors.Is(verifyRefusal(&tasks.RejectedError{Reason: "task_busy", Message: "busy"}), apperr.ErrNeedsOptIn) {
+		t.Error("a busy task is not an opt-in refusal")
 	}
 }

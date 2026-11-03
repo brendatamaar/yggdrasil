@@ -74,7 +74,7 @@ func TestChangeSetAdaptersFailPlainlyWithoutATaskOrWorktree(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 	store := db.NewStore(d, nil)
-	if _, err := (noteMessenger{store: store}).SendMessage(context.Background(), "tsk_missing", "hi"); err == nil {
+	if _, err := (noteMessenger{store: store}).SendMessage(context.Background(), "tsk_missing", "hi", false); err == nil {
 		t.Fatal("a message to an unknown task was sent")
 	}
 	if _, err := (changeSetDiffs{store: store}).FileHashes(context.Background(), "tsk_missing", "rep_1"); err == nil {

@@ -15,10 +15,13 @@ import (
 type ErrorCode string
 
 const (
-	ErrBadRequest   ErrorCode = "bad_request"
-	ErrNotFound     ErrorCode = "not_found"
-	ErrForbidden    ErrorCode = "forbidden"
-	ErrConflict     ErrorCode = "conflict"
+	ErrBadRequest ErrorCode = "bad_request"
+	ErrNotFound   ErrorCode = "not_found"
+	ErrForbidden  ErrorCode = "forbidden"
+	ErrConflict   ErrorCode = "conflict"
+	// ErrNeedsOptIn (HTTP 409): the task's mode needs the opt-in and the request
+	// did not carry it. The UI shows the warning and sends again with optIn.
+	ErrNeedsOptIn   ErrorCode = "needs_opt_in"
 	ErrUnavailable  ErrorCode = "unavailable"
 	ErrInternal     ErrorCode = "internal"
 	ErrHostRejected ErrorCode = "host_rejected"

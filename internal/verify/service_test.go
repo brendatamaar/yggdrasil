@@ -154,7 +154,7 @@ func TestSendFailureComposesFromRedactedLog(t *testing.T) {
 	rec := r.records()[0]
 	f := rec.State.(cv.Failed)
 	r.runner.SetLog(f.Build, 1, "FAIL TestX\nAuthorization: Bearer abcdefghij1234567890\ntoken="+secret+"\n--- done\n")
-	if err := r.svc.SendFailure(context.Background(), rec.ID); err != nil {
+	if err := r.svc.SendFailure(context.Background(), rec.ID, false); err != nil {
 		t.Fatal(err)
 	}
 	msgs := r.msg.Messages()
@@ -196,7 +196,7 @@ func TestSendFailureRefusals(t *testing.T) {
 	r := newRig(t)
 	r.settle()
 	rec := r.records()[0]
-	err := r.svc.SendFailure(context.Background(), rec.ID)
+	err := r.svc.SendFailure(context.Background(), rec.ID, false)
 	if c, ok := apperr.ClassOf(err); !ok || c != apperr.Conflict {
 		t.Fatalf("passed verification: err = %v", err)
 	}
@@ -204,10 +204,10 @@ func TestSendFailureRefusals(t *testing.T) {
 	r2.tc.verify = []builds.Step{step("test", 3)}
 	r2.settle()
 	r2.msg.Err = apperr.New(apperr.Conflict, "the task is busy", nil)
-	if err := r2.svc.SendFailure(context.Background(), r2.records()[0].ID); err == nil || !strings.Contains(err.Error(), "the task is busy") {
+	if err := r2.svc.SendFailure(context.Background(), r2.records()[0].ID, false); err == nil || !strings.Contains(err.Error(), "the task is busy") {
 		t.Fatalf("busy task: err = %v", err)
 	}
-	if err := r2.svc.SendFailure(context.Background(), "ver_nope"); err == nil {
+	if err := r2.svc.SendFailure(context.Background(), "ver_nope", false); err == nil {
 		t.Fatal("unknown verification accepted")
 	} else if c, _ := apperr.ClassOf(err); c != apperr.NotFound {
 		t.Fatalf("err = %v", err)

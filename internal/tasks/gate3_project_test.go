@@ -97,3 +97,26 @@ func TestFollowUpToAProjectTaskIsAccepted(t *testing.T) {
 		t.Errorf("follow-up start = %+v", o)
 	}
 }
+
+// A follow-up message to a whole-project task (what "Send failure to agent"
+// sends) is refused with needs_opt_in unless the click carried the opt-in; the
+// guard is not weakened and OptIn never defaults to true.
+func TestProjectFollowUpNeedsTheOptInOnEveryMessage(t *testing.T) {
+	h := newHarness(t, []string{"shop-api", "shop-web"})
+	h.adapter.caps.Enforcement = agents.EnforcementHook
+	h.adapter.fixture = "edits"
+	h.start()
+	res := h.send(h.projectMsg("change both"))
+	h.waitStatus(res.Task.ID, core.TaskReview)
+
+	follow := MessageRequest{TaskID: res.Task.ID, Prompt: "fix the failure", Mode: "project"}
+	_, err := h.svc.Message(context.Background(), follow)
+	var rj *RejectedError
+	if !errors.As(err, &rj) || rj.Reason != string(guard.ReasonNeedsOptIn) {
+		t.Fatalf("without the opt-in: %v", err)
+	}
+	follow.OptIn = true
+	if _, err := h.svc.Message(context.Background(), follow); err != nil {
+		t.Fatalf("with the opt-in: %v", err)
+	}
+}

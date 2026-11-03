@@ -62,7 +62,7 @@ type LogReader interface {
 // mode (VF-03). It is not part of Step: tasks owns the new turn and its audit.
 // A busy task is a refusal in plain language.
 type TaskMessenger interface {
-	SendMessage(ctx context.Context, task core.TaskID, text string) error
+	SendMessage(ctx context.Context, task core.TaskID, text string, optIn bool) error
 }
 
 // DiffProbe says whether a worktree differs from its base commit, untracked

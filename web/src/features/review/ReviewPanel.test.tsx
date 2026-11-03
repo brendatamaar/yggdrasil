@@ -36,6 +36,7 @@ interface Setup {
   diff?: string;
   files?: WorktreeDiffFileDTO[];
   extra?: Handler;
+  mode?: "ask" | "code" | "current_branch" | "project";
 }
 
 function setup(o: Setup = {}) {
@@ -48,7 +49,7 @@ function setup(o: Setup = {}) {
   });
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <ReviewPanel taskId="t1" repoIds={["r1"]} loadDiff={() => Promise.resolve({ text: o.diff ?? mixedDiff, truncated: false, binary: false, files: o.files ?? [] })} />
+      <ReviewPanel taskId="t1" repoIds={["r1"]} mode={o.mode} loadDiff={() => Promise.resolve({ text: o.diff ?? mixedDiff, truncated: false, binary: false, files: o.files ?? [] })} />
     </QueryClientProvider>,
   );
   return api;
@@ -234,5 +235,112 @@ describe("cancel cause", () => {
     setup({ verifications: [verif({ state: "cancelled", cancelCause: "not_trusted", reason: "x" })] });
     expect(await screen.findByText("Stopped: this repo is no longer trusted")).toBeTruthy();
     expect(screen.getByRole<HTMLButtonElement>("button", { name: "Verify again" }).disabled).toBe(false);
+  });
+});
+
+describe("opt-in at the send click", () => {
+  const failed = verif({ state: "failed", message: "x", canSendFailure: true });
+  const sends = (api: ReturnType<typeof setup>, path: string) => api.calls.filter((c) => c.method === "POST" && c.path === path);
+  const FAIL = "/api/verifications/v1/send-failure";
+  const NOTES = "/api/tasks/t1/notes/send";
+
+  it("shows no dialog for a mode that needs no opt-in and sends without optIn", async () => {
+    const api = setup({ verifications: [failed], mode: "code" });
+    fireEvent.click(await screen.findByRole("button", { name: "Send failure to agent" }));
+    await waitFor(() => {
+      expect(sends(api, FAIL)).toHaveLength(1);
+    });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(sends(api, FAIL)[0]?.body).toBeUndefined();
+  });
+
+  it("asks first in project mode and sends optIn only after the box is ticked", async () => {
+    const api = setup({ verifications: [failed], mode: "project" });
+    fireEvent.click(await screen.findByRole("button", { name: "Send failure to agent" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog.textContent).toContain("Whole project mode");
+    const confirm = screen.getByRole("button", { name: "Send to the agent" });
+    expect((confirm as HTMLButtonElement).disabled).toBe(true);
+    expect(sends(api, FAIL)).toHaveLength(0);
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(confirm);
+    await waitFor(() => {
+      expect(sends(api, FAIL)).toHaveLength(1);
+    });
+    expect(sends(api, FAIL)[0]?.body).toEqual({ optIn: true });
+  });
+
+  it("sends nothing when the dialog is cancelled", async () => {
+    const api = setup({ verifications: [failed], mode: "project" });
+    fireEvent.click(await screen.findByRole("button", { name: "Send failure to agent" }));
+    await screen.findByRole("alertdialog");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+    });
+    expect(sends(api, FAIL)).toHaveLength(0);
+  });
+
+  it("is keyboard operable: focus starts on Cancel, the box toggles with Space, Escape cancels", async () => {
+    const api = setup({ verifications: [failed], mode: "project" });
+    fireEvent.click(await screen.findByRole("button", { name: "Send failure to agent" }));
+    await screen.findByRole("alertdialog");
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Cancel" }));
+    });
+    const box = screen.getByRole<HTMLInputElement>("checkbox");
+    box.focus();
+    fireEvent.click(box);
+    expect(box.checked).toBe(true);
+    fireEvent.keyDown(screen.getByRole("alertdialog"), { key: "Escape" });
+    await waitFor(() => {
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+    });
+    expect(sends(api, FAIL)).toHaveLength(0);
+  });
+
+  it("asks first for notes in project mode and sends optIn after the box is ticked", async () => {
+    const api = setup({ notes: [note()], mode: "project" });
+    fireEvent.click(await screen.findByRole("button", { name: "Send notes to agent (1)" }));
+    await screen.findByRole("alertdialog");
+    expect(sends(api, NOTES)).toHaveLength(0);
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "Send to the agent" }));
+    await waitFor(() => {
+      expect(sends(api, NOTES)).toHaveLength(1);
+    });
+    expect(sends(api, NOTES)[0]?.body).toEqual({ ids: ["n1"], optIn: true });
+  });
+
+  it("sends notes without optIn for Code mode and without a dialog", async () => {
+    const api = setup({ notes: [note()], mode: "code" });
+    fireEvent.click(await screen.findByRole("button", { name: "Send notes to agent (1)" }));
+    await waitFor(() => {
+      expect(sends(api, NOTES)).toHaveLength(1);
+    });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(sends(api, NOTES)[0]?.body).toEqual({ ids: ["n1"] });
+  });
+
+  it("opens the dialog on a 409 needs_opt_in and sends again with optIn", async () => {
+    let first = true;
+    const api = setup({
+      verifications: [failed],
+      extra: (c) => {
+        if (c.path === FAIL && first) {
+          first = false;
+          return { status: 409, body: { code: "needs_opt_in", message: "This mode edits your main checkout directly. Turn on the opt-in to use it." } };
+        }
+        return undefined;
+      },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Send failure to agent" }));
+    await screen.findByRole("alertdialog");
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "Send to the agent" }));
+    await waitFor(() => {
+      expect(sends(api, FAIL)).toHaveLength(2);
+    });
+    expect(sends(api, FAIL)[1]?.body).toEqual({ optIn: true });
   });
 });

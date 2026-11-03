@@ -20,7 +20,7 @@ type VerifyBackend interface {
 	Retry(ctx context.Context, task core.TaskID) ([]vsvc.Record, error)
 	Get(ctx context.Context, id cv.VerificationID) (vsvc.Record, error)
 	Cancel(ctx context.Context, id cv.VerificationID) (vsvc.Record, error)
-	SendFailure(ctx context.Context, id cv.VerificationID) error
+	SendFailure(ctx context.Context, id cv.VerificationID, optIn bool) error
 }
 
 // FailureDetailer is optionally implemented by the backend. It returns the
@@ -68,14 +68,14 @@ func (a *verificationAdapter) Cancel(ctx context.Context, id cv.VerificationID) 
 	return a.dto(ctx, rec), nil
 }
 
-func (a *verificationAdapter) SendFailure(ctx context.Context, id cv.VerificationID) (SendFailureResponse, error) {
+func (a *verificationAdapter) SendFailure(ctx context.Context, id cv.VerificationID, optIn bool) (SendFailureResponse, error) {
 	// The service apperr errors (busy, already sent, result unknown) pass
 	// through unchanged: they are Conflicts with plain-language messages.
 	rec, err := a.b.Get(ctx, id)
 	if err != nil {
 		return SendFailureResponse{}, err
 	}
-	if err := a.b.SendFailure(ctx, id); err != nil {
+	if err := a.b.SendFailure(ctx, id, optIn); err != nil {
 		return SendFailureResponse{}, err
 	}
 	// The service does not report the new turn; the client refetches the task.

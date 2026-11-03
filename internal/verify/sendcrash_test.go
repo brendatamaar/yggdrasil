@@ -16,7 +16,7 @@ func TestSendFailureUnknownOutcomeIsNeverRepeated(t *testing.T) {
 	r := failedRig(t)
 	id := r.records()[0].ID
 	r.msg.Err = errors.New("timeout waiting for the agent")
-	err := r.svc.SendFailure(context.Background(), id)
+	err := r.svc.SendFailure(context.Background(), id, false)
 	if err == nil || !strings.Contains(err.Error(), "couldn't tell") {
 		t.Fatalf("err = %v", err)
 	}
@@ -24,7 +24,7 @@ func TestSendFailureUnknownOutcomeIsNeverRepeated(t *testing.T) {
 		t.Fatal("an unknown outcome must stay marked as sending")
 	}
 	r.msg.Err = nil
-	err = r.svc.SendFailure(context.Background(), id)
+	err = r.svc.SendFailure(context.Background(), id, false)
 	if c, ok := apperr.ClassOf(err); !ok || c != apperr.Conflict {
 		t.Fatalf("retry = %v, want a conflict", err)
 	}
@@ -38,7 +38,7 @@ func TestSendFailureCrashAfterSendNeverDuplicates(t *testing.T) {
 	id := r.records()[0].ID
 	// The process dies right after the message left: the result is not stored.
 	r.msg.During = func() { r.store.FailCommit = func() error { return errors.New("disk gone") } }
-	if err := r.svc.SendFailure(context.Background(), id); err != nil {
+	if err := r.svc.SendFailure(context.Background(), id, false); err != nil {
 		t.Fatalf("the message was sent: %v", err)
 	}
 	r.store.FailCommit = nil
@@ -48,7 +48,7 @@ func TestSendFailureCrashAfterSendNeverDuplicates(t *testing.T) {
 		t.Fatalf("sending=%v sent=%v, want a mark that blocks a resend", rec.Sending, rec.Sent)
 	}
 	svc := r.newService() // restart
-	if err := svc.SendFailure(context.Background(), id); err == nil {
+	if err := svc.SendFailure(context.Background(), id, false); err == nil {
 		t.Fatal("a restart resent the failure")
 	}
 	if n := len(r.msg.Messages()); n != 1 {
@@ -59,14 +59,14 @@ func TestSendFailureCrashAfterSendNeverDuplicates(t *testing.T) {
 func TestSendFailureSentSurvivesRestart(t *testing.T) {
 	r := failedRig(t)
 	id := r.records()[0].ID
-	if err := r.svc.SendFailure(context.Background(), id); err != nil {
+	if err := r.svc.SendFailure(context.Background(), id, false); err != nil {
 		t.Fatal(err)
 	}
 	if rec := r.records()[0]; !rec.Sent || rec.Sending {
 		t.Fatalf("sent=%v sending=%v", rec.Sent, rec.Sending)
 	}
 	svc := r.newService()
-	if err := svc.SendFailure(context.Background(), id); err == nil {
+	if err := svc.SendFailure(context.Background(), id, false); err == nil {
 		t.Fatal("sent flag lost across a restart")
 	}
 	if n := len(r.msg.Messages()); n != 1 {
@@ -119,7 +119,7 @@ func TestSendFailureRedactsTheWholeMessage(t *testing.T) {
 		t.Fatalf("state = %#v", rec.State)
 	}
 	r.runner.SetLog(f.Build, 1, "FAIL widget_test.go\nusing "+secret+" as key\nexit status 3\n")
-	if err := r.svc.SendFailure(context.Background(), rec.ID); err != nil {
+	if err := r.svc.SendFailure(context.Background(), rec.ID, false); err != nil {
 		t.Fatal(err)
 	}
 	msgs := r.msg.Messages()

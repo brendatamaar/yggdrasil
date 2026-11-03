@@ -79,3 +79,13 @@ func MessageOf(err error) (string, bool) {
 	}
 	return "", false
 }
+
+// ErrNeedsOptIn marks a refusal because the task's mode needs the person's
+// opt-in and the request did not carry it. The API answers 409 with the
+// needs_opt_in code so the UI asks for the confirmation and sends again.
+var ErrNeedsOptIn = errors.New("the mode needs the opt-in")
+
+// NeedsOptIn is the Conflict that says to confirm the project-mode warning.
+func NeedsOptIn(message string, cause error) *Error {
+	return New(Conflict, message, errors.Join(ErrNeedsOptIn, cause))
+}

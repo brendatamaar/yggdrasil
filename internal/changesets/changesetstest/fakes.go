@@ -481,10 +481,12 @@ type Messenger struct {
 type Message struct {
 	Task core.TaskID
 	Text string
+	// OptIn is the opt-in the send carried.
+	OptIn bool
 }
 
 // SendMessage implements changesets.Messenger.
-func (m *Messenger) SendMessage(_ context.Context, task core.TaskID, text string) (string, error) {
+func (m *Messenger) SendMessage(_ context.Context, task core.TaskID, text string, optIn bool) (string, error) {
 	if m.During != nil {
 		m.During()
 	}
@@ -493,7 +495,7 @@ func (m *Messenger) SendMessage(_ context.Context, task core.TaskID, text string
 	if m.Err != nil {
 		return "", m.Err
 	}
-	m.Sent = append(m.Sent, Message{Task: task, Text: text})
+	m.Sent = append(m.Sent, Message{Task: task, Text: text, OptIn: optIn})
 	if m.Turn != "" {
 		return m.Turn, nil
 	}

@@ -119,7 +119,7 @@ export function TaskPage({ taskId }: { taskId: string }) {
         </div>
       ) : tab === "review" ? (
         <div role="tabpanel" id="panel-review" aria-labelledby="tab-review">
-          {task.data ? <ReviewPanel taskId={taskId} repoIds={task.data.repoIds} /> : null}
+          {task.data ? <ReviewPanel taskId={taskId} repoIds={task.data.repoIds} mode={task.data.mode as Mode} /> : null}
         </div>
       ) : (
         <div role="tabpanel" id="panel-transcript" aria-labelledby="tab-transcript" className="space-y-4">

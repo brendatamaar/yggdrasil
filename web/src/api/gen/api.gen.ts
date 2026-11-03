@@ -71,6 +71,11 @@ export const ErrBadRequest: ErrorCode = "bad_request";
 export const ErrNotFound: ErrorCode = "not_found";
 export const ErrForbidden: ErrorCode = "forbidden";
 export const ErrConflict: ErrorCode = "conflict";
+/**
+ * ErrNeedsOptIn (HTTP 409): the task's mode needs the opt-in and the request
+ * did not carry it. The UI shows the warning and sends again with optIn.
+ */
+export const ErrNeedsOptIn: ErrorCode = "needs_opt_in";
 export const ErrUnavailable: ErrorCode = "unavailable";
 export const ErrInternal: ErrorCode = "internal";
 export const ErrHostRejected: ErrorCode = "host_rejected";
@@ -1608,6 +1613,11 @@ export interface EditNoteRequest {
  */
 export interface SendNotesRequest {
   ids: string[];
+  /**
+   * OptIn is the person's confirmation of the project-mode warning, given at
+   * the click. Absent means false.
+   */
+  optIn?: boolean;
 }
 /**
  * SendNotesResponse is the body of a successful send: the notes now belong to
@@ -1850,6 +1860,15 @@ export interface VerificationSummaryDTO {
 export interface SendFailureResponse {
   taskId: core.TaskID;
   turnId: string;
+}
+/**
+ * SendFailureRequest is the optional body of
+ * POST /api/verifications/{id}/send-failure. OptIn is the person's
+ * confirmation of the project-mode warning, given at the click; absent or an
+ * empty body means false.
+ */
+export interface SendFailureRequest {
+  optIn?: boolean;
 }
 
 //////////
