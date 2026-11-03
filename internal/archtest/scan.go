@@ -26,6 +26,8 @@ type file struct {
 	methods []string
 	// storeMethods are the exported methods declared on Store or *Store.
 	storeMethods []string
+	// literals are the values of string literals.
+	literals []string
 }
 
 // parse reads one source file. src is the content; name is its file name.
@@ -60,6 +62,11 @@ func parse(dir, name string, src any) (file, error) {
 			}
 			if id, ok := t.(*ast.Ident); ok && id.Name == "Store" {
 				f.storeMethods = append(f.storeMethods, fd.Name.Name)
+			}
+		}
+		if bl, ok := n.(*ast.BasicLit); ok && bl.Kind == token.STRING {
+			if v, err := strconv.Unquote(bl.Value); err == nil {
+				f.literals = append(f.literals, v)
 			}
 		}
 		sel, ok := n.(*ast.SelectorExpr)

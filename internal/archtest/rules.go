@@ -190,6 +190,40 @@ var storeWrites = rule{name: "Store exports no un-audited write", check: func(f 
 	return out
 }}
 
+// deleteFreeDirs are the Phase 4 surfaces (verification, landing, change sets,
+// API, MCP, wiring) where no code deletes anything. The one deletion in the
+// product is platform.RemoveStaged, below <root>/.removing/<leaf>.
+var deleteFreeDirs = []string{"internal/verify", "internal/core", "internal/api", "internal/mcp", "internal/db", "cmd/ygg"}
+
+// deleteAllowed are production files in those dirs with a documented reason
+// to remove a file of their own.
+var deleteAllowed = map[string]bool{
+	"cmd/ygg/doctor.go":                true, // removes the doctor's own empty probe file
+	"internal/core/guard/integrity.go": true, // the deny list: names these commands to refuse them
+	"internal/core/guard/rule.go":      true,
+}
+
+// phase4NoDelete is invariant 1 for the Phase 4 surface: no os.Remove-family
+// call, no rm/rmdir/del command, no git clean/reset --hard/branch -D/worktree remove.
+var phase4NoDelete = rule{name: "phase 4 code never deletes", check: func(f file) []string {
+	if f.test || !inDir(f, deleteFreeDirs...) || deleteAllowed[f.dir+"/"+f.name] {
+		return nil
+	}
+	var out []string
+	for _, call := range []string{"os.Remove", "os.RemoveAll", "os.Truncate", "syscall.Unlink", "golang.org/x/sys/windows.DeleteFile"} {
+		if f.uses1(call) {
+			out = append(out, violation(f, "calls %s; only platform.RemoveStaged deletes, below <root>/.removing (invariant 1)", call))
+		}
+	}
+	for _, l := range f.literals {
+		switch strings.TrimSpace(l) {
+		case "rm", "rmdir", "del", "erase", "rd", "clean", "--hard", "-D", "--force", "-f", "Remove-Item":
+			out = append(out, violation(f, "string %q names a deleting command or a destructive git flag (invariant 1)", l))
+		}
+	}
+	return out
+}}
+
 // rules are the architecture rules of docs/AGENTS.md sections 5 and 6.
 var rules = []rule{
 	// 5.3 Processes: every child process starts through platform.Start.
@@ -215,6 +249,8 @@ var rules = []rule{
 		}
 		return out
 	}},
+
+	phase4NoDelete,
 
 	// 5.2 Platform: no OS checks outside internal/platform.
 	banOutside("runtime.GOOS", "reads runtime.GOOS", func(f file) bool { return f.uses1("runtime.GOOS") }, "internal/platform"),
