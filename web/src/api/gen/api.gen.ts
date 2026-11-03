@@ -1869,6 +1869,16 @@ export interface WorktreeDTO {
   baseCommit: string;
   path?: string;
   status: core.WorktreeStatus;
+  /**
+   * TargetBranch is the branch the main checkout has checked out now: what a
+   * merge of this worktree would go into. Omitted when unknown.
+   */
+  targetBranch?: string;
+  /**
+   * Clean is true when the worktree has no uncommitted or untracked files.
+   * Omitted when unknown or when the folder is gone.
+   */
+  clean?: boolean;
   createdAt: string;
 }
 /**

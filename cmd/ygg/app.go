@@ -238,7 +238,7 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	}
 	srv, err := api.New(api.Deps{
 		InsecureNoSession: cfg.noSession,
-		Store:             store, Log: log, Tasks: taskSvc, Worktrees: api.NewWorktreeService(store), WriteModes: cfg.writeModes,
+		Store:             store, Log: log, Tasks: taskSvc, Worktrees: api.NewWorktreeServiceWithGit(store, g), WriteModes: cfg.writeModes,
 		Redactor: redactor, Version: version, Assets: assets,
 		Tracking: tracking, Status: status, RepoDetail: repos.NewDetailService(store, g),
 		Builds: buildSvc, Hosts: hostSvc, Search: searchSvc,

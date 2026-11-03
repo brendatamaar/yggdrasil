@@ -558,7 +558,7 @@ func (s *Service) SetOrder(ctx context.Context, id core.ChangeSetID, raw []strin
 		return View{}, userErr(err)
 	}
 	if _, ok := rec.St.(cs.Confirming); ok {
-		return View{}, &UserError{Message: "The order can't change while proposals are being confirmed. Stop the run first."}
+		return View{}, &UserError{Message: "The order can't change while proposals are being confirmed. Stop the run first.", Kind: KindConflict}
 	}
 	edges := s.edges(ctx, o.Set.Repos)
 	after, _, err := s.applySet(ctx, id, actor, func(setRec) (cs.Input, bool, error) {
@@ -587,10 +587,10 @@ func (s *Service) ConfirmRun(ctx context.Context, id core.ChangeSetID, raw RawCo
 	}
 	switch rec.St.(type) {
 	case cs.Confirming:
-		return View{}, &UserError{Message: "Proposals of this change set are already being confirmed. Wait for the run to end or stop it."}
+		return View{}, &UserError{Message: "Proposals of this change set are already being confirmed. Wait for the run to end or stop it.", Kind: KindConflict}
 	case cs.Open:
 	default:
-		return View{}, &UserError{Message: "This change set is finished. Nothing is left to confirm."}
+		return View{}, &UserError{Message: "This change set is finished. Nothing is left to confirm.", Kind: KindConflict}
 	}
 	edges := s.edges(ctx, o.Set.Repos)
 	after, cmds, err := s.applySet(ctx, id, actor, func(setRec) (cs.Input, bool, error) {
@@ -600,7 +600,7 @@ func (s *Service) ConfirmRun(ctx context.Context, id core.ChangeSetID, raw RawCo
 		return View{}, err
 	}
 	if len(cmds) == 0 {
-		return View{}, &UserError{Message: whyNoRun(rec.St, scope, seen, ack, edges)}
+		return View{}, &UserError{Message: whyNoRun(rec.St, scope, seen, ack, edges), Kind: KindConflict}
 	}
 	return s.view(ctx, after), nil
 }
@@ -647,7 +647,7 @@ func (s *Service) simple(ctx context.Context, id core.ChangeSetID, actor, nothin
 		return View{}, err
 	}
 	if len(cmds) == 0 {
-		return View{}, &UserError{Message: nothing}
+		return View{}, &UserError{Message: nothing, Kind: KindConflict}
 	}
 	return s.view(ctx, after), nil
 }

@@ -37,7 +37,22 @@ func (r *Refused) Error() string       { return "proposal refused: " + r.Message
 func (r *Refused) UserMessage() string { return r.Message }
 
 // UserError is a mistake the person can fix; Message says how.
-type UserError struct{ Message string }
+type UserError struct {
+	Message string
+	// Kind says whether the request is wrong (KindInvalid, the default) or is
+	// right but the change set state does not allow it now (KindConflict).
+	Kind UserErrorKind
+}
+
+// UserErrorKind classifies a UserError for the API (400 vs 409).
+type UserErrorKind int
+
+const (
+	// KindInvalid: the request is wrong; fix it and send again.
+	KindInvalid UserErrorKind = iota
+	// KindConflict: the request is fine but the state does not allow it now.
+	KindConflict
+)
 
 func (e *UserError) Error() string       { return e.Message }
 func (e *UserError) UserMessage() string { return e.Message }
