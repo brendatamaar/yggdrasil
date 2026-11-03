@@ -22,5 +22,5 @@ func (s *Service) repoTrusted(ctx context.Context, repo core.RepoID) (bool, erro
 	if err != nil {
 		return false, err
 	}
-	return v == guard.TrustNone || v == guard.TrustTrusted, nil
+	return v.Admissible(), nil
 }
