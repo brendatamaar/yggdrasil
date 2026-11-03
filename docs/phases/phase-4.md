@@ -254,3 +254,8 @@ Plan drafted 2026-11-01. **Approved 2026-11-01: decisions 1–9 accepted as reco
 - Deferred to T2/E2E: `changeSetLinks` real adapter has no direct test; `LandingReader` fake vs real contract; three-MR run on PushHost+GitLabStub; crash-point test for merge (kill after `RunMerge`); invariant-4 test with a token in a URL; conflict file list / lock holders must be placed in `message`/`result.note` by the server (FE2 assumes); `WorktreeDTO` has no target branch / clean status; `useTask` drops `verification` (no header badge); `changesets.UserError` -> 400 even for "run in progress"; diff endpoint serves only active worktrees.
 - Env: `go-backend` spawn kept failing (135 stale agent worktrees suspected); batch 4 ran as general-purpose/sonnet in hand-made worktrees (`px1b`, `ap1`, `wire1`, `fe2`, `g3fix`).
 - Full-check on main: generate clean, lint 0 issues; load flakes only (`claudecode TestAdapterContract`, `platform` editor/PTY tests) which pass alone.
+
+### Gate 3 closed
+- Round 2 (safety PASS, fe no Blocking/Must-fix) plus follow-ups merged: deterministic stage ID (`proposals.StageIDFor`, derived from the proposal ID; retry/restart resumes a staged removal; the earlier residual is closed), non-directory at the staged leaf = unreadable, accurate merge "not recorded" message, `WorktreeMarks` contract checks leaf memory (first leaf wins; SQL changed so `MarkRemoving` keeps an existing `staged_name`), double-audit comment, dead test code removed.
+- Left for T2: named property that `RunMerge` is only emitted when `WorktreeBranch == Branch`; plus the Deferred list under 'FE2 merged; Gate 3'.
+- Next: batch 5 (T2 test maps + safety matrix, E2E multi-repo on the test host), then phase close. Waiting for the human.
