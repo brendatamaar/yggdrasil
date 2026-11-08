@@ -217,3 +217,43 @@ func FuzzParseIssue(f *testing.F) {
 		}
 	})
 }
+
+func TestParseShellRoundTrip(t *testing.T) {
+	for _, s := range []Shell{ShellDefault, ShellPowerShell} {
+		got, err := ParseShell(string(s))
+		if err != nil || got != s {
+			t.Errorf("%q: %v %v", s, got, err)
+		}
+	}
+}
+
+func TestParseShellRejects(t *testing.T) {
+	for name, in := range map[string]string{
+		"empty":        "",
+		"command line": "powershell -NoProfile",
+		"path":         "C:\\Windows\\cmd.exe",
+		"unix path":    "/bin/bash",
+		"unknown name": "fish",
+		"upper case":   "PowerShell",
+		"padded":       " default",
+	} {
+		if got, err := ParseShell(in); err == nil {
+			t.Errorf("%s: accepted as %q", name, got)
+		}
+	}
+}
+
+func FuzzParseShell(f *testing.F) {
+	f.Add("default")
+	f.Add("powershell")
+	f.Add("")
+	f.Fuzz(func(t *testing.T, s string) {
+		got, err := ParseShell(s)
+		if err != nil {
+			return
+		}
+		if got.Validate() != nil || string(got) != s {
+			t.Fatalf("accepted %q as %q", s, got)
+		}
+	})
+}

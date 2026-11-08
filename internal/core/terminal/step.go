@@ -128,7 +128,7 @@ func redeem(r Registry, in RedeemRequested) (Registry, []Command) {
 	r.Tokens[in.Hash] = Consumed{At: in.Now, ExpiresAt: issued.ExpiresAt}
 	_, taken := r.Sessions[in.Session]
 	switch {
-	case in.Check != FolderTracked || in.Folder != issued.Folder:
+	case in.Check != FolderTracked:
 		return r, refuseRedeem(in.Reply, RefusedNotTracked)
 	case r.Phase == Draining:
 		return r, refuseRedeem(in.Reply, RefusedShuttingDown)
@@ -138,8 +138,12 @@ func redeem(r Registry, in RedeemRequested) (Registry, []Command) {
 		return r, refuseRedeem(in.Reply, RefusedCollision)
 	}
 	r.Sessions[in.Session] = Opening{Folder: issued.Folder, Size: in.Size, Since: in.Now}
+	// The open is audited before the shell exists, so a store that cannot take
+	// the entry stops the open (invariant 8; the shell refuses on failure).
 	return r, []Command{
 		OpenPTY{Session: in.Session, Folder: issued.Folder, Size: in.Size},
+		WriteAudit{Action: AuditOpen, Session: in.Session, Folder: issued.Folder},
+		ScheduleWake{Kind: WakeOpenDeadline, At: in.Now.Add(OpenDeadline)},
 		Reply{ID: in.Reply, Kind: ReplyRedeem, Granted: true, Session: in.Session},
 	}
 }
@@ -151,7 +155,7 @@ func opened(r Registry, in Opened) (Registry, []Command) {
 	}
 	r = clone(r)
 	r.Sessions[in.Session] = Open{Folder: s.Folder, Pid: in.Pid, Size: s.Size, Since: in.Now}
-	return r, []Command{WriteAudit{Action: AuditOpen, Session: in.Session, Folder: s.Folder}}
+	return r, nil
 }
 
 func openFailed(r Registry, in OpenFailed) (Registry, []Command) {
@@ -231,9 +235,40 @@ func shutdown(r Registry, in Shutdown) (Registry, []Command) {
 }
 
 func wake(r Registry, in Wake) (Registry, []Command) {
-	if in.Kind != WakeExpire {
+	switch in.Kind {
+	case WakeExpire:
+		return expire(r, in)
+	case WakeOpenDeadline:
+		return openDeadline(r, in)
+	}
+	return r, nil
+}
+
+// openDeadline gives up on sessions that stayed Opening past OpenDeadline: a
+// granted redeem whose socket never came must not hold a slot forever.
+func openDeadline(r Registry, in Wake) (Registry, []Command) {
+	var late []core.TerminalSessionID
+	for id, s := range r.Sessions {
+		if o, ok := s.(Opening); ok && !o.Since.Add(OpenDeadline).After(in.Now) {
+			late = append(late, id)
+		}
+	}
+	if len(late) == 0 {
 		return r, nil
 	}
+	slices.Sort(late)
+	r = clone(r)
+	var cmds []Command
+	for _, id := range late {
+		o := r.Sessions[id].(Opening)
+		r.Sessions[id] = Closing{Folder: o.Folder, Cause: CauseOpenFailed, Since: in.Now}
+		cmds = append(cmds, ClosePTY{Session: id},
+			WriteAudit{Action: AuditOpenFailed, Session: id, Folder: o.Folder, Cause: CauseOpenFailed})
+	}
+	return r, cmds
+}
+
+func expire(r Registry, in Wake) (Registry, []Command) {
 	r = clone(r)
 	var next time.Time
 	for h, t := range r.Tokens {

@@ -334,14 +334,31 @@ type MemAudit struct {
 	entries []terminal.AuditEntry
 	// Err, if set, makes Record fail (the entry is not stored).
 	Err error
+	// Hook, if set, is called for every Record before storing; a non-nil
+	// result fails that call. Calls counts every Record call.
+	Hook  func(e terminal.AuditEntry) error
+	calls int
+}
+
+// Calls is how many times Record was called, failed or not.
+func (m *MemAudit) Calls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.calls
 }
 
 // Record implements terminal.AuditSink.
 func (m *MemAudit) Record(_ context.Context, e terminal.AuditEntry) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.calls++
 	if m.Err != nil {
 		return m.Err
+	}
+	if m.Hook != nil {
+		if err := m.Hook(e); err != nil {
+			return err
+		}
 	}
 	m.entries = append(m.entries, e)
 	return nil

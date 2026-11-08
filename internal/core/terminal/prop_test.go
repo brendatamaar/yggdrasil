@@ -5,6 +5,7 @@ import (
 	"maps"
 	"math/rand"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -30,48 +31,92 @@ type gen struct {
 }
 
 func (g *gen) tick() time.Time {
-	g.now = g.now.Add(time.Duration(g.r.Intn(12)) * time.Second)
+	g.now = g.now.Add(time.Duration(g.r.Intn(5)) * time.Second)
 	return g.now
 }
 
 func pick[T any](r *rand.Rand, xs []T) T { return xs[r.Intn(len(xs))] }
 
-func (g *gen) input() Input {
+// issuedHashes and sessionIDs list the registry's keys in a fixed order, so
+// the generator is deterministic for a seed.
+func issuedHashes(reg Registry) []TokenHash {
+	var out []TokenHash
+	for h, t := range reg.Tokens {
+		if _, ok := t.(Issued); ok {
+			out = append(out, h)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+func sessionIDs(reg Registry) []core.TerminalSessionID {
+	var out []core.TerminalSessionID
+	for id := range reg.Sessions {
+		out = append(out, id)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// input draws the next input. It looks at the registry so that random runs
+// reach the interesting states: full token and session limits, open and
+// closing sessions.
+func (g *gen) input(reg Registry) Input {
 	r := g.r
 	now := g.tick()
 	sess := pick(r, sessions)
-	switch r.Intn(13) {
-	case 0, 1, 2:
-		return IssueRequested{Hash: pick(r, hashes), Folder: pick(r, folders), Now: now, Reply: "rp"}
-	case 3, 4, 5, 6:
+	if ids := sessionIDs(reg); len(ids) > 0 && r.Intn(10) < 7 {
+		sess = pick(r, ids)
+	}
+	switch k := r.Intn(14); {
+	case k < 4:
+		h := pick(r, hashes)
+		for try := 0; try < 4; try++ {
+			if _, used := reg.Tokens[h]; !used {
+				break
+			}
+			h = pick(r, hashes)
+		}
+		return IssueRequested{Hash: h, Folder: pick(r, folders), Now: now, Reply: "rp"}
+	case k < 8:
+		h := pick(r, hashes)
+		if iss := issuedHashes(reg); len(iss) > 0 && r.Intn(10) < 8 {
+			h = pick(r, iss)
+		}
+		if _, taken := reg.Sessions[sess]; taken && r.Intn(10) < 8 {
+			sess = core.TerminalSessionID(fmt.Sprintf("ts_free_%d", r.Intn(1000)))
+		}
 		check := FolderTracked
-		if r.Intn(6) == 0 {
+		if r.Intn(8) == 0 {
 			check = FolderUntracked
 		}
-		f := pick(r, folders)
-		return RedeemRequested{Hash: pick(r, hashes), Folder: f, Session: sess,
-			Size: Size{Cols: r.Intn(MaxCols + 20), Rows: 1 + r.Intn(MaxRows)}, Check: check, Now: now, Reply: "rp"}
-	case 7:
-		return Opened{Session: sess, Pid: 1 + r.Intn(999), Now: now}
-	case 8:
-		return OpenFailed{Session: sess, Now: now}
-	case 9:
-		return Resized{Session: sess, Size: Size{Cols: r.Intn(MaxCols + 50), Rows: r.Intn(MaxRows + 50)}}
-	case 10:
-		switch r.Intn(3) {
-		case 0:
-			return ClientClosed{Session: sess, Now: now}
-		case 1:
-			return CloseRequested{Session: sess, Now: now}
+		size := Size{Cols: 1 + r.Intn(MaxCols), Rows: 1 + r.Intn(MaxRows)}
+		if r.Intn(10) == 0 {
+			size.Cols = r.Intn(MaxCols + 20)
 		}
-		return ShellExited{Session: sess, Code: r.Intn(4), Now: now}
-	case 11:
-		if r.Intn(8) == 0 {
+		return RedeemRequested{Hash: h, Session: sess, Size: size, Check: check, Now: now, Reply: "rp"}
+	case k == 8:
+		return Opened{Session: sess, Pid: 1 + r.Intn(999), Now: now}
+	case k == 9:
+		if r.Intn(3) == 0 {
+			return OpenFailed{Session: sess, Now: now}
+		}
+		return Resized{Session: sess, Size: Size{Cols: r.Intn(MaxCols + 50), Rows: r.Intn(MaxRows + 50)}}
+	case k == 10:
+		if r.Intn(2) == 0 {
+			return ClientClosed{Session: sess, Now: now}
+		}
+		return CloseRequested{Session: sess, Now: now}
+	case k == 11:
+		if r.Intn(40) == 0 {
 			return Shutdown{Now: now}
 		}
 		return ShellExited{Session: sess, Code: r.Intn(4), Now: now}
+	case k == 12:
+		return Wake{Kind: WakeExpire, Now: now}
 	}
-	return Wake{Kind: WakeExpire, Now: now}
+	return Wake{Kind: WakeOpenDeadline, Now: now}
 }
 
 // forRuns drives random input sequences; check runs after every step with the
@@ -83,7 +128,7 @@ func forRuns(t *testing.T, steps int, check func(t *testing.T, prev Registry, in
 		g := &gen{r: rand.New(rand.NewSource(seed)), now: epoch}
 		reg := NewRegistry()
 		for i := 0; i < steps; i++ {
-			in := g.input()
+			in := g.input(reg)
 			snap := clone(reg)
 			next, cmds := Step(reg, in)
 			if !reflect.DeepEqual(snap, reg) {
@@ -110,7 +155,7 @@ func TestPropTokenSingleUse(t *testing.T) {
 		reg := NewRegistry()
 		opens := map[TokenHash]int{}
 		for i := 0; i < 80; i++ {
-			in := g.input()
+			in := g.input(reg)
 			if is, ok := in.(IssueRequested); ok {
 				if _, had := reg.Tokens[is.Hash]; !had {
 					opens[is.Hash] = 0
@@ -167,12 +212,49 @@ func TestPropRedeemBurnsToken(t *testing.T) {
 }
 
 func TestPropLimits(t *testing.T) {
-	forRuns(t, 120, func(t *testing.T, _ Registry, _ Input, next Registry, _ []Command) {
+	forRuns(t, 150, func(t *testing.T, _ Registry, _ Input, next Registry, _ []Command) {
 		if p := pending(next); p > MaxPending {
 			t.Errorf("%d pending tokens", p)
 		}
 		if a := active(next); a > MaxSessions {
 			t.Errorf("%d active sessions", a)
+		}
+	})
+}
+
+// TestPropGeneratorReachesLimits keeps TestPropLimits honest: the random runs
+// must actually fill the token and session limits, or the property proves
+// nothing about them.
+func TestPropGeneratorReachesLimits(t *testing.T) {
+	maxPending, maxActive := 0, 0
+	forRuns(t, 150, func(t *testing.T, _ Registry, _ Input, next Registry, _ []Command) {
+		maxPending = max(maxPending, pending(next))
+		maxActive = max(maxActive, active(next))
+	})
+	if maxPending != MaxPending || maxActive != MaxSessions {
+		t.Fatalf("runs reached %d pending and %d active; want %d and %d", maxPending, maxActive, MaxPending, MaxSessions)
+	}
+}
+
+func TestPropOpeningDeadline(t *testing.T) {
+	forRuns(t, 150, func(t *testing.T, prev Registry, in Input, next Registry, _ []Command) {
+		w, ok := in.(Wake)
+		if !ok || w.Kind != WakeOpenDeadline {
+			return
+		}
+		for id, s := range prev.Sessions {
+			o, wasOpening := s.(Opening)
+			late := wasOpening && !o.Since.Add(OpenDeadline).After(w.Now)
+			cl, nowClosing := next.Sessions[id].(Closing)
+			switch {
+			case late && (!nowClosing || cl.Cause != CauseOpenFailed):
+				t.Errorf("%s stayed Opening past the deadline: %#v", id, next.Sessions[id])
+			case !late && !reflect.DeepEqual(s, next.Sessions[id]):
+				t.Errorf("%s changed without being late", id)
+			}
+		}
+		if !reflect.DeepEqual(prev.Tokens, next.Tokens) {
+			t.Error("the open deadline changed tokens")
 		}
 	})
 }
@@ -188,9 +270,9 @@ func TestPropOpenOnlyTokenFolder(t *testing.T) {
 			if !isRedeem {
 				t.Fatalf("OpenPTY from %T", in)
 			}
-			iss, _ := prev.Tokens[rd.Hash].(Issued)
-			if op.Folder != iss.Folder || rd.Check != FolderTracked || rd.Folder != iss.Folder {
-				t.Errorf("OpenPTY folder %v, token %v, input %v/%v", op.Folder, iss.Folder, rd.Folder, rd.Check)
+			folder, issued := prev.FolderOf(rd.Hash)
+			if !issued || op.Folder != folder || rd.Check != FolderTracked {
+				t.Errorf("OpenPTY folder %v, token folder %v (issued %v), check %v", op.Folder, folder, issued, rd.Check)
 			}
 		}
 	})
@@ -203,8 +285,8 @@ func TestPropSessionAuditedOnce(t *testing.T) {
 		g := &gen{r: rand.New(rand.NewSource(seed)), now: epoch}
 		reg := NewRegistry()
 		count := map[core.TerminalSessionID]*audits{}
-		for i := 0; i < 120; i++ {
-			next, cmds := Step(reg, g.input())
+		for i := 0; i < 150; i++ {
+			next, cmds := Step(reg, g.input(reg))
 			for _, c := range cmds {
 				switch c := c.(type) {
 				case OpenPTY:
@@ -225,24 +307,16 @@ func TestPropSessionAuditedOnce(t *testing.T) {
 				}
 			}
 			for id, a := range count {
-				var want audits
+				ended := a.closed + a.failed
+				bad := a.open != 1 || a.closed > 1 || a.failed > 1 || ended > 1
 				switch next.Sessions[id].(type) {
-				case Opening:
-				case Open:
-					want = audits{open: 1}
-				case Closing:
-					want = *a
-					if a.closed != 1 || a.failed != 0 || a.open > 1 {
-						t.Fatalf("seed %d: closing %s has %+v", seed, id, *a)
-					}
-				default: // removed
-					if a.open > 1 || a.closed > 1 || a.failed > 1 || (a.closed == 1) == (a.failed == 1) || (a.open == 1 && a.closed != 1) {
-						t.Fatalf("seed %d: removed %s has %+v", seed, id, *a)
-					}
-					continue
+				case Opening, Open:
+					bad = bad || ended != 0
+				default: // Closing or removed: its one ending audit is written
+					bad = bad || ended != 1
 				}
-				if *a != want {
-					t.Fatalf("seed %d: %s in %T has %+v, want %+v", seed, id, next.Sessions[id], *a, want)
+				if bad {
+					t.Fatalf("seed %d: %s in %T has %+v", seed, id, next.Sessions[id], *a)
 				}
 			}
 			reg = next
@@ -285,7 +359,7 @@ func TestPropShutdownDrains(t *testing.T) {
 		reg := NewRegistry()
 		down := false
 		for i := 0; i < 120; i++ {
-			in := g.input()
+			in := g.input(reg)
 			if _, ok := in.(Shutdown); ok {
 				down = true
 			}
@@ -357,7 +431,7 @@ func TestPropResizeBounded(t *testing.T) {
 func TestPropExpireOnlyTokens(t *testing.T) {
 	forRuns(t, 100, func(t *testing.T, prev Registry, in Input, next Registry, _ []Command) {
 		w, ok := in.(Wake)
-		if !ok {
+		if !ok || w.Kind != WakeExpire {
 			return
 		}
 		want := map[TokenHash]Token{}
@@ -421,7 +495,7 @@ func TestNoSecretInOutputs(t *testing.T) {
 		}
 		reg := NewRegistry()
 		for i := 0; i < 80; i++ {
-			in := g.input()
+			in := g.input(reg)
 			switch x := in.(type) {
 			case IssueRequested:
 				x.Hash = pick(g.r, pool)
@@ -465,7 +539,8 @@ func TestAuditHasNoInput(t *testing.T) {
 				continue
 			}
 			seen++
-			if !actions[a.Action] || !causes[a.Cause] || !ids[string(a.Session)] || !ids[string(a.Folder.Repo)] || !ids[string(a.Folder.Worktree)] {
+			knownSession := ids[string(a.Session)] || strings.HasPrefix(string(a.Session), "ts_free_")
+			if !actions[a.Action] || !causes[a.Cause] || !knownSession || !ids[string(a.Folder.Repo)] || !ids[string(a.Folder.Worktree)] {
 				t.Errorf("audit entry with unexpected content: %#v", a)
 			}
 			if n := reflect.TypeOf(a).NumField(); n != 5 {

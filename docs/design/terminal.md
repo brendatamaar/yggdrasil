@@ -51,14 +51,16 @@ An expired token is simply removed by `Wake{Expire}`; there is no `Expired` entr
 | no token | `IssueRequested` | pending `< MaxPending` and `Phase = Serving` | `Issued{Folder, Now+30 s}` | `ScheduleWake{Expire, Now+30 s}`, `Reply{Issue, Granted}` |
 | no token | `IssueRequested` | otherwise | unchanged | `Reply{Issue, Refused{TooManyPending / ShuttingDown}}` |
 | no token | `IssueRequested` | hash already present | unchanged | `Reply{Issue, Refused{Collision}}` |
-| `Issued` | `RedeemRequested` | `Now < ExpiresAt`, `Check = Tracked`, sessions `< MaxSessions`, `Serving`, folder equals token folder | token `Consumed`, new `Opening` | `OpenPTY{Session, Folder, Size}`, `Reply{Redeem, Granted}` |
+| `Issued` | `RedeemRequested` | `Now < ExpiresAt`, `Check = Tracked`, sessions `< MaxSessions`, `Serving` | token `Consumed`, new `Opening` | `OpenPTY{Session, Folder (the token's), Size}`, `Audit{terminal.open}`, `ScheduleWake{OpenDeadline, Now+15 s}`, `Reply{Redeem, Granted}` |
 | `Issued` | `RedeemRequested` | `Now >= ExpiresAt` | token removed | `Reply{Redeem, Refused{Expired}}` |
 | `Issued` | `RedeemRequested` | `Check = Untracked` | token `Consumed` | `Reply{Redeem, Refused{NotTracked}}` |
 | `Issued` | `RedeemRequested` | session limit reached or `Draining` | token `Consumed` | `Reply{Redeem, Refused{TooManySessions / ShuttingDown}}` |
 | `Consumed` | `RedeemRequested` | | unchanged | `Reply{Redeem, Refused{Reused}}` |
 | none | `RedeemRequested` | | unchanged | `Reply{Redeem, Refused{Unknown}}` |
-| `Opening{s}` | `Opened{s}` | | `Open{s}` | `Audit{terminal.open: session, folder}` |
+| `Opening{s}` | `Opened{s}` | | `Open{s}` | none (the open was audited at redeem, before the shell exists) |
 | `Opening{s}` | `OpenFailed{s}` | | `Closed{OpenFailed}` | `Audit{terminal.open_failed}` |
+| `Closing{s}` | `OpenFailed{s}` | | `Closed` (removed) | none |
+| `Opening{s}` | `Wake{OpenDeadline}` | `Since + 15 s <= Now` | `Closing{OpenFailed}` | `ClosePTY{s}`, `Audit{terminal.open_failed}` |
 | `Open{s}` | `Resized` | size within limits | `Open` with size | `ResizePTY{s, size}` |
 | `Open{s}` | `ClientClosed` / `CloseRequested` / `ShellExited` | | `Closing{s, cause}` (ShellExited goes straight to `Closed`) | `ClosePTY{s}` (not for ShellExited), `Audit{terminal.close: cause, exit code}` |
 | `Opening{s}` | `ClientClosed` / `CloseRequested` | | `Closing{s, cause}` | `ClosePTY{s}`, `Audit{terminal.close}` |
@@ -68,7 +70,9 @@ An expired token is simply removed by `Wake{Expire}`; there is no `Expired` entr
 | any | input for an unknown or closed `Session` | | unchanged | none |
 | any other (state, input) pair | | | unchanged | none |
 
-A session gets its `Audit{terminal.close}` exactly once, on the first transition into `Closing` or `Closed`.
+Every granted session gets exactly one `terminal.open` (at redeem) and then exactly one ending audit: `terminal.close` on the first transition into `Closing` or `Closed`, or `terminal.open_failed` when the shell never started (start failure or the open deadline).
+
+The shell exposes `Registry.FolderOf(hash)` so the redeem-time tracked check uses the folder the core stored; `RedeemRequested` carries no folder, and the shell keeps no copy.
 
 ## Invariants
 
@@ -78,13 +82,14 @@ A session gets its `Audit{terminal.close}` exactly once, on the first transition
 | T2 | Expiry: `Reply{Redeem, Granted}` implies `Now < ExpiresAt` of that token | `TestPropNoGrantAfterExpiry` |
 | T3 | A redeem of an `Issued` token never leaves it `Issued`: it becomes `Consumed` or is removed, whatever the outcome (refused redeems burn the token) | `TestPropRedeemBurnsToken` |
 | T4 | `len(Sessions in Opening/Open) <= MaxSessions` and pending tokens `<= MaxPending` after every step | `TestPropLimits` |
-| T5 | Every `OpenPTY` carries the folder stored in the token, and `Check = Tracked` held for that input | `TestPropOpenOnlyTokenFolder` |
-| T6 | Each session that reached `Open` has exactly one `terminal.open` and exactly one `terminal.close` audit; one that failed to open has one `terminal.open_failed` | `TestPropSessionAuditedOnce` |
+| T5 | Every `OpenPTY` carries the folder stored in the token (`FolderOf`), and `Check = Tracked` held for that input | `TestPropOpenOnlyTokenFolder` |
+| T6 | Each granted session has exactly one `terminal.open` and, once it is `Closing` or gone, exactly one ending audit (`terminal.close` or `terminal.open_failed`, never both) | `TestPropSessionAuditedOnce` |
 | T7 | `Closing` is entered together with `ClosePTY` (except when the shell already exited) and leaves only to `Closed` | `TestPropClosingEnds` |
 | T8 | After `Shutdown`: no session in `Opening/Open`, no `OpenPTY`, no new grant | `TestPropShutdownDrains` |
 | T9 | Unknown or closed `Session` inputs change nothing | `TestPropUnknownSessionIgnored` |
 | T10 | No raw token appears in any state, command, reply or audit entry (the core only has `TokenHash`); the audit carries session ID and folder ID, never keystrokes, command lines or paths | `TestNoSecretInOutputs` (reflection over generated values), `TestAuditHasNoInput` |
 | T11 | `Resize` outside 1..500 cols/rows never reaches `ResizePTY` | `TestPropResizeBounded` |
+| T13 | A `Wake{OpenDeadline}` moves exactly the sessions that have been `Opening` for 15 s to `Closing{OpenFailed}` and changes nothing else | `TestPropOpeningDeadline` |
 | T12 | Expire removes exactly the tokens with `ExpiresAt <= Now`, never a live `Opening` session | `TestPropExpireOnlyTokens` |
 
 ## Commands
@@ -134,6 +139,9 @@ Tests: core by `Run`; the shell with `platformtest.FakePTY`, a counter `TokenSou
 | `TokenSource` | random source error | die | request fails (500, plain message); no token is stored |
 | Folder resolution | untracked, removed, `\\wsl$` | domain outcome | refused at issue; at redeem `Check = Untracked` |
 | `platform.StartPTY` | shell missing, ConPTY unavailable | domain outcome | `OpenFailed`; socket closed with a plain reason |
+| Audit write of `terminal.open` | store down | domain outcome (fail closed, invariant 8) | written synchronously before the PTY starts; on failure the session is closed as `open_failed`, no shell starts, the caller gets a plain error |
+| Audit write of `terminal.close` / `open_failed` | store down | escape hatch | retried 3 times with doubling backoff (50 ms first), then logged with IDs only |
+| Redeem never followed by Run/Abort | handler crashed, upgrade lost | domain outcome | `Wake{OpenDeadline}` after 15 s closes the session as `open_failed` and frees the slot; `Close` does not wait for it |
 | PTY read/write | broken pipe | domain outcome | `ShellExited`/`ClientClosed` |
 | WebSocket | upgrade rejected (Host/Origin) | domain outcome | 403 before the token is looked at (the token is not burned by a bad origin) |
 | `ClosePTY` | error | escape hatch | logged; the job object ends the tree at shutdown |

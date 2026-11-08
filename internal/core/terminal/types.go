@@ -26,6 +26,9 @@ const (
 	MaxSessions = 4
 	MaxCols     = 500
 	MaxRows     = 500
+	// OpenDeadline is how long a granted redeem may wait for its socket and
+	// shell before the session is given up as open_failed.
+	OpenDeadline = 15 * time.Second
 )
 
 // FolderCheck is the shell's fact at redeem time: is the folder still tracked.
@@ -79,6 +82,9 @@ type WakeKind string
 
 // WakeExpire removes expired tokens.
 const WakeExpire WakeKind = "expire"
+
+// WakeOpenDeadline gives up on sessions stuck in Opening.
+const WakeOpenDeadline WakeKind = "open_deadline"
 
 // Validate reports whether the size is within 1..MaxCols by 1..MaxRows.
 func (s Size) Validate() error {

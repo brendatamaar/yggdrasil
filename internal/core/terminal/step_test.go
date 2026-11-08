@@ -7,7 +7,7 @@ import (
 )
 
 func TestLimitsPinned(t *testing.T) {
-	if TokenTTL != 30*time.Second || MaxPending != 8 || MaxSessions != 4 || MaxCols != 500 || MaxRows != 500 {
+	if TokenTTL != 30*time.Second || MaxPending != 8 || MaxSessions != 4 || MaxCols != 500 || MaxRows != 500 || OpenDeadline != 15*time.Second {
 		t.Fatal("limits changed; update docs/design/terminal.md")
 	}
 }
@@ -22,7 +22,7 @@ func issueAt(now time.Time) IssueRequested {
 }
 
 func redeemAt(now time.Time) RedeemRequested {
-	return RedeemRequested{Hash: h1, Folder: fa, Session: "ts_1", Size: Size{80, 24}, Check: FolderTracked, Now: now, Reply: "r"}
+	return RedeemRequested{Hash: h1, Session: "ts_1", Size: Size{80, 24}, Check: FolderTracked, Now: now, Reply: "r"}
 }
 
 func reply(cmds []Command, kind ReplyKind) Reply {
@@ -79,8 +79,14 @@ func TestRedeemOutcomes(t *testing.T) {
 	if _, ok := r.Sessions["ts_1"].(Opening); !ok {
 		t.Fatalf("session = %#v", r.Sessions["ts_1"])
 	}
-	if _, ok := cmds[0].(OpenPTY); !ok {
-		t.Fatalf("first command = %#v", cmds[0])
+	want := []Command{
+		OpenPTY{Session: "ts_1", Folder: fa, Size: Size{80, 24}},
+		WriteAudit{Action: AuditOpen, Session: "ts_1", Folder: fa},
+		ScheduleWake{Kind: WakeOpenDeadline, At: soon.Add(OpenDeadline)},
+		Reply{ID: "r", Kind: ReplyRedeem, Granted: true, Session: "ts_1"},
+	}
+	if !reflect.DeepEqual(cmds, want) {
+		t.Fatalf("granted redeem cmds = %#v", cmds)
 	}
 	_, cmds = Step(r, redeemAt(soon))
 	if got := reply(cmds, ReplyRedeem).Refusal; got != RefusedReused {
@@ -109,13 +115,6 @@ func TestRedeemOutcomes(t *testing.T) {
 	if _, ok := r.Tokens[h1].(Consumed); !ok {
 		t.Error("a refused redeem must burn the token")
 	}
-
-	other := redeemAt(soon)
-	other.Folder = Folder{Repo: "repo_b"}
-	_, cmds = Step(issued, other)
-	if got := reply(cmds, ReplyRedeem).Refusal; got != RefusedNotTracked {
-		t.Errorf("other folder: %q", got)
-	}
 }
 
 func TestRedeemSessionLimit(t *testing.T) {
@@ -140,8 +139,8 @@ func lifecycle(t *testing.T) Registry {
 func TestOpenedResizeAndClose(t *testing.T) {
 	r := lifecycle(t)
 	r, cmds := Step(r, Opened{Session: "ts_1", Pid: 7, Now: epoch})
-	if !reflect.DeepEqual(cmds, []Command{WriteAudit{Action: AuditOpen, Session: "ts_1", Folder: fa}}) {
-		t.Fatalf("cmds = %#v", cmds)
+	if len(cmds) != 0 {
+		t.Fatalf("Opened emitted %#v; the open was audited at redeem", cmds)
 	}
 	if o := r.Sessions["ts_1"].(Open); o.Pid != 7 || o.Size != (Size{80, 24}) {
 		t.Fatalf("open = %#v", o)
@@ -226,5 +225,49 @@ func TestWakeReschedulesWhileTokensRemain(t *testing.T) {
 	_, cmds = Step(r, Wake{Kind: "other", Now: epoch.Add(time.Hour)})
 	if len(cmds) != 0 {
 		t.Fatal("unknown wake kind must be ignored")
+	}
+}
+
+func TestOpenDeadlineGivesUpOnStuckOpening(t *testing.T) {
+	r := lifecycle(t) // redeemed at epoch, never opened
+	r, cmds := Step(r, Wake{Kind: WakeOpenDeadline, Now: epoch.Add(OpenDeadline - time.Second)})
+	if len(cmds) != 0 {
+		t.Fatalf("early wake emitted %#v", cmds)
+	}
+	r, cmds = Step(r, Wake{Kind: WakeOpenDeadline, Now: epoch.Add(OpenDeadline)})
+	want := []Command{ClosePTY{Session: "ts_1"}, WriteAudit{Action: AuditOpenFailed, Session: "ts_1", Folder: fa, Cause: CauseOpenFailed}}
+	if !reflect.DeepEqual(cmds, want) {
+		t.Fatalf("cmds = %#v", cmds)
+	}
+	if _, ok := r.Sessions["ts_1"].(Closing); !ok {
+		t.Fatalf("session = %#v", r.Sessions["ts_1"])
+	}
+	// the shell reports the end; the slot is free
+	r, _ = Step(r, ShellExited{Session: "ts_1", Code: -1, Now: epoch})
+	if active(r) != 0 || len(r.Sessions) != 0 {
+		t.Fatalf("sessions = %v", r.Sessions)
+	}
+}
+
+func TestOpenDeadlineSparesOpenSessions(t *testing.T) {
+	r := lifecycle(t)
+	r, _ = Step(r, Opened{Session: "ts_1", Pid: 1, Now: epoch})
+	_, cmds := Step(r, Wake{Kind: WakeOpenDeadline, Now: epoch.Add(time.Hour)})
+	if len(cmds) != 0 {
+		t.Fatalf("cmds = %#v", cmds)
+	}
+}
+
+func TestFolderOf(t *testing.T) {
+	r, _ := Step(NewRegistry(), issueAt(epoch))
+	if f, ok := r.FolderOf(h1); !ok || f != fa {
+		t.Fatalf("FolderOf = %v %v", f, ok)
+	}
+	if _, ok := r.FolderOf(hh(9)); ok {
+		t.Fatal("unknown hash has a folder")
+	}
+	r, _ = Step(r, redeemAt(epoch))
+	if _, ok := r.FolderOf(h1); ok {
+		t.Fatal("a consumed token still reports a folder")
 	}
 }
