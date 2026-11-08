@@ -57,6 +57,11 @@ packages:
       - worktree_diff.go
       - changesets_adapter.go
       - landing_adapter.go
+      - phase5.go
+      - devservers.go
+      - worktreeenv.go
+      - terminal.go
+      - terminal_ws.go
     frontmatter: |
       import type * as agents from "./agents.gen";
       import type * as core from "./core.gen";

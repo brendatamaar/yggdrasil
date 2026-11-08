@@ -126,6 +126,19 @@ func (h *hub) closeAll() {
 
 func (h *hub) wait() { h.wg.Wait() }
 
+// track registers a long-lived handler (a terminal session) with the hub's
+// wait group, so Close waits for it. It reports false once the hub is closed;
+// on true the caller must call h.wg.Done when it ends.
+func (h *hub) track() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed {
+		return false
+	}
+	h.wg.Add(1)
+	return true
+}
+
 // serveWS upgrades the request and serves one client until it disconnects or
 // the server stops. Host and Origin were checked by the guard middleware
 // before this runs, so the library's own origin check is switched off.

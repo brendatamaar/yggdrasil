@@ -17,21 +17,28 @@ import (
 // header (curl, the page itself loading) is allowed.
 func (s *Server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host, port := splitHost(r.Host)
-		if !loopbackName(host) {
-			reject(w)
-			return
-		}
-		if p := int(s.port.Load()); p != 0 && port != "" && port != strconv.Itoa(p) {
-			reject(w)
-			return
-		}
-		if origin := r.Header.Get("Origin"); origin != "" && !s.originAllowed(origin, r.Host) {
+		if !s.hostOriginOK(r) {
 			reject(w)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// hostOriginOK is the Host and Origin check of guard. The terminal socket
+// calls it again before it touches its single-use token (invariant 7).
+func (s *Server) hostOriginOK(r *http.Request) bool {
+	host, port := splitHost(r.Host)
+	if !loopbackName(host) {
+		return false
+	}
+	if p := int(s.port.Load()); p != 0 && port != "" && port != strconv.Itoa(p) {
+		return false
+	}
+	if origin := r.Header.Get("Origin"); origin != "" && !s.originAllowed(origin, r.Host) {
+		return false
+	}
+	return true
 }
 
 func reject(w http.ResponseWriter) {
