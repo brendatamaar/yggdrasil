@@ -6,6 +6,7 @@ import { mergeRequests } from "./merge-requests";
 import { needsAttention } from "./needs-attention";
 import { recentAreas } from "./recent-areas";
 import { recentChats } from "./recent-chats";
+import { runningServices } from "./running-services";
 import { thisMachine } from "./this-machine";
 import type { WidgetModule } from "./types";
 import { workingNow } from "./working-now";
@@ -22,6 +23,7 @@ export const widgetRegistry: readonly WidgetModule[] = [
   mergeRequests,
   ciFailures,
   builds,
+  runningServices,
   recentAreas,
   recentChats,
   agentUsage,

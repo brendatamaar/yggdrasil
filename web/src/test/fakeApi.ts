@@ -38,6 +38,7 @@ function defaultReply(call: Call): Reply {
     return { body: { projects: [], counts } };
   }
   if (call.path === "/api/mrs") return { body: { items: [], instances: [] } };
+  if (call.path === "/api/devservers") return { body: { servers: [] } };
   if (call.path.startsWith("/api/builds")) return { body: { builds: [] } };
   if (/^\/api\/tasks\/[^/]+\/events/.test(call.path)) return { body: { events: [] } };
   return notFound;
