@@ -143,11 +143,11 @@ func stepStarting(st Starting, in Input) (Server, []Command) {
 			return st, nil
 		}
 		return Failed{
-				Attempt: st.Attempt, Kind: FailExitedEarly, Code: v.Code, At: v.Now,
-				Message: "The server stopped before it started listening (exit code " + itoa(v.Code) + ").",
-			}, []Command{
-				audit(AuditFail, "attempt", itoa(st.Attempt), "kind", string(FailExitedEarly), "code", itoa(v.Code)), Publish{},
-			}
+			Attempt: st.Attempt, Kind: FailExitedEarly, Code: v.Code, At: v.Now,
+			Message: "The server stopped before it started listening (exit code " + itoa(v.Code) + ").",
+		}, []Command{
+			audit(AuditFail, "attempt", itoa(st.Attempt), "kind", string(FailExitedEarly), "code", itoa(v.Code)), Publish{},
+		}
 	case StopRequested:
 		if st.Pid == 0 {
 			// The process may not exist yet: nothing to wait for. The kill
@@ -223,11 +223,11 @@ func stepRunning(st Running, in Input) (Server, []Command) {
 			}
 		}
 		return Failed{
-				Attempt: st.Attempt, Kind: FailCrashed, Code: v.Code, At: v.Now,
-				Message: "The server stopped unexpectedly (exit code " + itoa(v.Code) + ").",
-			}, []Command{
-				audit(AuditFail, "attempt", itoa(st.Attempt), "kind", string(FailCrashed), "code", itoa(v.Code)), Publish{},
-			}
+			Attempt: st.Attempt, Kind: FailCrashed, Code: v.Code, At: v.Now,
+			Message: "The server stopped unexpectedly (exit code " + itoa(v.Code) + ").",
+		}, []Command{
+			audit(AuditFail, "attempt", itoa(st.Attempt), "kind", string(FailCrashed), "code", itoa(v.Code)), Publish{},
+		}
 	case StopRequested:
 		return stopping(st.Attempt, st.Pid, st.Block, v.Cause, v.Now)
 	case ShutdownRequested:
@@ -258,11 +258,22 @@ func stepStopping(st Stopping, in Input) (Server, []Command) {
 			return st, []Command{KillProcess{Attempt: st.Attempt}, wake(st.Attempt, WakeKillGrace, v.Now, killGrace(st.Cause))}
 		}
 		return Failed{
-				Attempt: st.Attempt, Kind: FailStopFailed, At: v.Now,
-				Message: "The server did not stop. It ends when Yggdrasil closes.",
-			}, []Command{
-				audit(AuditFail, "attempt", itoa(st.Attempt), "kind", string(FailStopFailed)), Publish{},
-			}
+			Attempt: st.Attempt, Kind: FailStopFailed, At: v.Now,
+			Message: "The server did not stop. It ends when Yggdrasil closes.",
+		}, []Command{
+			audit(AuditFail, "attempt", itoa(st.Attempt), "kind", string(FailStopFailed)), Publish{},
+		}
+	case StopRequested:
+		// Always a way out: a second stop (the user pressing Stop on a server
+		// that will not die) sends another kill at once and counts as the second
+		// kill; the grace wake that follows ends in Failed{StopFailed}.
+		st.KillAttempt = KillSecond
+		return st, []Command{
+			KillProcess{Attempt: st.Attempt},
+			wake(st.Attempt, WakeKillGrace, v.Now, killGrace(st.Cause)),
+			audit(AuditStop, "attempt", itoa(st.Attempt), "cause", string(v.Cause), "escalated", "true"),
+			Publish{},
+		}
 	case Recovered:
 		return recovered(st.Attempt, st.Block, v)
 	}

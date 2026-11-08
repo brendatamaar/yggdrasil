@@ -573,3 +573,34 @@ func TestOrphanStopFailedIsAuditedAndPublished(t *testing.T) {
 		t.Error("OrphanStopFailed changed a server that is not an orphan")
 	}
 }
+
+// A Stopping server accepts a user StopRequested: another kill, the kill
+// attempt capped at 2 and never going down, the attempt unchanged. There is
+// always a way out of Stopping.
+func TestPropStoppingAcceptsAnotherStop(t *testing.T) {
+	seen := 0
+	drive(t, func() checker {
+		return func(prev Server, in Input, next Server, cmds []Command) error {
+			ps, was := prev.(Stopping)
+			if !was {
+				return nil
+			}
+			if ns, ok := next.(Stopping); ok {
+				if ns.KillAttempt < ps.KillAttempt || ns.KillAttempt > KillSecond || ns.Attempt != ps.Attempt || ns.Cause != ps.Cause {
+					return fmt.Errorf("Stopping changed from %+v to %+v", ps, ns)
+				}
+			}
+			if _, ok := in.(StopRequested); ok {
+				seen++
+				ns, ok := next.(Stopping)
+				if !ok || ns.KillAttempt != KillSecond || !has[KillProcess](cmds) || !has[WriteAudit](cmds) || !has[Publish](cmds) {
+					return fmt.Errorf("stop in Stopping: %#v %v", next, cmds)
+				}
+			}
+			return nil
+		}
+	})
+	if seen == 0 {
+		t.Fatal("the generator never sent StopRequested to a Stopping server")
+	}
+}

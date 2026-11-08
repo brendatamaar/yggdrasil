@@ -11,12 +11,12 @@ import (
 
 func TestFileSinkRotatesAndKeepsThreeFiles(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "logs")
-	s, err := devservers.NewFileSink(dir, "dsv_a", nil, 10, 100, nil)
+	s, err := devservers.NewFileSink(dir, "dsv_a", func(s string) string { return s }, 10, 100, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 40; i++ {
-		s.Write(strings.Repeat("x", 30))
+		s.Write(devservers.StreamStdout, strings.Repeat("x", 30))
 	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
@@ -44,7 +44,7 @@ func TestFileSinkWithAnUnwritableFolderFails(t *testing.T) {
 	if err := os.WriteFile(file, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := devservers.NewFileSink(filepath.Join(file, "sub"), "dsv_a", nil, 10, 0, nil); err == nil {
+	if _, err := devservers.NewFileSink(filepath.Join(file, "sub"), "dsv_a", func(s string) string { return s }, 10, 0, nil); err == nil {
 		t.Error("a log folder under a file was created")
 	}
 }

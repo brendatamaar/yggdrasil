@@ -1,6 +1,7 @@
 package devserverstest
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -305,18 +306,18 @@ func WakesContract(t *testing.T, mk func(t *testing.T) WakeHarness) {
 // LogSinkContract is the suite every devservers.LogSink passes: the ring
 // keeps the last lines in order, redaction is applied before anything is kept
 // or published, long lines are cut, and nothing is written after Close.
-func LogSinkContract(t *testing.T, mk func(t *testing.T, size int, redact devservers.Redact, publish func(string)) devservers.LogSink) {
+func LogSinkContract(t *testing.T, mk func(t *testing.T, size int, redact devservers.Redact, publish func(devservers.LogLine)) devservers.LogSink) {
 	redact := func(s string) string { return strings.ReplaceAll(s, "SECRET-VALUE", "[REDACTED]") }
 	t.Run("keeps the last lines in order", func(t *testing.T) {
 		s := mk(t, 3, redact, nil)
 		defer s.Close()
 		for i := 1; i <= 5; i++ {
-			s.Write(fmt.Sprintf("line %d", i))
+			s.Write(devservers.StreamStdout, fmt.Sprintf("line %d", i))
 		}
-		if got := s.Tail(-1); !slices.Equal(got, []string{"line 3", "line 4", "line 5"}) {
+		if got := s.Tail(-1); !slices.Equal(texts(got), []string{"line 3", "line 4", "line 5"}) {
 			t.Errorf("tail = %v", got)
 		}
-		if got := s.Tail(2); !slices.Equal(got, []string{"line 4", "line 5"}) {
+		if got := s.Tail(2); !slices.Equal(texts(got), []string{"line 4", "line 5"}) {
 			t.Errorf("tail(2) = %v", got)
 		}
 		if got := s.Tail(10); len(got) != 3 {
@@ -326,19 +327,19 @@ func LogSinkContract(t *testing.T, mk func(t *testing.T, size int, redact devser
 	t.Run("fewer lines than the ring", func(t *testing.T) {
 		s := mk(t, 5, redact, nil)
 		defer s.Close()
-		s.Write("a")
-		s.Write("b")
-		if got := s.Tail(-1); !slices.Equal(got, []string{"a", "b"}) {
+		s.Write(devservers.StreamStdout, "a")
+		s.Write(devservers.StreamStdout, "b")
+		if got := s.Tail(-1); !slices.Equal(texts(got), []string{"a", "b"}) {
 			t.Errorf("tail = %v", got)
 		}
 	})
 	t.Run("redacts before keeping and publishing", func(t *testing.T) {
 		var mu sync.Mutex
 		var pub []string
-		s := mk(t, 5, redact, func(l string) { mu.Lock(); pub = append(pub, l); mu.Unlock() })
+		s := mk(t, 5, redact, func(l devservers.LogLine) { mu.Lock(); pub = append(pub, l.Line); mu.Unlock() })
 		defer s.Close()
-		s.Write("token=SECRET-VALUE")
-		if got := s.Tail(-1); !slices.Equal(got, []string{"token=[REDACTED]"}) {
+		s.Write(devservers.StreamStdout, "token=SECRET-VALUE")
+		if got := s.Tail(-1); !slices.Equal(texts(got), []string{"token=[REDACTED]"}) {
 			t.Errorf("tail = %v", got)
 		}
 		mu.Lock()
@@ -350,9 +351,9 @@ func LogSinkContract(t *testing.T, mk func(t *testing.T, size int, redact devser
 	t.Run("cuts a very long line", func(t *testing.T) {
 		s := mk(t, 5, redact, nil)
 		defer s.Close()
-		s.Write(strings.Repeat("x", devservers.MaxLineBytes*2))
-		if got := s.Tail(1); len(got) != 1 || len(got[0]) > devservers.MaxLineBytes+16 {
-			t.Errorf("long line kept at %d bytes", len(got[0]))
+		s.Write(devservers.StreamStdout, strings.Repeat("x", devservers.MaxLineBytes*2))
+		if got := s.Tail(1); len(got) != 1 || len(got[0].Line) > devservers.MaxLineBytes+16 {
+			t.Errorf("long line kept at %d bytes", len(got[0].Line))
 		}
 	})
 	t.Run("redacts before cutting", func(t *testing.T) {
@@ -360,22 +361,22 @@ func LogSinkContract(t *testing.T, mk func(t *testing.T, size int, redact devser
 		defer s.Close()
 		// The secret starts just before the cut point; cutting first would
 		// leave half of it that no pattern matches.
-		s.Write(strings.Repeat("x", devservers.MaxLineBytes-11) + " SECRET-VALUE tail")
+		s.Write(devservers.StreamStdout, strings.Repeat("x", devservers.MaxLineBytes-11)+" SECRET-VALUE tail")
 		got := s.Tail(1)
-		if len(got) != 1 || strings.Contains(got[0], "SECRET") {
-			t.Errorf("part of the secret survived the cut: %q", got)
+		if len(got) != 1 || strings.Contains(got[0].Line, "SECRET") {
+			t.Errorf("part of the secret survived the cut: %+v", got)
 		}
 	})
 	t.Run("no write after close", func(t *testing.T) {
 		var mu sync.Mutex
 		n := 0
-		s := mk(t, 5, redact, func(string) { mu.Lock(); n++; mu.Unlock() })
-		s.Write("before")
+		s := mk(t, 5, redact, func(devservers.LogLine) { mu.Lock(); n++; mu.Unlock() })
+		s.Write(devservers.StreamStdout, "before")
 		if err := s.Close(); err != nil {
 			t.Fatal(err)
 		}
-		s.Write("after")
-		if got := s.Tail(-1); !slices.Equal(got, []string{"before"}) {
+		s.Write(devservers.StreamStdout, "after")
+		if got := s.Tail(-1); !slices.Equal(texts(got), []string{"before"}) {
 			t.Errorf("tail = %v", got)
 		}
 		mu.Lock()
@@ -387,4 +388,95 @@ func LogSinkContract(t *testing.T, mk func(t *testing.T, size int, redact devser
 			t.Errorf("second Close = %v", err)
 		}
 	})
+}
+
+func texts(ls []devservers.LogLine) []string {
+	out := make([]string, len(ls))
+	for i, l := range ls {
+		out[i] = l.Line
+	}
+	return out
+}
+
+// LogSeqContract is the part of the log suite about line numbers: one source
+// of numbers for the tail and the live publish. Seq starts at 1, grows by one
+// per line, is never reused (not even after the ring wraps), and a client that
+// replaces by Seq and sorts ends with every line once, in order.
+func LogSeqContract(t *testing.T, mk func(t *testing.T, size int, redact devservers.Redact, publish func(devservers.LogLine)) devservers.LogSink) {
+	redact := func(s string) string { return s }
+	t.Run("one numbering for tail and publish", func(t *testing.T) {
+		var mu sync.Mutex
+		var pub []devservers.LogLine
+		s := mk(t, 4, redact, func(l devservers.LogLine) { mu.Lock(); pub = append(pub, l); mu.Unlock() })
+		defer s.Close()
+		for i := 1; i <= 6; i++ {
+			s.Write(devservers.StreamStdout, fmt.Sprintf("line %d", i))
+		}
+		s.Write(devservers.StreamStderr, "oops")
+		mu.Lock()
+		defer mu.Unlock()
+		for i, l := range pub {
+			if l.Seq != uint64(i+1) {
+				t.Fatalf("published seq %d at position %d", l.Seq, i)
+			}
+		}
+		tail := s.Tail(-1)
+		if len(tail) != 4 || tail[len(tail)-1].Stream != devservers.StreamStderr {
+			t.Fatalf("tail = %+v", tail)
+		}
+		for _, l := range tail {
+			if pub[l.Seq-1] != l {
+				t.Errorf("tail line %+v differs from the published %+v", l, pub[l.Seq-1])
+			}
+		}
+	})
+	t.Run("a client merging tail and live lines by seq gets every line once, in order", func(t *testing.T) {
+		var mu sync.Mutex
+		var live []devservers.LogLine
+		s := mk(t, 50, redact, func(l devservers.LogLine) { mu.Lock(); live = append(live, l); mu.Unlock() })
+		defer s.Close()
+		for i := 1; i <= 10; i++ {
+			s.Write(devservers.StreamStdout, fmt.Sprintf("early %d", i))
+		}
+		tail := s.Tail(-1) // fetched while lines keep coming
+		for i := 1; i <= 10; i++ {
+			s.Write(devservers.StreamStdout, fmt.Sprintf("late %d", i))
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		// Live lines arrive in any order and some twice: reverse the second half.
+		arrived := append([]devservers.LogLine(nil), live...)
+		slices.Reverse(arrived[5:])
+		arrived = append(arrived, live[8:12]...)
+		got := MergeBySeq(tail, arrived)
+		if len(got) != 20 {
+			t.Fatalf("merged %d lines, want 20", len(got))
+		}
+		for i, l := range got {
+			want := fmt.Sprintf("early %d", i+1)
+			if i >= 10 {
+				want = fmt.Sprintf("late %d", i-9)
+			}
+			if l.Seq != uint64(i+1) || l.Line != want {
+				t.Fatalf("line %d = %+v, want %q", i, l, want)
+			}
+		}
+	})
+}
+
+// MergeBySeq is the rule a client applies: the tail and the live lines go into
+// one set keyed by Seq (a later copy replaces an earlier one), sorted by Seq.
+func MergeBySeq(sets ...[]devservers.LogLine) []devservers.LogLine {
+	by := map[uint64]devservers.LogLine{}
+	for _, set := range sets {
+		for _, l := range set {
+			by[l.Seq] = l
+		}
+	}
+	out := make([]devservers.LogLine, 0, len(by))
+	for _, l := range by {
+		out = append(out, l)
+	}
+	slices.SortFunc(out, func(a, b devservers.LogLine) int { return cmp.Compare(a.Seq, b.Seq) })
+	return out
 }

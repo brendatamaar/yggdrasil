@@ -98,7 +98,6 @@ type Service struct {
 	sinks    map[string]LogSink
 	restarts map[string]dsc.Key
 	msgs     map[string]string
-	warns    map[string]string
 	drained  chan struct{}
 }
 
@@ -141,7 +140,7 @@ func New(ctx context.Context, d Deps) (*Service, error) {
 	return &Service{
 		d: d, log: d.Log, clock: d.Clock, wakes: NewWakes(d.Clock), base: base, cancel: cancel, g: g,
 		runs: map[string]*run{}, sinks: map[string]LogSink{}, restarts: map[string]dsc.Key{}, msgs: map[string]string{},
-		locks: map[string]*srvLock{}, warns: map[string]string{}, drained: make(chan struct{}),
+		locks: map[string]*srvLock{}, drained: make(chan struct{}),
 	}, nil
 }
 
@@ -185,26 +184,21 @@ func (s *Service) startIn(ctx context.Context, t Target, key dsc.Key, dir string
 		return View{}, apperr.New(apperr.Invalid, "This server's command cannot be started: "+plainTemplateMessage(err.Error()), err)
 	}
 	var block core.PortBlock
-	warning := ""
 	if t.Worktree != "" {
 		block, err = s.d.Blocks.BlockFor(ctx, t)
 		switch {
 		case errors.Is(err, ErrNoBlock) || errors.Is(err, worktreeenv.ErrRangeFull):
 			// Every port of the range is taken: start without port variables.
 			// A command that needs {port} is refused by the core (BadTemplate).
-			block, warning = core.PortBlock{}, noBlockWarning
+			block = core.PortBlock{}
 		case err != nil:
 			return View{}, err
 		}
 	}
-	prev := s.swapWarning(IDOf(key), warning)
 	mk := func(cur dsc.Server) dsc.Input {
 		return dsc.StartRequested{Attempt: dsc.AttemptOf(cur) + 1, Now: s.clock.Now(), Template: tpl, Block: block}
 	}
 	next, err := s.apply(ctx, key, userActor, mk, dir)
-	if err != nil {
-		s.swapWarning(IDOf(key), prev) // a refused start leaves the running one as it was
-	}
 	return s.view(key, next), err
 }
 
@@ -214,18 +208,6 @@ func (s *Service) startIn(ctx context.Context, t Target, key dsc.Key, dir string
 var ErrNoBlock = errors.New("no free port block")
 
 const noBlockWarning = "No free port block was left, so this server started without a fixed port. Commands that need {port} cannot start."
-
-func (s *Service) swapWarning(id, w string) string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	prev := s.warns[id]
-	if w == "" {
-		delete(s.warns, id)
-	} else {
-		s.warns[id] = w
-	}
-	return prev
-}
 
 // trustGate refuses a repo that ships agent hooks or MCP servers and has not
 // been trusted (SF-09). An error reading the trust view refuses too.
@@ -322,7 +304,7 @@ func (s *Service) List(ctx context.Context, repo core.RepoID) ([]View, error) {
 
 // Logs returns the last n log lines of the server (all the ring holds if n<0).
 // They are already redacted.
-func (s *Service) Logs(t Target, command string, n int) ([]string, error) {
+func (s *Service) Logs(t Target, command string, n int) ([]LogLine, error) {
 	key, err := ParseStart(string(t.Repo), string(t.Worktree), command)
 	if err != nil {
 		return nil, err
@@ -331,7 +313,7 @@ func (s *Service) Logs(t Target, command string, n int) ([]string, error) {
 	sink := s.sinks[IDOf(key)]
 	s.mu.Unlock()
 	if sink == nil {
-		return []string{}, nil
+		return []LogLine{}, nil
 	}
 	return sink.Tail(n), nil
 }
@@ -372,7 +354,7 @@ func (s *Service) viewLocked(key dsc.Key, st dsc.Server) View {
 	id := IDOf(key)
 	msg := s.msgs[id]
 	_, restarting := s.restarts[id]
-	v := View{ID: id, Key: key, Status: st.Status(), Attempt: dsc.AttemptOf(st), Message: msg, Restarting: restarting, Warning: s.warns[id]}
+	v := View{ID: id, Key: key, Status: st.Status(), Attempt: dsc.AttemptOf(st), Message: msg, Restarting: restarting}
 	switch x := st.(type) {
 	case dsc.Stopped:
 		v.Since, v.Last, v.ExitCode = x.At, x.Last, x.Code
@@ -390,7 +372,52 @@ func (s *Service) viewLocked(key dsc.Key, st dsc.Server) View {
 	case dsc.Orphaned:
 		v.Since, v.Pid = x.SeenAt, x.Pid
 	}
+	// The warning follows the state: a live server on a worktree that has no
+	// port block started without injection. It goes away at rest.
+	if key.Worktree != "" {
+		switch st.(type) {
+		case dsc.Starting, dsc.Running, dsc.Stopping:
+			if v.Block.Empty() {
+				v.Warning = noBlockWarning
+			}
+		}
+	}
 	return v
+}
+
+// ByID returns a stored server by its ID, or an apperr NotFound. A server that
+// was never started has no row and so no ID the service knows.
+func (s *Service) ByID(ctx context.Context, id string) (View, error) {
+	row, err := s.d.Store.Get(ctx, id)
+	if errors.Is(err, db.ErrNotFound) {
+		return View{}, apperr.New(apperr.NotFound, "That dev server doesn't exist (any more).", err)
+	}
+	if err != nil {
+		return View{}, fmt.Errorf("read dev server %s: %w", id, err)
+	}
+	st, err := dsc.ServerFromRow(row.Row)
+	if err != nil {
+		return View{}, fmt.Errorf("read dev server %s: %w", id, err)
+	}
+	return s.view(row.Row.Key, st), nil
+}
+
+// Placeholder is the view of a server that has never been started: stopped,
+// with the ID it will have. The API lists one per detected command so the UI
+// can offer a first start.
+func (s *Service) Placeholder(key dsc.Key) View {
+	return s.view(key, dsc.Stopped{Last: dsc.LastNever})
+}
+
+// LogsByID returns the last n log lines of a server by its ID.
+func (s *Service) LogsByID(id string, n int) []LogLine {
+	s.mu.Lock()
+	sink := s.sinks[id]
+	s.mu.Unlock()
+	if sink == nil {
+		return []LogLine{}
+	}
+	return sink.Tail(n)
 }
 
 // apply is the one path of every change: load, Step, persist state and audit
@@ -502,13 +529,14 @@ func (s *Service) prepareAudits(key dsc.Key, id, actor string, cmds []dsc.Comman
 }
 
 // feed applies an input that came from a process, a timer or a poll. The
-// inputs that end an attempt (Exited, StartFailed, OrphanStopped) are retried
+// inputs that end an attempt (Exited, StartFailed, OrphanStopped) and the
+// wakes (a lost kill-grace wake would leave a server stuck in Stopping) are retried
 // with a bounded backoff when the commit fails: losing one would leave a dead
 // server marked live. Repeating one is harmless, the attempt fences it.
 func (s *Service) feed(key dsc.Key, in dsc.Input) {
 	tries := 1
 	switch in.(type) {
-	case dsc.Exited, dsc.StartFailed, dsc.OrphanStopped:
+	case dsc.Exited, dsc.StartFailed, dsc.OrphanStopped, dsc.OrphanStopFailed, dsc.Wake:
 		tries = feedTries
 	}
 	backoff := s.d.FeedBackoff
