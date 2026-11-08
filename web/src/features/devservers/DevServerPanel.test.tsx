@@ -110,4 +110,55 @@ describe("DevServerPanel", () => {
     setup([], () => ({ status: 500, body: { code: "internal", message: "Something went wrong.", hint: "Try again." } }));
     expect((await screen.findByRole("alert")).textContent).toContain("Something went wrong.");
   });
+
+  it("starts a never-run placeholder row and sends the target in the body", async () => {
+    const placeholder = server({ id: "ph1", status: "stopped", ports: [], command: "npm run dev" });
+    const h = setup([placeholder]);
+    fireEvent.click(await screen.findByRole("button", { name: "Start npm run dev" }));
+    await waitFor(() => { expect(h.api.calls.some((c) => c.path === "/api/devservers/ph1/start")).toBe(true); });
+    const call = h.api.calls.find((c) => c.path === "/api/devservers/ph1/start");
+    expect(call?.method).toBe("POST");
+    expect(call?.body).toEqual({ repoId: "r1", command: "npm run dev" });
+  });
+
+  it("includes the worktree in the body for a worktree row", async () => {
+    const h = stubApi((c) =>
+      c.path === "/api/devservers" ? { body: { servers: [server({ id: "ph2", status: "stopped", ports: [], worktreeId: "w1" })] } } : undefined,
+    );
+    renderWithWS(<DevServerPanel scope={{ repoId: "r1", worktreeIds: ["w1"] }} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Start npm run dev" }));
+    await waitFor(() => { expect(h.calls.some((c) => c.path === "/api/devservers/ph2/start")).toBe(true); });
+    expect(h.calls.find((c) => c.path === "/api/devservers/ph2/start")?.body).toEqual({ repoId: "r1", worktreeId: "w1", command: "npm run dev" });
+  });
+
+  it("offers Stop for a server that is stopping, and sends the body", async () => {
+    const h = setup([server({ status: "stopping" })]);
+    fireEvent.click(await screen.findByRole("button", { name: "Stop npm run dev" }));
+    await waitFor(() => { expect(h.api.calls.some((c) => c.path === "/api/devservers/s1/stop")).toBe(true); });
+    expect(screen.queryByRole("button", { name: "Restart npm run dev" })).toBeNull();
+  });
+
+  it("a tail refetch after live lines gives no duplicates and no reordering", async () => {
+    let tail = [1, 2];
+    const mk = (n: number) => ({ id: "s1", seq: n, stream: "stdout", line: `line ${String(n)}` });
+    const h = setup([server()], (c) =>
+      c.path === "/api/devservers/s1/log?tail=200" ? { body: { incomplete: false, lines: tail.map(mk) } } : undefined,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /Show log/ }));
+    const log = await screen.findByRole("log");
+    expect(await within(log).findByText("line 2")).toBeTruthy();
+    // Live lines 4 then 3 arrive (out of order), then the hub says lines were missed.
+    act(() => {
+      h.push("devserver:s1", mk(4));
+      h.push("devserver:s1", mk(3));
+    });
+    await within(log).findByText("line 4");
+    tail = [2, 3, 4, 5];
+    act(() => {
+      h.socket.receive({ type: "gap", topic: "devserver:s1" });
+    });
+    await within(log).findByText("line 5");
+    const texts = Array.from(log.querySelectorAll("div")).map((d) => d.textContent);
+    expect(texts).toEqual(["line 1", "line 2", "line 3", "line 4", "line 5"]);
+  });
 });

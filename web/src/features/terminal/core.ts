@@ -3,7 +3,7 @@
 // `openSocket` command. It is never part of the state, so nothing can render,
 // store or log it by accident (docs/design/terminal.md).
 
-export type FailureKind = "expired" | "too_many" | "not_tracked" | "other";
+export type FailureKind = "expired" | "too_many" | "not_tracked" | "shutting_down" | "other";
 
 export type TermState =
   | { tag: "idle" }
@@ -40,6 +40,7 @@ const none = (state: TermState): TermStep => ({ state, commands: [] });
 export const failureMessages: Record<Exclude<FailureKind, "other">, string> = {
   expired: "The terminal link expired before it could be used. Reconnect to get a new one.",
   too_many: "Too many terminals are open. Close one, then reconnect.",
+  shutting_down: "Yggdrasil is shutting down, so a terminal can't open now.",
   not_tracked: "This folder is no longer tracked by Yggdrasil, so a terminal can't open in it.",
 };
 
@@ -80,9 +81,19 @@ export function termStep(state: TermState, input: TermInput): TermStep {
 }
 
 /** Sorts a failed token request into the cases the dock explains in its own words. */
-export function classifyTokenFailure(status: number, code: string): FailureKind {
-  if (status === 404 || status === 403 || code === "not_found" || code === "not_tracked") return "not_tracked";
-  if (status === 429 || code.includes("too_many") || code.includes("limit")) return "too_many";
-  if (status === 410 || code === "expired") return "expired";
-  return "other";
+export function classifyTokenFailure(status: number): FailureKind {
+  // The server's statuses are exactly: 404 untracked or unknown folder, 429 too many sessions or
+  // pending tokens, 410 expired, reused or unknown token, 503 shutting down.
+  switch (status) {
+    case 404:
+      return "not_tracked";
+    case 429:
+      return "too_many";
+    case 410:
+      return "expired";
+    case 503:
+      return "shutting_down";
+    default:
+      return "other";
+  }
 }

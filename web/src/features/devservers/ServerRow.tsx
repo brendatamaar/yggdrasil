@@ -1,4 +1,3 @@
-import { serverId } from "../../api/devservers";
 import { describeError } from "../../api/client";
 import type { DevServerDTO } from "../../api/gen/api.gen";
 import { portHref, serverButtons, statusLabel, statusTone } from "./core";
@@ -30,11 +29,10 @@ export function PortList({ server }: { server: DevServerDTO }) {
 /** Start, Stop and Restart for one server, showing only what its state allows. */
 export function ServerControls({ server, label }: { server: DevServerDTO; label?: string }) {
   const act = useServerAction();
-  const id = serverId(server);
   const b = serverButtons(server.status);
   const name = label ?? server.command;
   const run = (action: "start" | "stop" | "restart") => {
-    act.mutate({ id, action });
+    act.mutate({ server, action });
   };
   return (
     <div className="flex flex-wrap items-center gap-2">

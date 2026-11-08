@@ -83,10 +83,11 @@ describe("termStep", () => {
 
 describe("classifyTokenFailure", () => {
   it("names the cases the dock explains", () => {
-    expect(classifyTokenFailure(404, "not_found")).toBe("not_tracked");
-    expect(classifyTokenFailure(429, "x")).toBe("too_many");
-    expect(classifyTokenFailure(409, "too_many_sessions")).toBe("too_many");
-    expect(classifyTokenFailure(410, "x")).toBe("expired");
-    expect(classifyTokenFailure(500, "internal")).toBe("other");
+    expect(classifyTokenFailure(404)).toBe("not_tracked");
+    expect(classifyTokenFailure(429)).toBe("too_many");
+    expect(classifyTokenFailure(410)).toBe("expired");
+    expect(classifyTokenFailure(503)).toBe("shutting_down");
+    // Only those four statuses are named; 409 and 403 are no longer used for these.
+    for (const s of [400, 401, 403, 409, 500]) expect(classifyTokenFailure(s)).toBe("other");
   });
 });
