@@ -55,7 +55,9 @@ type Stopping struct {
 type Failed struct {
 	Kind FailKind
 	Code int // exit code for FailExitedEarly and FailCrashed
-	At   time.Time
+	// Message is the plain-language reason (no paths), e.g. "Install Node and try again".
+	Message string
+	At      time.Time
 }
 
 // Orphaned is a process from a crashed run that is still alive (non-Windows).

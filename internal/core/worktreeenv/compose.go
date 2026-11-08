@@ -146,8 +146,17 @@ type ComposeAudit struct {
 // ComposePublish tells subscribers the state changed.
 type ComposePublish struct{}
 
+// ComposeRejectReason is the closed set of reasons a compose request is refused.
+type ComposeRejectReason string
+
+// The closed set of ComposeRejectReason values.
+const (
+	RejectConfirmFirst ComposeRejectReason = "confirm_first"
+	RejectBusy         ComposeRejectReason = "busy"
+)
+
 // ComposeReject answers a refused request.
-type ComposeReject struct{ Reason string } // "confirm_first", "busy"
+type ComposeReject struct{ Reason ComposeRejectReason }
 
 func (RunCompose) isComposeCommand()     {}
 func (ComposeAudit) isComposeCommand()   {}
