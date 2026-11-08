@@ -13,7 +13,7 @@ import (
 //
 // wsTopic is a WebSocket subscription topic, a closed set (tasksTopic,
 // taskTopic, reposTopic, repoTopic, buildsTopic, buildTopic, hostsTopic,
-// proposalsTopic, boardTopic).
+// proposalsTopic, boardTopic, devserversTopic, devserverTopic, worktreeEnvTopic).
 // Outside data becomes a wsTopic only through parseTopic, so a value is
 // always valid.
 
@@ -38,13 +38,25 @@ type hostsTopic struct{} // host instances or their MR/pipeline data changed
 
 type proposalsTopic struct{} // a proposal was created or changed state
 
+type devserversTopic struct{} // a dev server changed (any server)
+
+type devserverTopic struct{ ID core.DevServerID } // one dev server: changes and log lines
+
+type worktreeEnvTopic struct{} // a port block, profile copy or compose project changed
+
 type boardTopic struct{} // a task moved between board columns, or maxAgents changed
 
-func (proposalsTopic) isTopic() {}
-func (boardTopic) isTopic()     {}
+func (devserversTopic) isTopic()  {}
+func (devserverTopic) isTopic()   {}
+func (worktreeEnvTopic) isTopic() {}
+func (proposalsTopic) isTopic()   {}
+func (boardTopic) isTopic()       {}
 
-func (proposalsTopic) String() string { return TopicProposals }
-func (boardTopic) String() string     { return TopicBoard }
+func (devserversTopic) String() string  { return TopicDevServers }
+func (t devserverTopic) String() string { return TopicDevServerPrefix + string(t.ID) }
+func (worktreeEnvTopic) String() string { return TopicWorktreeEnv }
+func (proposalsTopic) String() string   { return TopicProposals }
+func (boardTopic) String() string       { return TopicBoard }
 
 func (tasksTopic) isTopic()  {}
 func (taskTopic) isTopic()   {}
@@ -65,8 +77,8 @@ func (t buildTopic) String() string {
 }
 
 // parseTopic accepts the fixed names "tasks", "repos", "builds", "hosts",
-// "proposals" and "board",
-// and "task:<id>", "repo:<id>" and "build:<id>" with a valid ID.
+// "proposals", "board", "devservers" and "worktreeenv",
+// and "task:<id>", "repo:<id>" and "build:<id>" and "devserver:<id>" with a valid ID.
 func parseTopic(s string) (wsTopic, error) {
 	switch s {
 	case TopicTasks:
@@ -81,6 +93,10 @@ func parseTopic(s string) (wsTopic, error) {
 		return proposalsTopic{}, nil
 	case TopicBoard:
 		return boardTopic{}, nil
+	case TopicDevServers:
+		return devserversTopic{}, nil
+	case TopicWorktreeEnv:
+		return worktreeEnvTopic{}, nil
 	}
 	if id, ok := strings.CutPrefix(s, TopicTaskPrefix); ok {
 		tid := core.TaskID(id)
@@ -102,6 +118,13 @@ func parseTopic(s string) (wsTopic, error) {
 			return nil, fmt.Errorf("parse topic %q: %w", s, err)
 		}
 		return buildTopic{ID: bid}, nil
+	}
+	if id, ok := strings.CutPrefix(s, TopicDevServerPrefix); ok {
+		did := core.DevServerID(id)
+		if err := did.Validate(); err != nil {
+			return nil, fmt.Errorf("parse topic %q: %w", s, err)
+		}
+		return devserverTopic{ID: did}, nil
 	}
 	return nil, fmt.Errorf("parse topic %q: unknown topic", s)
 }

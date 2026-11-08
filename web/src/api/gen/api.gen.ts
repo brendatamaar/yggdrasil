@@ -723,6 +723,103 @@ export interface DraftResponse {
 }
 
 //////////
+// source: types_devservers.go
+
+/**
+ * TopicDevServers carries DevServerChangedMessage: any server changed.
+ */
+export const TopicDevServers = "devservers";
+/**
+ * TopicDevServerPrefix starts "devserver:<id>", which carries
+ * DevServerChangedMessage and DevServerLogMessage for one server.
+ */
+export const TopicDevServerPrefix = "devserver:";
+/**
+ * DevServerStatus is the closed set of server states.
+ */
+export type DevServerStatus = string;
+/**
+ * The closed set of DevServerStatus values.
+ */
+export const DevServerStopped: DevServerStatus = "stopped";
+/**
+ * The closed set of DevServerStatus values.
+ */
+export const DevServerStarting: DevServerStatus = "starting";
+/**
+ * The closed set of DevServerStatus values.
+ */
+export const DevServerRunning: DevServerStatus = "running";
+/**
+ * The closed set of DevServerStatus values.
+ */
+export const DevServerStopping: DevServerStatus = "stopping";
+/**
+ * The closed set of DevServerStatus values.
+ */
+export const DevServerFailed: DevServerStatus = "failed";
+/**
+ * The closed set of DevServerStatus values.
+ */
+export const DevServerOrphaned: DevServerStatus = "orphaned";
+/**
+ * DevServerPortDTO is one listening port. OutsideBlock is true when the port
+ * lies outside the worktree's block (DV-02 warning).
+ */
+export interface DevServerPortDTO {
+  port: number /* int */;
+  announced: boolean;
+  outsideBlock: boolean;
+}
+/**
+ * DevServerDTO is one dev server. Message is a plain-language reason for a
+ * failed server; it holds no paths.
+ */
+export interface DevServerDTO {
+  id: any /* core.DevServerID */;
+  repoId: core.RepoID;
+  repoName: string;
+  worktreeId?: core.WorktreeID;
+  command: string;
+  status: DevServerStatus;
+  ports: DevServerPortDTO[];
+  blockBase?: number /* int */;
+  blockSize?: number /* int */;
+  message?: string;
+  since?: string;
+}
+/**
+ * DevServersResponse is the body of GET /api/devservers.
+ */
+export interface DevServersResponse {
+  servers: DevServerDTO[];
+}
+/**
+ * DevServerChangedMessage is the data of a message on TopicDevServers and on
+ * "devserver:<id>": the server's new state.
+ */
+export interface DevServerChangedMessage {
+  server: DevServerDTO;
+}
+/**
+ * DevServerLogMessage is one log line on "devserver:<id>". Lines are redacted.
+ */
+export interface DevServerLogMessage {
+  id: any /* core.DevServerID */;
+  seq: number /* uint64 */;
+  stream: string; // "stdout" or "stderr"
+  line: string;
+}
+/**
+ * DevServerLogResponse is the body of GET /api/devservers/{id}/log.
+ * Incomplete is true when output was lost (a grandchild held the pipe).
+ */
+export interface DevServerLogResponse {
+  lines: DevServerLogMessage[];
+  incomplete: boolean;
+}
+
+//////////
 // source: types_hosts.go
 
 /**
@@ -1411,6 +1508,34 @@ export interface SearchResponse {
 }
 
 //////////
+// source: types_terminal.go
+
+/**
+ * TerminalTokenRequest asks for a socket token. Exactly one of RepoID and
+ * WorktreeID is set.
+ */
+export interface TerminalTokenRequest {
+  repoId?: core.RepoID;
+  worktreeId?: core.WorktreeID;
+}
+/**
+ * TerminalTokenResponse carries the raw token, once.
+ */
+export interface TerminalTokenResponse {
+  token: string;
+  expiresIn: number /* int */; // seconds
+}
+/**
+ * TerminalResizeFrame is the only JSON text frame a client sends on the
+ * terminal socket; binary frames are keystrokes and output.
+ */
+export interface TerminalResizeFrame {
+  type: string; // "resize"
+  cols: number /* int */;
+  rows: number /* int */;
+}
+
+//////////
 // source: types_trust.go
 
 /**
@@ -1441,6 +1566,88 @@ export interface TrustDTO {
  */
 export interface TrustRequest {
   hash: string;
+}
+
+//////////
+// source: types_worktreeenv.go
+
+/**
+ * TopicWorktreeEnv carries WorktreeEnvChangedMessage: a block was allocated,
+ * a profile copy finished or a compose project changed.
+ */
+export const TopicWorktreeEnv = "worktreeenv";
+/**
+ * RepoEnvDTO is the per-repo environment settings. ProfilePaths are relative
+ * paths; the server rejects absolute paths, "..", ".git", globs and control
+ * characters. AgentCopy is off by default: copying env files into a worktree
+ * makes them readable by the task's agent.
+ */
+export interface RepoEnvDTO {
+  repoId: core.RepoID;
+  profilePaths: string[];
+  agentCopy: boolean;
+  composeEnabled: boolean;
+  composeFile?: string;
+}
+/**
+ * ComposeStatus is the closed set of compose project states.
+ */
+export type ComposeStatus = string;
+/**
+ * The closed set of ComposeStatus values.
+ */
+export const ComposeOff: ComposeStatus = "off";
+/**
+ * The closed set of ComposeStatus values.
+ */
+export const ComposeNeedsConfirm: ComposeStatus = "needs_confirm";
+/**
+ * The closed set of ComposeStatus values.
+ */
+export const ComposeDown: ComposeStatus = "down";
+/**
+ * The closed set of ComposeStatus values.
+ */
+export const ComposeStarting: ComposeStatus = "starting";
+/**
+ * The closed set of ComposeStatus values.
+ */
+export const ComposeUp: ComposeStatus = "up";
+/**
+ * The closed set of ComposeStatus values.
+ */
+export const ComposeStopping: ComposeStatus = "stopping";
+/**
+ * The closed set of ComposeStatus values.
+ */
+export const ComposeFailed: ComposeStatus = "failed";
+/**
+ * ProfileEntryResult is the outcome of one profile entry in the last copy.
+ */
+export interface ProfileEntryResult {
+  path: string;
+  result: string; // "copied", "skipped" or "failed"
+  reason?: string;
+}
+/**
+ * WorktreeEnvDTO is the environment of one worktree: its port block, the last
+ * profile copy and the compose project.
+ */
+export interface WorktreeEnvDTO {
+  worktreeId: core.WorktreeID;
+  blockBase?: number /* int */;
+  blockSize?: number /* int */;
+  profile: ProfileEntryResult[];
+  compose: ComposeStatus;
+  composeHash?: string;
+  composeNote?: string; // plain language: file lacks YGG_PORT, Docker missing, ...
+  updatedAt: string;
+}
+/**
+ * WorktreeEnvChangedMessage is the data of a message on TopicWorktreeEnv.
+ */
+export interface WorktreeEnvChangedMessage {
+  env: WorktreeEnvDTO;
 }
 
 //////////
