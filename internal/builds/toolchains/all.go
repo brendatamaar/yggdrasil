@@ -5,15 +5,18 @@ import (
 	"io/fs"
 
 	"github.com/brendatamaar/yggdrasil/internal/builds"
+	"github.com/brendatamaar/yggdrasil/internal/builds/toolchains/dotnet"
+	"github.com/brendatamaar/yggdrasil/internal/builds/toolchains/golang"
 	"github.com/brendatamaar/yggdrasil/internal/builds/toolchains/gradle"
 	"github.com/brendatamaar/yggdrasil/internal/builds/toolchains/maven"
 	"github.com/brendatamaar/yggdrasil/internal/builds/toolchains/node"
+	"github.com/brendatamaar/yggdrasil/internal/builds/toolchains/python"
 )
 
 // All returns the detectable modules. The custom module is not here: it needs
 // the repo's settings and never detects on its own.
 func All() []builds.Toolchain {
-	return []builds.Toolchain{node.New(), maven.New(), gradle.New()}
+	return []builds.Toolchain{node.New(), maven.New(), gradle.New(), golang.New(), dotnet.New(), python.New()}
 }
 
 // Match is one toolchain that detected the repo.

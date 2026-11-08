@@ -1,0 +1,8 @@
+[tool.poetry]
+name = "shop-mailer"
+
+[tool.poetry.dependencies]
+flask = "^3.0"
+
+[tool.mypy]
+strict = true
