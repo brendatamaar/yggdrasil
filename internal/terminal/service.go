@@ -40,6 +40,9 @@ type Config struct {
 	OutputQueue int
 	// WriteTimeout bounds one socket write. Default 10 s.
 	WriteTimeout time.Duration
+	// AuditBackoff is the first wait before a failed close audit is retried;
+	// it doubles on each of 3 retries. Default 50 ms.
+	AuditBackoff time.Duration
 
 	Log *slog.Logger
 }
@@ -72,10 +75,10 @@ type Service struct {
 
 	mu      sync.Mutex // protects everything below
 	reg     ct.Registry
-	pending map[ct.TokenHash]ct.Folder // side record of issued tokens, for the redeem-time folder check
 	live    map[core.TerminalSessionID]*live
 	audits  []AuditEntry
-	timers  map[int64]func() bool
+	openErr map[core.TerminalSessionID]error // failed open audits, read by Redeem
+	timers  map[timerKey]func() bool
 	closed  bool
 
 	auditMu sync.Mutex // serializes audit writes in step order
@@ -111,6 +114,9 @@ func New(c Config) (*Service, error) {
 	if c.WriteTimeout <= 0 {
 		c.WriteTimeout = 10 * time.Second
 	}
+	if c.AuditBackoff <= 0 {
+		c.AuditBackoff = 50 * time.Millisecond
+	}
 	if c.Log == nil {
 		c.Log = slog.New(slog.DiscardHandler)
 	}
@@ -118,9 +124,9 @@ func New(c Config) (*Service, error) {
 	return &Service{
 		cfg: c, ctx: ctx, cancel: cancel,
 		reg:     ct.NewRegistry(),
-		pending: map[ct.TokenHash]ct.Folder{},
 		live:    map[core.TerminalSessionID]*live{},
-		timers:  map[int64]func() bool{},
+		openErr: map[core.TerminalSessionID]error{},
+		timers:  map[timerKey]func() bool{},
 	}, nil
 }
 
@@ -179,9 +185,6 @@ func (s *Service) Issue(ctx context.Context, t ct.Target) (token string, expires
 	if rp, ok := findReply(cmds, ct.ReplyIssue); ok {
 		granted, refusal = rp.Granted, rp.Refusal
 	}
-	if granted {
-		s.pending[hash] = folder
-	}
 	s.mu.Unlock()
 	s.interpret(cmds)
 	if !granted {
@@ -205,11 +208,6 @@ func findReply(cmds []ct.Command, kind ct.ReplyKind) (ct.Reply, bool) {
 func (s *Service) stepLocked(in ct.Input) []ct.Command {
 	reg, cmds := ct.Step(s.reg, in)
 	s.reg = reg
-	for h := range s.pending {
-		if _, ok := reg.Tokens[h].(ct.Issued); !ok {
-			delete(s.pending, h)
-		}
-	}
 	for _, c := range cmds {
 		switch c := c.(type) {
 		case ct.OpenPTY:
@@ -242,7 +240,7 @@ func (s *Service) interpret(cmds []ct.Command) {
 				l.requestClose()
 			}
 		case ct.ScheduleWake:
-			s.scheduleWake(c.At)
+			s.scheduleWake(c.Kind, c.At)
 		}
 	}
 	s.flushAudit()
@@ -254,13 +252,18 @@ func (s *Service) liveFor(id core.TerminalSessionID) *live {
 	return s.live[id]
 }
 
-func (s *Service) scheduleWake(at time.Time) {
+type timerKey struct {
+	kind ct.WakeKind
+	at   int64
+}
+
+func (s *Service) scheduleWake(kind ct.WakeKind, at time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return
 	}
-	key := at.UnixNano()
+	key := timerKey{kind: kind, at: at.UnixNano()}
 	if _, ok := s.timers[key]; ok {
 		return
 	}
@@ -273,11 +276,14 @@ func (s *Service) scheduleWake(at time.Time) {
 		if closed {
 			return
 		}
-		s.interpret(s.step(ct.Wake{Kind: ct.WakeExpire, Now: s.cfg.Now()}))
+		s.interpret(s.step(ct.Wake{Kind: kind, Now: s.cfg.Now()}))
 	})
 }
 
 // flushAudit writes queued entries, oldest first, one writer at a time.
+// A failed terminal.open is remembered for Redeem, which refuses the open
+// (fail closed, invariant 8). Any other entry is retried with a growing wait
+// and, if it still fails, logged with IDs only.
 func (s *Service) flushAudit() {
 	s.auditMu.Lock()
 	defer s.auditMu.Unlock()
@@ -290,16 +296,44 @@ func (s *Service) flushAudit() {
 		e := s.audits[0]
 		s.audits = s.audits[1:]
 		s.mu.Unlock()
-		// The session is over or running either way; a failed audit write is
-		// logged (IDs only) so the problem is visible.
-		actx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		err := s.cfg.Audit.Record(actx, e)
-		cancel()
-		if err != nil {
-			s.cfg.Log.Error("terminal audit write failed", "action", e.Action, "session", e.Session, "err", err)
+
+		attempts := 4
+		if e.Action == ct.AuditOpen {
+			attempts = 1
+		}
+		err := s.record(e, attempts)
+		if err == nil {
+			continue
+		}
+		s.cfg.Log.Error("terminal audit write failed", "action", e.Action, "session", e.Session, "attempts", attempts, "err", err)
+		if e.Action == ct.AuditOpen {
+			s.mu.Lock()
+			s.openErr[e.Session] = err
+			s.mu.Unlock()
 		}
 	}
 }
+
+func (s *Service) record(e AuditEntry, attempts int) (err error) {
+	wait := s.cfg.AuditBackoff
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			time.Sleep(wait)
+			wait *= 2
+		}
+		actx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err = s.cfg.Audit.Record(actx, e)
+		cancel()
+		if err == nil {
+			return nil
+		}
+	}
+	return err
+}
+
+// ErrAuditUnavailable is returned when the open could not be written to the
+// audit log, so no shell was started.
+var ErrAuditUnavailable = errors.New("terminal: the audit log is not available")
 
 // Redeem spends a token and reserves a session. The caller must then call
 // Session.Run or Session.Abort. Check Host and Origin before calling (see the
@@ -310,7 +344,7 @@ func (s *Service) Redeem(ctx context.Context, token string, size ct.Size) (*Sess
 		return nil, &RefusedError{Reason: ct.RefusedUnknown}
 	}
 	s.mu.Lock()
-	folder, known := s.pending[hash]
+	folder, known := s.reg.FolderOf(hash)
 	s.mu.Unlock()
 	check := ct.FolderUntracked
 	if known {
@@ -320,15 +354,24 @@ func (s *Service) Redeem(ctx context.Context, token string, size ct.Size) (*Sess
 	}
 	id := s.cfg.NewID()
 	s.mu.Lock()
-	cmds := s.stepLocked(ct.RedeemRequested{Hash: hash, Folder: folder, Session: id, Size: size, Check: check, Now: s.cfg.Now()})
+	cmds := s.stepLocked(ct.RedeemRequested{Hash: hash, Session: id, Size: size, Check: check, Now: s.cfg.Now()})
 	l := s.live[id]
 	rp, _ := findReply(cmds, ct.ReplyRedeem)
 	s.mu.Unlock()
-	s.interpret(cmds)
+	s.interpret(cmds) // writes the open audit before any shell exists
 	if !rp.Granted || l == nil {
 		return nil, &RefusedError{Reason: rp.Refusal}
 	}
-	return &Session{l: l}, nil
+	se := &Session{l: l}
+	s.mu.Lock()
+	auditErr := s.openErr[id]
+	delete(s.openErr, id)
+	s.mu.Unlock()
+	if auditErr != nil {
+		se.Abort() // open_failed; the slot is free again
+		return nil, ErrAuditUnavailable
+	}
+	return se, nil
 }
 
 // Open redeems the token and runs the session on sock until it ends. A
@@ -339,6 +382,8 @@ func (s *Service) Open(ctx context.Context, token string, sock Socket) error {
 		var re *RefusedError
 		if errors.As(err, &re) {
 			_ = sock.Close(re.Message())
+		} else if errors.Is(err, ErrAuditUnavailable) {
+			_ = sock.Close("The terminal was not opened because Yggdrasil could not record it in the audit log.")
 		} else {
 			_ = sock.Close("The terminal could not be opened.")
 		}
@@ -365,7 +410,7 @@ func (s *Service) Close(ctx context.Context) error {
 	for _, stop := range s.timers {
 		stop()
 	}
-	s.timers = map[int64]func() bool{}
+	s.timers = map[timerKey]func() bool{}
 	cmds := s.stepLocked(ct.Shutdown{Now: s.cfg.Now()})
 	s.mu.Unlock()
 	s.interpret(cmds)

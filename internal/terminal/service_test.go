@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -360,7 +361,7 @@ func TestCloseWhileShellIsStarting(t *testing.T) {
 		}
 	}
 	got := f.audit.Entries()
-	if len(got) != 1 || got[0].Action != ct.AuditClose {
+	if len(got) != 2 || got[0].Action != ct.AuditOpen || got[1].Action != ct.AuditClose {
 		t.Fatalf("audit = %+v", got)
 	}
 }
@@ -376,7 +377,7 @@ func TestOpenFailureIsAudited(t *testing.T) {
 		t.Fatalf("socket = %v %q", ok, why)
 	}
 	got := f.audit.Entries()
-	if len(got) != 1 || got[0].Action != ct.AuditOpenFailed || got[0].Cause != ct.CauseOpenFailed {
+	if len(got) != 2 || got[1].Action != ct.AuditOpenFailed || got[1].Cause != ct.CauseOpenFailed {
 		t.Fatalf("audit = %+v", got)
 	}
 	// the slot is free again
@@ -398,7 +399,7 @@ func TestAbortBeforeRunIsAudited(t *testing.T) {
 	if err := se.Run(context.Background(), tt.NewMemSocket()); !errors.Is(err, terminal.ErrSessionGone) {
 		t.Fatalf("Run after Abort: %v", err)
 	}
-	if got := auditActions(f.audit); len(got) != 1 || got[0] != ct.AuditOpenFailed {
+	if got := auditActions(f.audit); len(got) != 2 || got[1] != ct.AuditOpenFailed {
 		t.Fatalf("audit = %v", got)
 	}
 }
@@ -494,7 +495,6 @@ func TestCloseDrainsAllSessions(t *testing.T) {
 	if _, err := f.svc.Redeem(context.Background(), tok, terminal.DefaultSize); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, "open audits", func() bool { return len(f.audit.Entries()) == 2 })
 	ctx, cancel := context.WithTimeout(context.Background(), wait)
 	defer cancel()
 	if err := f.svc.Close(ctx); err != nil {
@@ -528,15 +528,156 @@ func TestCloseDrainsAllSessions(t *testing.T) {
 	}
 }
 
-func TestAuditFailureDoesNotKillTheSession(t *testing.T) {
+// The open audit is written before any shell exists; if it cannot be, the
+// open is refused (invariant 8).
+func TestOpenAuditFailureRefusesTheOpen(t *testing.T) {
 	f := newFixture(t)
-	f.audit.Err = errors.New("disk full")
-	sock, done := f.open(t)
+	f.audit.Hook = func(e terminal.AuditEntry) error {
+		if e.Action == ct.AuditOpen {
+			return errors.New("disk full")
+		}
+		return nil
+	}
+	tok, _, _ := f.svc.Issue(context.Background(), ct.Target{Repo: "repo_a"})
+	sock := tt.NewMemSocket()
+	res := make(chan error, 1)
+	go func() { res <- f.svc.Open(context.Background(), tok, sock) }()
+	var err error
+	select {
+	case err = <-res:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Open ran a session although the open could not be audited")
+	}
+	if !errors.Is(err, terminal.ErrAuditUnavailable) {
+		t.Fatalf("Open = %v", err)
+	}
+	if f.starter.Entered.Load() != 0 {
+		t.Fatal("a shell was started although the open could not be audited")
+	}
+	if ok, why := sock.Closed(); !ok || !strings.Contains(why, "audit log") {
+		t.Fatalf("socket = %v %q", ok, why)
+	}
+	got := f.audit.Entries()
+	if len(got) != 1 || got[0].Action != ct.AuditOpenFailed {
+		t.Fatalf("audit = %+v", got)
+	}
+	// the slot is free: four sessions still fit
+	f.audit.Hook = nil
+	var dones []<-chan error
+	for i := 0; i < ct.MaxSessions; i++ {
+		_, d := f.open(t)
+		dones = append(dones, d)
+	}
+	for i := range dones {
+		f.pty(t, i).Exit(0)
+	}
+	for _, d := range dones {
+		_ = finished(t, d)
+	}
+}
+
+func TestCloseAuditIsRetriedThenLogged(t *testing.T) {
+	var logs strings.Builder
+	f := newFixture(t, func(c *terminal.Config) {
+		c.AuditBackoff = time.Millisecond
+		c.Log = slog.New(slog.NewTextHandler(&lockedWriter{w: &logs}, nil))
+	})
+	failures := 2
+	f.audit.Hook = func(e terminal.AuditEntry) error {
+		if e.Action == ct.AuditClose && failures > 0 {
+			failures--
+			return errors.New("busy")
+		}
+		return nil
+	}
+	_, done := f.open(t)
 	f.pty(t, 0).Exit(0)
-	if err := finished(t, done); err != nil {
+	_ = finished(t, done)
+	if got := auditActions(f.audit); len(got) != 2 || got[1] != ct.AuditClose {
+		t.Fatalf("close audit lost after transient failures: %v", got)
+	}
+
+	// a store that stays down: bounded attempts, then a log line with IDs only
+	before := f.audit.Calls()
+	f.audit.Hook = func(e terminal.AuditEntry) error {
+		if e.Action == ct.AuditClose {
+			return errors.New("down")
+		}
+		return nil
+	}
+	_, done = f.open(t)
+	f.pty(t, 1).Exit(0)
+	_ = finished(t, done)
+	if n := f.audit.Calls() - before; n != 1+4 { // the open, then 4 attempts at the close
+		t.Fatalf("audit calls = %d, want 5", n)
+	}
+	if out := logs.String(); !strings.Contains(out, "audit write failed") || !strings.Contains(out, "ts_2") || strings.Contains(out, f.dir) {
+		t.Fatalf("log = %q", out)
+	}
+}
+
+type lockedWriter struct {
+	mu sync.Mutex
+	w  *strings.Builder
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
+}
+
+// A redeem whose socket never comes must not hold a slot or block Close.
+func TestUnclaimedSessionExpires(t *testing.T) {
+	f := newFixture(t)
+	var unclaimed []*terminal.Session
+	for i := 0; i < ct.MaxSessions; i++ {
+		tok, _, _ := f.svc.Issue(context.Background(), ct.Target{Repo: "repo_a"})
+		se, err := f.svc.Redeem(context.Background(), tok, terminal.DefaultSize)
+		if err != nil {
+			t.Fatal(err)
+		}
+		unclaimed = append(unclaimed, se)
+	}
+	tok, _, _ := f.svc.Issue(context.Background(), ct.Target{Repo: "repo_a"})
+	_, err := f.svc.Redeem(context.Background(), tok, terminal.DefaultSize)
+	var re *terminal.RefusedError
+	if !errors.As(err, &re) || re.Reason != ct.RefusedTooManySessions {
+		t.Fatalf("full: %v", err)
+	}
+
+	f.advance(ct.OpenDeadline)
+	f.fireWakes()
+
+	// the slots are free again (a fresh token: the one above was burned)
+	tok, _, err = f.svc.Issue(context.Background(), ct.Target{Repo: "repo_a"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	_ = sock
+	se, err := f.svc.Redeem(context.Background(), tok, terminal.DefaultSize)
+	if err != nil {
+		t.Fatalf("after the deadline: %v", err)
+	}
+	if err := unclaimed[0].Run(context.Background(), tt.NewMemSocket()); !errors.Is(err, terminal.ErrSessionGone) {
+		t.Fatalf("Run of an expired session: %v", err)
+	}
+	failed := 0
+	for _, a := range auditActions(f.audit) {
+		if a == ct.AuditOpenFailed {
+			failed++
+		}
+	}
+	if failed != ct.MaxSessions {
+		t.Fatalf("%d open_failed audits, want %d", failed, ct.MaxSessions)
+	}
+
+	// Close does not wait for a session nobody started
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
+	defer cancel()
+	_ = se
+	if err := f.svc.Close(ctx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 }
 
 func TestRealTokenSourceContract(t *testing.T) {
