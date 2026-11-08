@@ -1,6 +1,9 @@
 import { Link, useParams } from "@tanstack/react-router";
 import { useState } from "react";
 import { ApiError, describeError } from "../../api/client";
+import { DevServerPanel } from "../devservers";
+import { RepoEnvSettings } from "../repoenv";
+import { TerminalToggle, useTerminalTarget } from "../terminal";
 import { relativeTime } from "../repos/ui";
 import { BranchesTab } from "./BranchesTab";
 import { ChangesTab } from "./ChangesTab";
@@ -13,6 +16,7 @@ const tabs = [
   { id: "changes", label: "Changes" },
   { id: "history", label: "History" },
   { id: "branches", label: "Branches" },
+  { id: "settings", label: "Settings" },
 ];
 
 function NotTracked() {
@@ -36,6 +40,7 @@ function RepoView({ id }: { id: string }) {
   useRepoDetailLive(id);
   const [tab, setTab] = useState("changes");
   const q = useRepoStatus(id);
+  useTerminalTarget("repo", id, q.data?.repo.name ?? "Repo");
 
   if (q.isPending) return <p className="p-4 text-sm text-muted">Loading repo…</p>;
   if (q.isError) {
@@ -58,7 +63,10 @@ function RepoView({ id }: { id: string }) {
           </Link>{" "}
           / {projectName}
         </p>
-        <h1 className="text-xl font-semibold">{repo.name}</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-semibold">{repo.name}</h1>
+          <TerminalToggle />
+        </div>
         <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
           <span>
             Branch: <span className="font-mono">{repo.detached ? "detached" : repo.branch || "-"}</span>
@@ -88,11 +96,14 @@ function RepoView({ id }: { id: string }) {
 
       <HostBlock repoId={id} />
 
+      <DevServerPanel scope={{ repoId: id }} />
+
       <div>
         <Tabs tabs={tabs} value={tab} onChange={setTab} label="Repo sections" />
         <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`} className="pt-3">
           {tab === "changes" && <ChangesTab repoId={id} />}
           {tab === "history" && <HistoryTab repoId={id} />}
+          {tab === "settings" && <RepoEnvSettings repoId={id} />}
           {tab === "branches" && (
             <BranchesTab repoId={id} ahead={repo.ahead} behind={repo.behind} hasUpstream={repo.hasUpstream} />
           )}
