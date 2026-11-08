@@ -214,3 +214,23 @@ func ServerFromRow(r Row) (Server, error) {
 	}
 	return nil, badRow("unknown status %q", r.Status)
 }
+
+// AttemptOf is the attempt a server carries: the live one, or the last one
+// it ran when at rest. The shell numbers the next attempt AttemptOf+1.
+func AttemptOf(s Server) int {
+	switch st := s.(type) {
+	case Stopped:
+		return st.Attempt
+	case Starting:
+		return st.Attempt
+	case Running:
+		return st.Attempt
+	case Stopping:
+		return st.Attempt
+	case Failed:
+		return st.Attempt
+	case Orphaned:
+		return st.Attempt
+	}
+	return 0
+}
