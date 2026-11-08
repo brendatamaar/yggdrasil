@@ -15,12 +15,10 @@ import (
 	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
+	cw "github.com/brendatamaar/yggdrasil/internal/core/worktrees"
 	"github.com/brendatamaar/yggdrasil/internal/git"
 	"github.com/brendatamaar/yggdrasil/internal/platform"
 )
-
-// maxAttempts is how many names are tried before a collision is an error.
-const maxAttempts = 5
 
 // RepoRef is a tracked repo a worktree is made for. The caller passes only
 // tracked repos (invariant 6).
@@ -89,107 +87,167 @@ var ErrNameTaken = errors.New("no free worktree name")
 // branch ygg/<name> started from the repo's default branch. On failure it
 // returns the worktrees that exist so far together with the error, and
 // removes nothing.
+//
+// The decisions (which repos need one, the name retry, the partial-failure
+// outcome) are made by internal/core/worktrees; this function runs the
+// commands it returns and feeds the answers back.
 func (e *Ensurer) Ensure(ctx context.Context, task core.TaskID, repos []RepoRef) ([]core.Worktree, error) {
 	if err := task.Validate(); err != nil {
 		return nil, err
 	}
-	existing, err := e.c.Store.List(ctx, task)
-	if err != nil {
-		return nil, &Error{Msg: "Could not read the task's worktrees. Try again.", Err: err}
-	}
-	byRepo := map[core.RepoID]core.Worktree{}
-	for _, w := range existing {
-		if w.Status == core.WorktreeActive {
-			byRepo[w.RepoID] = w
+	ids := make([]core.RepoID, len(repos))
+	refs := make(map[core.RepoID]RepoRef, len(repos))
+	for i, r := range repos {
+		ids[i] = r.ID
+		if _, ok := refs[r.ID]; !ok {
+			refs[r.ID] = r
 		}
 	}
-	out := make([]core.Worktree, 0, len(repos))
-	for _, r := range repos {
-		if w, ok := byRepo[r.ID]; ok {
-			if !e.underWorktreeRoot(w.Path) {
-				return out, &Error{
-					Msg: "A saved worktree for this task is not in Yggdrasil's worktree folder, so it was not used. Check the data folder setting or restore the folder, then try again.",
-					Err: fmt.Errorf("worktree %s of repo %s is outside the worktree root", w.ID, r.ID),
-				}
+	x := &exec{e: e, ctx: ctx, refs: refs, dirs: map[cw.Name]string{}}
+	state, cmds := cw.Step(cw.Idle{}, cw.Begin{Task: task, Repos: ids})
+	for {
+		if placed, failure, done := cw.Result(state); done {
+			out := append(make([]core.Worktree, 0, len(repos)), placed...)
+			if failure == nil {
+				return out, nil
 			}
-			out = append(out, w)
-			continue
+			return out, x.errorFor(*failure)
 		}
-		w, err := e.create(ctx, task, r)
-		if err != nil {
-			return out, err
+		if len(cmds) != 1 {
+			return nil, fmt.Errorf("worktrees: internal error: %d commands outstanding", len(cmds))
 		}
-		out = append(out, w)
+		state, cmds = cw.Step(state, x.run(cmds[0]))
 	}
-	return out, nil
 }
 
-func (e *Ensurer) create(ctx context.Context, task core.TaskID, r RepoRef) (core.Worktree, error) {
-	if err := platform.CheckPath(r.Path); err != nil {
-		// The detail (it may hold the path) stays in Err, never in the message.
-		return core.Worktree{}, &Error{
-			Msg: "Yggdrasil can't use this repo's folder. Folders inside WSL are not supported yet; move the repository to a normal Windows folder and add it again.",
-			Err: err,
-		}
+// exec carries out the core's commands.
+type exec struct {
+	e        *Ensurer
+	ctx      context.Context
+	refs     map[core.RepoID]RepoRef
+	dirs     map[cw.Name]string
+	existing []core.Worktree
+	cause    error // the detail of the last failed command
+}
+
+func (x *exec) gitCause(err error) cw.Cause {
+	x.cause = err
+	if x.ctx.Err() != nil {
+		return cw.CauseCanceled
 	}
-	fail := func(err error) (core.Worktree, error) {
-		if ctx.Err() != nil {
-			return core.Worktree{}, fmt.Errorf("create worktree: %w", ctx.Err())
-		}
-		return core.Worktree{}, &Error{
-			Msg: "Git could not create the worktree. Check that the repo is healthy and no other git operation is running, then try again.",
-			Err: fmt.Errorf("create worktree for repo %s: %w", r.ID, err),
-		}
-	}
-	base, err := e.c.Git.ResolveCommit(ctx, r.Path, r.DefaultBranch)
-	if err != nil {
-		return fail(err)
-	}
-	wtRoot := filepath.Join(e.c.DataDir, "wt")
-	if err := os.MkdirAll(wtRoot, 0o750); err != nil {
-		return fail(err)
-	}
-	for attempt := range maxAttempts {
-		name := Generate(e.c.Rand, attempt)
-		dir := filepath.Join(wtRoot, platform.ShortDirName(string(name), MaxNameLen))
-		taken, err := e.taken(ctx, r.Path, name, dir)
+	return cw.CauseGit
+}
+
+func (x *exec) run(c cw.Command) cw.Input {
+	e := x.e
+	switch v := c.(type) {
+	case cw.LoadExisting:
+		rows, err := e.c.Store.List(x.ctx, v.Task)
 		if err != nil {
-			return fail(err)
+			x.cause = err
+			return cw.LoadFailed{Seq: v.Seq}
 		}
-		if taken {
-			continue
+		x.existing = rows
+		known := make([]cw.Known, len(rows))
+		for i, w := range rows {
+			known[i] = cw.Known{Worktree: w, InRoot: e.underWorktreeRoot(w.Path)}
 		}
-		if _, err := e.c.Git.WorktreeAdd(ctx, r.Path, dir, name.Branch(), base); err != nil {
-			return fail(err)
+		return cw.ExistingLoaded{Seq: v.Seq, Existing: known}
+	case cw.PrepareRepo:
+		r := x.refs[v.Repo]
+		if err := platform.CheckPath(r.Path); err != nil {
+			x.cause = err
+			return cw.PrepareFailed{Seq: v.Seq, Cause: cw.CauseUnusable}
+		}
+		base, err := e.c.Git.ResolveCommit(x.ctx, r.Path, r.DefaultBranch)
+		if err != nil {
+			return cw.PrepareFailed{Seq: v.Seq, Cause: x.gitCause(err)}
+		}
+		if err := os.MkdirAll(filepath.Join(e.c.DataDir, "wt"), 0o750); err != nil {
+			return cw.PrepareFailed{Seq: v.Seq, Cause: x.gitCause(err)}
+		}
+		return cw.Prepared{Seq: v.Seq, Base: base}
+	case cw.DrawName:
+		return cw.NameDrawn{Seq: v.Seq, Name: cw.Name(Generate(e.c.Rand, v.Attempt))}
+	case cw.CheckName:
+		dir := filepath.Join(e.c.DataDir, "wt", platform.ShortDirName(string(v.Name), MaxNameLen))
+		x.dirs[v.Name] = dir
+		taken, err := e.taken(x.ctx, x.refs[v.Repo].Path, Name(v.Name), dir)
+		if err != nil {
+			return cw.ProbeFailed{Seq: v.Seq, Cause: x.gitCause(err)}
+		}
+		return cw.Probed{Seq: v.Seq, Taken: taken}
+	case cw.AddWorktree:
+		r := x.refs[v.Repo]
+		dir := x.dirs[v.Name]
+		if _, err := e.c.Git.WorktreeAdd(x.ctx, r.Path, dir, v.Branch, v.Base); err != nil {
+			return cw.AddFailed{Seq: v.Seq, Cause: x.gitCause(err)}
 		}
 		long, err := platform.LongPath(dir)
 		if err != nil {
-			return fail(err)
+			return cw.AddFailed{Seq: v.Seq, Cause: x.gitCause(err)}
 		}
 		now := e.c.Now().UTC()
-		w := core.Worktree{
-			ID: core.WorktreeID(e.c.NewID("wt")), RepoID: r.ID, TaskID: task, Name: string(name),
-			Path: long, Branch: name.Branch(), Status: core.WorktreeActive, CreatedAt: now,
+		return cw.Added{
+			Seq: v.Seq, ID: core.WorktreeID(e.c.NewID("wt")), AuditID: core.AuditID(e.c.NewID("aud")),
+			Path: long, At: now,
 		}
-		detail, err := json.Marshal(map[string]string{"worktree": string(w.ID), "repo": string(r.ID), "branch": w.Branch, "base": base})
+	case cw.RecordWorktree:
+		d := v.Audit.Detail
+		detail, err := json.Marshal(map[string]string{"worktree": string(d.Worktree), "repo": string(d.Repo), "branch": d.Branch, "base": d.Base})
 		if err != nil {
-			return fail(err)
+			x.cause = err
+			return cw.RecordFailed{Seq: v.Seq}
 		}
 		audit := core.AuditEntry{
-			ID: core.AuditID(e.c.NewID("aud")), At: now, Actor: "system", Action: "worktree.create",
-			Subject: "task:" + string(task), Detail: detail,
+			ID: v.Audit.ID, At: v.Audit.At, Actor: v.Audit.Actor, Action: v.Audit.Action,
+			Subject: v.Audit.Subject, Detail: detail,
 		}
-		if err := e.c.Store.Record(ctx, w, base, audit); err != nil {
-			return core.Worktree{}, &Error{
-				Msg: "The worktree was created but Yggdrasil could not save it. Try again.",
-				Err: fmt.Errorf("record worktree %s: %w", w.ID, err),
+		if err := e.c.Store.Record(x.ctx, v.Worktree, v.Base, audit); err != nil {
+			x.cause = fmt.Errorf("record worktree %s: %w", v.Worktree.ID, err)
+			return cw.RecordFailed{Seq: v.Seq}
+		}
+		return cw.Recorded{Seq: v.Seq}
+	}
+	// Unreachable: the core issues only the commands above.
+	return nil
+}
+
+// errorFor turns the core's failure into the error callers see.
+func (x *exec) errorFor(f cw.Failure) error {
+	switch f.Kind {
+	case cw.FailLoad:
+		return &Error{Msg: "Could not read the task's worktrees. Try again.", Err: x.cause}
+	case cw.FailOutsideRoot:
+		var id core.WorktreeID
+		for _, w := range x.existing {
+			if w.RepoID == f.Repo && w.Status == core.WorktreeActive {
+				id = w.ID
 			}
 		}
-		return w, nil
+		return &Error{
+			Msg: "A saved worktree for this task is not in Yggdrasil's worktree folder, so it was not used. Check the data folder setting or restore the folder, then try again.",
+			Err: fmt.Errorf("worktree %s of repo %s is outside the worktree root", id, f.Repo),
+		}
+	case cw.FailUnusablePath:
+		// The detail (it may hold the path) stays in Err, never in the message.
+		return &Error{
+			Msg: "Yggdrasil can't use this repo's folder. Folders inside WSL are not supported yet; move the repository to a normal Windows folder and add it again.",
+			Err: x.cause,
+		}
+	case cw.FailCanceled:
+		return fmt.Errorf("create worktree: %w", x.ctx.Err())
+	case cw.FailNameTaken:
+		return &Error{
+			Msg: "Yggdrasil could not find a free worktree name. Try again.",
+			Err: fmt.Errorf("repo %s: %w", f.Repo, ErrNameTaken),
+		}
+	case cw.FailRecord:
+		return &Error{Msg: "The worktree was created but Yggdrasil could not save it. Try again.", Err: x.cause}
 	}
-	return core.Worktree{}, &Error{
-		Msg: "Yggdrasil could not find a free worktree name. Try again.",
-		Err: fmt.Errorf("repo %s: %w", r.ID, ErrNameTaken),
+	return &Error{
+		Msg: "Git could not create the worktree. Check that the repo is healthy and no other git operation is running, then try again.",
+		Err: fmt.Errorf("create worktree for repo %s: %w", f.Repo, x.cause),
 	}
 }
 
