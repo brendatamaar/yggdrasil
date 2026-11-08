@@ -3,6 +3,8 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
@@ -153,5 +155,47 @@ func TestPutRepoEnvProfileKeepsComposeColumns(t *testing.T) {
 	err := commit(func(tx *Tx) error { return tx.PutRepoEnvProfile(ctx, "rep_unknown", nil, false, bsNow) })
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown repo: %v", err)
+	}
+}
+
+// Profile writes racing with compose writes never lose the compose columns.
+func TestPutRepoEnvProfileDoesNotLoseConcurrentComposeChange(t *testing.T) {
+	ctx := context.Background()
+	s := NewStore(openTest(t), nil)
+	_, r := seed(t, s)
+	for i := range 30 {
+		hash := fmt.Sprintf("h%d", i)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			err := s.Commit(ctx, func(tx *Tx) error {
+				if err := tx.PutRepoEnvProfile(ctx, r.ID, []string{".env"}, i%2 == 0, bsNow); err != nil {
+					return err
+				}
+				return tx.AppendAudit(ctx, bsAudit(NewID("aud"), r.ID))
+			})
+			if err != nil {
+				t.Error(err)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			rec := RepoEnvRecord{Repo: r.ID, ComposeEnabled: true, ComposeFile: "compose.yml", ComposeConfirmedHash: hash, UpdatedAt: bsNow}
+			err := s.Commit(ctx, func(tx *Tx) error {
+				if err := tx.PutRepoEnvSettings(ctx, rec); err != nil {
+					return err
+				}
+				return tx.AppendAudit(ctx, bsAudit(NewID("aud"), r.ID))
+			})
+			if err != nil {
+				t.Error(err)
+			}
+		}()
+		wg.Wait()
+		got, _ := s.GetRepoEnvSettings(ctx, r.ID)
+		if got.ComposeConfirmedHash != hash || got.ComposeFile != "compose.yml" {
+			t.Fatalf("round %d: compose columns changed by a profile write: %+v", i, got)
+		}
 	}
 }

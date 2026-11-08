@@ -17,7 +17,6 @@ import (
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	env "github.com/brendatamaar/yggdrasil/internal/core/worktreeenv"
-	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/worktreeenv"
 	"github.com/brendatamaar/yggdrasil/internal/worktreeenv/worktreeenvtest"
 )
@@ -424,51 +423,4 @@ func TestPersistentOverlapIsAuditedOnce(t *testing.T) {
 	if conflicts != 1 {
 		t.Fatalf("%d conflict audit entries for one persistent overlap, want 1", conflicts)
 	}
-}
-
-// Profile writes racing with compose writes never lose the compose columns.
-func TestPutRepoEnvDoesNotLoseConcurrentComposeChange(t *testing.T) {
-	s := newDBStore(t)
-	repo, _ := seedRows(t, s)
-	store := worktreeenv.DBStore{S: s}
-	ctx := context.Background()
-	for i := range 30 {
-		hash := fmt.Sprintf("h%d", i)
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			e := worktreeenv.RepoEnv{Profile: []env.RelPath{".env"}, AgentCopy: i%2 == 0}
-			if err := store.PutRepoEnv(ctx, repo, e, now, auditFor(fmt.Sprintf("aud_p%d", i), repo)); err != nil {
-				t.Error(err)
-			}
-		}()
-		go func() {
-			defer wg.Done()
-			rec, err := s.GetRepoEnvSettings(ctx, repo)
-			if err != nil {
-				t.Error(err)
-				return
-			}
-			rec.ComposeEnabled, rec.ComposeFile, rec.ComposeConfirmedHash, rec.UpdatedAt = true, "compose.yml", hash, now
-			err = s.Commit(ctx, func(tx *db.Tx) error {
-				if err := tx.PutRepoEnvSettings(ctx, rec); err != nil {
-					return err
-				}
-				return tx.AppendAudit(ctx, auditFor(fmt.Sprintf("aud_c%d", i), repo))
-			})
-			if err != nil {
-				t.Error(err)
-			}
-		}()
-		wg.Wait()
-		got, _ := s.GetRepoEnvSettings(ctx, repo)
-		if got.ComposeConfirmedHash != hash {
-			t.Fatalf("round %d: lost an update: %+v", i, got)
-		}
-	}
-}
-
-func auditFor(id string, repo core.RepoID) core.AuditEntry {
-	return core.AuditEntry{ID: core.AuditID(id), At: now, Actor: "user", Action: "worktreeenv.profile_settings", Subject: "repo:" + string(repo)}
 }

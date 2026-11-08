@@ -82,7 +82,11 @@ Caps: 50 entries, 1 MiB per file, 5 MiB total; the core enforces them on observe
 
 ### Interpreter rules (shell, tested in T-maps)
 
-`Observe` uses `Lstat` on every path component of the source (reuse the existing reparse checks in `platform`), refuses a link or reparse point at any level, and requires the cleaned path to stay inside the repo and outside `.git`. `CopyFile` creates the destination with exclusive-create (`O_EXCL`), so an existing file is never overwritten even in a race, copies bytes as they are (CRLF preserved), and removes nothing; on a failed copy it leaves the partial file and reports it (no deletion, invariant 1).
+`Observe` uses `Lstat` on every path component of the source (reuse the existing reparse checks in `platform`), refuses a link or reparse point at any level, and requires the cleaned path to stay inside the repo and outside `.git`. `CopyFile` creates the destination with exclusive-create (`O_EXCL`), so an existing file is never overwritten even in a race, copies bytes as they are (CRLF preserved), and removes nothing; on a failed copy it leaves the partial file and reports it (no deletion, invariant 1). A failed copy is therefore visible in two places: the entry is `Failed` in the result and counted in the `profile_copied` audit entry (`failed` count), and a partial file may remain in the worktree, which the user can delete by hand; a retry never overwrites it (`DestExists`).
+
+Known window: the destination's parent folders are checked with `Lstat` right before the file is created, but another process could replace a parent with a link between that check and the open. The worktree is new, owned by Yggdrasil and normally not written by anything else at that moment; the residual window is listed in `docs/threat-model.md` by the lead. The source side re-checks with `os.SameFile` after opening.
+
+Port probing goes through `platform.BusyPorts(lo, hi)`: one read of the operating system's listener table (`/proc/net/tcp*` on Linux, `GetExtendedTcpTable` on Windows), so a listener on any address counts as busy and no port is bound. A failed probe is logged as a warning (no error text, it can hold file names) and the block is treated as free. A conflict between stored blocks (`worktreeenv.conflict`) is audited once per process per distinct conflict, not on every allocation. `Prepare` runs inline after the worktree is recorded, and its failure is logged by default and never fails `Ensure`. Profile settings are written with one statement that touches only the profile columns, so a concurrent compose change is not lost.
 
 ## 3. Compose (WE-03, task E2, droppable)
 
@@ -176,7 +180,7 @@ Ports are "offset into the block" by environment, not by rewriting the compose f
 |---|---|---|---|
 | `PortStore` (`LoadBlocks`, `SaveBlock`, `ReleaseBlock`) | `internal/db` | `dbtest` | round trip; unique `Base` among live rows; release then reuse; version conflict |
 | `SettingsStore` (profile paths, agent-copy toggle, compose opt-in and confirmed hash) | `internal/db` | `dbtest` | round trip; defaults (toggle off, compose off); unknown repo errors |
-| `PortProber` (`Busy(range) []Port`) | `platform` | fixed list | a real listener on loopback is reported; a free port is not |
+| `PortProber` (`Busy(range) []Port`) | `platform.BusyPorts` | fixed list | a real listener on the wildcard address is reported; a free port is not |
 | `FileSystem` (`Observe`, `CopyExclusive`) | `os` + `platform` reparse checks | in-memory map | `O_EXCL` never overwrites (including concurrent writers); links and reparse points refused at any path level (skipped without privilege on Windows); CRLF bytes preserved; size reported correctly; nothing is removed |
 | `ComposeRunner` (`Run(Op, project, file, env) Result`) | `platform.Start` + docker | recorded results | argv shape per op; missing docker maps to `DockerMissing`; real runs skip when docker is absent |
 | `Clock`, `IDs` | real | fixed | none |
