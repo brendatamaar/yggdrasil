@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
+	env "github.com/brendatamaar/yggdrasil/internal/core/worktreeenv"
 	cw "github.com/brendatamaar/yggdrasil/internal/core/worktrees"
 	"github.com/brendatamaar/yggdrasil/internal/git"
 	"github.com/brendatamaar/yggdrasil/internal/platform"
@@ -45,7 +46,15 @@ type Store interface {
 	Record(ctx context.Context, w core.Worktree, baseCommit string, audit core.AuditEntry) error
 }
 
-// Config wires an Ensurer. All fields are required.
+// Preparer gets a newly recorded worktree ready: a port block and the repo's
+// bootstrap profile files (WE-01, WE-02; internal/worktreeenv). The trigger
+// says who started the worktree.
+type Preparer interface {
+	Prepare(ctx context.Context, w core.Worktree, trigger env.Trigger) error
+}
+
+// Config wires an Ensurer. All fields are required except Prepare and
+// OnPrepareError.
 type Config struct {
 	Git     Git
 	Store   Store
@@ -53,6 +62,12 @@ type Config struct {
 	Now     func() time.Time
 	NewID   func(prefix string) string
 	DataDir string
+	// Prepare, when set, is called once for every worktree created by Ensure
+	// (not for ones that already existed), after it is recorded. A failure
+	// never fails Ensure: the worktree works without it.
+	Prepare Preparer
+	// OnPrepareError, when set, receives the failure of Prepare.
+	OnPrepareError func(w core.Worktree, err error)
 }
 
 // Ensurer creates worktrees.
@@ -92,6 +107,13 @@ var ErrNameTaken = errors.New("no free worktree name")
 // outcome) are made by internal/core/worktrees; this function runs the
 // commands it returns and feeds the answers back.
 func (e *Ensurer) Ensure(ctx context.Context, task core.TaskID, repos []RepoRef) ([]core.Worktree, error) {
+	return e.EnsureFor(ctx, task, repos, env.TriggerAgentTask)
+}
+
+// EnsureFor is Ensure with the trigger that says who started the task. Use
+// TriggerUserStarted for a task the user started or confirmed; Ensure uses
+// TriggerAgentTask, which copies no profile files unless the repo allows it.
+func (e *Ensurer) EnsureFor(ctx context.Context, task core.TaskID, repos []RepoRef, trigger env.Trigger) ([]core.Worktree, error) {
 	if err := task.Validate(); err != nil {
 		return nil, err
 	}
@@ -103,7 +125,7 @@ func (e *Ensurer) Ensure(ctx context.Context, task core.TaskID, repos []RepoRef)
 			refs[r.ID] = r
 		}
 	}
-	x := &exec{e: e, ctx: ctx, refs: refs, dirs: map[cw.Name]string{}}
+	x := &exec{e: e, ctx: ctx, refs: refs, dirs: map[cw.Name]string{}, trigger: trigger}
 	state, cmds := cw.Step(cw.Idle{}, cw.Begin{Task: task, Repos: ids})
 	for {
 		if placed, failure, done := cw.Result(state); done {
@@ -128,6 +150,7 @@ type exec struct {
 	dirs     map[cw.Name]string
 	existing []core.Worktree
 	cause    error // the detail of the last failed command
+	trigger  env.Trigger
 }
 
 func (x *exec) gitCause(err error) cw.Cause {
@@ -206,6 +229,11 @@ func (x *exec) run(c cw.Command) cw.Input {
 		if err := e.c.Store.Record(x.ctx, v.Worktree, v.Base, audit); err != nil {
 			x.cause = fmt.Errorf("record worktree %s: %w", v.Worktree.ID, err)
 			return cw.RecordFailed{Seq: v.Seq}
+		}
+		if e.c.Prepare != nil {
+			if err := e.c.Prepare.Prepare(x.ctx, v.Worktree, x.trigger); err != nil && e.c.OnPrepareError != nil {
+				e.c.OnPrepareError(v.Worktree, err)
+			}
 		}
 		return cw.Recorded{Seq: v.Seq}
 	}

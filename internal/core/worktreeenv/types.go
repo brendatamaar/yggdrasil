@@ -45,6 +45,7 @@ const (
 	SkipBudgetExceeded  SkipReason = "budget_exceeded"
 	SkipAgentTasksOff   SkipReason = "agent_tasks_off"
 	SkipSourceUnreadble SkipReason = "source_unreadable"
+	SkipTooManyEntries  SkipReason = "too_many_entries"
 )
 
 // Source is what Lstat found for a profile entry in the repo.
