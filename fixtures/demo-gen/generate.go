@@ -42,6 +42,9 @@ and screenshots. Every repo, person, email address and commit in it is made up.
 - shop-gateway: Kotlin / Gradle edge service (clean)
 - shop-payments: Go service (detached HEAD)
 - shop-inventory: Python / uv service (conflicted merge)
+- shop-ledger: .NET solution (builds and passes offline)
+- shop-api-dev: Go dev server that honours PORT
+- shop-web-dev: Node dev server that honours PORT and proxies to the API
 
 hosts/ holds recorded GitLab, GitHub and Gitea answers (merge requests, pipelines).
 
@@ -76,6 +79,9 @@ var repos = []repoSpec{
 	{"shop-gateway", time.Date(2026, 3, 23, 8, 0, 0, 0, time.UTC), buildShopGateway},
 	{"shop-payments", time.Date(2026, 3, 30, 8, 0, 0, 0, time.UTC), buildShopPayments},
 	{"shop-inventory", time.Date(2026, 4, 6, 8, 0, 0, 0, time.UTC), buildShopInventory},
+	{"shop-ledger", ledgerStart, buildShopLedger},
+	{"shop-api-dev", apiDevStart, buildShopAPIDev},
+	{"shop-web-dev", webDevStart, buildShopWebDev},
 }
 
 // generate writes the demo project into out and returns its absolute path.

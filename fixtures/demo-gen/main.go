@@ -20,7 +20,7 @@ import (
 func main() {
 	out := flag.String("out", "", "output folder, named "+outName+"; it must be empty or missing")
 	ifMissing := flag.Bool("if-missing", false, "do nothing, successfully, when the output folder already has files")
-	scenario := flag.String("scenario", "", "write a named scenario instead of the six-repo project (known: "+scenarioMultiRepo+")")
+	scenario := flag.String("scenario", "", "write a named scenario instead of the default project (known: "+scenarioMultiRepo+")")
 	flag.Parse()
 	if *out == "" || flag.NArg() > 0 {
 		fmt.Fprintln(os.Stderr, "usage: go run . -out <path>/"+outName+" [-if-missing] [-scenario "+scenarioMultiRepo+"]")
