@@ -539,7 +539,8 @@ func TestAuditHasNoInput(t *testing.T) {
 				continue
 			}
 			seen++
-			if !actions[a.Action] || !causes[a.Cause] || !(ids[string(a.Session)] || strings.HasPrefix(string(a.Session), "ts_free_")) || !ids[string(a.Folder.Repo)] || !ids[string(a.Folder.Worktree)] {
+			knownSession := ids[string(a.Session)] || strings.HasPrefix(string(a.Session), "ts_free_")
+			if !actions[a.Action] || !causes[a.Cause] || !knownSession || !ids[string(a.Folder.Repo)] || !ids[string(a.Folder.Worktree)] {
 				t.Errorf("audit entry with unexpected content: %#v", a)
 			}
 			if n := reflect.TypeOf(a).NumField(); n != 5 {
