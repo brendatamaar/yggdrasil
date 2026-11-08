@@ -37,3 +37,34 @@ func TestMavenIsOrderer(t *testing.T) {
 		}
 	}
 }
+
+func TestAllNamesUniqueAndListed(t *testing.T) {
+	seen := map[string]bool{}
+	for _, tc := range All() {
+		if seen[tc.Name()] {
+			t.Errorf("duplicate %s", tc.Name())
+		}
+		seen[tc.Name()] = true
+	}
+	for _, n := range []string{"node", "maven", "gradle", "golang", "dotnet", "python"} {
+		if !seen[n] {
+			t.Errorf("%s missing from All", n)
+		}
+	}
+}
+
+func TestDetectAllGoDotnetPython(t *testing.T) {
+	repo := fstest.MapFS{
+		"go.mod":     {Data: []byte("module x\n")},
+		"App.csproj": {},
+		"uv.lock":    {},
+	}
+	got := DetectAll(repo)
+	var names []string
+	for _, m := range got {
+		names = append(names, m.Toolchain.Name())
+	}
+	if len(names) != 3 || names[0] != "golang" || names[1] != "dotnet" || names[2] != "python" {
+		t.Fatal(names)
+	}
+}
