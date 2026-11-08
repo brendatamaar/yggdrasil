@@ -75,6 +75,28 @@ type ChangeSet struct {
 	CreatedAt  string
 }
 
+type DevServer struct {
+	ID          string
+	RepoID      string
+	WorktreeID  sql.NullString
+	CommandKey  string
+	Status      string
+	Attempt     int64
+	Pid         sql.NullInt64
+	Ports       string
+	Announced   string
+	BlockBase   int64
+	BlockSize   int64
+	LastKind    string
+	FailKind    sql.NullString
+	ExitCode    int64
+	StopCause   sql.NullString
+	KillAttempt int64
+	Since       sql.NullString
+	UpdatedAt   string
+	Version     int64
+}
+
 type Project struct {
 	ID          string
 	Name        string
@@ -116,6 +138,16 @@ type Repo struct {
 	TrustHash     string
 	UntrackedAt   sql.NullString
 	RelPath       string
+}
+
+type RepoEnvSetting struct {
+	RepoID               string
+	ProfilePaths         string
+	AgentCopy            int64
+	ComposeEnabled       int64
+	ComposeFile          string
+	ComposeConfirmedHash string
+	UpdatedAt            string
 }
 
 type Setting struct {
@@ -192,4 +224,13 @@ type Worktree struct {
 	Status     string
 	CreatedAt  string
 	BaseCommit string
+}
+
+type WorktreePort struct {
+	ID          int64
+	WorktreeID  string
+	Base        int64
+	Size        int64
+	AllocatedAt string
+	ReleasedAt  sql.NullString
 }

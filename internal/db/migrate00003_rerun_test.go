@@ -7,7 +7,7 @@ import (
 
 // A crash between the migration's commit and goose's version insert leaves
 // the schema without the version row; starting again must not fail. Later
-// migrations (00004) are rolled back first: 00003 was then the newest one.
+// migrations (00004, 00005) are rolled back first: 00003 was then the newest one.
 func TestMigration00003RerunIsSafe(t *testing.T) {
 	d := openTest(t)
 	ctx := context.Background()
@@ -25,8 +25,8 @@ func TestMigration00003RerunIsSafe(t *testing.T) {
 		t.Fatalf("rerun of 00003: %v", err)
 	}
 	v, err := m.GetDBVersion(ctx)
-	if err != nil || v != 4 {
-		t.Fatalf("version = %d, %v; want 4", v, err)
+	if err != nil || v != 5 {
+		t.Fatalf("version = %d, %v; want 5", v, err)
 	}
 	if _, err := NewStore(d, nil).GetWorkspace(ctx); err != nil {
 		t.Errorf("workspace after the rerun: %v", err)
