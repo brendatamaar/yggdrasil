@@ -205,3 +205,32 @@ func ParseFrame(kind FrameKind, payload []byte) (Frame, error) {
 	}
 	return nil, errors.New("terminal frame kind is unknown")
 }
+
+// Shell is a terminal shell choice by name, never a command line.
+type Shell string
+
+// The closed set of Shell values: the platform's default shell ($SHELL, or
+// PowerShell on Windows) and PowerShell by name.
+const (
+	ShellDefault    Shell = "default"
+	ShellPowerShell Shell = "powershell"
+)
+
+// Validate reports whether the shell is in the closed set.
+func (s Shell) Validate() error {
+	switch s {
+	case ShellDefault, ShellPowerShell:
+		return nil
+	}
+	return errors.New("terminal shell must be default or powershell")
+}
+
+// ParseShell reads the shell setting. It is a name; paths and command lines
+// are rejected.
+func ParseShell(name string) (Shell, error) {
+	s := Shell(name)
+	if err := s.Validate(); err != nil {
+		return "", err
+	}
+	return s, nil
+}

@@ -24,7 +24,6 @@ type IssueRequested struct {
 // RedeemRequested presents a token and asks for a session.
 type RedeemRequested struct {
 	Hash    TokenHash
-	Folder  Folder // the folder the shell re-checked; must equal the token's
 	Session core.TerminalSessionID
 	Size    Size
 	Check   FolderCheck

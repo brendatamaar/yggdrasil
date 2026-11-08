@@ -66,3 +66,10 @@ type Registry struct {
 func NewRegistry() Registry {
 	return Registry{Tokens: map[TokenHash]Token{}, Sessions: map[core.TerminalSessionID]Session{}, Phase: Serving}
 }
+
+// FolderOf returns the folder of an Issued token: the one source of truth for
+// the shell's tracked-folder check at redeem time.
+func (r Registry) FolderOf(h TokenHash) (Folder, bool) {
+	t, ok := r.Tokens[h].(Issued)
+	return t.Folder, ok
+}
