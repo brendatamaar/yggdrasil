@@ -9,6 +9,10 @@
     "internal/repos/**",
     "internal/hosts/**",
     "internal/search/**",
+    "internal/verify/**",
+    "internal/devservers/**",
+    "internal/terminal/**",
+    "internal/worktreeenv/**",
     "web/src/main.tsx"
   ],
   "exclude": [],
