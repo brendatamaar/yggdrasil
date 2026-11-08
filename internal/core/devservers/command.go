@@ -54,12 +54,14 @@ const (
 	AuditFail      AuditAction = "devserver.fail"
 	AuditOrphaned  AuditAction = "devserver.orphaned"
 	AuditRecovered AuditAction = "devserver.recovered"
+	// AuditOrphanStopFailed records a stop of an orphan that did not work.
+	AuditOrphanStopFailed AuditAction = "devserver.orphan_stop_failed"
 )
 
 // Validate reports whether a is one of the closed set.
 func (a AuditAction) Validate() error {
 	switch a {
-	case AuditStart, AuditRunning, AuditStop, AuditExit, AuditFail, AuditOrphaned, AuditRecovered:
+	case AuditStart, AuditRunning, AuditStop, AuditExit, AuditFail, AuditOrphaned, AuditRecovered, AuditOrphanStopFailed:
 		return nil
 	}
 	return fmt.Errorf("unknown dev server audit action %q", string(a))

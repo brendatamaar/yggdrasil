@@ -39,6 +39,7 @@ One pure piece: `Step(Server, Input) (Server, []Command)`, one `Server` per key 
 | `ShutdownRequested` | `Now` |
 | `Recovered` | `Liveness` (Dead / Alive{Pid}), `Now` (once per stored row at startup) |
 | `OrphanStopped` | `Now` |
+| `OrphanStopFailed` | `Now` (stopping an orphan failed; it may still be alive) |
 
 Clock and attempt numbers arrive as input fields.
 
@@ -60,8 +61,9 @@ Clock and attempt numbers arrive as input fields.
 | `Running{a}` | `OutputAnnounced{a}` | | `Running` with `Announced` set | `Publish` |
 | `Running{a}` | `Exited{a, 0}` | | `Stopped{Exited{0}}` | `Audit`, `Publish` |
 | `Running{a}` | `Exited{a, code≠0}` | | `Failed{Crashed{code}}` | `Audit`, `Publish` |
-| `Starting`/`Running` | `StopRequested{c}` | | `Stopping{a, c, 1}` | `KillProcess{a}`, `ScheduleWake{KillGrace, +10 s}`, `Audit{devserver.stop}`, `Publish` |
-| `Starting`/`Running` | `ShutdownRequested` | | `Stopping{a, AppShutdown, 1}` | `KillProcess{a}`, `ScheduleWake{KillGrace, +5 s}`, `Audit` |
+| `Starting{pid: 0}` | `StopRequested{c}` / `ShutdownRequested` | no process yet, so no pid for a `Stopping` row | `Stopped{UserStopped}` (`Interrupted` for shutdown) | `KillProcess{a}` (cancels a start that is still in flight), `Audit{devserver.stop}`, `Publish` |
+| `Starting{pid known}`/`Running` | `StopRequested{c}` | | `Stopping{a, c, 1}` | `KillProcess{a}`, `ScheduleWake{KillGrace, +10 s}`, `Audit{devserver.stop}`, `Publish` |
+| `Starting{pid known}`/`Running` | `ShutdownRequested` | | `Stopping{a, AppShutdown, 1}` | `KillProcess{a}`, `ScheduleWake{KillGrace, +5 s}`, `Audit` |
 | `Stopping{a}` | `Exited{a}` | | `Stopped{UserStopped}` (Cause AppShutdown: `Stopped{Interrupted}`) | `Audit`, `Publish` |
 | `Stopping{a, c, 1}` | `Wake{a, KillGrace}` | | `Stopping{a, c, 2}` | `KillProcess{a}`, `ScheduleWake{KillGrace, +10 s}` |
 | `Stopping{a, c, 2}` | `Wake{a, KillGrace}` | | `Failed{StopFailed}` | `Audit`, `Publish` (the job object still ends the tree when `ygg` ends) |
@@ -69,6 +71,7 @@ Clock and attempt numbers arrive as input fields.
 | `Starting`/`Running`/`Stopping` | `Recovered{Dead}` | | `Stopped{Interrupted}` | `Audit`, `Publish` |
 | `Starting`/`Running`/`Stopping` | `Recovered{Alive{pid}}` | non-Windows (the shell never sends `Alive` on Windows) | `Orphaned{pid}` | `Publish` |
 | `Orphaned` | `StopRequested` | | `Orphaned` | `StopOrphan{pid}`, `Audit` |
+| `Orphaned` | `OrphanStopFailed` | the shell could not stop the process | `Orphaned` | `Audit{devserver.orphan_stop_failed}`, `Publish` |
 | `Orphaned` | `OrphanStopped` | | `Stopped{Interrupted}` | `Audit`, `Publish` |
 | any | input with a stale `Attempt` | | unchanged | none |
 | any other (state, input) pair | | | unchanged | none |
@@ -82,9 +85,9 @@ After `ShutdownRequested` the shell stops sending `StartRequested`; the core als
 | D1 | At most one live attempt per server: `Starting/Running/Stopping` carry exactly one `Attempt`; a second `StartRequested` in a live state changes nothing | `TestPropOneLiveAttempt` |
 | D2 | `StartProcess` is emitted only on `Stopped/Failed → Starting`, once per `Attempt` | `TestPropStartOnce` |
 | D3 | A stale `Attempt` changes nothing; `Attempt` never decreases | `TestPropStaleIgnored` |
-| D4 | `Stopping` is entered together with `KillProcess` and leaves only to `Stopped` or `Failed` | `TestPropStoppingEnds` |
+| D4 | `Stopping` is entered together with `KillProcess` and leaves only to `Stopped` or `Failed` | `TestPropStoppingEnds` (also: a `Starting` server without a pid goes to `Stopped` with `KillProcess`, never `Stopping`) |
 | D5 | No automatic restart: `StartProcess` appears only in the step of a `StartRequested` | `TestPropNoAutoRestart` |
-| D6 | After `ShutdownRequested`, no server is in `Starting` or `Running`, and no step emits `StartProcess` | `TestPropShutdownDrains` |
+| D6 | After `ShutdownRequested`, no server is in `Starting` or `Running`, and no step emits `StartProcess` | `TestShutdownDrainsEveryLiveState` (core), `TestPropNoStartAfterShutdownInDriver` (the shell stops sending `StartRequested`; the core has no `Closed` marker) |
 | D7 | `Running.Ports` is sorted, unique, within 1..65535; `Warnings` is non-empty iff a port lies outside a non-empty `Block` | `TestPropPortsWellFormed`, `TestOutsideBlockTable` |
 | D8 | Every `{port}` / `{port:n}` expansion lies inside the block; a template that cannot expand is rejected, never partly started | `TestPropExpansionInsideBlock` |
 | D9 | `Recovered` leaves no server in `Starting/Running/Stopping`; `Orphaned` only comes from `Alive`; `Orphaned` never starts | `TestPropRecoveredNothingLive`, `TestPropOrphanNeverStarts` |
@@ -100,7 +103,7 @@ After `ShutdownRequested` the shell stops sending `StartRequested`; the core als
 | `KillProcess{Attempt}` | one | yes (`platform.KillTask`-style kill of the server's job) | `Exited` |
 | `PollPorts{Attempt}` | one | yes | `PortsObserved` |
 | `ScheduleWake{Attempt, Kind, At}` | one | yes with key `(Attempt, Kind)` | `Wake` |
-| `StopOrphan{Pid}` | one | yes | `OrphanStopped` |
+| `StopOrphan{Pid}` | one | yes | `OrphanStopped` or `OrphanStopFailed` |
 | `Publish{status}` | one | yes | none |
 | `Audit{Entry}` | one | yes with key (subject, action, at) | none; committed with the state |
 | `Reject{Reason}` | one | yes | HTTP response only |
@@ -155,6 +158,14 @@ Tests: `Run(initial, inputs)` for the core; the shell with `platformtest.Fake`, 
 | interpreter goroutine | panic | die | recovered, `Exited` fed for the attempt, stack logged |
 | hub publish | slow client | escape hatch | hub drops for that client |
 | process crash of `ygg` | | domain outcome | next start `Recovered`: Windows → `Stopped{Interrupted}` (job object killed them); Unix → `Orphaned` or `Stopped` |
+
+## Shell notes (gate 2)
+
+- The platform job ID (`Spec.TaskID`) and the orphan record are keyed by `(server id, attempt)` (`ProcessID`), so a restart during `Starting` cannot kill or forget the new attempt's process.
+- If `BlockFor` reports a full port range (`worktreeenv.ErrRangeFull`), the server starts without injection and the view carries a warning; a template that needs `{port}` is then rejected as `BadTemplate`.
+- `Exited`, `StartFailed` and `OrphanStopped` are retried with bounded backoff when the commit fails; attempt fencing makes a repeat harmless.
+- State changes are serialised per server (keyed mutex), not by one service lock; publishing happens after the commit, in order per server.
+- Redaction runs on the whole line before it is cut, and an over-long unterminated line is emitted with a 1 KiB redacted tail carried into the next chunk.
 
 ## Requirements
 

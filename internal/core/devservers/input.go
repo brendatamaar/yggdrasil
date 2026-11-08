@@ -77,6 +77,12 @@ type Recovered struct {
 // OrphanStopped reports that an orphaned process was stopped.
 type OrphanStopped struct{ Now time.Time }
 
+// OrphanStopFailed reports that stopping an orphaned process failed and the
+// process may still be alive. The orphan stays; the failure is audited and
+// published so the user sees it.
+type OrphanStopFailed struct{ Now time.Time }
+
+func (OrphanStopFailed) isInput()  {}
 func (StartRequested) isInput()    {}
 func (Started) isInput()           {}
 func (StartFailed) isInput()       {}

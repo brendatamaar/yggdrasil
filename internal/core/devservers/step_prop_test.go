@@ -106,10 +106,21 @@ func TestPropStaleIgnored(t *testing.T) {
 }
 
 // D4: Stopping is entered together with KillProcess and leaves only to
-// Stopped or Failed (or, at startup recovery, Orphaned).
+// Stopped or Failed (or, at startup recovery, Orphaned). A Starting server
+// that has no pid yet cannot be Stopping (its row would need a pid): a stop or
+// shutdown goes straight to Stopped, still with KillProcess so a late start
+// is cancelled.
 func TestPropStoppingEnds(t *testing.T) {
 	drive(t, func() checker {
 		return func(prev Server, in Input, next Server, cmds []Command) error {
+			if st, ok := prev.(Starting); ok && st.Pid == 0 {
+				switch in.(type) {
+				case StopRequested, ShutdownRequested:
+					if _, stopped := next.(Stopped); !stopped || !has[KillProcess](cmds) {
+						return fmt.Errorf("stop before the pid: %T with %v", next, cmds)
+					}
+				}
+			}
 			if _, ok := next.(Stopping); ok {
 				if _, was := prev.(Stopping); !was || !reflect.DeepEqual(prev, next) {
 					if !has[KillProcess](cmds) {
@@ -145,9 +156,11 @@ func TestPropNoAutoRestart(t *testing.T) {
 	})
 }
 
-// D6: after ShutdownRequested no server is Starting or Running and no step
-// starts a process (the shell sends no StartRequested after it).
-func TestPropShutdownDrains(t *testing.T) {
+// D6 (driver property): once the driver has sent ShutdownRequested it sends no
+// StartRequested, and then no step starts a process and nothing is Starting or
+// Running. The core itself has no Closed marker; TestShutdownDrainsEveryLiveState
+// checks what ShutdownRequested does to each live state.
+func TestPropNoStartAfterShutdownInDriver(t *testing.T) {
 	drive(t, func() checker {
 		closed := false
 		return func(prev Server, in Input, next Server, cmds []Command) error {
@@ -518,5 +531,45 @@ func TestStepStopBeforePid(t *testing.T) {
 	s, _ = Step(st, ShutdownRequested{Now: epoch})
 	if sp, ok := s.(Stopped); !ok || sp.Last != LastInterrupted {
 		t.Fatalf("shutdown before pid: %#v", s)
+	}
+}
+
+// D6 (core): ShutdownRequested leaves no live server Starting or Running, and
+// every one of them gets a KillProcess.
+func TestShutdownDrainsEveryLiveState(t *testing.T) {
+	for _, st := range []Server{
+		Starting{Attempt: 1, Since: epoch},
+		Starting{Attempt: 1, Since: epoch, Pid: 7},
+		Running{Attempt: 1, Since: epoch, Pid: 7},
+		Stopping{Attempt: 1, Cause: CauseUserStop, KillAttempt: KillFirst, Since: epoch, Pid: 7},
+	} {
+		next, cmds := Step(st, ShutdownRequested{Now: epoch})
+		switch next.(type) {
+		case Starting, Running:
+			t.Errorf("%T -> %T after shutdown", st, next)
+		}
+		if _, was := st.(Stopping); !was && !has[KillProcess](cmds) {
+			t.Errorf("%T: shutdown without KillProcess", st)
+		}
+	}
+	for _, st := range []Server{Stopped{}, Failed{Attempt: 1, Kind: FailCrashed}, Orphaned{Attempt: 1, Pid: 3}} {
+		if next, cmds := Step(st, ShutdownRequested{Now: epoch}); !reflect.DeepEqual(next, st) || len(cmds) != 0 {
+			t.Errorf("%T changed by shutdown", st)
+		}
+	}
+}
+
+// Safety: a failed orphan stop is audited and published, and the orphan stays.
+func TestOrphanStopFailedIsAuditedAndPublished(t *testing.T) {
+	st := Orphaned{Attempt: 2, Pid: 9, SeenAt: epoch}
+	next, cmds := Step(st, OrphanStopFailed{Now: epoch})
+	if next != Server(st) || !has[WriteAudit](cmds) || !has[Publish](cmds) {
+		t.Fatalf("next %#v cmds %#v", next, cmds)
+	}
+	if a := cmds[0].(WriteAudit); a.Action != AuditOrphanStopFailed {
+		t.Errorf("action %q", a.Action)
+	}
+	if next, cmds := Step(Stopped{}, OrphanStopFailed{Now: epoch}); next != Server(Stopped{}) || len(cmds) != 0 {
+		t.Error("OrphanStopFailed changed a server that is not an orphan")
 	}
 }

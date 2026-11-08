@@ -122,6 +122,9 @@ func gen(r *rand.Rand, cur Server, maxAttempt int, closed bool, now time.Time) I
 		}
 		return StopRequested{Cause: CauseUserStop, Now: now}
 	}
+	if r.Intn(3) == 0 {
+		return OrphanStopFailed{Now: now}
+	}
 	return OrphanStopped{Now: now}
 }
 
@@ -221,8 +224,11 @@ func wellSequenced(r *rand.Rand, cur Server, maxAttempt int, closed bool, now ti
 		}
 		return Wake{Attempt: att, Kind: WakeKillGrace, Now: now}
 	case Orphaned:
-		if r.Intn(2) == 0 {
+		switch r.Intn(3) {
+		case 0:
 			return StopRequested{Cause: CauseUserStop, Now: now}
+		case 1:
+			return OrphanStopFailed{Now: now}
 		}
 		return OrphanStopped{Now: now}
 	}

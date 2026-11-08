@@ -275,6 +275,8 @@ func stepOrphaned(st Orphaned, in Input) (Server, []Command) {
 		return st, rejectRunning()
 	case StopRequested:
 		return st, []Command{StopOrphan{Pid: st.Pid}, audit(AuditStop, "attempt", itoa(st.Attempt), "pid", itoa(st.Pid))}
+	case OrphanStopFailed:
+		return st, []Command{audit(AuditOrphanStopFailed, "attempt", itoa(st.Attempt), "pid", itoa(st.Pid)), Publish{}}
 	case OrphanStopped:
 		return Stopped{Attempt: st.Attempt, Last: LastInterrupted, At: v.Now}, []Command{
 			audit(AuditExit, "attempt", itoa(st.Attempt), "orphan", "true"), Publish{},
