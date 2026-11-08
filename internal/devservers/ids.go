@@ -30,6 +30,11 @@ func IDOf(k dsc.Key) string {
 	return "dsv_" + hex.EncodeToString(sum[:12])
 }
 
+// ProcessID names one attempt of a server for the platform: its job (the
+// Spec.TaskID that KillTask takes) and its orphan record. Keyed by attempt, a
+// late kill or forget of an old attempt cannot reach the new one.
+func ProcessID(id string, attempt int) string { return fmt.Sprintf("%s-a%d", id, attempt) }
+
 const maxCommandKey = 64
 
 // ParseStart is the boundary parser of a start, stop or restart request: it

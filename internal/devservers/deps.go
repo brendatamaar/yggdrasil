@@ -96,6 +96,9 @@ type Deps struct {
 	DataDir string
 	// DrainTimeout bounds how long Close waits for processes. Default 5 s.
 	DrainTimeout time.Duration
+	// FeedBackoff is the first wait between retries of an exit that could not
+	// be saved; it doubles. Default 100 ms.
+	FeedBackoff time.Duration
 	// LogLines is the ring size per server (default 1000); LogFileBytes the
 	// rotation size (default 5 MiB).
 	LogLines     int

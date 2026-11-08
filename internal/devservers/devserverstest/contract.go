@@ -355,6 +355,17 @@ func LogSinkContract(t *testing.T, mk func(t *testing.T, size int, redact devser
 			t.Errorf("long line kept at %d bytes", len(got[0]))
 		}
 	})
+	t.Run("redacts before cutting", func(t *testing.T) {
+		s := mk(t, 5, redact, nil)
+		defer s.Close()
+		// The secret starts just before the cut point; cutting first would
+		// leave half of it that no pattern matches.
+		s.Write(strings.Repeat("x", devservers.MaxLineBytes-11) + " SECRET-VALUE tail")
+		got := s.Tail(1)
+		if len(got) != 1 || strings.Contains(got[0], "SECRET") {
+			t.Errorf("part of the secret survived the cut: %q", got)
+		}
+	})
 	t.Run("no write after close", func(t *testing.T) {
 		var mu sync.Mutex
 		n := 0
