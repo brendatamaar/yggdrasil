@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
@@ -62,6 +63,30 @@ const (
 	RefusedReused          Refusal = "reused"
 	RefusedUnknown         Refusal = "unknown"
 )
+
+// AuditAction is the closed set of audit actions the terminal writes.
+type AuditAction string
+
+// The closed set of AuditAction values.
+const (
+	AuditOpen       AuditAction = "terminal.open"
+	AuditClose      AuditAction = "terminal.close"
+	AuditOpenFailed AuditAction = "terminal.open_failed"
+)
+
+// WakeKind says why a wake-up was scheduled. The set is closed.
+type WakeKind string
+
+// WakeExpire removes expired tokens.
+const WakeExpire WakeKind = "expire"
+
+// Validate reports whether the size is within 1..MaxCols by 1..MaxRows.
+func (s Size) Validate() error {
+	if s.Cols < 1 || s.Cols > MaxCols || s.Rows < 1 || s.Rows > MaxRows {
+		return fmt.Errorf("terminal size %dx%d is outside 1..%d columns and 1..%d rows", s.Cols, s.Rows, MaxCols, MaxRows)
+	}
+	return nil
+}
 
 // Phase is whether the registry accepts new work.
 type Phase string

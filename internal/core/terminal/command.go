@@ -27,7 +27,10 @@ type ResizePTY struct {
 type ClosePTY struct{ Session core.TerminalSessionID }
 
 // ScheduleWake asks for a Wake input at At. Idempotent.
-type ScheduleWake struct{ At time.Time }
+type ScheduleWake struct {
+	Kind WakeKind
+	At   time.Time
+}
 
 // ReplyKind says which request a Reply answers.
 type ReplyKind string
@@ -52,7 +55,7 @@ type Reply struct {
 // folder IDs, cause and exit code only: never keystrokes, command lines,
 // paths or the token.
 type WriteAudit struct {
-	Action  string // terminal.open, terminal.close, terminal.open_failed
+	Action  AuditAction
 	Session core.TerminalSessionID
 	Folder  Folder
 	Cause   CloseCause
