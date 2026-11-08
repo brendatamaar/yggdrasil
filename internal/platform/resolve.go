@@ -21,6 +21,9 @@ func Resolve(name, dir string, env []string) (string, error) {
 	if env == nil {
 		return "", ErrNoEnv
 	}
+	if isVenvName(name) {
+		return resolveVenv(name, dir)
+	}
 	if dir != "" && filepath.Base(name) == name {
 		if w := wrapperFile(name); w != "" {
 			if p := filepath.Join(dir, w); isRegular(p) {
@@ -29,6 +32,27 @@ func Resolve(name, dir string, env []string) (string, error) {
 		}
 	}
 	return lookPath(name, dir, env)
+}
+
+// venvName is the portable spelling of the project's virtual-environment
+// interpreter that toolchain modules use (".venv/python", either separator).
+const venvName = ".venv/python"
+
+func isVenvName(name string) bool {
+	return strings.ReplaceAll(name, `\`, "/") == venvName
+}
+
+// resolveVenv maps ".venv/python" to .venv\Scripts\python.exe on Windows and
+// .venv/bin/python elsewhere, inside dir.
+func resolveVenv(name, dir string) (string, error) {
+	if dir == "" {
+		return "", fmt.Errorf("%w: %q needs the project folder", ErrNotFound, name)
+	}
+	p := filepath.Join(dir, venvPython)
+	if !isRegular(p) {
+		return "", fmt.Errorf("%w: the project's virtual environment (%s) does not exist yet. Run the dependency install for this repo first", ErrNotFound, venvPython)
+	}
+	return p, nil
 }
 
 // wrapperFile maps a tool name to its project-local wrapper, relative to the

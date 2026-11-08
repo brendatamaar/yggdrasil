@@ -33,14 +33,13 @@ const procThreadAttributeJobList = 0x0002000D
 // then close both pipes. Callers must keep calling Read until it fails: the
 // pseudo console can block while its output pipe is full.
 //
-// Ctrl+C decision: callers send 0x03 through Write and ConPTY turns it into
-// CTRL_C_EVENT for the processes on the pseudo console. A child inherits the
-// "ignore Ctrl+C" flag of ygg (set when an ancestor used CREATE_NEW_PROCESS_GROUP
-// or SetConsoleCtrlHandler(NULL, TRUE), as under `go test` and many launchers),
-// and then ignores the event. Clearing it for good, as the spike did, would make
-// Ctrl+C in ygg's own console stop ygg. So we read the flag from the PEB and,
-// only if it is set, clear it for the duration of CreateProcess and set it
-// again (allowCtrlC). ygg's own flag is back as before within milliseconds.
+// Ctrl+C decision (phase 5 decision 4): callers send 0x03 through Write and
+// ConPTY turns it into CTRL_C_EVENT for the processes on the pseudo console. A
+// child inherits the "ignore Ctrl+C" flag of ygg (set when an ancestor used
+// CREATE_NEW_PROCESS_GROUP or SetConsoleCtrlHandler(NULL, TRUE), as under
+// `go test` and many launchers) and would then ignore the event. ygg never
+// changes its own flag: the child is created suspended, the flag is cleared in
+// the child's own PEB (clearChildIgnoreCtrlC), and the child is resumed.
 // TestPTYCtrlC covers cmd and PowerShell.
 func StartPTY(ctx context.Context, spec PTYSpec) (PTY, error) {
 	if err := checkPTYSpec(spec); err != nil {
@@ -159,7 +158,6 @@ func newConPTY(spec PTYSpec, exe, dir string) (*conPTY, error) {
 	}
 
 	var pi windows.ProcessInformation
-	defer allowCtrlC()()
 	own, task, err := startInJobs(spec.TaskID, func(list []windows.Handle) error {
 		if err := attrs.Update(procThreadAttributeJobList,
 			unsafe.Pointer(&list[0]), uintptr(len(list))*unsafe.Sizeof(list[0])); err != nil { //nolint:gosec // raw Win32 attribute
@@ -170,16 +168,25 @@ func newConPTY(spec PTYSpec, exe, dir string) (*conPTY, error) {
 		// Null standard handles: without the flag a child can inherit our own
 		// redirected stdio (a pipe, a log file) instead of the pseudo console.
 		si.Flags = windows.STARTF_USESTDHANDLES
-		flags := uint32(windows.EXTENDED_STARTUPINFO_PRESENT | windows.CREATE_UNICODE_ENVIRONMENT)
+		// Suspended so the ignore flag can be cleared in the child before it runs.
+		flags := uint32(windows.EXTENDED_STARTUPINFO_PRESENT | windows.CREATE_UNICODE_ENVIRONMENT | windows.CREATE_SUSPENDED)
 		if err := windows.CreateProcess(exePtr, cmdLine, nil, nil, false, flags, env, dirPtr, &si.StartupInfo, &pi); err != nil {
 			return fmt.Errorf("start %s: %w", exe, err)
+		}
+		// Best effort: if the flag cannot be cleared the terminal still works,
+		// only Ctrl+C does not interrupt (TestPTYCtrlC catches a regression).
+		_ = clearChildIgnoreCtrlC(pi.Process)
+		if _, err := windows.ResumeThread(pi.Thread); err != nil {
+			_ = windows.TerminateProcess(pi.Process, 1)
+			closeHandles(pi.Thread, pi.Process)
+			return fmt.Errorf("resume %s: %w", exe, err)
 		}
 		return nil
 	})
 	if err != nil {
 		return fail(err)
 	}
-	// Not suspended, so the thread handle has no further use.
+	// The child is running; the thread handle has no further use.
 	_ = windows.CloseHandle(pi.Thread)
 
 	return &conPTY{
@@ -194,32 +201,47 @@ func newConPTY(spec PTYSpec, exe, dir string) (*conPTY, error) {
 	}, nil
 }
 
-var (
-	procSetConsoleCtrlHandler = windows.NewLazySystemDLL("kernel32.dll").NewProc("SetConsoleCtrlHandler")
-	ctrlCMu                   sync.Mutex
-)
-
 // consoleIgnoreCtrlC is the CONSOLE_IGNORE_CTRL_C bit of the PEB's ConsoleFlags.
 const consoleIgnoreCtrlC = 1
 
-// allowCtrlC clears this process's "ignore Ctrl+C" flag if it is set, so a child
-// created now does not inherit it, and returns the function that restores it.
-// Call the result when CreateProcess is done. Calls are serialised.
-func allowCtrlC() (restore func()) {
-	ctrlCMu.Lock()
-	peb := windows.RtlGetCurrentPeb()
-	if peb == nil || peb.ProcessParameters == nil || peb.ProcessParameters.ConsoleFlags&consoleIgnoreCtrlC == 0 {
-		return ctrlCMu.Unlock
+// clearChildIgnoreCtrlC clears the "ignore Ctrl+C" flag in the PEB of the
+// suspended child proc, and only there: ygg's own flag is never touched and
+// SetConsoleCtrlHandler is never called in ygg. The child inherited the flag
+// from ygg at CreateProcess and reads it during its console initialisation,
+// which has not run yet because the child is still suspended.
+func clearChildIgnoreCtrlC(proc windows.Handle) error {
+	var pbi windows.PROCESS_BASIC_INFORMATION
+	if err := windows.NtQueryInformationProcess(proc, windows.ProcessBasicInformation,
+		unsafe.Pointer(&pbi), uint32(unsafe.Sizeof(pbi)), nil); err != nil { //nolint:gosec // fixed struct size
+		return fmt.Errorf("query child process: %w", err)
 	}
-	// If clearing fails the child keeps ignoring Ctrl+C; there is nothing to
-	// restore then, and the PTY still works (Ctrl+C is sent as 0x03).
-	if r, _, _ := procSetConsoleCtrlHandler.Call(0, 0); r == 0 {
-		return ctrlCMu.Unlock
+	pebAddr := uintptr(unsafe.Pointer(pbi.PebBaseAddress)) //nolint:gosec // address in the CHILD's address space, never dereferenced here
+	var params uintptr
+	if err := readChild(proc, pebAddr+unsafe.Offsetof(windows.PEB{}.ProcessParameters), unsafe.Pointer(&params), unsafe.Sizeof(params)); err != nil { //nolint:gosec // reads into our own variable
+		return fmt.Errorf("read child PEB: %w", err)
 	}
-	return func() {
-		_, _, _ = procSetConsoleCtrlHandler.Call(0, 1)
-		ctrlCMu.Unlock()
+	if params == 0 {
+		return errors.New("child has no process parameters")
 	}
+	flagsAddr := params + unsafe.Offsetof(windows.RTL_USER_PROCESS_PARAMETERS{}.ConsoleFlags)
+	var flags uint32
+	if err := readChild(proc, flagsAddr, unsafe.Pointer(&flags), unsafe.Sizeof(flags)); err != nil { //nolint:gosec // reads into our own variable
+		return fmt.Errorf("read child console flags: %w", err)
+	}
+	if flags&consoleIgnoreCtrlC == 0 {
+		return nil
+	}
+	flags &^= consoleIgnoreCtrlC
+	var n uintptr
+	if err := windows.WriteProcessMemory(proc, flagsAddr, (*byte)(unsafe.Pointer(&flags)), unsafe.Sizeof(flags), &n); err != nil { //nolint:gosec // writes our own variable into the child
+		return fmt.Errorf("write child console flags: %w", err)
+	}
+	return nil
+}
+
+func readChild(proc windows.Handle, addr uintptr, dst unsafe.Pointer, size uintptr) error {
+	var n uintptr
+	return windows.ReadProcessMemory(proc, addr, (*byte)(dst), size, &n)
 }
 
 // startInJobs creates the process job (and the task job for taskID), then

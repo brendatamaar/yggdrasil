@@ -207,6 +207,8 @@ func runHelper(mode string, args []string) error {
 			return fmt.Errorf("start grandchild: %w", err)
 		}
 		time.Sleep(helperLife)
+	case "ygg-dev":
+		return runYggDev(exe, args[0])
 	case "ygg":
 		return runYgg(exe, args[0], args[1] == "gate", args[2] == "editor")
 	default:

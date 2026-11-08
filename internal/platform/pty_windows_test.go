@@ -337,6 +337,37 @@ func TestPTYCtrlC(t *testing.T) {
 	}
 }
 
+// The same, when ygg itself carries the inherited "ignore Ctrl+C" flag (as
+// under many launchers): the flag is cleared in the child only, ygg's own
+// flag stays set, and ygg never calls SetConsoleCtrlHandler (decision 4). The
+// test sets the flag by writing its own PEB, not through the API.
+func TestPTYCtrlCInheritedIgnoreFlag(t *testing.T) {
+	params := windows.RtlGetCurrentPeb().ProcessParameters
+	old := params.ConsoleFlags
+	params.ConsoleFlags = old | consoleIgnoreCtrlC
+	t.Cleanup(func() { params.ConsoleFlags = old })
+
+	s := startSession(t, "cmd")
+	if params.ConsoleFlags&consoleIgnoreCtrlC == 0 {
+		t.Fatal("StartPTY cleared ygg's own ignore-Ctrl+C flag")
+	}
+	s.send("echo ygg-ready\r")
+	s.waitFor(`(?m)^ygg-ready`)
+	s.send("ping -n 30 127.0.0.1\r")
+	time.Sleep(1500 * time.Millisecond)
+	start := time.Now()
+	s.send("\x03")
+	time.Sleep(500 * time.Millisecond)
+	s.send("echo ygg-after-ctrlc\r")
+	s.waitFor(`(?m)^ygg-after-ctrlc`)
+	if d := time.Since(start); d > 10*time.Second {
+		t.Fatalf("Ctrl+C took %v; the command was not interrupted", d)
+	}
+	if params.ConsoleFlags&consoleIgnoreCtrlC == 0 {
+		t.Fatal("ygg's own ignore-Ctrl+C flag changed")
+	}
+}
+
 // Check (c): interactive programs read keystrokes.
 func TestPTYInteractive(t *testing.T) {
 	t.Run("powershell Read-Host", func(t *testing.T) {
