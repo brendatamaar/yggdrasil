@@ -178,7 +178,7 @@ func resized(r Registry, in Resized) (Registry, []Command) {
 	r = clone(r)
 	s.Size = in.Size
 	r.Sessions[in.Session] = s
-	return r, []Command{ResizePTY{Session: in.Session, Size: in.Size}}
+	return r, []Command{ResizePTY(in)}
 }
 
 func closeSession(r Registry, id core.TerminalSessionID, cause CloseCause, code int, now time.Time) (Registry, []Command) {

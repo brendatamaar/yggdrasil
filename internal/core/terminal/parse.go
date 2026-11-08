@@ -1,13 +1,12 @@
 package terminal
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"slices"
 	"strings"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
@@ -108,12 +107,12 @@ func ParseIssue(body []byte) (Target, error) {
 		Repo     string `json:"repoId"`
 		Worktree string `json:"worktreeId"`
 	}
-	dec := json.NewDecoder(bytes.NewReader(body))
+	dec := json.NewDecoder(strings.NewReader(string(body)))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&in); err != nil {
 		return Target{}, fmt.Errorf("terminal request is not valid: %w", err)
 	}
-	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+	if strings.TrimSpace(string(body[dec.InputOffset():])) != "" {
 		return Target{}, errors.New("terminal request has extra data after the object")
 	}
 	t := Target{Repo: core.RepoID(in.Repo), Worktree: core.WorktreeID(in.Worktree)}
@@ -176,7 +175,7 @@ func ParseFrame(kind FrameKind, payload []byte) (Frame, error) {
 	}
 	switch kind {
 	case BinaryFrame:
-		f := DataFrame{Data: bytes.Clone(payload)}
+		f := DataFrame{Data: slices.Clone(payload)}
 		if err := f.Validate(); err != nil {
 			return nil, err
 		}
@@ -187,12 +186,12 @@ func ParseFrame(kind FrameKind, payload []byte) (Frame, error) {
 			Cols int    `json:"cols"`
 			Rows int    `json:"rows"`
 		}
-		dec := json.NewDecoder(bytes.NewReader(payload))
+		dec := json.NewDecoder(strings.NewReader(string(payload)))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&in); err != nil {
 			return nil, fmt.Errorf("terminal control frame is not valid: %w", err)
 		}
-		if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		if strings.TrimSpace(string(payload[dec.InputOffset():])) != "" {
 			return nil, errors.New("terminal control frame has extra data")
 		}
 		if in.Type != "resize" {
