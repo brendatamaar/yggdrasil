@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import type { DevServerDTO, DevServerLogMessage, DevServerLogResponse, DevServersResponse } from "./gen/api.gen";
+import type { DevServerActionRequest, DevServerDTO, DevServerLogMessage, DevServerLogResponse, DevServersResponse } from "./gen/api.gen";
 
 const enc = encodeURIComponent;
 const post: RequestInit = { method: "POST" };
@@ -17,11 +17,32 @@ export type ServerAction = "start" | "stop" | "restart";
 export const fetchDevServers = async (): Promise<DevServerDTO[]> =>
   (await apiFetch<DevServersResponse>("/api/devservers")).servers;
 
-export const runServerAction = (id: string, action: ServerAction) =>
-  apiFetch<DevServerDTO | undefined>(`/api/devservers/${enc(id)}/${action}`, post);
+/**
+ * Every action names its target: a row that was never run is a placeholder with no entry on the
+ * server, so the first start needs the repo, worktree and command (DevServerActionRequest).
+ */
+export const runServerAction = (server: DevServerDTO, action: ServerAction) =>
+  apiFetch<DevServerDTO | undefined>(`/api/devservers/${enc(serverId(server))}/${action}`, {
+    ...post,
+    body: JSON.stringify({
+      repoId: server.repoId,
+      ...(server.worktreeId ? { worktreeId: server.worktreeId } : {}),
+      command: server.command,
+    } satisfies DevServerActionRequest),
+  });
 
-export const fetchServerLog = (id: string, tail: number): Promise<DevServerLogResponse> =>
-  apiFetch<DevServerLogResponse>(`/api/devservers/${enc(id)}/log?tail=${String(tail)}`);
+/**
+ * The tail carries the same server-assigned seq as live lines. Defensively, a line without one
+ * gets a negative number in order, so it sorts before every live line instead of colliding.
+ */
+export async function fetchServerLog(id: string, tail: number): Promise<DevServerLogResponse> {
+  const r = await apiFetch<DevServerLogResponse>(`/api/devservers/${enc(id)}/log?tail=${String(tail)}`);
+  const n = r.lines.length;
+  return {
+    ...r,
+    lines: r.lines.map((l, i) => ((l as { seq?: unknown }).seq === undefined ? { ...l, seq: i - n } : l)),
+  };
+}
 
 /** Reads a hub message's data as a DevServerChangedMessage's server; anything else is null. */
 export function parseServerChanged(data: unknown): DevServerDTO | null {

@@ -63,7 +63,7 @@ export function createSession(deps: SessionDeps): Session {
           },
           (e: unknown) => {
             // A message from the server is already plain language; keep it for the cases we don't name.
-            const kind = e instanceof ApiError ? classifyTokenFailure(e.status, e.code) : "other";
+            const kind = e instanceof ApiError ? classifyTokenFailure(e.status) : "other";
             const message = kind === "other" ? describeError(e) : failureMessages[kind];
             dispatch({ tag: "tokenRejected", kind, message });
           },

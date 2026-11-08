@@ -42,7 +42,7 @@ export function useDevServers() {
 export function useServerAction() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { id: string; action: ServerAction }) => runServerAction(v.id, v.action),
+    mutationFn: (v: { server: DevServerDTO; action: ServerAction }) => runServerAction(v.server, v.action),
     onSuccess: () => qc.invalidateQueries({ queryKey: devServerKeys.list }),
   });
 }

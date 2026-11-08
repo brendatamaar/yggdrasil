@@ -49,9 +49,11 @@ export function serverButtons(status: string): ServerButtons {
       return { start: true, stop: false, restart: false };
     case DevServerRunning:
       return { start: false, stop: true, restart: true };
+    case DevServerStopping: // Stop again escalates the kill
+      return { start: false, stop: true, restart: false };
     case DevServerOrphaned:
       return { start: false, stop: true, restart: false };
-    default: // starting, stopping or unknown: wait for the next state
+    default: // starting or unknown: wait for the next state
       return { start: false, stop: false, restart: false };
   }
 }

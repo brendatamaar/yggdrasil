@@ -104,6 +104,8 @@ describe("terminal session", () => {
     const cases: [number, string, string][] = [
       [429, "x", "Too many terminals"],
       [404, "not_found", "no longer tracked"],
+      [410, "gone", "expired"],
+      [503, "unavailable", "shutting down"],
     ];
     for (const [status, code, text] of cases) {
       const h = setup();

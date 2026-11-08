@@ -61,4 +61,20 @@ describe("Running services widget", () => {
     await renderWidget(RunningServices);
     expect((await screen.findByRole("alert")).textContent).toContain("Something went wrong.");
   });
+
+  it("starts a never-run placeholder with the target in the body", async () => {
+    const api = stubApi((c) =>
+      c.path === "/api/devservers" ? { body: { servers: [server({ id: "ph1", status: "stopped", ports: [] })] } } : undefined,
+    );
+    await renderWidget(RunningServices);
+    fireEvent.click(await screen.findByRole("button", { name: /^Start/ }));
+    await waitFor(() => { expect(api.calls.some((c) => c.path === "/api/devservers/ph1/start")).toBe(true); });
+    expect(api.calls.find((c) => c.path === "/api/devservers/ph1/start")?.body).toEqual({ repoId: "r1", command: "npm run dev" });
+  });
+
+  it("offers Stop while a server is stopping", async () => {
+    stubApi((c) => (c.path === "/api/devservers" ? { body: { servers: [server({ status: "stopping" })] } } : undefined));
+    await renderWidget(RunningServices);
+    expect(await screen.findByRole("button", { name: /^Stop/ })).toBeTruthy();
+  });
 });

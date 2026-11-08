@@ -20,7 +20,8 @@ describe("dev server helpers", () => {
     expect(serverButtons("running")).toEqual({ start: false, stop: true, restart: true });
     expect(serverButtons("orphaned")).toEqual({ start: false, stop: true, restart: false });
     expect(serverButtons("starting")).toEqual({ start: false, stop: false, restart: false });
-    expect(serverButtons("stopping")).toEqual({ start: false, stop: false, restart: false });
+    // Stop while stopping escalates the kill.
+    expect(serverButtons("stopping")).toEqual({ start: false, stop: true, restart: false });
   });
 
   it("labels states in plain words", () => {
