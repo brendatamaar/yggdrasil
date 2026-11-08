@@ -81,7 +81,7 @@ func TestPipDjango(t *testing.T) {
 	}
 	c := New().Commands(d)
 	if got := argvs(c.Bootstrap); !reflect.DeepEqual(got, [][]string{
-		{"python", "-m", "venv", ".venv"},
+		{"python-base", "-m", "venv", ".venv"},
 		{".venv/python", "-m", "pip", "install", "-r", "requirements.txt"},
 	}) {
 		t.Fatal(got)

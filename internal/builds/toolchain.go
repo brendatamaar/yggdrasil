@@ -21,7 +21,8 @@ import (
 //     internal/core/builds does that), and it never contains a step that
 //     needs a database or network services.
 //   - Commands run through the project's own runner (mvnw, gradlew, uv run,
-//     poetry run, the venv's Python), named by Argv[0] relative to the repo;
+//     poetry run, the venv's Python), named by Argv[0] relative to the repo
+//     (".venv/python"; "python-base" is the interpreter that creates the venv);
 //     internal/platform resolves it (mvnw.cmd vs ./mvnw, npm.cmd, ...).
 //     A toolchain never resolves executables or builds paths itself.
 //   - Every repo can override any command in its build settings, and the

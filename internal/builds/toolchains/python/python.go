@@ -19,6 +19,11 @@ const maxManifest = 4 << 20
 // forward slashes, like mvnw. internal/platform resolves it per OS.
 const venvPython = ".venv/python"
 
+// basePython is a reserved Argv[0] convention, like venvPython: the base
+// interpreter that creates the venv, used before .venv exists. internal/platform
+// resolves it with PythonBase from the clean environment.
+const basePython = "python-base"
+
 // Toolchain implements builds.Toolchain.
 type Toolchain struct{}
 
@@ -179,7 +184,7 @@ func bootstrap(d builds.Detection) []builds.Step {
 		return []builds.Step{step(d, "Install dependencies", []string{"poetry", "install"})}
 	default:
 		return []builds.Step{
-			step(d, "Create virtual environment", []string{"python", "-m", "venv", ".venv"}),
+			step(d, "Create virtual environment", []string{basePython, "-m", "venv", ".venv"}),
 			step(d, "Install dependencies", []string{venvPython, "-m", "pip", "install", "-r", "requirements.txt"}),
 		}
 	}
