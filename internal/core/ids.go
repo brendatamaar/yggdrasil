@@ -17,6 +17,10 @@ type (
 	ProposalID  string
 	BuildID     string
 	AuditID     string
+	// DevServerID names one dev server (a target and a command), TerminalSessionID
+	// one terminal session (docs/design/devservers.md, terminal.md).
+	DevServerID       string
+	TerminalSessionID string
 )
 
 // ErrInvalidID is returned for empty IDs or IDs with whitespace.
@@ -52,3 +56,9 @@ func (id BuildID) Validate() error { return checkID("build id", string(id)) }
 
 // Validate reports whether the ID is well formed.
 func (id AuditID) Validate() error { return checkID("audit id", string(id)) }
+
+// Validate reports whether the ID is well formed.
+func (id DevServerID) Validate() error { return checkID("dev server id", string(id)) }
+
+// Validate reports whether the ID is well formed.
+func (id TerminalSessionID) Validate() error { return checkID("terminal session id", string(id)) }
