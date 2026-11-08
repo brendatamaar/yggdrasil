@@ -9,6 +9,9 @@ import {
 } from "@tanstack/react-router";
 import { render } from "@testing-library/react";
 import type { ComponentType } from "react";
+import { WSClient } from "../api/ws";
+import { WSContext } from "../api/wsContext";
+import { FakeSocket } from "./fakeSocket";
 
 /** Renders a widget with a query client and a router that knows the pages widgets link to. */
 export async function renderWidget(Component: ComponentType) {
@@ -25,10 +28,22 @@ export async function renderWidget(Component: ComponentType) {
   ]);
   const router = createRouter({ routeTree: tree, history: createMemoryHistory({ initialEntries: ["/"] }) });
   await router.load();
-  return render(
+  const ws = new WSClient({ socketCtor: FakeSocket });
+  ws.connect();
+  const socket = FakeSocket.last();
+  socket.open();
+  let seq = 0;
+  const result = render(
     <QueryClientProvider client={client}>
-      {/* The test router has its own route tree, not the app's registered one. */}
-      <RouterProvider router={router as unknown as ReturnType<typeof import("../router").createAppRouter>} />
+      <WSContext.Provider value={ws}>
+        {/* The test router has its own route tree, not the app's registered one. */}
+        <RouterProvider router={router as unknown as ReturnType<typeof import("../router").createAppRouter>} />
+      </WSContext.Provider>
     </QueryClientProvider>,
   );
+  /** Delivers a hub message on `topic`, as the server would. */
+  const push = (topic: string, data: unknown) => {
+    socket.receive({ type: "event", topic, seq: ++seq, data });
+  };
+  return Object.assign(result, { push });
 }

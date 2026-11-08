@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { useRegisterCommands, type Command } from "../stores/commands";
 import { useThemeStore } from "../stores/theme";
 import { CommandPalette } from "./CommandPalette";
+import { TerminalDock, useTerminalStore } from "../features/terminal";
 import { LiveSync } from "./LiveSync";
 import { TopBar } from "./TopBar";
 
@@ -15,6 +16,15 @@ export function AppLayout() {
       { id: "go.start", title: "Go to Start", group: "Navigate", run: () => void navigate({ to: "/" }) },
       { id: "go.projects", title: "Go to Projects", group: "Navigate", run: () => void navigate({ to: "/projects" }) },
       { id: "go.settings", title: "Go to Settings", group: "Navigate", run: () => void navigate({ to: "/settings" }) },
+      {
+        id: "terminal.toggle",
+        title: "Show or hide the terminal",
+        group: "Terminal",
+        keywords: ["shell", "console"],
+        run: () => {
+          useTerminalStore.getState().toggle();
+        },
+      },
       { id: "theme.cycle", title: "Change theme", group: "Appearance", keywords: ["dark", "light"], run: cycleTheme },
     ],
     [navigate, cycleTheme],
@@ -27,6 +37,7 @@ export function AppLayout() {
       <main className="flex-1 p-4">
         <Outlet />
       </main>
+      <TerminalDock />
       <CommandPalette />
       <LiveSync />
     </div>

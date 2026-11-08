@@ -6,7 +6,10 @@ import { cancelTask, taskKeys, useTask } from "../../api/queries";
 import { useBoard } from "../../features/board";
 import { VerifyStateBadge } from "../../components/VerifyStateBadge";
 import { MessageComposer, type Mode } from "../../features/composer";
-import { ChangeSetPanel } from "../../features/changesets";
+import { ChangeSetPanel, useWorktrees } from "../../features/changesets";
+import { DevServerPanel } from "../../features/devservers";
+import { WorktreeEnvPanel } from "../../features/repoenv";
+import { TerminalToggle, useTerminalTarget } from "../../features/terminal";
 import { ProposalsPanel } from "../../features/proposals";
 import { ReviewPanel } from "../../features/review";
 import { NeedsYouNotice, TrustPanel } from "../../features/trust";
@@ -18,11 +21,12 @@ const capabilities: Capabilities | undefined = undefined;
 const idleStatuses = new Set(["needs_you", "review", "done"]);
 const cancellable = new Set(["queued", "running"]);
 
-type Tab = "transcript" | "review" | "changeset";
+type Tab = "transcript" | "review" | "changeset" | "services";
 const tabs: { id: Tab; label: string }[] = [
   { id: "transcript", label: "Transcript" },
   { id: "review", label: "Review" },
   { id: "changeset", label: "Change set" },
+  { id: "services", label: "Services" },
 ];
 
 /** One task: its status, its totals and the live transcript. */
@@ -36,6 +40,10 @@ export function TaskPage({ taskId }: { taskId: string }) {
   });
 
   const [tab, setTab] = useState<Tab>("transcript");
+  const worktrees = useWorktrees(taskId);
+  const liveWorktrees = (worktrees.data ?? []).filter((w) => w.status !== "removed");
+  const firstWorktree = liveWorktrees[0];
+  useTerminalTarget("worktree", firstWorktree?.id, firstWorktree ? `${firstWorktree.repoName} worktree` : "Worktree");
   const board = useBoard();
   const reason = board.data?.cards.find((c) => c.taskId === taskId)?.needsYouReason;
   const status = task.data?.status;
@@ -54,6 +62,7 @@ export function TaskPage({ taskId }: { taskId: string }) {
             </span>
           ) : null}
           {task.data?.verification ? <VerifyStateBadge state={task.data.verification.state} /> : null}
+          {firstWorktree ? <TerminalToggle /> : null}
           {status && cancellable.has(status) ? (
             <button
               type="button"
@@ -113,7 +122,19 @@ export function TaskPage({ taskId }: { taskId: string }) {
           </button>
         ))}
       </div>
-      {tab === "changeset" ? (
+      {tab === "services" ? (
+        <div role="tabpanel" id="panel-services" aria-labelledby="tab-services" className="space-y-4">
+          {liveWorktrees.length === 0 ? (
+            <p className="text-sm text-muted">This task has no worktree yet, so nothing can run here.</p>
+          ) : null}
+          {liveWorktrees.map((w) => (
+            <div key={w.id} className="space-y-2">
+              <DevServerPanel scope={{ repoId: w.repoId, worktreeIds: [w.id] }} heading={`Dev servers in ${w.repoName}`} />
+              <WorktreeEnvPanel worktreeId={w.id} title={`Environment of ${w.repoName}`} />
+            </div>
+          ))}
+        </div>
+      ) : tab === "changeset" ? (
         <div role="tabpanel" id="panel-changeset" aria-labelledby="tab-changeset">
           <ChangeSetPanel taskId={taskId} />
         </div>
