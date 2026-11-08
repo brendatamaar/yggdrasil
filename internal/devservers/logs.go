@@ -87,11 +87,12 @@ func newSink(p sinkParts) *logSink {
 }
 
 func (l *logSink) Write(line string) {
-	line = strings.TrimRight(line, "\r\n")
+	// Redact the whole line first, then cut it: cutting first could split a
+	// secret in two halves that no pattern matches.
+	line = l.redact(strings.TrimRight(line, "\r\n"))
 	if len(line) > MaxLineBytes {
 		line = line[:MaxLineBytes] + " [cut]"
 	}
-	line = l.redact(line)
 	l.mu.Lock()
 	if l.closed {
 		l.mu.Unlock()
@@ -150,8 +151,9 @@ func (l *logSink) Close() error {
 }
 
 // rotatingFile appends lines to path and rotates by rename at maxBytes: path
-// becomes path.1, path.1 becomes path.2, and the oldest is replaced. Nothing
-// is deleted.
+// becomes path.1, path.1 becomes path.2, and the rename replaces (overwrites)
+// the oldest rotated file. That is the only way a log file goes away; no file
+// is removed with os.Remove, and only Yggdrasil's own log files are touched.
 type rotatingFile struct {
 	path string
 	max  int64
@@ -231,12 +233,23 @@ func (r *rotatingFile) close() error {
 // lineWriter turns the bytes of a process's output into lines. It is safe for
 // the two goroutines that copy stdout and stderr.
 type lineWriter struct {
-	mu   sync.Mutex
-	buf  []byte
-	emit func(line string)
+	mu     sync.Mutex
+	buf    []byte
+	redact Redact
+	emit   func(line string)
 }
 
-func newLineWriter(emit func(string)) *lineWriter { return &lineWriter{emit: emit} }
+// carryBytes is how much of an over-long, unterminated line is held back
+// when a piece is emitted, so a secret that straddles the cut is redacted
+// whole in the next piece.
+const carryBytes = 1024
+
+func newLineWriter(redact Redact, emit func(string)) *lineWriter {
+	if redact == nil {
+		redact = func(s string) string { return s }
+	}
+	return &lineWriter{redact: redact, emit: emit}
+}
 
 func (w *lineWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
@@ -251,8 +264,16 @@ func (w *lineWriter) Write(p []byte) (int, error) {
 		w.buf = w.buf[i+1:]
 	}
 	if len(w.buf) > MaxLineBytes {
-		w.emit(string(w.buf))
-		w.buf = nil
+		// No line break for a long while. Redact everything buffered, emit all
+		// but the last carryBytes, and keep that tail (already redacted where a
+		// secret was complete) in front of the next bytes.
+		red := w.redact(string(w.buf))
+		if len(red) > carryBytes {
+			w.emit(red[:len(red)-carryBytes])
+			w.buf = []byte(red[len(red)-carryBytes:])
+		} else {
+			w.buf = []byte(red)
+		}
 	}
 	return len(p), nil
 }

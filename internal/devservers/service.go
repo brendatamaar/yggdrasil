@@ -26,17 +26,20 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	dsc "github.com/brendatamaar/yggdrasil/internal/core/devservers"
 	"github.com/brendatamaar/yggdrasil/internal/db"
+	"github.com/brendatamaar/yggdrasil/internal/worktreeenv"
 )
 
 const (
-	systemActor   = "system"
-	userActor     = "user"
-	commitTries   = 3
-	feedTimeout   = 10 * time.Second
-	announceDelay = 250 * time.Millisecond
-	defaultDrain  = 5 * time.Second
-	logSubfolder  = "devservers"
-	logParent     = "logs"
+	systemActor        = "system"
+	userActor          = "user"
+	commitTries        = 3
+	feedTimeout        = 10 * time.Second
+	announceDelay      = 250 * time.Millisecond
+	feedTries          = 5
+	defaultFeedBackoff = 100 * time.Millisecond
+	defaultDrain       = 5 * time.Second
+	logSubfolder       = "devservers"
+	logParent          = "logs"
 )
 
 // View is a server as the API shows it. Warnings are derived (DV-02).
@@ -57,6 +60,9 @@ type View struct {
 	StopCause  dsc.StopCause
 	Message    string
 	Restarting bool
+	// Warning is set when the server started without a port block (the range
+	// is full): no port variables were injected and detection still applies.
+	Warning string
 }
 
 // run is the live attempt of a server: its process and what its output said.
@@ -81,14 +87,34 @@ type Service struct {
 	cancel context.CancelFunc
 	g      *errgroup.Group
 
-	mu       sync.Mutex // serialises apply and guards the maps below
-	closed   bool       // no new start; shutdown began
-	stopped  bool       // no new goroutine
+	// mu guards the fields below and is only ever held for a few map
+	// operations, never across a commit, a publish or a wake. Changes to one
+	// server are serialised by that server's srvLock instead.
+	mu       sync.Mutex
+	closed   bool // no new start; shutdown began
+	stopped  bool // no new goroutine
+	locks    map[string]*srvLock
 	runs     map[string]*run
 	sinks    map[string]LogSink
 	restarts map[string]dsc.Key
 	msgs     map[string]string
+	warns    map[string]string
 	drained  chan struct{}
+}
+
+// srvLock serialises the changes of one server. pub keeps publishes in commit
+// order without holding mu while the hub is called.
+type srvLock struct{ mu, pub sync.Mutex }
+
+func (s *Service) srv(id string) *srvLock {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	l := s.locks[id]
+	if l == nil {
+		l = &srvLock{}
+		s.locks[id] = l
+	}
+	return l
 }
 
 // New returns a service whose goroutines end when ctx ends or Close is called.
@@ -115,7 +141,7 @@ func New(ctx context.Context, d Deps) (*Service, error) {
 	return &Service{
 		d: d, log: d.Log, clock: d.Clock, wakes: NewWakes(d.Clock), base: base, cancel: cancel, g: g,
 		runs: map[string]*run{}, sinks: map[string]LogSink{}, restarts: map[string]dsc.Key{}, msgs: map[string]string{},
-		drained: make(chan struct{}),
+		locks: map[string]*srvLock{}, warns: map[string]string{}, drained: make(chan struct{}),
 	}, nil
 }
 
@@ -159,16 +185,46 @@ func (s *Service) startIn(ctx context.Context, t Target, key dsc.Key, dir string
 		return View{}, apperr.New(apperr.Invalid, "This server's command cannot be started: "+plainTemplateMessage(err.Error()), err)
 	}
 	var block core.PortBlock
+	warning := ""
 	if t.Worktree != "" {
-		if block, err = s.d.Blocks.BlockFor(ctx, t); err != nil {
+		block, err = s.d.Blocks.BlockFor(ctx, t)
+		switch {
+		case errors.Is(err, ErrNoBlock) || errors.Is(err, worktreeenv.ErrRangeFull):
+			// Every port of the range is taken: start without port variables.
+			// A command that needs {port} is refused by the core (BadTemplate).
+			block, warning = core.PortBlock{}, noBlockWarning
+		case err != nil:
 			return View{}, err
 		}
 	}
+	prev := s.swapWarning(IDOf(key), warning)
 	mk := func(cur dsc.Server) dsc.Input {
 		return dsc.StartRequested{Attempt: dsc.AttemptOf(cur) + 1, Now: s.clock.Now(), Template: tpl, Block: block}
 	}
 	next, err := s.apply(ctx, key, userActor, mk, dir)
+	if err != nil {
+		s.swapWarning(IDOf(key), prev) // a refused start leaves the running one as it was
+	}
 	return s.view(key, next), err
+}
+
+// ErrNoBlock is returned by a BlockSource that has no port block to give
+// (worktreeenv.ErrRangeFull counts too): the server then starts without port
+// variables.
+var ErrNoBlock = errors.New("no free port block")
+
+const noBlockWarning = "No free port block was left, so this server started without a fixed port. Commands that need {port} cannot start."
+
+func (s *Service) swapWarning(id, w string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prev := s.warns[id]
+	if w == "" {
+		delete(s.warns, id)
+	} else {
+		s.warns[id] = w
+	}
+	return prev
 }
 
 // trustGate refuses a repo that ships agent hooks or MCP servers and has not
@@ -316,7 +372,7 @@ func (s *Service) viewLocked(key dsc.Key, st dsc.Server) View {
 	id := IDOf(key)
 	msg := s.msgs[id]
 	_, restarting := s.restarts[id]
-	v := View{ID: id, Key: key, Status: st.Status(), Attempt: dsc.AttemptOf(st), Message: msg, Restarting: restarting}
+	v := View{ID: id, Key: key, Status: st.Status(), Attempt: dsc.AttemptOf(st), Message: msg, Restarting: restarting, Warning: s.warns[id]}
 	switch x := st.(type) {
 	case dsc.Stopped:
 		v.Since, v.Last, v.ExitCode = x.At, x.Last, x.Code
@@ -340,31 +396,45 @@ func (s *Service) viewLocked(key dsc.Key, st dsc.Server) View {
 // apply is the one path of every change: load, Step, persist state and audit
 // together, then run the commands. mk builds the input from the loaded state
 // (nil means nothing to do). dir is the tracked folder for a StartProcess.
-// Calls are serialised; the commands never call apply while the lock is held
-// (they start goroutines).
+// Changes to one server are serialised by its srvLock; the commands never call
+// apply (they start goroutines). The hub is told after the commit, outside the
+// server lock but in commit order.
 func (s *Service) apply(ctx context.Context, key dsc.Key, actor string, mk func(dsc.Server) dsc.Input, dir string) (dsc.Server, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	sl := s.srv(IDOf(key))
+	sl.mu.Lock()
+	next, pub, err := s.applyLocked(ctx, key, actor, mk, dir)
+	if pub == nil {
+		sl.mu.Unlock()
+		return next, err
+	}
+	sl.pub.Lock()
+	sl.mu.Unlock()
+	pub()
+	sl.pub.Unlock()
+	return next, err
+}
+
+func (s *Service) applyLocked(ctx context.Context, key dsc.Key, actor string, mk func(dsc.Server) dsc.Input, dir string) (dsc.Server, func(), error) {
 	id := IDOf(key)
 	var lastErr error
 	for range commitTries {
 		cur, version, err := loadServer(ctx, s.d.Store.Get, id)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		in := mk(cur)
 		if in == nil {
-			return cur, nil
+			return cur, nil, nil
 		}
-		if _, isStart := in.(dsc.StartRequested); isStart && s.closed {
-			return cur, closingError()
+		if _, isStart := in.(dsc.StartRequested); isStart && s.isClosed() {
+			return cur, nil, closingError()
 		}
 		next, cmds := dsc.Step(cur, in)
 		changed := !reflect.DeepEqual(dsc.Persisted(cur), dsc.Persisted(next))
 		now := s.clock.Now()
 		audits, err := s.prepareAudits(key, id, actor, cmds, now)
 		if err != nil {
-			return cur, err
+			return cur, nil, err
 		}
 		if changed || len(audits) > 0 {
 			err = s.d.Store.Commit(ctx, func(tx Tx) error {
@@ -385,12 +455,27 @@ func (s *Service) apply(ctx context.Context, key dsc.Key, actor string, mk func(
 				continue
 			}
 			if err != nil {
-				return cur, apperr.New(apperr.Unavailable, "Yggdrasil could not save the server's state. Try again.", fmt.Errorf("commit dev server %s: %w", id, err))
+				return cur, nil, apperr.New(apperr.Unavailable, "Yggdrasil could not save the server's state. Try again.", fmt.Errorf("commit dev server %s: %w", id, err))
 			}
 		}
-		return next, s.afterCommit(key, id, next, cmds, dir)
+		rejected := s.afterCommit(key, id, next, cmds, dir)
+		var pub func()
+		if s.d.Hub != nil && hasPublish(cmds) {
+			v := s.view(key, next)
+			pub = func() { s.d.Hub.PublishServer(id, v) }
+		}
+		return next, pub, rejected
 	}
-	return nil, apperr.New(apperr.Conflict, "The server changed while Yggdrasil was updating it. Try again.", lastErr)
+	return nil, nil, apperr.New(apperr.Conflict, "The server changed while Yggdrasil was updating it. Try again.", lastErr)
+}
+
+func hasPublish(cmds []dsc.Command) bool {
+	for _, c := range cmds {
+		if _, ok := c.(dsc.Publish); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) prepareAudits(key dsc.Key, id, actor string, cmds []dsc.Command, now time.Time) ([]core.AuditEntry, error) {
@@ -416,18 +501,41 @@ func (s *Service) prepareAudits(key dsc.Key, id, actor string, cmds []dsc.Comman
 	return out, nil
 }
 
-// feed applies an input that came from a process, a timer or a poll.
+// feed applies an input that came from a process, a timer or a poll. The
+// inputs that end an attempt (Exited, StartFailed, OrphanStopped) are retried
+// with a bounded backoff when the commit fails: losing one would leave a dead
+// server marked live. Repeating one is harmless, the attempt fences it.
 func (s *Service) feed(key dsc.Key, in dsc.Input) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(s.base), feedTimeout)
-	defer cancel()
-	if _, err := s.apply(ctx, key, systemActor, func(dsc.Server) dsc.Input { return in }, ""); err != nil {
-		s.log.Warn("could not apply a dev server event", "id", IDOf(key), "event", fmt.Sprintf("%T", in), "err", err)
+	tries := 1
+	switch in.(type) {
+	case dsc.Exited, dsc.StartFailed, dsc.OrphanStopped:
+		tries = feedTries
+	}
+	backoff := s.d.FeedBackoff
+	if backoff <= 0 {
+		backoff = defaultFeedBackoff
+	}
+	for i := range tries {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(s.base), feedTimeout)
+		_, err := s.apply(ctx, key, systemActor, func(dsc.Server) dsc.Input { return in }, "")
+		cancel()
+		if err == nil {
+			return
+		}
+		if i == tries-1 {
+			s.log.Error("could not apply a dev server event", "id", IDOf(key), "event", fmt.Sprintf("%T", in), "err", err)
+			return
+		}
+		s.log.Warn("retrying a dev server event", "id", IDOf(key), "event", fmt.Sprintf("%T", in), "err", err)
+		time.Sleep(backoff << i)
 	}
 }
 
 // spawn runs f in the service group. It reports false after shutdown. A panic
 // is recovered and logged; f itself feeds the exit of its attempt.
 func (s *Service) spawn(f func()) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.stopped {
 		return false
 	}
@@ -447,14 +555,16 @@ func wakeKey(id string, attempt int, kind dsc.WakeKind) string {
 	return fmt.Sprintf("%s|%d|%s", id, attempt, kind)
 }
 
-// afterCommit runs the commands of a step (called with s.mu held, after the
-// state and its audit were committed).
+// afterCommit runs the commands of a step (the server's lock is held, after the
+// state and its audit were committed; Publish is handled by apply).
 func (s *Service) afterCommit(key dsc.Key, id string, next dsc.Server, cmds []dsc.Command, dir string) error {
+	s.mu.Lock()
 	if f, ok := next.(dsc.Failed); ok && f.Message != "" {
 		s.msgs[id] = f.Message
 	} else if _, ok := next.(dsc.Starting); ok {
 		delete(s.msgs, id)
 	}
+	s.mu.Unlock()
 	var rejected error
 	for _, c := range cmds {
 		switch c := c.(type) {
@@ -469,11 +579,7 @@ func (s *Service) afterCommit(key dsc.Key, id string, next dsc.Server, cmds []ds
 				s.feed(key, dsc.Wake{Attempt: c.Attempt, Kind: c.Kind, Now: now})
 			})
 		case dsc.StopOrphan:
-			s.stopOrphan(key, id, c.Pid)
-		case dsc.Publish:
-			if s.d.Hub != nil {
-				s.d.Hub.PublishServer(id, s.viewLocked(key, next))
-			}
+			s.stopOrphan(key, id, dsc.AttemptOf(next), c.Pid)
 		case dsc.Reject:
 			rejected = rejectError(c)
 		}
@@ -488,8 +594,11 @@ func (s *Service) afterCommit(key dsc.Key, id string, next dsc.Server, cmds []ds
 func (s *Service) afterState(key dsc.Key, id string, next dsc.Server) {
 	switch st := next.(type) {
 	case dsc.Stopped, dsc.Failed:
-		if rk, ok := s.restarts[id]; ok {
-			delete(s.restarts, id)
+		s.mu.Lock()
+		rk, ok := s.restarts[id]
+		delete(s.restarts, id)
+		s.mu.Unlock()
+		if ok {
 			t := Target{Repo: rk.Repo, Worktree: rk.Worktree}
 			s.spawn(func() {
 				ctx, cancel := context.WithTimeout(context.WithoutCancel(s.base), feedTimeout)
@@ -500,7 +609,10 @@ func (s *Service) afterState(key dsc.Key, id string, next dsc.Server) {
 			})
 		}
 	case dsc.Running:
-		if r := s.runs[id]; r != nil && r.attempt == st.Attempt && !r.sameAnnounced(st.Announced) {
+		s.mu.Lock()
+		r := s.runs[id]
+		s.mu.Unlock()
+		if r != nil && r.attempt == st.Attempt && !r.sameAnnounced(st.Announced) {
 			s.spawn(func() { s.sendAnnounced(key, r) })
 		}
 	}

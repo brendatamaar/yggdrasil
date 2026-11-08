@@ -13,7 +13,8 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
 
-// sinkFor returns the log of a server, created on first use (s.mu held).
+// sinkFor returns the log of a server, created on first use (s.mu held; the
+// caller must not call the sink before releasing it).
 func (s *Service) sinkFor(id string) LogSink {
 	if sink, ok := s.sinks[id]; ok {
 		return sink
@@ -36,16 +37,22 @@ func (s *Service) sinkFor(id string) LogSink {
 	return sink
 }
 
-// startRun begins the attempt: it owns the process goroutine (s.mu held).
+// startRun begins the attempt: it owns the process goroutine.
 func (s *Service) startRun(key dsc.Key, id, dir string, c dsc.StartProcess) {
 	ctx, cancel := context.WithCancel(s.base)
 	r := &run{attempt: c.Attempt, cancel: cancel, announced: map[dsc.Port]struct{}{}}
+	s.mu.Lock()
 	s.runs[id] = r
 	sink := s.sinkFor(id)
+	s.mu.Unlock()
 	sink.Write(fmt.Sprintf("--- starting (attempt %d) ---", c.Attempt))
 	if !s.spawn(func() { s.runProcess(ctx, r, key, id, dir, c, sink) }) {
 		cancel()
-		delete(s.runs, id)
+		s.mu.Lock()
+		if s.runs[id] == r {
+			delete(s.runs, id)
+		}
+		s.mu.Unlock()
 	}
 }
 
@@ -54,6 +61,7 @@ func (s *Service) startRun(key dsc.Key, id, dir string, c dsc.StartProcess) {
 // tracked folder the Repos capability resolved from IDs (invariant 6).
 func (s *Service) runProcess(ctx context.Context, r *run, key dsc.Key, id, dir string, c dsc.StartProcess, sink LogSink) {
 	exited := false
+	procID := ProcessID(id, c.Attempt)
 	defer func() {
 		if p := recover(); p != nil {
 			s.log.Error("dev server goroutine panicked", "id", id, "panic", fmt.Sprint(p), "stack", string(debug.Stack()))
@@ -93,8 +101,8 @@ func (s *Service) runProcess(ctx context.Context, r *run, key dsc.Key, id, dir s
 		return
 	}
 	argv[0] = exe
-	w := newLineWriter(func(line string) { s.onLine(r, key, id, sink, line) })
-	proc, err := s.d.Start(ctx, platform.Spec{Argv: argv, Dir: dir, Env: env, TaskID: id, Stdout: w, Stderr: w})
+	w := newLineWriter(s.d.Redactor.Redact, func(line string) { s.onLine(r, key, id, sink, line) })
+	proc, err := s.d.Start(ctx, platform.Spec{Argv: argv, Dir: dir, Env: env, TaskID: procID, Stdout: w, Stderr: w})
 	if err != nil {
 		switch {
 		case errors.Is(err, platform.ErrNotFound):
@@ -111,7 +119,7 @@ func (s *Service) runProcess(ctx context.Context, r *run, key dsc.Key, id, dir s
 	r.mu.Lock()
 	r.pid = proc.Pid()
 	r.mu.Unlock()
-	if err := s.d.Orphans.Record(id, proc.Pid()); err != nil {
+	if err := s.d.Orphans.Record(procID, proc.Pid()); err != nil {
 		s.log.Warn("could not record the dev server process", "id", id, "err", err)
 	}
 	s.feed(key, dsc.Started{Attempt: c.Attempt, Pid: proc.Pid(), Now: s.clock.Now()})
@@ -121,7 +129,7 @@ func (s *Service) runProcess(ctx context.Context, r *run, key dsc.Key, id, dir s
 	}
 	_ = proc.Truncated()
 	w.Flush()
-	if err := s.d.Orphans.Forget(id); err != nil {
+	if err := s.d.Orphans.Forget(procID); err != nil {
 		s.log.Warn("could not forget the dev server process", "id", id, "err", err)
 	}
 	exited = true
@@ -175,23 +183,28 @@ func (s *Service) sendAnnounced(key dsc.Key, r *run) {
 }
 
 // kill ends the attempt's process tree: it cancels the process context and
-// kills the server's job (s.mu held; the work runs in the group).
+// kills the attempt's job, which is keyed by attempt: it cannot reach a newer
+// attempt of the same server (the work runs in the group).
 func (s *Service) kill(id string, attempt int) {
+	s.mu.Lock()
 	r := s.runs[id]
+	s.mu.Unlock()
 	if r == nil || r.attempt != attempt {
 		return
 	}
 	s.spawn(func() {
 		r.cancel()
-		if err := s.d.KillTask(id); err != nil {
+		if err := s.d.KillTask(ProcessID(id, attempt)); err != nil {
 			s.log.Warn("could not kill the dev server job", "id", id, "err", err)
 		}
 	})
 }
 
-// poll reads the listening ports of the attempt's process tree (s.mu held).
+// poll reads the listening ports of the attempt's process tree.
 func (s *Service) poll(key dsc.Key, id string, attempt int) {
+	s.mu.Lock()
 	r := s.runs[id]
+	s.mu.Unlock()
 	if r == nil || r.attempt != attempt {
 		return
 	}
@@ -215,12 +228,16 @@ func (s *Service) poll(key dsc.Key, id string, attempt int) {
 	})
 }
 
-// stopOrphan stops a process left by a crashed run (s.mu held).
-func (s *Service) stopOrphan(key dsc.Key, id string, pid int) {
+// stopOrphan stops a process left by a crashed run. A stop that failed while
+// the process is still there is an input too (OrphanStopFailed), so it is
+// audited and shown.
+func (s *Service) stopOrphan(key dsc.Key, id string, attempt, pid int) {
+	procID := ProcessID(id, attempt)
 	s.spawn(func() {
-		if err := s.d.Orphans.Stop(id); err != nil {
+		if err := s.d.Orphans.Stop(procID); err != nil {
 			s.log.Warn("could not stop an orphaned dev server", "id", id, "pid", pid, "err", err)
-			if !s.orphanGone(id) {
+			if !s.orphanGone(procID) {
+				s.feed(key, dsc.OrphanStopFailed{Now: s.clock.Now()})
 				return
 			}
 		}
@@ -265,7 +282,8 @@ func (s *Service) Reconcile(ctx context.Context) error {
 			s.log.Warn("skipping an unreadable dev server row", "id", row.ID, "err", err)
 			continue
 		}
-		pid, isAlive := alive[row.ID]
+		procID := ProcessID(row.ID, row.Row.Attempt)
+		pid, isAlive := alive[procID]
 		if _, orphan := cur.(dsc.Orphaned); orphan {
 			if isAlive {
 				continue
@@ -276,7 +294,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		var live dsc.Liveness = dsc.Dead{}
 		if isAlive {
 			live = dsc.Alive{Pid: pid}
-		} else if err := s.d.Orphans.Forget(row.ID); err != nil {
+		} else if err := s.d.Orphans.Forget(procID); err != nil {
 			s.log.Debug("could not forget a dead dev server process", "id", row.ID, "err", err)
 		}
 		s.feed(row.Row.Key, dsc.Recovered{Liveness: live, Now: s.clock.Now()})

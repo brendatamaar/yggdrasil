@@ -60,6 +60,7 @@ type rig struct {
 	recorded []string
 	forgot   []string
 	resolve  func(name, dir string, env []string) (string, error)
+	stopErr  error
 }
 
 func newRig(t *testing.T) *rig {
@@ -98,10 +99,16 @@ func (r *rig) build(store devservers.Store) {
 				r.mu.Unlock()
 				return o.Forget(id)
 			},
-			List: o.List, Stop: o.Stop,
+			List: o.List,
+			Stop: func(id string) error {
+				if err := r.stopErr; err != nil {
+					return err
+				}
+				return o.Stop(id)
+			},
 		},
 		Env: safety.NewEnvBuilder(), Redactor: safety.NewRedactor(), Hub: r.hub, Clock: r.clock,
-		IDs: db.NewID, DataDir: r.dataDir,
+		IDs: db.NewID, DataDir: r.dataDir, FeedBackoff: time.Millisecond,
 	})
 	if err != nil {
 		r.t.Fatal(err)
@@ -170,7 +177,7 @@ func TestStartRunsInTheTrackedFolderWithTheCleanEnvAndPortBlock(t *testing.T) {
 		t.Fatalf("started %d processes", len(specs))
 	}
 	spec := specs[0]
-	if spec.Dir != r.dir || spec.TaskID != v.ID {
+	if spec.Dir != r.dir || spec.TaskID != devservers.ProcessID(v.ID, v.Attempt) {
 		t.Errorf("dir/task = %q / %q", spec.Dir, spec.TaskID)
 	}
 	env := strings.Join(spec.Env, "\n")
@@ -192,7 +199,7 @@ func TestStartRunsInTheTrackedFolderWithTheCleanEnvAndPortBlock(t *testing.T) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !slices.Equal(r.recorded, []string{v.ID}) {
+	if !slices.Equal(r.recorded, []string{devservers.ProcessID(v.ID, v.Attempt)}) {
 		t.Errorf("recorded = %v", r.recorded)
 	}
 }
@@ -293,7 +300,7 @@ func TestStopKillsAndRecordsUserStop(t *testing.T) {
 	if got.Last != dsc.LastUserStopped {
 		t.Errorf("last = %q", got.Last)
 	}
-	if !slices.Contains(r.fake.KilledTasks(), v.ID) {
+	if !slices.Contains(r.fake.KilledTasks(), devservers.ProcessID(v.ID, v.Attempt)) {
 		t.Errorf("job not killed: %v", r.fake.KilledTasks())
 	}
 	want := []string{"devserver.start", "devserver.running", "devserver.stop", "devserver.exit"}
@@ -302,7 +309,7 @@ func TestStopKillsAndRecordsUserStop(t *testing.T) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !slices.Contains(r.forgot, v.ID) {
+	if !slices.Contains(r.forgot, devservers.ProcessID(v.ID, v.Attempt)) {
 		t.Error("the process was not forgotten after it exited")
 	}
 }
@@ -335,7 +342,7 @@ func TestCrashOfARunningServer(t *testing.T) {
 	r := newRig(t)
 	r.fake.Push(platformtest.Script{Block: true})
 	v := r.toRunning(20001)
-	_ = r.fake.KillTask(v.ID) // the process dies by itself, exit code 1
+	_ = r.fake.KillTask(devservers.ProcessID(v.ID, v.Attempt)) // the process dies by itself, exit code 1
 	got := r.waitStatus("failed")
 	if got.Fail != dsc.FailCrashed {
 		t.Errorf("fail = %q", got.Fail)
@@ -526,7 +533,7 @@ func TestReconcileAfterACrashedRun(t *testing.T) {
 		}
 	}
 	pid := r.orph.Spawn()
-	_ = r.orph.Orphans().Record(devservers.IDOf(keys["alive"]), pid)
+	_ = r.orph.Orphans().Record(devservers.ProcessID(devservers.IDOf(keys["alive"]), 1), pid)
 	if err := r.svc.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
