@@ -1,6 +1,6 @@
 # Phase 5 — Dev servers, terminal, worktree environment and more toolchains → `v0.6.0`
 
-> Status: **plan approved, decisions final (2026-11-08). Foundation F1 (designs) in progress; waiting for design approval. No agent spawned, no F2–F4 code written.**
+> Status: **plan approved, decisions final (2026-11-08). Designs approved with all recommendations. Foundations F1–F4 on `main`. Batch 1 (T1, T2, T3) in progress.**
 > Source: docs/PLAN.md Phase 5; docs/PRD.md BL-12, BL-13, BL-14, WE-01, WE-02, WE-03, WE-05, DV-01–DV-05, UI-03, PL-02, PL-05 (D9, D12 reused); docs/AGENTS.md 5.2, 5.3, 5.7, 5.10, 5.11, 6 (invariants 2, 3, 4, 5, 6, 7, 8, 10); docs/spikes.md B1 (ConPTY gotchas), B2 (job objects); docs/phases/phase-4.md (carry-ins).
 
 **Exit criterion (PLAN.md):** two worktrees of the same frontend+backend pair run side by side with no port conflicts; killing Yggdrasil leaves no processes behind; a Python (uv) repo and a .NET repo in the demo project pass verification in fresh worktrees.
@@ -152,4 +152,7 @@ Other PLAN.md checkboxes: Python bootstrap (T1, T2), dev servers (D, A, UI), ter
 
 ## Log
 
-*(filled during the phase: decisions, deviations, gate results, in-flight state)*
+- 2026-11-08: the three designs approved with all recommendations (compose file hash-confirm, containers outlive `ygg`, same trust gate for dev servers, no block for main checkouts, token bound to folder + Host/Origin, port probe on allocation, terminal limits 4/8).
+- F2 `98aff37` core types and `Step` stubs (`core/devservers`, `core/terminal`, `core/worktreeenv`; `core.PortBlock`, `DevServerID`, `TerminalSessionID`). F3 `ea2b8e3` migration 00005 + queries + sqlc (goose accepts the 00003 SQL gap: 00003 is a Go migration). F4 `1d3c64a` DTOs, topics (`devservers`, `devserver:<id>`, `worktreeenv`), tygo output, `platform/orphans.go` stubs (`RecordProcess`, `ForgetProcess`, `ListOrphans`, `StopOrphan`, `PythonBase`; return `ErrNotImplemented` until T2).
+- `TestMigration00003RerunIsSafe` now expects version 5.
+- Checks run on this Linux box: `go vet ./...`, golangci-lint on core/api/platform/db (0 issues), tests for api, archtest, db, platform, core. Pre-existing and unrelated: `api.TestJoinInside` fails on Linux (a `C:/x` path case); `db.TestListActiveTaskStates` is order-flaky (equal timestamps, random IDs). `pnpm` is not installed here, so `task typecheck` and `task test:web` could not run; the generated TS is committed unchecked and the frontend task must run them.
