@@ -19,7 +19,7 @@ func (s *Service) sinkFor(id string) LogSink {
 	if sink, ok := s.sinks[id]; ok {
 		return sink
 	}
-	publish := func(line string) {
+	publish := func(line LogLine) {
 		if s.d.Hub != nil {
 			s.d.Hub.PublishLog(id, line)
 		}
@@ -31,7 +31,7 @@ func (s *Service) sinkFor(id string) LogSink {
 	sink, err := NewFileSink(s.logDir(), id, s.d.Redactor.Redact, size, s.d.LogFileBytes, publish)
 	if err != nil {
 		s.log.Warn("dev server log file unavailable; keeping the log in memory", "id", id, "err", err)
-		sink = NewMemorySink(s.d.Redactor.Redact, size, publish)
+		sink, _ = NewMemorySink(s.d.Redactor.Redact, size, publish) // the redactor is required by New
 	}
 	s.sinks[id] = sink
 	return sink
@@ -45,7 +45,7 @@ func (s *Service) startRun(key dsc.Key, id, dir string, c dsc.StartProcess) {
 	s.runs[id] = r
 	sink := s.sinkFor(id)
 	s.mu.Unlock()
-	sink.Write(fmt.Sprintf("--- starting (attempt %d) ---", c.Attempt))
+	sink.Write(StreamSystem, fmt.Sprintf("--- starting (attempt %d) ---", c.Attempt))
 	if !s.spawn(func() { s.runProcess(ctx, r, key, id, dir, c, sink) }) {
 		cancel()
 		s.mu.Lock()
@@ -101,8 +101,9 @@ func (s *Service) runProcess(ctx context.Context, r *run, key dsc.Key, id, dir s
 		return
 	}
 	argv[0] = exe
-	w := newLineWriter(s.d.Redactor.Redact, func(line string) { s.onLine(r, key, id, sink, line) })
-	proc, err := s.d.Start(ctx, platform.Spec{Argv: argv, Dir: dir, Env: env, TaskID: procID, Stdout: w, Stderr: w})
+	wOut := newLineWriter(s.d.Redactor.Redact, func(line string) { s.onLine(r, key, id, sink, StreamStdout, line) })
+	wErr := newLineWriter(s.d.Redactor.Redact, func(line string) { s.onLine(r, key, id, sink, StreamStderr, line) })
+	proc, err := s.d.Start(ctx, platform.Spec{Argv: argv, Dir: dir, Env: env, TaskID: procID, Stdout: wOut, Stderr: wErr})
 	if err != nil {
 		switch {
 		case errors.Is(err, platform.ErrNotFound):
@@ -128,7 +129,8 @@ func (s *Service) runProcess(ctx context.Context, r *run, key dsc.Key, id, dir s
 		s.log.Warn("waiting for a dev server failed", "id", id, "err", werr)
 	}
 	_ = proc.Truncated()
-	w.Flush()
+	wOut.Flush()
+	wErr.Flush()
 	if err := s.d.Orphans.Forget(procID); err != nil {
 		s.log.Warn("could not forget the dev server process", "id", id, "err", err)
 	}
@@ -138,8 +140,8 @@ func (s *Service) runProcess(ctx context.Context, r *run, key dsc.Key, id, dir s
 
 // onLine logs a line and collects the ports it announces (DV-02). Announced
 // ports reach the core batched, so a chatty server is one commit per 250 ms.
-func (s *Service) onLine(r *run, key dsc.Key, id string, sink LogSink, line string) {
-	sink.Write(line)
+func (s *Service) onLine(r *run, key dsc.Key, id string, sink LogSink, stream Stream, line string) {
+	sink.Write(stream, line)
 	ports := dsc.ParseAnnouncement(line)
 	if len(ports) == 0 {
 		return

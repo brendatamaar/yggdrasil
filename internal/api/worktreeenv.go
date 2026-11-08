@@ -60,8 +60,6 @@ func envErr(err error) error {
 	switch {
 	case errors.Is(err, worktreeenv.ErrNotFound):
 		return apperr.New(apperr.NotFound, "That repo or worktree isn't tracked (any more).", err)
-	case errors.Is(err, worktreeenv.ErrRangeFull):
-		return apperr.New(apperr.Conflict, "No free ports are left in the configured range. Widen the range in the settings.", err)
 	case errors.Is(err, worktreeenv.ErrConflict):
 		return apperr.New(apperr.Conflict, "This worktree's ports changed while you were working. Reload and try again.", err)
 	case errors.As(err, &ee):

@@ -65,6 +65,7 @@ Clock and attempt numbers arrive as input fields.
 | `Starting{pid known}`/`Running` | `StopRequested{c}` | | `Stopping{a, c, 1}` | `KillProcess{a}`, `ScheduleWake{KillGrace, +10 s}`, `Audit{devserver.stop}`, `Publish` |
 | `Starting{pid known}`/`Running` | `ShutdownRequested` | | `Stopping{a, AppShutdown, 1}` | `KillProcess{a}`, `ScheduleWake{KillGrace, +5 s}`, `Audit` |
 | `Stopping{a}` | `Exited{a}` | | `Stopped{UserStopped}` (Cause AppShutdown: `Stopped{Interrupted}`) | `Audit`, `Publish` |
+| `Stopping{a, c, k}` | `StopRequested` | the user presses Stop again | `Stopping{a, c, 2}` (cause unchanged) | `KillProcess{a}`, `ScheduleWake{KillGrace, +grace}` (replaces the pending one), `Audit{devserver.stop, escalated}`, `Publish` |
 | `Stopping{a, c, 1}` | `Wake{a, KillGrace}` | | `Stopping{a, c, 2}` | `KillProcess{a}`, `ScheduleWake{KillGrace, +10 s}` |
 | `Stopping{a, c, 2}` | `Wake{a, KillGrace}` | | `Failed{StopFailed}` | `Audit`, `Publish` (the job object still ends the tree when `ygg` ends) |
 | `Stopped`/`Failed`/`Orphaned` | `ShutdownRequested` | | unchanged | none |

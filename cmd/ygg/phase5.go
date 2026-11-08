@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -99,6 +101,31 @@ func (d trackedDirs) Dir(ctx context.Context, repo core.RepoID, wt core.Worktree
 	return d.WorktreeDir(ctx, repo, wt)
 }
 
+// RunDir is Dir for a folder a program is about to start in (a dev server or a
+// terminal): the leaf must not be a symlink or junction, which could point
+// outside the tracked folders (invariant 6).
+func (d trackedDirs) RunDir(ctx context.Context, repo core.RepoID, wt core.WorktreeID) (string, error) {
+	dir, err := d.Dir(ctx, repo, wt)
+	if err != nil {
+		return "", err
+	}
+	link, err := platform.IsReparsePoint(dir)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return "", errNotTracked
+	case err != nil:
+		return "", fmt.Errorf("check the folder of %s: %w", repo, err)
+	case link:
+		return "", &unsupportedPathError{plainError("This folder is a link (a symlink or junction), so Yggdrasil will not start a program in it. Track the real folder instead.")}
+	}
+	return dir, nil
+}
+
+// plainError is an error whose text is written for the user.
+type plainError string
+
+func (e plainError) Error() string { return string(e) }
+
 // unsupportedPathError wraps a platform.CheckPath refusal, whose text is
 // written for the user.
 type unsupportedPathError struct{ err error }
@@ -113,7 +140,7 @@ func (e *unsupportedPathError) UserText() string { return e.err.Error() }
 type devRepos struct{ dirs trackedDirs }
 
 func (r devRepos) Dir(ctx context.Context, t devservers.Target) (string, error) {
-	dir, err := r.dirs.Dir(ctx, t.Repo, t.Worktree)
+	dir, err := r.dirs.RunDir(ctx, t.Repo, t.Worktree)
 	return dir, devRefusal(err)
 }
 
@@ -219,6 +246,9 @@ type devServerAPI struct {
 var _ api.DevServerService = devServerAPI{}
 
 // Servers lists the servers of every tracked repo, main checkout and worktrees.
+// A detected dev command that was never started has no row; it is listed as a
+// stopped placeholder so the UI can start it (the start request names the repo,
+// worktree and command).
 func (a devServerAPI) Servers(ctx context.Context) ([]devservers.View, error) {
 	projects, err := a.store.ListProjects(ctx)
 	if err != nil {
@@ -230,12 +260,58 @@ func (a devServerAPI) Servers(ctx context.Context) ([]devservers.View, error) {
 		if err != nil {
 			return nil, fmt.Errorf("list repos of %s: %w", p.ID, err)
 		}
+		worktrees, err := a.activeWorktrees(ctx, p.ID)
+		if err != nil {
+			return nil, err
+		}
 		for _, r := range repos {
 			views, err := a.List(ctx, r.ID)
 			if err != nil {
 				return nil, fmt.Errorf("list dev servers of %s: %w", r.ID, err)
 			}
 			out = append(out, views...)
+			have := map[string]bool{}
+			for _, v := range views {
+				have[v.ID] = true
+			}
+			targets := []devservers.Target{{Repo: r.ID}}
+			for _, w := range worktrees[r.ID] {
+				targets = append(targets, devservers.Target{Repo: r.ID, Worktree: w})
+			}
+			for _, t := range targets {
+				dir, err := (trackedDirs{a.store}).Dir(ctx, t.Repo, t.Worktree)
+				if err != nil {
+					continue // not usable (moved, refused path): nothing to offer
+				}
+				steps := devSteps(dir)
+				for _, command := range slices.Sorted(maps.Keys(steps)) {
+					key := t.Key(command)
+					if !have[devservers.IDOf(key)] {
+						out = append(out, a.Placeholder(key))
+					}
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
+// activeWorktrees lists the active worktrees of a project's tasks by repo.
+func (a devServerAPI) activeWorktrees(ctx context.Context, project core.ProjectID) (map[core.RepoID][]core.WorktreeID, error) {
+	tasks, err := a.store.ListTasks(ctx, project)
+	if err != nil {
+		return nil, fmt.Errorf("list tasks of %s: %w", project, err)
+	}
+	out := map[core.RepoID][]core.WorktreeID{}
+	for _, t := range tasks {
+		wts, err := a.store.ListWorktrees(ctx, t.ID)
+		if err != nil {
+			return nil, fmt.Errorf("list worktrees of %s: %w", t.ID, err)
+		}
+		for _, w := range wts {
+			if w.Status == core.WorktreeActive {
+				out[w.RepoID] = append(out[w.RepoID], w.ID)
+			}
 		}
 	}
 	return out, nil
@@ -394,8 +470,10 @@ func (a *worktreeEnvAPI) SetRepoEnv(ctx context.Context, repo core.RepoID, in ap
 	if _, err := (trackedDirs{a.store}).RepoDir(ctx, repo); err != nil {
 		return api.RepoEnvDTO{}, envRefusal(err)
 	}
-	if in.ComposeEnabled {
-		return api.RepoEnvDTO{}, apperr.New(apperr.Unavailable, "Docker compose per worktree is not available yet.", nil)
+	// Compose is not built yet (E2). Nothing of it is stored, so a request that
+	// sets any compose field is refused, never half applied.
+	if in.ComposeEnabled || in.ComposeFile != "" {
+		return api.RepoEnvDTO{}, apperr.New(apperr.Unavailable, "Docker compose is not available yet, so its settings cannot be saved.", nil)
 	}
 	if err := a.svc.SetProfile(ctx, repo, in.ProfilePaths, in.AgentCopy); err != nil {
 		return api.RepoEnvDTO{}, envRefusal(err)
@@ -499,7 +577,7 @@ func (f terminalFolders) Resolve(ctx context.Context, t ct.Target) (ct.Folder, e
 
 // Dir re-checks that the folder is still tracked every time it is asked.
 func (f terminalFolders) Dir(ctx context.Context, folder ct.Folder) (string, error) {
-	dir, err := f.dirs.Dir(ctx, folder.Repo, folder.Worktree)
+	dir, err := f.dirs.RunDir(ctx, folder.Repo, folder.Worktree)
 	var up *unsupportedPathError
 	if errors.Is(err, errNotTracked) || errors.As(err, &up) {
 		return "", terminal.ErrNotTracked
@@ -549,6 +627,9 @@ func newTerminal(cfg config, store *db.Store, red safety.Redactor, log *slog.Log
 	return svc, nil
 }
 
+// terminalCloseTimeout bounds the wait for terminal sessions at shutdown.
+const terminalCloseTimeout = 10 * time.Second
+
 // closePhase5 stops the dev servers and the terminal sessions. It runs before
 // the store closes.
 func (a *app) closePhase5() {
@@ -557,7 +638,10 @@ func (a *app) closePhase5() {
 		a.devservers.Close(ctx)
 	}
 	if a.terminal != nil {
-		if err := a.terminal.Close(ctx); err != nil {
+		// A shell that will not end must not hold up the shutdown for good.
+		tctx, cancel := context.WithTimeout(ctx, terminalCloseTimeout)
+		defer cancel()
+		if err := a.terminal.Close(tctx); err != nil {
 			a.log.Warn("could not close the terminals cleanly", "err", err)
 		}
 	}

@@ -211,7 +211,7 @@ func TestPlaceholdersAreExpandedInsideTheBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.waitStatus("failed") // the fake script exits at once
-	lines, _ := r.svc.Logs(r.target, "dev", -1)
+	lines := logTexts(r.svc, r.target, -1)
 	if !slices.Contains(lines, "Local: http://localhost:20002") {
 		t.Errorf("log = %v", lines)
 	}
@@ -329,7 +329,7 @@ func TestEarlyExitFailsAndIsNeverRestarted(t *testing.T) {
 	if n := len(r.fake.Started()); n != 1 {
 		t.Errorf("started %d times, want 1 (no automatic restart)", n)
 	}
-	lines, _ := r.svc.Logs(r.target, "dev", 50)
+	lines := logTexts(r.svc, r.target, 50)
 	if !slices.Contains(lines, "Error: port in use") {
 		t.Errorf("log = %v", lines)
 	}
@@ -439,10 +439,10 @@ func TestLogsAreRedactedInRingFileAndHub(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.waitStatus("failed")
-	lines, _ := r.svc.Logs(r.target, "dev", -1)
+	lines := logTexts(r.svc, r.target, -1)
 	all := strings.Join(lines, "\n")
 	for _, l := range r.hub.LinesOf(v.ID) {
-		all += "\n" + l
+		all += "\n" + l.Line
 	}
 	data, err := os.ReadFile(filepath.Join(r.dataDir, "logs", "devservers", v.ID+".log"))
 	if err != nil {
@@ -610,4 +610,13 @@ func TestEveryTargetHasItsOwnPortBlock(t *testing.T) {
 	if !slices.Contains(a, "PORT=20000") || !slices.Contains(b, "PORT=20020") {
 		t.Errorf("ports not distinct: %v / %v", a, b)
 	}
+}
+
+func logTexts(svc *devservers.Service, t devservers.Target, n int) []string {
+	ls, _ := svc.Logs(t, "dev", n)
+	out := make([]string, len(ls))
+	for i, l := range ls {
+		out[i] = l.Line
+	}
+	return out
 }

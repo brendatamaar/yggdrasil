@@ -400,7 +400,7 @@ func (b *Blocks) BlockFor(_ context.Context, t devservers.Target) (core.PortBloc
 type Hub struct {
 	mu      sync.Mutex
 	Servers []devservers.View
-	Lines   map[string][]string
+	Lines   map[string][]devservers.LogLine
 }
 
 // PublishServer implements devservers.Publisher.
@@ -411,11 +411,11 @@ func (h *Hub) PublishServer(_ string, v devservers.View) {
 }
 
 // PublishLog implements devservers.Publisher.
-func (h *Hub) PublishLog(id, line string) {
+func (h *Hub) PublishLog(id string, line devservers.LogLine) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.Lines == nil {
-		h.Lines = map[string][]string{}
+		h.Lines = map[string][]devservers.LogLine{}
 	}
 	h.Lines[id] = append(h.Lines[id], line)
 }
@@ -434,7 +434,7 @@ func (h *Hub) Statuses() []string {
 var _ devservers.Publisher = (*Hub)(nil)
 
 // LinesOf returns the log lines published for a server.
-func (h *Hub) LinesOf(id string) []string {
+func (h *Hub) LinesOf(id string) []devservers.LogLine {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return slices.Clone(h.Lines[id])

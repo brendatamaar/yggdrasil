@@ -2,6 +2,7 @@ package devservers_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -70,13 +71,17 @@ func TestWakesOnRealClock(t *testing.T) {
 }
 
 func TestMemorySinkContract(t *testing.T) {
-	devserverstest.LogSinkContract(t, func(t *testing.T, size int, r devservers.Redact, p func(string)) devservers.LogSink {
-		return devservers.NewMemorySink(r, size, p)
+	devserverstest.LogSinkContract(t, func(t *testing.T, size int, r devservers.Redact, p func(devservers.LogLine)) devservers.LogSink {
+		s, err := devservers.NewMemorySink(r, size, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
 	})
 }
 
 func TestFileSinkContract(t *testing.T) {
-	devserverstest.LogSinkContract(t, func(t *testing.T, size int, r devservers.Redact, p func(string)) devservers.LogSink {
+	devserverstest.LogSinkContract(t, func(t *testing.T, size int, r devservers.Redact, p func(devservers.LogLine)) devservers.LogSink {
 		s, err := devservers.NewFileSink(filepath.Join(t.TempDir(), "my logs"), "dsv_a", r, size, 0, p)
 		if err != nil {
 			t.Fatal(err)
@@ -100,5 +105,35 @@ func TestSQLiteStoreRedactsAuditEntries(t *testing.T) {
 	rows, err := store.ListAudit(ctx, "devserver:dsv_a", 10)
 	if err != nil || len(rows) != 1 || strings.Contains(string(rows[0].Detail), "ghp_") {
 		t.Fatalf("rows = %+v, %v", rows, err)
+	}
+}
+
+func TestLogSeqContract(t *testing.T) {
+	t.Run("memory", func(t *testing.T) {
+		devserverstest.LogSeqContract(t, func(t *testing.T, size int, r devservers.Redact, p func(devservers.LogLine)) devservers.LogSink {
+			s, err := devservers.NewMemorySink(r, size, p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return s
+		})
+	})
+	t.Run("file", func(t *testing.T) {
+		devserverstest.LogSeqContract(t, func(t *testing.T, size int, r devservers.Redact, p func(devservers.LogLine)) devservers.LogSink {
+			s, err := devservers.NewFileSink(t.TempDir(), "dsv_a", r, size, 0, p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return s
+		})
+	})
+}
+
+func TestSinksRequireARedactor(t *testing.T) {
+	if _, err := devservers.NewMemorySink(nil, 5, nil); !errors.Is(err, devservers.ErrNoRedactor) {
+		t.Errorf("memory sink without a redactor: %v", err)
+	}
+	if _, err := devservers.NewFileSink(t.TempDir(), "dsv_a", nil, 5, 0, nil); !errors.Is(err, devservers.ErrNoRedactor) {
+		t.Errorf("file sink without a redactor: %v", err)
 	}
 }

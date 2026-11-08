@@ -44,7 +44,9 @@ type BlockSource interface {
 // is the hub's problem, not the service's.
 type Publisher interface {
 	PublishServer(id string, view View)
-	PublishLog(id string, line string)
+	// PublishLog carries the line with the number the log gave it (LogLine.Seq):
+	// the same number the tail returns.
+	PublishLog(id string, line LogLine)
 }
 
 // Orphans are the orphan functions of internal/platform with the data

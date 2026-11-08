@@ -108,8 +108,15 @@ func TestPhase5ServicesAreWired(t *testing.T) {
 	base := r.base
 
 	var list api.DevServersResponse
-	if code := getJSON(t, base+"/api/devservers", &list); code != 200 || len(list.Servers) != 0 {
+	// Nothing was started, but the detected dev command of the repo and of its
+	// worktree is offered as a stopped placeholder.
+	if code := getJSON(t, base+"/api/devservers", &list); code != 200 || len(list.Servers) != 2 {
 		t.Fatalf("GET /api/devservers = %d %+v", code, list)
+	}
+	for _, d := range list.Servers {
+		if d.Status != api.DevServerStopped || d.Command != "dev" {
+			t.Fatalf("placeholder = %+v", d)
+		}
 	}
 
 	var tok api.TerminalTokenResponse
@@ -187,7 +194,7 @@ func TestPhase5DevServerStartStopIsAudited(t *testing.T) {
 		t.Fatalf("started = %+v, want one process in the worktree", specs)
 	}
 	var list api.DevServersResponse
-	if code := getJSON(t, r.base+"/api/devservers", &list); code != 200 || len(list.Servers) != 1 || list.Servers[0].ID != core.DevServerID(id) {
+	if code := getJSON(t, r.base+"/api/devservers", &list); code != 200 || len(list.Servers) != 2 || !listsServer(list, core.DevServerID(id), api.DevServerStarting) {
 		t.Fatalf("list = %d %+v", code, list)
 	}
 	if code, data = apiDo(t, http.MethodPost, r.base+"/api/devservers/"+id+"/stop", body, appClient); code != 200 {
@@ -324,4 +331,13 @@ func TestCommandKey(t *testing.T) {
 			t.Errorf("commandKey(%q) = %q, want %q", in, got, want)
 		}
 	}
+}
+
+func listsServer(l api.DevServersResponse, id core.DevServerID, status api.DevServerStatus) bool {
+	for _, d := range l.Servers {
+		if d.ID == id {
+			return d.Status == status || status == api.DevServerStarting && d.Status == api.DevServerRunning
+		}
+	}
+	return false
 }

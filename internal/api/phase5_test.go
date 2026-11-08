@@ -36,7 +36,7 @@ type fakeDev struct {
 	views []devservers.View
 	err   error
 	calls []string
-	logs  []string
+	logs  []devservers.LogLine
 }
 
 func (f *fakeDev) rec(op string, t devservers.Target, c string) {
@@ -67,7 +67,18 @@ func (f *fakeDev) Restart(_ context.Context, t devservers.Target, c string) (dev
 	return f.view(t, c, "stopping"), f.err
 }
 
-func (f *fakeDev) Logs(t devservers.Target, c string, n int) ([]string, error) {
+func (f *fakeDev) ByID(_ context.Context, id string) (devservers.View, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, v := range f.views {
+		if v.ID == id {
+			return v, nil
+		}
+	}
+	return devservers.View{}, apperr.New(apperr.NotFound, "That dev server doesn't exist (any more).", nil)
+}
+
+func (f *fakeDev) Logs(t devservers.Target, c string, n int) ([]devservers.LogLine, error) {
 	f.rec(fmt.Sprintf("logs%d", n), t, c)
 	return f.logs, f.err
 }
@@ -195,13 +206,13 @@ func TestDevServerUnknownAndMalformedIDs(t *testing.T) {
 }
 
 func TestDevServerLogTail(t *testing.T) {
-	f := &fakeDev{logs: []string{"a", "b"}}
+	f := &fakeDev{logs: []devservers.LogLine{{Seq: 7, Stream: devservers.StreamStdout, Line: "a"}, {Seq: 8, Stream: devservers.StreamStderr, Line: "b"}}}
 	v := f.view(devservers.Target{Repo: "repo_a"}, "dev", "running")
 	f.views = []devservers.View{v}
 	e := devEnv(t, f)
 	resp, data := e.do(t, "GET", "/api/devservers/"+v.ID+"/log?tail=50", nil)
 	var out DevServerLogResponse
-	if resp.StatusCode != 200 || json.Unmarshal(data, &out) != nil || len(out.Lines) != 2 || out.Lines[1].Line != "b" || out.Lines[1].Seq != 2 || string(out.Lines[0].ID) != v.ID {
+	if resp.StatusCode != 200 || json.Unmarshal(data, &out) != nil || len(out.Lines) != 2 || out.Lines[1].Line != "b" || out.Lines[1].Seq != 8 || out.Lines[1].Stream != "stderr" || out.Lines[0].Seq != 7 || string(out.Lines[0].ID) != v.ID {
 		t.Fatalf("log = %d %s", resp.StatusCode, data)
 	}
 	if f.calls[len(f.calls)-1] != "logs50 repo_a//dev" {
@@ -228,7 +239,7 @@ func TestDevServerPublishes(t *testing.T) {
 	subscribe(t, c, TopicDevServerPrefix+v.ID)
 	time.Sleep(150 * time.Millisecond) // subscriptions have no ack
 	e.srv.PublishServer(v.ID, v)
-	e.srv.PublishLog(v.ID, "ready on :3000")
+	e.srv.PublishLog(v.ID, devservers.LogLine{Seq: 1, Stream: devservers.StreamStdout, Line: "ready on :3000"})
 	got := map[string]string{}
 	for i := 0; i < 3; i++ {
 		m, err := readMsg(t, c, 3*time.Second)
@@ -352,7 +363,7 @@ func TestWorktreeEnvEndpointsAndErrorMapping(t *testing.T) {
 		err    error
 		status int
 	}{
-		{worktreeenv.ErrNotFound, 404}, {worktreeenv.ErrRangeFull, 409}, {worktreeenv.ErrConflict, 409},
+		{worktreeenv.ErrNotFound, 404}, {worktreeenv.ErrConflict, 409},
 		{&worktreeenv.Error{Msg: "Use a port range", Err: errors.New("x")}, 400},
 		{apperr.New(apperr.Unavailable, "later", nil), 503},
 		{errors.New("boom"), 500},
@@ -593,11 +604,12 @@ func TestTerminalSocketNeedsTheSessionAndASingleUseToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	closeBody(resp)
-	defer c.CloseNow()                                     //nolint:errcheck // test cleanup
-	for _, bad := range []string{tok, "", "not-a-token"} { // reused, empty, malformed
+	defer c.CloseNow() //nolint:errcheck // test cleanup
+	// reused: 410, empty: 400 (no token at all), unknown or malformed: 410
+	for bad, want := range map[string]int{tok: 410, "": 400, "not-a-token": 410} {
 		_, resp, err = te.dialTerm(bad)
-		if err == nil || resp == nil || resp.StatusCode != 400 {
-			t.Fatalf("token %q: %v %v", bad, err, resp)
+		if err == nil || resp == nil || resp.StatusCode != want {
+			t.Fatalf("token %q: %v %v, want %d", bad, err, resp, want)
 		}
 		var b ErrorBody
 		_ = json.NewDecoder(resp.Body).Decode(&b)

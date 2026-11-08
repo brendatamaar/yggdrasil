@@ -23,23 +23,48 @@ const (
 	MaxLineBytes = 8 << 10
 )
 
+// Stream says where a log line came from.
+type Stream string
+
+// The closed set of Stream values. StreamSystem marks lines Yggdrasil wrote
+// itself (the start marker, a warning about the log file).
+const (
+	StreamStdout Stream = "stdout"
+	StreamStderr Stream = "stderr"
+	StreamSystem Stream = "system"
+)
+
+// LogLine is one redacted log line. Seq is the one line number of a server:
+// the sink assigns it, starting at 1 and never reusing one, and both the tail
+// and the live publish carry the same value. A client merges the two by
+// replacing on Seq and sorting by it.
+type LogLine struct {
+	Seq    uint64
+	Stream Stream
+	Line   string
+}
+
 // LogSink receives the output lines of one server. Lines are redacted before
 // they are stored or published. Write after Close does nothing.
 type LogSink interface {
-	Write(line string)
+	Write(stream Stream, line string)
 	// Tail returns the last n lines (all if fewer), oldest first.
-	Tail(n int) []string
+	Tail(n int) []LogLine
 	Close() error
 }
 
 // Redact masks secrets in a line (safety.Redactor.Redact).
 type Redact func(string) string
 
+// ErrNoRedactor is returned when a sink is made without a redactor: a log
+// that cannot redact must not exist (invariant 4).
+var ErrNoRedactor = errors.New("devservers: a log sink needs a redactor")
+
 // sinkParts wires a sink; file may be nil.
 type sinkParts struct {
 	redact  Redact
 	size    int
-	publish func(line string)
+	publish func(LogLine)
 	file    *rotatingFile
 }
 
@@ -48,24 +73,32 @@ type logSink struct {
 	mu      sync.Mutex
 	closed  bool
 	redact  Redact
-	ring    []string
+	ring    []LogLine
 	start   int
 	n       int
-	publish func(string)
+	seq     uint64
+	publish func(LogLine)
 	file    *rotatingFile
 }
 
 // NewMemorySink returns a LogSink that keeps the last size lines in memory
-// and publishes each (redacted) line. publish may be nil.
-func NewMemorySink(redact Redact, size int, publish func(line string)) LogSink {
-	return newSink(sinkParts{redact: redact, size: size, publish: publish})
+// and publishes each (redacted) line. publish may be nil. redact must not be
+// nil.
+func NewMemorySink(redact Redact, size int, publish func(LogLine)) (LogSink, error) {
+	if redact == nil {
+		return nil, ErrNoRedactor
+	}
+	return newSink(sinkParts{redact: redact, size: size, publish: publish}), nil
 }
 
 // NewFileSink is NewMemorySink plus a log file in dir named id.log. The file
 // rotates at maxBytes and keeps LogFilesKept files (id.log, id.log.1, ...).
 // A disk error stops the file, adds one warning line to the ring, and the
 // ring keeps working.
-func NewFileSink(dir, id string, redact Redact, size int, maxBytes int64, publish func(line string)) (LogSink, error) {
+func NewFileSink(dir, id string, redact Redact, size int, maxBytes int64, publish func(LogLine)) (LogSink, error) {
+	if redact == nil {
+		return nil, ErrNoRedactor
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create log folder: %w", err)
 	}
@@ -77,16 +110,13 @@ func NewFileSink(dir, id string, redact Redact, size int, maxBytes int64, publis
 }
 
 func newSink(p sinkParts) *logSink {
-	if p.redact == nil {
-		p.redact = func(s string) string { return s }
-	}
 	if p.size < 1 {
 		p.size = RingLines
 	}
-	return &logSink{redact: p.redact, ring: make([]string, p.size), publish: p.publish, file: p.file}
+	return &logSink{redact: p.redact, ring: make([]LogLine, p.size), publish: p.publish, file: p.file}
 }
 
-func (l *logSink) Write(line string) {
+func (l *logSink) Write(stream Stream, line string) {
 	// Redact the whole line first, then cut it: cutting first could split a
 	// secret in two halves that no pattern matches.
 	line = l.redact(strings.TrimRight(line, "\r\n"))
@@ -98,37 +128,42 @@ func (l *logSink) Write(line string) {
 		l.mu.Unlock()
 		return
 	}
-	l.push(line)
+	out := []LogLine{l.push(stream, line)}
 	if l.file != nil {
 		if err := l.file.write(line); err != nil {
 			l.file = nil
-			l.push("[the log file stopped because of a disk error; recent lines stay here]")
+			out = append(out, l.push(StreamSystem, "[the log file stopped because of a disk error; recent lines stay here]"))
 		}
 	}
 	pub := l.publish
 	l.mu.Unlock()
 	if pub != nil {
-		pub(line)
+		for _, ln := range out {
+			pub(ln)
+		}
 	}
 }
 
-func (l *logSink) push(line string) {
+func (l *logSink) push(stream Stream, line string) LogLine {
+	l.seq++
+	ln := LogLine{Seq: l.seq, Stream: stream, Line: line}
 	if l.n < len(l.ring) {
-		l.ring[(l.start+l.n)%len(l.ring)] = line
+		l.ring[(l.start+l.n)%len(l.ring)] = ln
 		l.n++
-		return
+		return ln
 	}
-	l.ring[l.start] = line
+	l.ring[l.start] = ln
 	l.start = (l.start + 1) % len(l.ring)
+	return ln
 }
 
-func (l *logSink) Tail(n int) []string {
+func (l *logSink) Tail(n int) []LogLine {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if n < 0 || n > l.n {
 		n = l.n
 	}
-	out := make([]string, 0, n)
+	out := make([]LogLine, 0, n)
 	for i := l.n - n; i < l.n; i++ {
 		out = append(out, l.ring[(l.start+i)%len(l.ring)])
 	}
