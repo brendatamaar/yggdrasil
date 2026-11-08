@@ -30,6 +30,8 @@ type config struct {
 	// writeModes allows task modes other than Ask (YGG_WRITE_MODES). Off by
 	// default.
 	writeModes bool
+	// phase5 swaps the platform process functions in tests only.
+	phase5 *phase5Hooks
 	// noSession switches the per-launch UI session off (YGG_INSECURE_NO_SESSION=1,
 	// for task dev behind the Vite proxy). It is never honoured while
 	// writeModes is on: noSessionRefused says the user asked and was refused.

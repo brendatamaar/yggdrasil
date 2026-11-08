@@ -63,11 +63,14 @@ func holderString(h mainlock.Holder) string { return string(h.Owner.Kind) + ":" 
 // newTasks builds the tasks service. lock is the one main-checkout lock that
 // builds and git actions share. hub is bound to the server after the
 // server exists.
-func newTasks(store *db.Store, adapters adapterRegistry, g *git.Git, hub *api.HubAdapter, redactor safety.Redactor, lock *mainlock.Registry, dataDir string, writeModes bool, pending func(context.Context, core.TaskID) (int, error), mcp tasks.MCPSessions, log *slog.Logger) (*tasks.Service, error) {
+func newTasks(store *db.Store, adapters adapterRegistry, g *git.Git, hub *api.HubAdapter, redactor safety.Redactor, lock *mainlock.Registry, dataDir string, writeModes bool, pending func(context.Context, core.TaskID) (int, error), mcp tasks.MCPSessions, prep worktrees.Preparer, log *slog.Logger) (*tasks.Service, error) {
 	now := func() time.Time { return time.Now().UTC() }
+	// Tasks call Ensure, which prepares with TriggerAgentTask: a port block,
+	// and a profile copy only if the repo allows it for agent tasks (WE-01).
 	ens, err := worktrees.New(worktrees.Config{
 		Git: g, Store: worktrees.DBStore{S: store}, Rand: tasks.Rand{},
 		Now: now, NewID: db.NewID, DataDir: filepath.Join(dataDir, "wt"),
+		Prepare: prep, Logger: log,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("prepare worktrees: %w", err)
