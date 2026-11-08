@@ -172,6 +172,13 @@ func buildShopInventory(b *builder) {
 		f("src/inventory/reserve.py", "def reserve(available: int, wanted: int) -> int:\n    return min(available, wanted)\n"))
 	b.push("main")
 
+	// Second venv state: a branch whose uv.lock and dependencies differ from
+	// main, so a venv built on main is stale on this branch.
+	b.branch("chore/bump-deps", "main")
+	b.commit("chore/bump-deps", dana, "build: add httpx and refresh uv.lock",
+		f("pyproject.toml", "[project]\nname = \"shop-inventory\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\ndependencies = [\"fastapi>=0.110\", \"httpx>=0.27\"]\n\n[dependency-groups]\ndev = [\"pytest>=8\"]\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n"),
+		f("uv.lock", "version = 1\nrequires-python = \">=3.11\"\n\n[[package]]\nname = \"shop-inventory\"\nversion = \"0.1.0\"\nsource = { editable = \".\" }\ndependencies = [\n    { name = \"httpx\" },\n]\n"))
+
 	b.branch("feature/low-stock-alert", "main")
 	b.commit("feature/low-stock-alert", ada, "feat(stock): lower the low-stock threshold",
 		f(stockPath, stockTheirs))

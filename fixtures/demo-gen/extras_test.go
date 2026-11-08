@@ -99,6 +99,9 @@ func TestGenerate_ToolchainManifests(t *testing.T) {
 		"shop-gateway":   {"settings.gradle.kts", "build.gradle.kts", "gradlew", "gradlew.bat", "gradle.lockfile", "gradle/wrapper/gradle-wrapper.properties"},
 		"shop-payments":  {"go.mod"},
 		"shop-inventory": {"pyproject.toml", "uv.lock"},
+		"shop-ledger":    {"ShopLedger.sln", "src/Ledger/Ledger.csproj", "tests/Ledger.Tests/Ledger.Tests.csproj"},
+		"shop-api-dev":   {"go.mod", "main.go"},
+		"shop-web-dev":   {"package.json", "package-lock.json", "server.js"},
 	}
 	for repo, files := range want {
 		for _, name := range files {
