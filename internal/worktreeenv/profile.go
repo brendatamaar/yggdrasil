@@ -26,7 +26,7 @@ func (s *Service) CopyProfile(ctx context.Context, w core.Worktree, trigger env.
 		return nil
 	}
 	var repoDir string
-	if !(trigger == env.TriggerAgentTask && !settings.AgentCopy) {
+	if trigger != env.TriggerAgentTask || settings.AgentCopy {
 		repoDir, err = s.c.RepoDir(ctx, w.RepoID)
 		if err != nil {
 			return fmt.Errorf("find repo %s: %w", w.RepoID, err)
@@ -53,7 +53,7 @@ func (s *Service) CopyProfile(ctx context.Context, w core.Worktree, trigger env.
 			if err := s.c.FS.CopyExclusive(ctx, repoDir, w.Path, v.Entry, env.MaxFileBytes); err != nil {
 				in = env.FileCopyFailed{Entry: v.Entry, Reason: copyFailure(err)}
 			} else {
-				in = env.FileCopied{Entry: v.Entry}
+				in = env.FileCopied(v)
 			}
 		case env.ProfileAudit:
 			if err := s.auditProfile(ctx, v); err != nil {

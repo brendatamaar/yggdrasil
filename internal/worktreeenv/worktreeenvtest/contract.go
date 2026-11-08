@@ -112,7 +112,7 @@ func StoreContract(t *testing.T, mk func(t *testing.T) StoreEnv) {
 			t.Fatal(err)
 		}
 		got, err = e.Settings.RepoEnv(ctx, e.Repo)
-		if err != nil || got.AgentCopy != true || !slices.Equal(got.Profile, want.Profile) {
+		if err != nil || !got.AgentCopy || !slices.Equal(got.Profile, want.Profile) {
 			t.Fatalf("round trip: %+v %v", got, err)
 		}
 		if n := e.Audits("repo:" + string(e.Repo)); n != 1 {

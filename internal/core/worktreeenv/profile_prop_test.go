@@ -97,7 +97,7 @@ func drive(t *testing.T, r *rand.Rand, check func(step int, before, after Job, i
 				if r.Intn(5) == 0 {
 					queue = append(queue, FileCopyFailed{Entry: v.Entry, Reason: "locked"})
 				} else {
-					queue = append(queue, FileCopied{Entry: v.Entry})
+					queue = append(queue, FileCopied(v))
 				}
 			}
 		}

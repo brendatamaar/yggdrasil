@@ -130,7 +130,7 @@ func (OSFileSystem) CopyExclusive(ctx context.Context, srcRoot, dstRoot string, 
 	if err := makeParents(dstRoot, rel); err != nil {
 		return err
 	}
-	in, err := os.Open(srcPath)
+	in, err := os.Open(srcPath) //nolint:gosec // srcPath is rel validated by RelPath.Validate and walked with Lstat
 	if err != nil {
 		return fmt.Errorf("open profile file: %w", err)
 	}
@@ -144,7 +144,7 @@ func (OSFileSystem) CopyExclusive(ctx context.Context, srcRoot, dstRoot string, 
 	}
 	// O_EXCL: an existing file, a link or a file made by a racing writer fails
 	// with "exists" and is never overwritten.
-	out, err := os.OpenFile(dstPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	out, err := os.OpenFile(dstPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // dstPath is rel validated by RelPath.Validate; parents checked by makeParents
 	if err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return ErrDestExists
