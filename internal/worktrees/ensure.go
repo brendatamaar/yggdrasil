@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,11 +64,17 @@ type Config struct {
 	NewID   func(prefix string) string
 	DataDir string
 	// Prepare, when set, is called once for every worktree created by Ensure
-	// (not for ones that already existed), after it is recorded. A failure
-	// never fails Ensure: the worktree works without it.
+	// (not for ones that already existed), inline right after the worktree is
+	// recorded: Ensure waits for it, so it must stay quick (a port block and a
+	// few small files). A failure never fails Ensure: the worktree works
+	// without it.
 	Prepare Preparer
-	// OnPrepareError, when set, receives the failure of Prepare.
+	// OnPrepareError, when set, receives the failure of Prepare. When nil the
+	// failure is logged as a warning (Logger) with the worktree and repo IDs
+	// and the plain-language message only, never paths.
 	OnPrepareError func(w core.Worktree, err error)
+	// Logger receives that warning. Default: slog.Default().
+	Logger *slog.Logger
 }
 
 // Ensurer creates worktrees.
@@ -231,8 +238,8 @@ func (x *exec) run(c cw.Command) cw.Input {
 			return cw.RecordFailed{Seq: v.Seq}
 		}
 		if e.c.Prepare != nil {
-			if err := e.c.Prepare.Prepare(x.ctx, v.Worktree, x.trigger); err != nil && e.c.OnPrepareError != nil {
-				e.c.OnPrepareError(v.Worktree, err)
+			if err := e.c.Prepare.Prepare(x.ctx, v.Worktree, x.trigger); err != nil {
+				e.prepareFailed(v.Worktree, err)
 			}
 		}
 		return cw.Recorded{Seq: v.Seq}
@@ -315,4 +322,23 @@ func (e *Ensurer) taken(ctx context.Context, repo string, name Name, dir string)
 		return false, err
 	}
 	return local || remote, nil
+}
+
+// prepareFailed reports a failed Prepare. It never fails Ensure.
+func (e *Ensurer) prepareFailed(w core.Worktree, err error) {
+	if e.c.OnPrepareError != nil {
+		e.c.OnPrepareError(w, err)
+		return
+	}
+	lg := e.c.Logger
+	if lg == nil {
+		lg = slog.Default()
+	}
+	// The error text can hold file names; log only a message made for users.
+	msg := "setting up the worktree (ports, profile files) failed"
+	var ue interface{ UserMessage() string }
+	if errors.As(err, &ue) {
+		msg = ue.UserMessage()
+	}
+	lg.Warn("worktree setup failed; the worktree works without it", "worktree", w.ID, "repo", w.RepoID, "reason", msg)
 }

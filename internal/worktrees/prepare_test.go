@@ -1,9 +1,12 @@
 package worktrees_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,5 +69,30 @@ func TestPrepareFailureDoesNotFailEnsure(t *testing.T) {
 	}
 	if !errors.Is(reported, boom) {
 		t.Fatalf("reported %v", reported)
+	}
+}
+
+type userErr struct{}
+
+func (userErr) Error() string       { return "open /home/someone/secret-folder/.env: denied" }
+func (userErr) UserMessage() string { return "Could not copy profile files." }
+
+func TestPrepareFailureIsLoggedByDefault(t *testing.T) {
+	var buf bytes.Buffer
+	e, err := worktrees.New(worktrees.Config{
+		Git: worktreestest.NewGit(), Store: worktreestest.NewStore(), Rand: &worktreestest.Rand{}, Now: time.Now, NewID: newID,
+		DataDir: filepath.Join(t.TempDir(), "data"), Prepare: &recordingPreparer{err: userErr{}},
+		Logger: slog.New(slog.NewTextHandler(&buf, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repos := []worktrees.RepoRef{{ID: "rep_1", Path: filepath.Join(t.TempDir(), "shop-api"), DefaultBranch: "main"}}
+	if _, err := e.Ensure(context.Background(), "tsk_1", repos); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "Could not copy profile files.") || strings.Contains(out, "secret-folder") {
+		t.Fatalf("log = %q", out)
 	}
 }

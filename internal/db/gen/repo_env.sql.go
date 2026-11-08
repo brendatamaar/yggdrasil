@@ -28,6 +28,33 @@ func (q *Queries) GetRepoEnvSettings(ctx context.Context, repoID string) (RepoEn
 	return i, err
 }
 
+const upsertRepoEnvProfile = `-- name: UpsertRepoEnvProfile :exec
+INSERT INTO repo_env_settings (repo_id, profile_paths, agent_copy, updated_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT (repo_id) DO UPDATE SET
+    profile_paths = excluded.profile_paths,
+    agent_copy = excluded.agent_copy,
+    updated_at = excluded.updated_at
+`
+
+type UpsertRepoEnvProfileParams struct {
+	RepoID       string
+	ProfilePaths string
+	AgentCopy    int64
+	UpdatedAt    string
+}
+
+// Writes only the profile columns; the compose columns of an existing row are not touched.
+func (q *Queries) UpsertRepoEnvProfile(ctx context.Context, arg UpsertRepoEnvProfileParams) error {
+	_, err := q.db.ExecContext(ctx, upsertRepoEnvProfile,
+		arg.RepoID,
+		arg.ProfilePaths,
+		arg.AgentCopy,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
 const upsertRepoEnvSettings = `-- name: UpsertRepoEnvSettings :exec
 INSERT INTO repo_env_settings (repo_id, profile_paths, agent_copy, compose_enabled, compose_file,
                                compose_confirmed_hash, updated_at)

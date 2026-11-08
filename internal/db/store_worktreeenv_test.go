@@ -116,3 +116,42 @@ func TestRepoEnvSettings(t *testing.T) {
 		t.Fatalf("empty profile not stored: %+v", got)
 	}
 }
+
+func TestPutRepoEnvProfileKeepsComposeColumns(t *testing.T) {
+	ctx := context.Background()
+	s := NewStore(openTest(t), nil)
+	_, r := seed(t, s)
+	commit := func(fn func(tx *Tx) error) error {
+		return s.Commit(ctx, func(tx *Tx) error {
+			if err := fn(tx); err != nil {
+				return err
+			}
+			return tx.AppendAudit(ctx, bsAudit(NewID("aud"), r.ID))
+		})
+	}
+	// no row yet: the upsert creates it with the defaults for the rest
+	if err := commit(func(tx *Tx) error { return tx.PutRepoEnvProfile(ctx, r.ID, []string{".env"}, true, bsNow) }); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.GetRepoEnvSettings(ctx, r.ID)
+	if !got.AgentCopy || got.ComposeEnabled || got.ComposeFile != "" || len(got.ProfilePaths) != 1 {
+		t.Fatalf("created row: %+v", got)
+	}
+	full := RepoEnvRecord{Repo: r.ID, ProfilePaths: []string{"a"}, ComposeEnabled: true, ComposeFile: "compose.yml",
+		ComposeConfirmedHash: "abc", UpdatedAt: bsNow}
+	if err := commit(func(tx *Tx) error { return tx.PutRepoEnvSettings(ctx, full) }); err != nil {
+		t.Fatal(err)
+	}
+	if err := commit(func(tx *Tx) error { return tx.PutRepoEnvProfile(ctx, r.ID, []string{"b", "c"}, false, bsNow) }); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.GetRepoEnvSettings(ctx, r.ID)
+	if !got.ComposeEnabled || got.ComposeFile != "compose.yml" || got.ComposeConfirmedHash != "abc" ||
+		got.AgentCopy || len(got.ProfilePaths) != 2 {
+		t.Fatalf("profile write changed compose columns: %+v", got)
+	}
+	err := commit(func(tx *Tx) error { return tx.PutRepoEnvProfile(ctx, "rep_unknown", nil, false, bsNow) })
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown repo: %v", err)
+	}
+}
