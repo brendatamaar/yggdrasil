@@ -35,7 +35,11 @@ func (s *Server) handleGetBoard(w http.ResponseWriter, r *http.Request) {
 		s.serviceErr(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, boardResponse(view))
+	out := boardResponse(view)
+	for i := range out.Cards {
+		out.Cards[i].Verification = s.verificationSummary(r.Context(), out.Cards[i].TaskID)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // boardResponse maps the read model to its DTO. Drafts are left out by the

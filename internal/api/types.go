@@ -15,10 +15,13 @@ import (
 type ErrorCode string
 
 const (
-	ErrBadRequest   ErrorCode = "bad_request"
-	ErrNotFound     ErrorCode = "not_found"
-	ErrForbidden    ErrorCode = "forbidden"
-	ErrConflict     ErrorCode = "conflict"
+	ErrBadRequest ErrorCode = "bad_request"
+	ErrNotFound   ErrorCode = "not_found"
+	ErrForbidden  ErrorCode = "forbidden"
+	ErrConflict   ErrorCode = "conflict"
+	// ErrNeedsOptIn (HTTP 409): the task's mode needs the opt-in and the request
+	// did not carry it. The UI shows the warning and sends again with optIn.
+	ErrNeedsOptIn   ErrorCode = "needs_opt_in"
 	ErrUnavailable  ErrorCode = "unavailable"
 	ErrInternal     ErrorCode = "internal"
 	ErrHostRejected ErrorCode = "host_rejected"
@@ -141,6 +144,9 @@ type TaskResponse struct {
 	// Warning is "edits_main_checkout" or "edits_all_repos" when the task edits
 	// main checkouts; empty otherwise.
 	Warning string `json:"warning,omitempty"`
+	// Verification is the worst verification state over the task's repos. It
+	// stays absent until verification is wired (Phase 4).
+	Verification *VerificationSummaryDTO `json:"verification,omitempty"`
 }
 
 // TaskEventsResponse is the body of GET /api/tasks/{id}/events: the events

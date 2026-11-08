@@ -37,7 +37,7 @@
   4. Dev-server `Step`s carry no port information. Frameworks differ on how a port is set (`PORT` env, `--port`, `ASPNETCORE_URLS`, `--server.port`).
   5. No store for port blocks, bootstrap profiles or compose opt-in; `Ensurer` has no hook for copying files into a new worktree.
   6. Demo project has **no .NET repo**, and no small servers that honour a port variable, so the side-by-side exit test has nothing to run.
-  7. Migrations on disk: `00001`, `00002`, `00004` (no `00003`). The new one is `00005`; confirm goose accepts the gap before relying on it.
+  7. Migrations on disk: `00001`, `00002`, `00004` (no `00003`). Phase 4 added a Go migration `00005` (verify/review/landing), so the Phase 5 migration is `00006_devservers_env.sql`.
   8. DV-03 orphan listing (non-Windows) has no platform support. Windows relies on the job object; a "kill ygg leaves nothing" test exists only for builds, not for long-lived servers.
   9. `.functional-effect.json` shell globs did not list the four new packages (decision 7 fixes this).
 - **Environment risk carried from Phase 4:** `go-backend` subagent spawns failed with ~135 stale agent worktrees; `git worktree list` now shows 148. See decision 8.
@@ -58,7 +58,7 @@ Each is a pure-core design first (`/functional-effect:design`), approved by the 
 |---|---|---|
 | F1 | Design docs (service profile): devservers (lifecycle Starting → Running{ports} → Stopping → Stopped / Failed / Orphaned; port detection as input events; no automatic restart; cleanup at shutdown), terminal (token: Issued → Redeemed / Expired; session: Opening → Open → Closed), worktree-env (port-block allocation, bootstrap profile copy plan, compose lifecycle). Each lists failure classes, boundary parsers and capabilities with fakes. | 3 design docs, linked below |
 | F2 | Core types and `step` signatures: `internal/core/devservers`, `internal/core/terminal`, `internal/core/worktreeenv` (state, input, command, `step`; stub returning state unchanged), plus ID types in `internal/core/ids.go`. | pure packages, archtest-clean |
-| F3 | Migration `00005_devservers_env.sql` (`dev_servers`, `worktree_ports`, `repo_env_settings`: profile paths, agent-copy toggle, compose opt-in; terminal sessions audit rows only), sqlc queries, `task generate`. | migration + generated code |
+| F3 | Migration `00006_devservers_env.sql` (`dev_servers`, `worktree_ports`, `repo_env_settings`: profile paths, agent-copy toggle, compose opt-in; terminal sessions audit rows only), sqlc queries, `task generate`. | migration + generated code |
 | F4 | API contracts: DTOs in `internal/api/types_devservers.go`, `types_terminal.go`, `types_worktreeenv.go`, closed topics above (`topic.go`), tygo output; `platform` interface additions (signatures + stubs in `platformtest`): `Resolve` venv rule, `PythonBase()`, `ListOrphans`/`StopOrphan`. | types + generated TS |
 
 Design docs:
@@ -153,6 +153,7 @@ Other PLAN.md checkboxes: Python bootstrap (T1, T2), dev servers (D, A, UI), ter
 ## Log
 
 - 2026-11-08: the three designs approved with all recommendations (compose file hash-confirm, containers outlive `ygg`, same trust gate for dev servers, no block for main checkouts, token bound to folder + Host/Origin, port probe on allocation, terminal limits 4/8).
-- F2 `98aff37` core types and `Step` stubs (`core/devservers`, `core/terminal`, `core/worktreeenv`; `core.PortBlock`, `DevServerID`, `TerminalSessionID`). F3 `ea2b8e3` migration 00005 + queries + sqlc (goose accepts the 00003 SQL gap: 00003 is a Go migration). F4 `1d3c64a` DTOs, topics (`devservers`, `devserver:<id>`, `worktreeenv`), tygo output, `platform/orphans.go` stubs (`RecordProcess`, `ForgetProcess`, `ListOrphans`, `StopOrphan`, `PythonBase`; return `ErrNotImplemented` until T2).
-- `TestMigration00003RerunIsSafe` now expects version 5.
+- F2 `98aff37` core types and `Step` stubs (`core/devservers`, `core/terminal`, `core/worktreeenv`; `core.PortBlock`, `DevServerID`, `TerminalSessionID`). F3 `ea2b8e3` migration (first numbered 00005, renumbered 00006 after merging Phase 4, which owns 00005) + queries + sqlc. F4 `1d3c64a` DTOs, topics (`devservers`, `devserver:<id>`, `worktreeenv`), tygo output, `platform/orphans.go` stubs (`RecordProcess`, `ForgetProcess`, `ListOrphans`, `StopOrphan`, `PythonBase`; return `ErrNotImplemented` until T2).
+- `TestMigration00003RerunIsSafe` now expects version 6.
+- The local checkout lacked Phase 4 (it was only on origin): fetched and merged `origin/main` (`0edb96c`) into local `main` with a merge commit, conflicts in `topic.go` (topics merged), generated files (regenerated) and the migration test (Phase 4's `migrate00005_test.go` kept, ours renamed `migrate00006_test.go`). T1 had stopped for lack of `Step.Env`/`Commands.Bootstrap`; it is re-briefed after the merge.
 - Checks run on this Linux box: `go vet ./...`, golangci-lint on core/api/platform/db (0 issues), tests for api, archtest, db, platform, core. Pre-existing and unrelated: `api.TestJoinInside` fails on Linux (a `C:/x` path case); `db.TestListActiveTaskStates` is order-flaky (equal timestamps, random IDs). `pnpm` is not installed here, so `task typecheck` and `task test:web` could not run; the generated TS is committed unchecked and the frontend task must run them.

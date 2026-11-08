@@ -21,6 +21,7 @@ type Command struct {
 // Config is the parsed custom-commands setting of a repo.
 type Config struct {
 	Install   []Command `json:"install,omitempty"`
+	Bootstrap []Command `json:"bootstrap,omitempty"`
 	Verify    []Command `json:"verify,omitempty"`
 	FullTests []Command `json:"fullTests,omitempty"`
 	Build     []Command `json:"build,omitempty"`
@@ -37,7 +38,7 @@ func New(cfg Config) (Toolchain, error) {
 	groups := []struct {
 		name string
 		cmds []Command
-	}{{"install", cfg.Install}, {"verify", cfg.Verify}, {"full tests", cfg.FullTests},
+	}{{"install", cfg.Install}, {"bootstrap", cfg.Bootstrap}, {"verify", cfg.Verify}, {"full tests", cfg.FullTests},
 		{"build", cfg.Build}, {"dev server", cfg.DevServer}}
 	for _, g := range groups {
 		for i, c := range g.cmds {
@@ -79,7 +80,7 @@ func steps(cs []Command) []builds.Step {
 
 // Commands implements builds.Toolchain.
 func (t Toolchain) Commands(builds.Detection) builds.Commands {
-	return builds.Commands{Install: steps(t.cfg.Install), Verify: steps(t.cfg.Verify),
+	return builds.Commands{Install: steps(t.cfg.Install), Bootstrap: steps(t.cfg.Bootstrap), Verify: steps(t.cfg.Verify),
 		FullTests: steps(t.cfg.FullTests), Build: steps(t.cfg.Build), DevServer: steps(t.cfg.DevServer)}
 }
 

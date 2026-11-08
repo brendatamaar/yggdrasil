@@ -109,6 +109,39 @@ func (a DeleteFiles) Validate() error {
 	return validatePaths(a.Paths)
 }
 
+func (a MergeLocal) Validate() error {
+	m, ok := a.Where.(MainCheckout)
+	if !ok {
+		return invalid("a local merge acts in the main checkout of a repo")
+	}
+	if m.Repo.Validate() != nil {
+		return invalid("the repo id is not valid")
+	}
+	if a.Worktree.Validate() != nil {
+		return invalid("the worktree id is not valid")
+	}
+	if err := CheckBranch(a.Branch); err != nil {
+		return err
+	}
+	if err := CheckBranch(a.TargetBranch); err != nil {
+		return err
+	}
+	if err := checkTitle(a.Title); err != nil {
+		return err
+	}
+	if n := len(a.ExpectBranchHead); (n != 40 && n != 64) || !isHex(a.ExpectBranchHead) {
+		return invalid("expect_branch_head must be a full lowercase hex commit ID")
+	}
+	return nil
+}
+
+func (a RemoveWorktree) Validate() error {
+	if a.Worktree.Validate() != nil {
+		return invalid("the worktree id is not valid")
+	}
+	return nil
+}
+
 func (a Install) Validate() error {
 	if a.Repo.Validate() != nil {
 		return invalid("the repo id is not valid")

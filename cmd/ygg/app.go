@@ -19,6 +19,7 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/api"
 	"github.com/brendatamaar/yggdrasil/internal/builds"
 	"github.com/brendatamaar/yggdrasil/internal/builds/toolchains"
+	"github.com/brendatamaar/yggdrasil/internal/changesets"
 	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/git"
 	"github.com/brendatamaar/yggdrasil/internal/hosts"
@@ -29,6 +30,7 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/repos"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 	"github.com/brendatamaar/yggdrasil/internal/tasks"
+	"github.com/brendatamaar/yggdrasil/internal/verify"
 )
 
 // app is the running Yggdrasil: the database, the audit log, the agents and
@@ -58,6 +60,12 @@ type app struct {
 	proposals *proposals.Service
 	// mcp serves /mcp and issues per-run tokens.
 	mcp *mcpService
+	// verify runs automatic verification (VF-01); changesets runs change sets
+	// and review notes; fanout hands proposal changes to changesets. All three
+	// run in the errgroup of run, so they stop before the store closes.
+	verify     *verify.Service
+	changesets *changesets.Service
+	fanout     *proposalFanout
 }
 
 // newLogger writes redacted text logs: no token reaches a log (invariant 4).
@@ -113,7 +121,7 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	adapters := adapterRegistry{
 		// The demo agent replays a recorded session with nested sub-agents. It
 		// starts no process and reads nothing, so it is always on.
-		"mock":        mock.New(mock.Options{Fixture: "subagents", Delay: cfg.mockDelay}),
+		"mock":        mock.New(mock.Options{Fixture: "subagents", Delay: cfg.mockDelay, Enforcement: cfg.mockEnforcement}),
 		"claude-code": claudecode.New(claudecode.Options{HookExecutable: self, TempDir: runs}),
 	}
 
@@ -140,11 +148,13 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	// One main-checkout lock for tasks, builds and git actions (AG-11).
 	checkoutLock := &mainlock.Registry{}
 	buildsPub := &lateBuildsPublisher{}
+	// A finished build also wakes the verify loop (VF-01).
+	wake := &wakeOnBuild{next: buildsPub}
 	buildSvc, err := builds.NewService(builds.Deps{
 		Store: builds.NewSQLiteStore(store), Start: platform.Start,
 		Locator: buildLocator{store}, Env: safety.NewEnvBuilder(),
 		Toolchains: toolchains.All(), DataDir: cfg.dataDir,
-		Redactor: redactor, Publisher: buildsPub, Status: status, Log: log,
+		Redactor: redactor, Publisher: wake, Status: status, Log: log,
 		MainLock: checkoutLock,
 	})
 	if err != nil {
@@ -182,7 +192,9 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	}
 
 	propHub := &api.ProposalsHub{}
-	propSvc, err := newProposals(store, g, checkoutLock, buildSvc, hostSvc, propHub, redactor)
+	fanout := newProposalFanout(propHub, log.Warn)
+	live := &liveProbe{store: store, builds: buildSvc}
+	propSvc, err := newProposals(store, g, checkoutLock, buildSvc, hostSvc, fanout, live, cfg.dataDir, redactor)
 	if err != nil {
 		_ = d.Close()
 		return nil, err
@@ -200,6 +212,24 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		return nil, err
 	}
 
+	verifyHub := &lateVerifyHub{}
+	verifySvc, err := newVerifyService(store, buildSvc, taskSvc, g, redactor, verifyHub)
+	if err != nil {
+		_ = d.Close()
+		return nil, err
+	}
+	csHub := &lateChangeSetHub{}
+	csSvc, err := newChangeSetsService(store, propSvc, taskSvc, g, redactor, csHub, log)
+	if err != nil {
+		_ = d.Close()
+		return nil, err
+	}
+	// Everything that needs the verify and change-set services is bound
+	// before run starts any goroutine.
+	wake.svc.Store(verifySvc)
+	live.verify.Store(verifySvc)
+	fanout.svc.Store(csSvc)
+
 	if cfg.noSession {
 		log.Warn("the UI session is switched off (YGG_INSECURE_NO_SESSION): any program on this computer can use the API; use this only for task dev")
 	}
@@ -208,7 +238,7 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	}
 	srv, err := api.New(api.Deps{
 		InsecureNoSession: cfg.noSession,
-		Store:             store, Log: log, Tasks: taskSvc, Worktrees: api.NewWorktreeService(store), WriteModes: cfg.writeModes,
+		Store:             store, Log: log, Tasks: taskSvc, Worktrees: api.NewWorktreeServiceWithGit(store, g), WriteModes: cfg.writeModes,
 		Redactor: redactor, Version: version, Assets: assets,
 		Tracking: tracking, Status: status, RepoDetail: repos.NewDetailService(store, g),
 		Builds: buildSvc, Hosts: hostSvc, Search: searchSvc,
@@ -229,7 +259,21 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	batchPub.srv = srv
 	taskHub.Bind(srv)
 	propHub.Bind(srv)
-	return &app{cfg: cfg, log: log, db: d, store: store, srv: srv, status: status, builds: buildSvc, hosts: hostSvc, actions: actions, feeder: feeder, tasks: taskSvc, proposals: propSvc, mcp: mcpSvc}, nil
+	verifyHub.Set(srv)
+	csHub.Set(srv)
+	names := repoNamer(store)
+	srv.SetPhase4Services(api.Phase4Services{
+		Verification: api.NewVerificationService(verifySvc, names),
+		Review:       api.NewReviewService(csSvc, store),
+		ChangeSets:   api.NewChangeSetService(csSvc, names),
+		Landing:      api.NewLandingService(store, g, propSvc),
+		WorktreeDiff: api.NewWorktreeDiffer(store, g),
+	})
+	return &app{
+		cfg: cfg, log: log, db: d, store: store, srv: srv, status: status, builds: buildSvc, hosts: hostSvc, actions: actions,
+		feeder: feeder, tasks: taskSvc, proposals: propSvc, mcp: mcpSvc,
+		verify: verifySvc, changesets: csSvc, fanout: fanout,
+	}, nil
 }
 
 // run serves on ln until ctx is cancelled. On the way out the server stops
@@ -258,6 +302,9 @@ func (a *app) run(ctx context.Context, ln net.Listener) error {
 	// stops them after the server is done.
 	group.Go(func() error { return a.hosts.Start(gctx) })
 	group.Go(func() error { return a.feeder.run(gctx) })
+	startVerify(group, gctx, a.verify)
+	startChangeSets(group, gctx, a.changesets)
+	group.Go(func() error { return a.fanout.run(gctx) })
 	group.Go(func() error { return a.srv.Run(gctx, ln) })
 	serveErr := group.Wait()
 	a.proposals.Close()

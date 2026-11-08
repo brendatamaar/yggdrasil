@@ -181,7 +181,7 @@ Each gets: round trip (`ParseTemplate(Format(t)) == t`, `ServerFromRow(RowOf(s))
 
 ## Persistence
 
-Migration `00005` (F3) `dev_servers(id, repo_id, worktree_id nullable, command_key, status, attempt, pid, ports json, announced json, block_base, block_size, last_kind, last_code, since, version)` with a unique key on `(repo_id, worktree_id, command_key)`. State changes commit with their audit entry in one transaction. Logs are files under the data dir (rotated at 5 MiB, 3 kept) plus an in-memory ring (1000 lines); neither is in SQLite.
+Migration `00006` (F3) `dev_servers(id, repo_id, worktree_id nullable, command_key, status, attempt, pid, ports json, announced json, block_base, block_size, last_kind, last_code, since, version)` with a unique key on `(repo_id, worktree_id, command_key)`. State changes commit with their audit entry in one transaction. Logs are files under the data dir (rotated at 5 MiB, 3 kept) plus an in-memory ring (1000 lines); neither is in SQLite.
 
 ## Open questions
 

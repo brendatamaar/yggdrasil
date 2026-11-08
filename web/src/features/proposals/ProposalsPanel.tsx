@@ -152,7 +152,8 @@ function ProposalRow({
         {p.fromAgent ? <span className="text-xs text-muted">Proposed by an agent</span> : null}
       </div>
       {p.summary ? <p className="whitespace-pre-wrap">{p.summary}</p> : null}
-      {v.note ? <p className="text-muted">{v.note}</p> : null}
+      {v.note ? <p className="whitespace-pre-wrap text-muted">{v.note}</p> : null}
+      {p.result?.note ? <p className="whitespace-pre-wrap text-muted">{p.result.note}</p> : null}
       {p.result?.mrUrl ? <p className="text-muted">Merge request created.</p> : null}
       {v.actions.length > 0 ? (
         <div className="flex gap-2">

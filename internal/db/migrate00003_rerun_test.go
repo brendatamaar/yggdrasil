@@ -25,8 +25,8 @@ func TestMigration00003RerunIsSafe(t *testing.T) {
 		t.Fatalf("rerun of 00003: %v", err)
 	}
 	v, err := m.GetDBVersion(ctx)
-	if err != nil || v != 5 {
-		t.Fatalf("version = %d, %v; want 5", v, err)
+	if err != nil || v != 6 {
+		t.Fatalf("version = %d, %v; want 6", v, err)
 	}
 	if _, err := NewStore(d, nil).GetWorkspace(ctx); err != nil {
 		t.Errorf("workspace after the rerun: %v", err)

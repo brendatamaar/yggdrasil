@@ -106,6 +106,10 @@ func (s *Service) reconcile(ctx context.Context, p coreprop.Proposal) (coreprop.
 			moved = append(moved, coreprop.RelPath(dest))
 		}
 		return coreprop.ReconcileDone, coreprop.Result{MovedPaths: moved, Note: "Moved the files into " + toDeleteDir + ". Nothing was deleted."}
+	case coreprop.MergeLocal:
+		return s.reconcileMerge(ctx, p, a)
+	case coreprop.RemoveWorktree:
+		return s.reconcileRemove(ctx, p, a)
 	}
 	return unknown() // Install: the build may or may not have run
 }

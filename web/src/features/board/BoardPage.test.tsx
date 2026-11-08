@@ -136,3 +136,25 @@ describe("Agent board", () => {
     expect(document.querySelector("b")).toBeNull();
   });
 });
+
+describe("verification badge on the card", () => {
+  const cases: [string, string][] = [
+    ["passed", "Passed"],
+    ["failed", "Failed"],
+    ["verifying", "Verifying"],
+    ["cancelled", "Cancelled"],
+  ];
+  it.each(cases)("shows %s", async (state, label) => {
+    renderBoard(
+      serve(() => board([card("1", "Fix cart total", { verification: { state, total: 2, passed: 1, failed: 1, running: 0 } })])),
+    );
+    const badge = await screen.findByLabelText(`Verification: ${state}`);
+    expect(badge.textContent).toBe(label);
+  });
+
+  it("shows nothing when verification is absent or none", async () => {
+    renderBoard(serve(() => board([card("1", "A"), card("2", "B", { verification: { state: "none", total: 0, passed: 0, failed: 0, running: 0 } })])));
+    await screen.findByText("A");
+    expect(screen.queryByLabelText(/^Verification:/)).toBeNull();
+  });
+});

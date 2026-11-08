@@ -71,6 +71,11 @@ export const ErrBadRequest: ErrorCode = "bad_request";
 export const ErrNotFound: ErrorCode = "not_found";
 export const ErrForbidden: ErrorCode = "forbidden";
 export const ErrConflict: ErrorCode = "conflict";
+/**
+ * ErrNeedsOptIn (HTTP 409): the task's mode needs the opt-in and the request
+ * did not carry it. The UI shows the warning and sends again with optIn.
+ */
+export const ErrNeedsOptIn: ErrorCode = "needs_opt_in";
 export const ErrUnavailable: ErrorCode = "unavailable";
 export const ErrInternal: ErrorCode = "internal";
 export const ErrHostRejected: ErrorCode = "host_rejected";
@@ -220,6 +225,11 @@ export interface TaskResponse {
    * main checkouts; empty otherwise.
    */
   warning?: string;
+  /**
+   * Verification is the worst verification state over the task's repos. It
+   * stays absent until verification is wired (Phase 4).
+   */
+  verification?: VerificationSummaryDTO;
 }
 /**
  * TaskEventsResponse is the body of GET /api/tasks/{id}/events: the events
@@ -411,6 +421,11 @@ export interface BoardCardDTO {
   needsYouReason?: string;
   usage: UsageDTO;
   updatedAt: string;
+  /**
+   * Verification is the worst verification state over the task's repos. It
+   * stays absent until verification is wired (Phase 4).
+   */
+  verification?: VerificationSummaryDTO;
 }
 /**
  * RoomHintDTO suggests raising maxAgents; RaiseTo is 0 when there is no
@@ -615,6 +630,167 @@ export interface BuildLogMessage {
   step: number /* int */;
   attempt: number /* int */;
   line: string;
+}
+
+//////////
+// source: types_changesets.go
+
+/**
+ * TopicChangeSets carries ChangeSetChangedMessage: a change set changed state,
+ * order or run, or the review notes of its task changed.
+ */
+export const TopicChangeSets = "changesets";
+/**
+ * ChangeSetChangedMessage is the data of a message on TopicChangeSets. Kind is
+ * "changeset" or "notes". It holds no text of a note (docs/AGENTS.md 5.9).
+ */
+export interface ChangeSetChangedMessage {
+  changeSetId?: core.ChangeSetID;
+  taskId: core.TaskID;
+  kind: string;
+}
+/**
+ * The values of ChangeSetDTO.State.
+ */
+export const ChangeSetStateOpen = "open";
+/**
+ * The values of ChangeSetDTO.State.
+ */
+export const ChangeSetStateConfirming = "confirming";
+/**
+ * The values of ChangeSetDTO.State.
+ */
+export const ChangeSetStateShipped = "shipped";
+/**
+ * The values of ChangeSetDTO.State.
+ */
+export const ChangeSetStateClosed = "closed";
+/**
+ * The values of ChangeSetDTO.Run.State.
+ */
+export const RunStateIdle = "idle";
+/**
+ * The values of ChangeSetDTO.Run.State.
+ */
+export const RunStateHalted = "halted";
+/**
+ * The values of ChangeSetDTO.Run.State.
+ */
+export const RunStateCompleted = "completed";
+/**
+ * The only value of WarningDTO.Code at v0.5.
+ */
+export const WarningDependentBeforeDependency = "dependent_before_dependency";
+/**
+ * ScopeDTO says which proposals a run covers: Kind "all", or "repo" with RepoID.
+ */
+export interface ScopeDTO {
+  kind: string;
+  repoId?: core.RepoID;
+}
+/**
+ * ChangeSetMemberDTO is one proposal of the set. Hash is what a confirm run
+ * must send back in Seen.
+ */
+export interface ChangeSetMemberDTO {
+  proposalId: core.ProposalID;
+  repoId: core.RepoID;
+  kind: core.ProposalKind;
+  status: core.ProposalStatus;
+  hash: string;
+}
+/**
+ * ChangeSetRepoDTO is a repo of the set, for display.
+ */
+export interface ChangeSetRepoDTO {
+  repoId: core.RepoID;
+  name: string;
+}
+/**
+ * MRLinkDTO is a merge request created by an executed member. URL is only set
+ * for a URL that passed the safe-URL check.
+ */
+export interface MRLinkDTO {
+  repoId: core.RepoID;
+  url: string;
+}
+/**
+ * WarningDTO is an advisory finding of the preflight. It never blocks; the
+ * user acknowledges it by Code. Message is plain words.
+ */
+export interface WarningDTO {
+  code: string;
+  dependent?: core.RepoID;
+  dependency?: core.RepoID;
+  message: string;
+}
+/**
+ * RunDTO is how the last confirm run ended. At and Reason are set when it
+ * halted.
+ */
+export interface RunDTO {
+  state: string;
+  at?: core.ProposalID;
+  reason?: string;
+}
+/**
+ * ConfirmingDTO is set while a run is in progress.
+ */
+export interface ConfirmingDTO {
+  scope: ScopeDTO;
+  current: core.ProposalID;
+  remaining: number /* int */;
+}
+/**
+ * ChangeSetDTO is a change set with its members, merge order, links and
+ * warnings. SuggestedOrder follows the repos' dependencies; Cycle lists repos
+ * in a dependency cycle (the suggestion then keeps the task's order). Landing
+ * kinds (merge_local, remove_worktree) appear as members but are never part of
+ * a run.
+ */
+export interface ChangeSetDTO {
+  id: core.ChangeSetID;
+  taskId: core.TaskID;
+  status: any /* core.ChangeSetStatus */;
+  state: string;
+  repos: ChangeSetRepoDTO[];
+  order: core.RepoID[];
+  suggestedOrder: core.RepoID[];
+  cycle?: core.RepoID[];
+  members: ChangeSetMemberDTO[];
+  links: MRLinkDTO[];
+  run: RunDTO;
+  confirming?: ConfirmingDTO;
+  warnings: WarningDTO[];
+}
+/**
+ * SetOrderRequest is the body of PUT /api/changesets/{id}/order: a permutation
+ * of the set's repos.
+ */
+export interface SetOrderRequest {
+  order: core.RepoID[];
+}
+/**
+ * PreflightRequest is the body of POST /api/changesets/{id}/preflight.
+ */
+export interface PreflightRequest {
+  scope: ScopeDTO;
+}
+/**
+ * PreflightResponse lists the warnings a run of Scope would raise.
+ */
+export interface PreflightResponse {
+  warnings: WarningDTO[];
+}
+/**
+ * ConfirmRunRequest is the body of POST /api/changesets/{id}/confirm. Seen maps
+ * each proposal ID of the run to the hash the user saw; Ack lists the warning
+ * codes the user acknowledged.
+ */
+export interface ConfirmRunRequest {
+  scope: ScopeDTO;
+  seen: { [key: string]: string};
+  ack?: string[];
 }
 
 //////////
@@ -1007,6 +1183,19 @@ export interface RefreshHostsRequest {
 export interface HostsChangedMessage {
   repo?: core.RepoID;
   instance?: string;
+}
+
+//////////
+// source: types_landing.go
+
+/**
+ * MergeLocalRequest is the body of POST /api/worktrees/{id}/merge-local. The
+ * repo, branch, target branch and branch tip come from the worktree and the
+ * main checkout, never from the client. Title is the merge commit's subject; it
+ * defaults to the task title.
+ */
+export interface MergeLocalRequest {
+  title?: string;
 }
 
 //////////
@@ -1458,6 +1647,119 @@ export interface BranchesResponse {
 }
 
 //////////
+// source: types_review.go
+
+/**
+ * The values of ReviewNoteDTO.State.
+ */
+export const NoteOpen = "open";
+/**
+ * The values of ReviewNoteDTO.State.
+ */
+export const NoteSending = "sending";
+/**
+ * The values of ReviewNoteDTO.State.
+ */
+export const NoteSent = "sent";
+/**
+ * The values of ReviewNoteDTO.State.
+ */
+export const NoteOutdated = "outdated";
+/**
+ * ReviewNoteDTO is one note anchored to a line of a repo's diff. Path is
+ * repo-relative with forward slashes. Side is "old" or "new". Text is plain
+ * text: the UI must not render it as markup.
+ */
+export interface ReviewNoteDTO {
+  id: string;
+  taskId: core.TaskID;
+  repoId: core.RepoID;
+  path: string;
+  line: number /* int */;
+  side: string;
+  text: string;
+  state: string;
+  createdAt: string;
+}
+/**
+ * ReviewNotesResponse is the body of GET /api/tasks/{id}/notes.
+ */
+export interface ReviewNotesResponse {
+  notes: ReviewNoteDTO[];
+}
+/**
+ * CreateNoteRequest is the body of POST /api/tasks/{id}/notes. DiffHash is the
+ * checksum of that file's diff as the client saw it (64 hex).
+ */
+export interface CreateNoteRequest {
+  repoId: core.RepoID;
+  path: string;
+  line: number /* int */;
+  side: string;
+  text: string;
+  diffHash: string;
+}
+/**
+ * EditNoteRequest is the body of PUT /api/notes/{id}.
+ */
+export interface EditNoteRequest {
+  text: string;
+}
+/**
+ * SendNotesRequest is the body of POST /api/tasks/{id}/notes/send.
+ */
+export interface SendNotesRequest {
+  ids: string[];
+  /**
+   * OptIn is the person's confirmation of the project-mode warning, given at
+   * the click. Absent means false.
+   */
+  optIn?: boolean;
+}
+/**
+ * SendNotesResponse is the body of a successful send: the notes now belong to
+ * TurnID. When the agent is busy the answer is a 409 and the notes stay open.
+ */
+export interface SendNotesResponse {
+  turnId: string;
+  notes: ReviewNoteDTO[];
+}
+/**
+ * WorktreeDiffFileDTO is one changed file of a task's repo. Hash is the
+ * lowercase hex SHA-256 of the file's patch (what a note's diffHash must
+ * equal); for a binary file, a cut patch or an omitted one it never equals a
+ * client's hash of the text, so notes must not anchor there. Status is "A",
+ * "M" or "D".
+ */
+export interface WorktreeDiffFileDTO {
+  path: string;
+  status: string;
+  binary: boolean;
+  added: number /* int */;
+  deleted: number /* int */;
+  eolOnly: boolean;
+  hash: string;
+  patchTruncated: boolean;
+  /**
+   * Omitted: the patch is not in Text because the response hit its size cap.
+   */
+  omitted?: boolean;
+}
+/**
+ * WorktreeDiffDTO is the body of GET /api/tasks/{id}/repos/{repo}/diff: the
+ * unified diff of the repo's worktree against its base (commits, uncommitted
+ * changes and untracked files together). Text is the patches of Files in path
+ * order. Truncated is set when a patch was cut, files were left out or the
+ * size cap was hit. Binary is set when any file is binary.
+ */
+export interface WorktreeDiffDTO {
+  text: string;
+  truncated: boolean;
+  binary: boolean;
+  files: WorktreeDiffFileDTO[];
+}
+
+//////////
 // source: types_search.go
 
 /**
@@ -1569,6 +1871,132 @@ export interface TrustRequest {
 }
 
 //////////
+// source: types_verify.go
+
+/**
+ * TopicVerifications carries VerificationChangedMessage: a verification of any
+ * task changed state. The client refetches the task's verifications.
+ */
+export const TopicVerifications = "verifications";
+/**
+ * VerificationChangedMessage is the data of a message on TopicVerifications.
+ * It holds no log, path or command (docs/AGENTS.md 5.9).
+ */
+export interface VerificationChangedMessage {
+  verificationId: string;
+  taskId: core.TaskID;
+  repoId: core.RepoID;
+  state: string;
+}
+/**
+ * The values of VerificationDTO.State and VerificationSummaryDTO.State.
+ */
+export const VerifyNone = "none";
+/**
+ * The values of VerificationDTO.State and VerificationSummaryDTO.State.
+ */
+export const VerifySkipped = "skipped";
+/**
+ * The values of VerificationDTO.State and VerificationSummaryDTO.State.
+ */
+export const VerifyUnverifiable = "unverifiable";
+/**
+ * The values of VerificationDTO.State and VerificationSummaryDTO.State.
+ */
+export const VerifyBootstrapping = "bootstrapping";
+/**
+ * The values of VerificationDTO.State and VerificationSummaryDTO.State.
+ */
+export const VerifyVerifying = "verifying";
+/**
+ * The values of VerificationDTO.State and VerificationSummaryDTO.State.
+ */
+export const VerifyPassed = "passed";
+/**
+ * The values of VerificationDTO.State and VerificationSummaryDTO.State.
+ */
+export const VerifyFailed = "failed";
+/**
+ * The values of VerificationDTO.State and VerificationSummaryDTO.State.
+ */
+export const VerifyInterrupted = "interrupted";
+/**
+ * The values of VerificationDTO.State and VerificationSummaryDTO.State.
+ */
+export const VerifyCancelled = "cancelled";
+/**
+ * VerificationDTO is the verification of one repo of a task. State is one of
+ * the Verify* values. Reason is the skip reason, unverifiable reason or cancel
+ * cause in plain words, by state. Stage ("bootstrap" or "verify") and
+ * FailedStep (the step name) are set on a failed or interrupted verification;
+ * ExitCode only when a step ran and exited non-zero. BuildID joins the log in
+ * the Builds page. CanSendFailure is true when "Send failure to agent" is
+ * offered.
+ */
+export interface VerificationDTO {
+  id: string;
+  taskId: core.TaskID;
+  repoId: core.RepoID;
+  repoName?: string;
+  worktreeId: string;
+  state: string;
+  turn?: string;
+  attempt?: number /* int */;
+  reason?: string;
+  stage?: string;
+  failedStep?: string;
+  exitCode?: number /* int */;
+  message?: string;
+  buildId?: core.BuildID;
+  since?: string;
+  at?: string;
+  canSendFailure?: boolean;
+  /**
+   * CancelCause is set on a cancelled verification: "user", "external" or
+   * "not_trusted" (the repo stopped being trusted while it ran).
+   */
+  cancelCause?: string;
+}
+/**
+ * VerificationsResponse is the body of GET /api/tasks/{id}/verifications and
+ * POST /api/tasks/{id}/verify/retry.
+ */
+export interface VerificationsResponse {
+  verifications: VerificationDTO[];
+  summary: VerificationSummaryDTO;
+}
+/**
+ * VerificationSummaryDTO is the worst state over a task's repos (Failed >
+ * Interrupted > Unverifiable > Cancelled > running > Passed > Skipped > None),
+ * with counts. It is derived, never stored. The board card and the task view
+ * carry it as an optional field that stays absent until verification is wired.
+ */
+export interface VerificationSummaryDTO {
+  state: string;
+  total: number /* int */;
+  passed: number /* int */;
+  failed: number /* int */;
+  running: number /* int */;
+}
+/**
+ * SendFailureResponse is the body of POST /api/verifications/{id}/send-failure:
+ * the failure was sent to the agent as a new message and TurnID is its turn.
+ */
+export interface SendFailureResponse {
+  taskId: core.TaskID;
+  turnId: string;
+}
+/**
+ * SendFailureRequest is the optional body of
+ * POST /api/verifications/{id}/send-failure. OptIn is the person's
+ * confirmation of the project-mode warning, given at the click; absent or an
+ * empty body means false.
+ */
+export interface SendFailureRequest {
+  optIn?: boolean;
+}
+
+//////////
 // source: types_worktreeenv.go
 
 /**
@@ -1667,6 +2095,16 @@ export interface WorktreeDTO {
   baseCommit: string;
   path?: string;
   status: core.WorktreeStatus;
+  /**
+   * TargetBranch is the branch the main checkout has checked out now: what a
+   * merge of this worktree would go into. Omitted when unknown.
+   */
+  targetBranch?: string;
+  /**
+   * Clean is true when the worktree has no uncommitted or untracked files.
+   * Omitted when unknown or when the folder is gone.
+   */
+  clean?: boolean;
   createdAt: string;
 }
 /**

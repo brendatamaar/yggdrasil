@@ -43,7 +43,7 @@ func allReposTrusted(views []TrustView) bool {
 		return false
 	}
 	for _, v := range views {
-		if v != TrustNone && v != TrustTrusted {
+		if !v.Admissible() {
 			return false
 		}
 	}

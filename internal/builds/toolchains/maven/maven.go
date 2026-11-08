@@ -35,7 +35,46 @@ func (Toolchain) Detect(repo fs.FS) (builds.Detection, bool) {
 	if find.Exists(repo, find.Join(dir, "mvnw")) || find.Exists(repo, find.Join(dir, "mvnw.cmd")) {
 		runner = "mvnw"
 	}
-	return builds.Detection{Toolchain: "maven", Dir: dir, Runner: runner}, true
+	det := builds.Detection{Toolchain: "maven", Dir: dir, Runner: runner}
+	if poms := reactorPoms(repo, dir); len(poms) > 1 {
+		det.Facts = map[string]string{"poms": strings.Join(poms, "\n")}
+	}
+	return det, true
+}
+
+// reactorPoms lists the root pom and the module poms it reaches, best effort
+// (an unreadable or broken pom ends that branch), capped at maxReactor. It
+// feeds DepsFiles; Modules reports problems properly.
+func reactorPoms(repo fs.FS, root string) []string {
+	var out []string
+	seen := map[string]bool{}
+	var walk func(dir string)
+	walk = func(dir string) {
+		if seen[dir] || len(seen) >= maxReactor {
+			return
+		}
+		seen[dir] = true
+		name := find.Join(dir, "pom.xml")
+		f, err := repo.Open(name)
+		if err != nil {
+			return
+		}
+		_, mods, err := parsePOM(f)
+		_ = f.Close()
+		if err != nil {
+			return
+		}
+		out = append(out, name)
+		for _, sub := range mods {
+			sd := path.Join(dir, strings.ReplaceAll(sub, "\\", "/"))
+			if !fs.ValidPath(sd) || strings.ContainsRune(sd, '\n') || symlinkedPath(repo, sd) {
+				continue
+			}
+			walk(sd)
+		}
+	}
+	walk(path.Clean(root))
+	return out
 }
 
 func argv(d builds.Detection, args ...string) []string {
@@ -49,6 +88,14 @@ func argv(d builds.Detection, args ...string) []string {
 // Commands implements builds.Toolchain.
 func (Toolchain) Commands(d builds.Detection) builds.Commands {
 	return builds.Commands{
+		// Bootstrap: go-offline resolves every dependency and plugin the
+		// build needs and, on the first wrapper run, downloads the Maven
+		// distribution, so all of it is visible as bootstrap and not inside
+		// the verify chain. It is chosen over dependency:resolve because that
+		// goal fails in a multi-module reactor when a module needs a sibling
+		// that has not been installed; go-offline skips reactor modules.
+		// -B is batch mode and -ntp hides transfer progress.
+		Bootstrap: []builds.Step{{Name: "Download Maven and dependencies", Argv: argv(d, "-B", "-ntp", "dependency:go-offline")}},
 		Verify:    []builds.Step{{Name: "test-compile", Argv: argv(d, "-B", "test-compile")}},
 		FullTests: []builds.Step{{Name: "test", Argv: argv(d, "-B", "test")}},
 		Build:     []builds.Step{{Name: "build", Argv: argv(d, "clean", "install", "-B")}},
@@ -125,4 +172,13 @@ func symlinkedPath(repo fs.FS, dir string) bool {
 		}
 	}
 	return false
+}
+
+// DepsFiles implements builds.DepsFiler: the root pom and every module pom
+// found when the repo was detected, relative to the repo with forward slashes.
+func (Toolchain) DepsFiles(d builds.Detection) []string {
+	if p := d.Facts["poms"]; p != "" {
+		return strings.Split(p, "\n")
+	}
+	return []string{find.Join(d.Dir, "pom.xml")}
 }

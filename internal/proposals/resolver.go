@@ -36,7 +36,15 @@ func (r StoreResolver) Worktree(ctx context.Context, id core.WorktreeID) (Worktr
 	if err != nil {
 		return WorktreeInfo{}, fmt.Errorf("read worktree %s: %w", id, err)
 	}
-	return WorktreeInfo{ID: w.ID, Repo: w.RepoID, Task: w.TaskID, Path: w.Path, Branch: w.Branch}, nil
+	leaf := ""
+	if w.Status == core.WorktreeRemoving {
+		n, serr := r.Store.GetWorktreeStagedName(ctx, id)
+		if serr != nil && !errors.Is(serr, db.ErrNotFound) {
+			return WorktreeInfo{}, fmt.Errorf("read worktree %s staged name: %w", id, serr)
+		}
+		leaf = n
+	}
+	return WorktreeInfo{ID: w.ID, Repo: w.RepoID, Task: w.TaskID, Path: w.Path, Branch: w.Branch, Name: w.Name, Status: w.Status, StagedLeaf: leaf}, nil
 }
 
 // Task returns the repos of a task.

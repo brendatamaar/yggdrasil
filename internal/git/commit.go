@@ -88,6 +88,12 @@ func (g *Git) noHooks() (string, error) {
 // err is set only when git could not run or the context ended. Arguments never
 // hold a token.
 func (g *Git) exec(ctx context.Context, dir, op string, stdin io.Reader, args ...string) (stdout, stderr string, code int, err error) {
+	return g.execWith(ctx, dir, op, stdin, true, args...)
+}
+
+// execWith is exec; redactOut false leaves stdout exactly as git printed it
+// (diff text must not be altered). stderr is always redacted.
+func (g *Git) execWith(ctx context.Context, dir, op string, stdin io.Reader, redactOut bool, args ...string) (stdout, stderr string, code int, err error) {
 	argv := append([]string{g.exe}, baseConfig...)
 	argv = append(argv, args...)
 	var so, se bytes.Buffer
@@ -104,7 +110,11 @@ func (g *Git) exec(ctx context.Context, dir, op string, stdin io.Reader, args ..
 	if ctx.Err() != nil {
 		return "", "", 0, &Error{Op: op, Err: ctx.Err(), UserMsg: fmt.Sprintf("git %s was cancelled.", op)}
 	}
-	return g.redact.Redact(so.String()), strings.TrimSpace(g.redact.Redact(se.String())), code, nil
+	out := so.String()
+	if redactOut {
+		out = g.redact.Redact(out)
+	}
+	return out, strings.TrimSpace(g.redact.Redact(se.String())), code, nil
 }
 
 // execOK is exec that turns a non-zero exit into an *Error.

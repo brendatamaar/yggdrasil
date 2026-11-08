@@ -13,7 +13,8 @@ import (
 //
 // wsTopic is a WebSocket subscription topic, a closed set (tasksTopic,
 // taskTopic, reposTopic, repoTopic, buildsTopic, buildTopic, hostsTopic,
-// proposalsTopic, boardTopic, devserversTopic, devserverTopic, worktreeEnvTopic).
+// proposalsTopic, boardTopic, verificationsTopic, changeSetsTopic,
+// devserversTopic, devserverTopic, worktreeEnvTopic).
 // Outside data becomes a wsTopic only through parseTopic, so a value is
 // always valid.
 
@@ -46,11 +47,21 @@ type worktreeEnvTopic struct{} // a port block, profile copy or compose project 
 
 type boardTopic struct{} // a task moved between board columns, or maxAgents changed
 
-func (devserversTopic) isTopic()  {}
-func (devserverTopic) isTopic()   {}
-func (worktreeEnvTopic) isTopic() {}
-func (proposalsTopic) isTopic()   {}
-func (boardTopic) isTopic()       {}
+type verificationsTopic struct{} // a verification of any task changed state
+
+type changeSetsTopic struct{} // a change set or the review notes of a task changed
+
+func (verificationsTopic) isTopic() {}
+func (changeSetsTopic) isTopic()    {}
+func (devserversTopic) isTopic()    {}
+func (devserverTopic) isTopic()     {}
+func (worktreeEnvTopic) isTopic()   {}
+
+func (verificationsTopic) String() string { return TopicVerifications }
+func (changeSetsTopic) String() string    { return TopicChangeSets }
+
+func (proposalsTopic) isTopic() {}
+func (boardTopic) isTopic()     {}
 
 func (devserversTopic) String() string  { return TopicDevServers }
 func (t devserverTopic) String() string { return TopicDevServerPrefix + string(t.ID) }
@@ -77,8 +88,9 @@ func (t buildTopic) String() string {
 }
 
 // parseTopic accepts the fixed names "tasks", "repos", "builds", "hosts",
-// "proposals", "board", "devservers" and "worktreeenv",
-// and "task:<id>", "repo:<id>" and "build:<id>" and "devserver:<id>" with a valid ID.
+// "proposals", "board", "verifications", "changesets", "devservers" and
+// "worktreeenv", and "task:<id>", "repo:<id>", "build:<id>" and
+// "devserver:<id>" with a valid ID.
 func parseTopic(s string) (wsTopic, error) {
 	switch s {
 	case TopicTasks:
@@ -91,6 +103,10 @@ func parseTopic(s string) (wsTopic, error) {
 		return hostsTopic{}, nil
 	case TopicProposals:
 		return proposalsTopic{}, nil
+	case TopicVerifications:
+		return verificationsTopic{}, nil
+	case TopicChangeSets:
+		return changeSetsTopic{}, nil
 	case TopicBoard:
 		return boardTopic{}, nil
 	case TopicDevServers:

@@ -215,7 +215,7 @@ These are not style preferences. Breaking them is a bug.
 
 Yggdrasil's main promise is that it is safe to let agents work. **Never weaken these, even if a task seems to ask for it.** If a change touches this area, say so explicitly in the PR description.
 
-1. **Never implement** force push, `git reset --hard`, branch deletion, or deleting files on disk. Not behind a flag, not as an "advanced" option. (`propose_delete_files` moves files into a `_to_delete/` folder for the user; it never deletes.)
+1. **Never implement** force push, `git reset --hard`, branch deletion, or deleting files on disk. Not behind a flag, not as an "advanced" option. (`propose_delete_files` moves files into a `_to_delete/` folder for the user; it never deletes.) The one exception is removing a worktree you confirmed: `platform.RemoveStaged` deletes only the staged copy under `<worktree root>/.removing/`, after the worktree was renamed there; the branch is never deleted (docs/design/landing.md).
 2. **Every mutation of a main checkout or remote is a proposal** that requires UI confirmation: commit, push, MR, install, publish, agent-file changes, file removal.
 3. **Tokens never reach child processes.** Every spawned process uses the clean environment (see 5.3).
 4. **Tokens never appear in URLs, git config, logs or the audit log.** Use the redaction helper in `slog` handlers.

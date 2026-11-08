@@ -15,6 +15,7 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/git"
 	"github.com/brendatamaar/yggdrasil/internal/mainlock"
+	"github.com/brendatamaar/yggdrasil/internal/platform"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
 
@@ -38,6 +39,11 @@ type WorktreeInfo struct {
 	Task   core.TaskID
 	Path   string
 	Branch string
+	// Name is the worktree's folder name; Status its row status.
+	Name   string
+	Status core.WorktreeStatus
+	// StagedLeaf is the staged folder leaf a removal remembered ("" if none).
+	StagedLeaf string
 }
 
 // TaskInfo is the scope of a task.
@@ -108,6 +114,8 @@ type Config struct {
 	Lock     mainlock.MainLock
 	Builds   Builds
 	Hosts    Hosts
+	// Links reads the linked-MR facts of a change set (RV-03); nil = no links.
+	Links ChangeSetLinks
 
 	Publisher Publisher
 	Logger    *slog.Logger
@@ -120,6 +128,20 @@ type Config struct {
 	ExecTimeout time.Duration
 	// InstallTimeout bounds the wait for an install build; default 20 minutes.
 	InstallTimeout time.Duration
+
+	// Landing (merge_local and remove_worktree, RV-05, RV-06). Landing and
+	// Reader default to Git when it implements them; Platform defaults to the
+	// real one. Marks, Live and WorktreeRoot are needed to run these two kinds;
+	// without them the executors refuse and change nothing.
+	Landing      git.LandingGit
+	Reader       LandingReader
+	Platform     platform.Landing
+	Marks        WorktreeMarks
+	Live         LiveProbe
+	WorktreeRoot string
+	// StageID derives the ID of a removal's staging folder from its proposal (1-64 of
+	// [A-Za-z0-9_-]). It must be deterministic, so a retry plans the same folder; default StageIDFor.
+	StageID func(core.ProposalID) string
 }
 
 // Service creates, decides and executes proposals (RV-02, GH-03).
@@ -159,6 +181,15 @@ func New(cfg Config) (*Service, error) {
 	if _, ok := cfg.Git.(StagedReader); !ok {
 		return nil, errors.New("proposals: the git writer cannot list staged files")
 	}
+	if cfg.Landing == nil {
+		cfg.Landing, _ = cfg.Git.(git.LandingGit)
+	}
+	if cfg.Reader == nil {
+		cfg.Reader, _ = cfg.Git.(LandingReader)
+	}
+	if cfg.Platform == nil {
+		cfg.Platform = platform.RealLanding{}
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
@@ -170,6 +201,9 @@ func New(cfg Config) (*Service, error) {
 	}
 	if cfg.NewID == nil {
 		cfg.NewID = db.NewID
+	}
+	if cfg.StageID == nil {
+		cfg.StageID = StageIDFor
 	}
 	if cfg.InstallTimeout <= 0 {
 		cfg.InstallTimeout = 20 * time.Minute
@@ -387,6 +421,14 @@ func (e errRefused) Error() string { return e.r.Error() }
 func (s *Service) Create(ctx context.Context, req CreateRequest) (View, error) {
 	if req.Action == nil {
 		return View{}, refusal(coreprop.RefuseUnsupported, "")
+	}
+	if _, agent := req.Source.(coreprop.AgentSource); agent {
+		// Only a person lands or removes a worktree; MCP cannot create these
+		// either. Defence in depth (invariant 2).
+		switch req.Action.(type) {
+		case coreprop.MergeLocal, coreprop.RemoveWorktree:
+			return View{}, refusal(coreprop.RefuseUnsupported, "An agent cannot propose this. Merging and removing a worktree are started from the change set.")
+		}
 	}
 	if err := req.Task.Validate(); err != nil {
 		return View{}, refusal(coreprop.RefuseBadFacts, "The task for this proposal is not valid.")

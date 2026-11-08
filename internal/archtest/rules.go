@@ -159,6 +159,20 @@ func storeAllowed(name string) bool {
 		strings.HasPrefix(name, "Get") || strings.HasPrefix(name, "List")
 }
 
+// auditForwarders are the files that call AppendAudit without making an entry
+// themselves, so audit.Prepare does not apply to them (invariant 4):
+//   - internal/verify/store.go only forwards the call of the service, whose
+//     entries are made with audit.Prepare in service.go and actions.go;
+//   - internal/verify/verifytest/contract.go writes fixture entries to the
+//     store under test, to check that the store keeps them as given.
+//
+// Every other file stays under the rule. Production files are not exempted
+// without a reason written here.
+var auditForwarders = map[string]bool{
+	"internal/verify/store.go":               true,
+	"internal/verify/verifytest/contract.go": true,
+}
+
 // storeWrites forbids an exported write method on db.Store other than the
 // allowed set. Together with "db/gen only from db" and the unexported DB
 // pools, no package outside internal/db can write without Store.Commit.
@@ -171,6 +185,41 @@ var storeWrites = rule{name: "Store exports no un-audited write", check: func(f 
 	for _, m := range f.storeMethods {
 		if !storeAllowed(m) {
 			out = append(out, violation(f, "Store.%s is exported; writes go through Store.Commit with an audit entry (allowed: Commit, AppendTaskEvent, Get*, List*, TaskDependencies)", m))
+		}
+	}
+	return out
+}}
+
+// deleteFreeDirs are the Phase 4 surfaces (verification, landing, change sets,
+// API, MCP, wiring) where no code deletes anything. internal/proposals and
+// internal/git have their own older rule. The one deletion in the product is
+// platform.RemoveStaged, below <root>/.removing/<leaf>.
+var deleteFreeDirs = []string{"internal/verify", "internal/changesets", "internal/composer", "internal/core", "internal/api", "internal/mcp", "internal/db", "cmd/ygg"}
+
+// deleteAllowed are production files in those dirs with a documented reason
+// to remove a file of their own.
+var deleteAllowed = map[string]bool{
+	"cmd/ygg/doctor.go":                true, // removes the doctor's own empty probe file
+	"internal/core/guard/integrity.go": true, // the deny list: names these commands to refuse them
+	"internal/core/guard/rule.go":      true,
+}
+
+// phase4NoDelete is invariant 1 for the Phase 4 surface: no os.Remove-family
+// call, no rm/rmdir/del command, no git clean/reset --hard/branch -D/worktree remove.
+var phase4NoDelete = rule{name: "phase 4 code never deletes", check: func(f file) []string {
+	if f.test || !inDir(f, deleteFreeDirs...) || deleteAllowed[f.dir+"/"+f.name] {
+		return nil
+	}
+	var out []string
+	for _, call := range []string{"os.Remove", "os.RemoveAll", "os.Truncate", "syscall.Unlink", "golang.org/x/sys/windows.DeleteFile"} {
+		if f.uses1(call) {
+			out = append(out, violation(f, "calls %s; only platform.RemoveStaged deletes, below <root>/.removing (invariant 1)", call))
+		}
+	}
+	for _, l := range f.literals {
+		switch strings.TrimSpace(l) {
+		case "rm", "rmdir", "del", "erase", "rd", "clean", "--hard", "-D", "--force", "-f", "Remove-Item":
+			out = append(out, violation(f, "string %q names a deleting command or a destructive git flag (invariant 1)", l))
 		}
 	}
 	return out
@@ -202,6 +251,8 @@ var rules = []rule{
 		return out
 	}},
 
+	phase4NoDelete,
+
 	// 5.2 Platform: no OS checks outside internal/platform.
 	banOutside("runtime.GOOS", "reads runtime.GOOS", func(f file) bool { return f.uses1("runtime.GOOS") }, "internal/platform"),
 
@@ -214,7 +265,7 @@ var rules = []rule{
 	// and the audit package (which calls Prepare unqualified), a file that
 	// appends audit entries must make them with audit.Prepare.
 	banOutside("AppendAudit", "calls AppendAudit without audit.Prepare, which redacts", func(f file) bool {
-		return f.calls("AppendAudit") && !f.uses1(internalPrefix+"audit.Prepare")
+		return f.calls("AppendAudit") && !f.uses1(internalPrefix+"audit.Prepare") && !auditForwarders[f.dir+"/"+f.name]
 	}, "internal/db", "internal/audit"),
 
 	// Invariant 8: every write of state goes through Store.Commit, with its

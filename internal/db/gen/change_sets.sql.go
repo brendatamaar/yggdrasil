@@ -33,7 +33,7 @@ func (q *Queries) CreateChangeSet(ctx context.Context, arg CreateChangeSetParams
 }
 
 const getChangeSet = `-- name: GetChangeSet :one
-SELECT id, task_id, status, merge_order, created_at FROM change_sets WHERE id = ?
+SELECT id, task_id, status, merge_order, created_at, run_result, version FROM change_sets WHERE id = ?
 `
 
 func (q *Queries) GetChangeSet(ctx context.Context, id string) (ChangeSet, error) {
@@ -45,12 +45,14 @@ func (q *Queries) GetChangeSet(ctx context.Context, id string) (ChangeSet, error
 		&i.Status,
 		&i.MergeOrder,
 		&i.CreatedAt,
+		&i.RunResult,
+		&i.Version,
 	)
 	return i, err
 }
 
 const listChangeSetsByTask = `-- name: ListChangeSetsByTask :many
-SELECT id, task_id, status, merge_order, created_at FROM change_sets WHERE task_id = ? ORDER BY created_at, id
+SELECT id, task_id, status, merge_order, created_at, run_result, version FROM change_sets WHERE task_id = ? ORDER BY created_at, id
 `
 
 func (q *Queries) ListChangeSetsByTask(ctx context.Context, taskID string) ([]ChangeSet, error) {
@@ -68,6 +70,8 @@ func (q *Queries) ListChangeSetsByTask(ctx context.Context, taskID string) ([]Ch
 			&i.Status,
 			&i.MergeOrder,
 			&i.CreatedAt,
+			&i.RunResult,
+			&i.Version,
 		); err != nil {
 			return nil, err
 		}

@@ -310,3 +310,8 @@ type Admission struct {
 	// Refusal is set when Admitted is false.
 	Refusal Reason
 }
+
+// Admissible reports whether a repo with this trust view may be worked in:
+// there is nothing to trust, or it is trusted. Task admission and verification
+// (SF-09) share this one predicate.
+func (v TrustView) Admissible() bool { return v == TrustNone || v == TrustTrusted }

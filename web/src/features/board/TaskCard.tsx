@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import type { BoardCardDTO } from "../../api/gen/api.gen";
+import { VerifyStateBadge } from "../../components/VerifyStateBadge";
 import { canCancel, elapsedText, isWarnMode, modeLabel, statusText, usageText } from "./ui";
 
 interface Props {
@@ -32,6 +33,11 @@ export function TaskCard({ card, cancelling, onCancel }: Props) {
         >
           {warn ? `Warning: ${modeLabel(card.mode)}` : modeLabel(card.mode)}
         </span>
+        {card.verification && card.verification.state !== "none" && (
+          <span aria-label={`Verification: ${card.verification.state}`} className="inline-flex">
+            <VerifyStateBadge state={card.verification.state} />
+          </span>
+        )}
         {card.pendingProposals > 0 && (
           <span className="rounded-sm border border-accent px-1.5 py-0.5 font-medium text-accent">
             {card.pendingProposals === 1 ? "1 proposal" : `${String(card.pendingProposals)} proposals`}

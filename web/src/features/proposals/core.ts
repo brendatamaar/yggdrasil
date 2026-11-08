@@ -59,6 +59,8 @@ export const KIND_LABEL: Record<string, string> = {
   agent_file: "Change agent files",
   delete_files: "Move files to _to_delete",
   subtasks: "Split into sub-tasks",
+  merge_local: "Merge into the main checkout",
+  remove_worktree: "Remove worktree",
 };
 
 export const kindLabel = (kind: string): string => KIND_LABEL[kind] ?? "Change";
@@ -73,7 +75,7 @@ export interface ProposalView {
 }
 
 /** Status text, explanation and the buttons that make sense for a proposal. */
-export function describeProposal(p: Pick<ProposalDTO, "status" | "failKind" | "message" | "retryable">): ProposalView {
+export function describeProposal(p: Pick<ProposalDTO, "status" | "failKind" | "message" | "retryable"> & { kind?: string }): ProposalView {
   switch (p.status) {
     case "pending":
       return { label: "Waiting for you", tone: "waiting", actions: ["confirm", "reject"] };
@@ -100,6 +102,17 @@ export function describeProposal(p: Pick<ProposalDTO, "status" | "failKind" | "m
           note: p.message || "Yggdrasil stopped while this was running. Retry first checks what already happened.",
           actions,
         };
+      }
+      if (p.kind === "remove_worktree" && p.retryable) {
+        return {
+          label: "In use",
+          tone: "problem",
+          note: `${p.message || "Something is using this worktree."} Close it, then press Retry. Nothing was stopped for you.`,
+          actions,
+        };
+      }
+      if (p.kind === "merge_local") {
+        return { label: "Not merged", tone: "problem", note: p.message || "The merge did not complete.", actions };
       }
       return { label: "Failed", tone: "problem", note: p.message || "This did not complete.", actions };
     }

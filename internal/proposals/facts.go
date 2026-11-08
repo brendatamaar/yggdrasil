@@ -35,6 +35,10 @@ func subjectOf(a coreprop.Action) (subject, error) {
 		return subject{where: v.Where, paths: v.Paths}, nil
 	case coreprop.Install:
 		return subject{repo: v.Repo}, nil
+	case coreprop.MergeLocal:
+		return subject{where: v.Where}, nil
+	case coreprop.RemoveWorktree:
+		return subject{where: coreprop.InWorktree{ID: v.Worktree}}, nil
 	}
 	return subject{}, fmt.Errorf("unsupported proposal kind %T", a)
 }
@@ -145,6 +149,9 @@ func (s *Service) gatherFacts(ctx context.Context, req CreateRequest) (coreprop.
 			}
 		}
 		if mr, ok := req.Action.(coreprop.MergeRequest); ok {
+			if why := validateMRDescription(mr.Description); why != "" {
+				return bad(why)
+			}
 			url, err := s.cfg.Git.RemoteURL(ctx, dir, mr.Remote)
 			if err != nil || s.cfg.Hosts.Kind(url) != HostGitLab {
 				f.RemoteSupported = false

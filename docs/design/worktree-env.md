@@ -196,7 +196,7 @@ Each gets: round trip, accepted ⇒ valid, one test per rejection rule, and a fu
 
 ## Persistence
 
-Migration `00005` (F3): `worktree_ports(worktree_id unique among live, base, size, allocated_at, released_at)`, `repo_env_settings(repo_id, profile_paths json, agent_copy, compose_enabled, compose_file, compose_confirmed_hash)`. Defaults: agent copy off, compose off. Compose runtime state and profile jobs are not stored (they are derived or one-shot). Every change to settings and every allocation commits with its audit entry.
+Migration `00006` (F3): `worktree_ports(worktree_id unique among live, base, size, allocated_at, released_at)`, `repo_env_settings(repo_id, profile_paths json, agent_copy, compose_enabled, compose_file, compose_confirmed_hash)`. Defaults: agent copy off, compose off. Compose runtime state and profile jobs are not stored (they are derived or one-shot). Every change to settings and every allocation commits with its audit entry.
 
 ## Open questions
 
