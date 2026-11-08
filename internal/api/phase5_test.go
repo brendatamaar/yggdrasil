@@ -604,11 +604,12 @@ func TestTerminalSocketNeedsTheSessionAndASingleUseToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	closeBody(resp)
-	defer c.CloseNow()                                     //nolint:errcheck // test cleanup
-	for _, bad := range []string{tok, "", "not-a-token"} { // reused, empty, malformed
+	defer c.CloseNow() //nolint:errcheck // test cleanup
+	// reused: 410, empty: 400 (no token at all), unknown or malformed: 410
+	for bad, want := range map[string]int{tok: 410, "": 400, "not-a-token": 410} {
 		_, resp, err = te.dialTerm(bad)
-		if err == nil || resp == nil || resp.StatusCode != 400 {
-			t.Fatalf("token %q: %v %v", bad, err, resp)
+		if err == nil || resp == nil || resp.StatusCode != want {
+			t.Fatalf("token %q: %v %v, want %d", bad, err, resp, want)
 		}
 		var b ErrorBody
 		_ = json.NewDecoder(resp.Body).Decode(&b)
