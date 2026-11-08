@@ -32,6 +32,7 @@ type Session interface{ isSession() }
 // Opening waits for the PTY to start.
 type Opening struct {
 	Folder Folder
+	Size   Size
 	Since  time.Time
 }
 

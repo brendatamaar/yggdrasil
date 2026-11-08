@@ -24,6 +24,7 @@ type IssueRequested struct {
 // RedeemRequested presents a token and asks for a session.
 type RedeemRequested struct {
 	Hash    TokenHash
+	Folder  Folder // the folder the shell re-checked; must equal the token's
 	Session core.TerminalSessionID
 	Size    Size
 	Check   FolderCheck
@@ -73,7 +74,10 @@ type ShellExited struct {
 type Shutdown struct{ Now time.Time }
 
 // Wake expires tokens.
-type Wake struct{ Now time.Time }
+type Wake struct {
+	Kind WakeKind
+	Now  time.Time
+}
 
 func (IssueRequested) isInput()  {}
 func (RedeemRequested) isInput() {}
