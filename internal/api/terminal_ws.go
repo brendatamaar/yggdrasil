@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"net"
 	"sync"
 	"unicode/utf8"
 
@@ -22,26 +23,64 @@ const maxCloseReason = 123
 type wsSocket struct {
 	conn *websocket.Conn
 
+	frames chan wsFrame
+	done   chan struct{} // closed by Close
+	pump   sync.Once
+
 	once sync.Once
+}
+
+type wsFrame struct {
+	kind ct.FrameKind
+	data []byte
+	err  error
 }
 
 var _ terminal.Socket = (*wsSocket)(nil)
 
 func newWSSocket(conn *websocket.Conn) *wsSocket {
 	conn.SetReadLimit(ct.MaxFrameBytes)
-	return &wsSocket{conn: conn}
+	return &wsSocket{conn: conn, frames: make(chan wsFrame), done: make(chan struct{})}
+}
+
+// readPump reads the connection until it fails or the socket is closed. It
+// reads with a context that is never cancelled: the library drops the
+// connection without a close frame when a read's context ends, and the
+// session must be able to send its plain-language close reason. Read returns
+// when its own context ends, and the pump stops when the connection does
+// (Close ends it).
+func (s *wsSocket) readPump() {
+	for {
+		typ, data, err := s.conn.Read(context.Background())
+		f := wsFrame{kind: ct.BinaryFrame, data: data, err: err}
+		if typ == websocket.MessageText {
+			f.kind = ct.TextFrame
+		}
+		select {
+		case s.frames <- f:
+		case <-s.done:
+			return
+		}
+		if err != nil {
+			return
+		}
+	}
 }
 
 // Read implements terminal.Socket.
 func (s *wsSocket) Read(ctx context.Context) (ct.FrameKind, []byte, error) {
-	typ, data, err := s.conn.Read(ctx)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return 0, nil, err
 	}
-	if typ == websocket.MessageText {
-		return ct.TextFrame, data, nil
+	s.pump.Do(func() { go s.readPump() }) // ends with the connection; see readPump
+	select {
+	case f := <-s.frames:
+		return f.kind, f.data, f.err
+	case <-s.done:
+		return 0, nil, net.ErrClosed
+	case <-ctx.Done():
+		return 0, nil, ctx.Err()
 	}
-	return ct.BinaryFrame, data, nil
 }
 
 // Write implements terminal.Socket.
@@ -54,6 +93,7 @@ func (s *wsSocket) Write(ctx context.Context, data []byte) error {
 func (s *wsSocket) Close(reason string) error {
 	var err error
 	s.once.Do(func() {
+		close(s.done)
 		err = s.conn.Close(websocket.StatusNormalClosure, truncateUTF8(reason, maxCloseReason))
 	})
 	return err
