@@ -118,7 +118,6 @@ type Server struct {
 
 	p4       atomic.Pointer[Phase4Services]
 	p5       atomic.Pointer[Phase5Services]
-	logSeq   logSeq
 	composer ComposerService
 	mcp      MCPService
 	clock    func() time.Time

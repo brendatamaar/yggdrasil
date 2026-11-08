@@ -409,17 +409,6 @@ func (s *Service) Placeholder(key dsc.Key) View {
 	return s.view(key, dsc.Stopped{Last: dsc.LastNever})
 }
 
-// LogsByID returns the last n log lines of a server by its ID.
-func (s *Service) LogsByID(id string, n int) []LogLine {
-	s.mu.Lock()
-	sink := s.sinks[id]
-	s.mu.Unlock()
-	if sink == nil {
-		return []LogLine{}
-	}
-	return sink.Tail(n)
-}
-
 // apply is the one path of every change: load, Step, persist state and audit
 // together, then run the commands. mk builds the input from the loaded state
 // (nil means nothing to do). dir is the tracked folder for a StartProcess.

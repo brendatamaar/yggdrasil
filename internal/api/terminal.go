@@ -37,13 +37,18 @@ func (s *Server) terminalFailure(w http.ResponseWriter, r *http.Request, err err
 	var re *terminal.RefusedError
 	switch {
 	case errors.As(err, &re):
+		// The statuses are part of the contract with the UI, which maps exactly
+		// these: 404 untracked folder, 429 too many (pending or open), 410 a
+		// link that is expired, used or unknown, 503 shutting down.
 		status, code := http.StatusBadRequest, ErrBadRequest
 		switch re.Reason {
 		case ct.RefusedNotTracked:
 			status, code = http.StatusNotFound, ErrNotFound
-		case ct.RefusedTooManyPending:
+		case ct.RefusedTooManyPending, ct.RefusedTooManySessions:
 			status, code = http.StatusTooManyRequests, ErrUnavailable
-		case ct.RefusedTooManySessions, ct.RefusedCollision:
+		case ct.RefusedExpired, ct.RefusedReused, ct.RefusedUnknown:
+			status, code = http.StatusGone, ErrNotFound
+		case ct.RefusedCollision:
 			status, code = http.StatusConflict, ErrConflict
 		case ct.RefusedShuttingDown:
 			status, code = http.StatusServiceUnavailable, ErrUnavailable

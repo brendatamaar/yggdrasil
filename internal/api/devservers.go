@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"sync"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	"github.com/brendatamaar/yggdrasil/internal/devservers"
@@ -20,15 +19,19 @@ import (
 // by the service from the tracked repo (invariants 5 and 6).
 
 // DevServerService is implemented over *devservers.Service by an adapter in
-// cmd/ygg. Start, Stop, Restart and Logs are the methods of that type.
-// Servers lists the servers of every tracked repo (the adapter calls List
-// once per repo); RepoName gives the display name of a repo ("" if unknown).
+// cmd/ygg. Start, Stop, Restart, Logs and ByID are the methods of that type.
+// Servers lists the servers of every tracked repo and worktree: the stored
+// ones, plus a stopped placeholder for every detected command that was never
+// started (so the UI can offer a first start). ByID returns a stored server by
+// its ID (NotFound for a placeholder). RepoName gives the display name of a
+// repo ("" if unknown).
 // Errors carry an apperr class (NotFound, Conflict, Invalid, Unavailable).
 type DevServerService interface {
 	Start(ctx context.Context, t devservers.Target, command string) (devservers.View, error)
 	Stop(ctx context.Context, t devservers.Target, command string) (devservers.View, error)
 	Restart(ctx context.Context, t devservers.Target, command string) (devservers.View, error)
-	Logs(t devservers.Target, command string, n int) ([]string, error)
+	Logs(t devservers.Target, command string, n int) ([]devservers.LogLine, error)
+	ByID(ctx context.Context, id string) (devservers.View, error)
 	Servers(ctx context.Context) ([]devservers.View, error)
 	RepoName(ctx context.Context, repo core.RepoID) string
 }
@@ -139,18 +142,12 @@ func (s *Server) devServerTarget(w http.ResponseWriter, r *http.Request, svc Dev
 			return id, devservers.Target{Repo: key.Repo, Worktree: key.Worktree}, key.CommandKey, true
 		}
 	}
-	views, err := svc.Servers(r.Context())
+	v, err := svc.ByID(r.Context(), string(id))
 	if err != nil {
 		s.fail(w, r, err)
 		return "", devservers.Target{}, "", false
 	}
-	for _, v := range views {
-		if v.ID == string(id) {
-			return id, devservers.Target{Repo: v.Key.Repo, Worktree: v.Key.Worktree}, v.Key.CommandKey, true
-		}
-	}
-	serverNotFound(w)
-	return "", devservers.Target{}, "", false
+	return id, devservers.Target{Repo: v.Key.Repo, Worktree: v.Key.Worktree}, v.Key.CommandKey, true
 }
 
 func (s *Server) devServerAction(what string, do func(DevServerService, context.Context, devservers.Target, string) (devservers.View, error)) http.HandlerFunc {
@@ -197,29 +194,18 @@ func (s *Server) handleDevServerLog(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	// The service keeps one merged, redacted stream and no sequence numbers:
-	// lines are numbered from 1 within this reply and reported as stdout.
+	// The numbers come from the service's log: the same Seq the live messages
+	// carry, so a client can merge the two by replacing on Seq. The stream is
+	// "stdout", "stderr", or "system" for a line Yggdrasil wrote itself.
 	out := DevServerLogResponse{Lines: make([]DevServerLogMessage, 0, len(lines))}
-	for i, l := range lines {
-		out.Lines = append(out.Lines, DevServerLogMessage{ID: id, Seq: uint64(i + 1), Stream: "stdout", Line: l}) //nolint:gosec // i is a small index
+	for _, l := range lines {
+		out.Lines = append(out.Lines, logMessage(id, l))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
-// logSeq numbers the live log lines of each server for the hub.
-type logSeq struct {
-	mu sync.Mutex
-	n  map[string]uint64
-}
-
-func (l *logSeq) next(id string) uint64 {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.n == nil {
-		l.n = map[string]uint64{}
-	}
-	l.n[id]++
-	return l.n[id]
+func logMessage(id core.DevServerID, l devservers.LogLine) DevServerLogMessage {
+	return DevServerLogMessage{ID: id, Seq: l.Seq, Stream: string(l.Stream), Line: l.Line}
 }
 
 var _ devservers.Publisher = (*Server)(nil)
@@ -237,7 +223,6 @@ func (s *Server) PublishServer(id string, v devservers.View) {
 }
 
 // PublishLog implements devservers.Publisher: one redacted log line.
-func (s *Server) PublishLog(id string, line string) {
-	s.hub.publishNext(devserverTopic{ID: core.DevServerID(id)},
-		DevServerLogMessage{ID: core.DevServerID(id), Seq: s.logSeq.next(id), Stream: "stdout", Line: line})
+func (s *Server) PublishLog(id string, line devservers.LogLine) {
+	s.hub.publishNext(devserverTopic{ID: core.DevServerID(id)}, logMessage(core.DevServerID(id), line))
 }
