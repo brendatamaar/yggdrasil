@@ -16,9 +16,12 @@ type Server interface {
 
 // Stopped is at rest; it may start.
 type Stopped struct {
-	Last LastKind
-	Code int // exit code when Last is LastExited
-	At   time.Time
+	// Attempt is the last attempt this server ran (0 if it never ran). A
+	// StartRequested must carry a higher one.
+	Attempt int
+	Last    LastKind
+	Code    int // exit code when Last is LastExited
+	At      time.Time
 }
 
 // Starting has asked for the process and not yet seen it listening.
@@ -45,7 +48,7 @@ type Running struct {
 type Stopping struct {
 	Attempt     int
 	Cause       StopCause
-	KillAttempt int
+	KillAttempt KillAttempt
 	Since       time.Time
 	Pid         int
 	Block       core.PortBlock
@@ -53,8 +56,10 @@ type Stopping struct {
 
 // Failed is at rest; it may start again.
 type Failed struct {
-	Kind FailKind
-	Code int // exit code for FailExitedEarly and FailCrashed
+	// Attempt is the attempt that failed.
+	Attempt int
+	Kind    FailKind
+	Code    int // exit code for FailExitedEarly and FailCrashed
 	// Message is the plain-language reason (no paths), e.g. "Install Node and try again".
 	Message string
 	At      time.Time
@@ -62,8 +67,10 @@ type Failed struct {
 
 // Orphaned is a process from a crashed run that is still alive (non-Windows).
 type Orphaned struct {
-	Pid    int
-	SeenAt time.Time
+	// Attempt is the attempt the process was started for.
+	Attempt int
+	Pid     int
+	SeenAt  time.Time
 }
 
 func (Stopped) isServer()  {}

@@ -1,6 +1,7 @@
 package devservers
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
@@ -93,3 +94,21 @@ const (
 	KillGraceUser  = 10 * time.Second
 	KillGraceClose = 5 * time.Second
 )
+
+// KillAttempt says which kill of a stop this is: the first or the second.
+// It is a closed set.
+type KillAttempt int
+
+// The closed set of KillAttempt values.
+const (
+	KillFirst  KillAttempt = 1
+	KillSecond KillAttempt = 2
+)
+
+// Validate reports whether k is KillFirst or KillSecond.
+func (k KillAttempt) Validate() error {
+	if k == KillFirst || k == KillSecond {
+		return nil
+	}
+	return fmt.Errorf("kill attempt %d: must be 1 or 2", int(k))
+}
