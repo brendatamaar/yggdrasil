@@ -1,10 +1,12 @@
 package worktreeenv_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +22,12 @@ import (
 )
 
 var now = time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC)
+
+// logs is a Config.Logger that keeps what it is given.
+func logs() (*slog.Logger, *bytes.Buffer) {
+	var b bytes.Buffer
+	return slog.New(slog.NewTextHandler(&b, nil)), &b
+}
 
 type rig struct {
 	svc    *worktreeenv.Service
@@ -340,7 +348,7 @@ func TestRealDiskProfileEndToEnd(t *testing.T) {
 	}
 	store := worktreeenv.DBStore{S: s}
 	svc, err := worktreeenv.New(worktreeenv.Config{
-		Ports: store, Settings: store, Audit: store, Prober: worktreeenv.LoopbackProber{}, FS: worktreeenv.OSFileSystem{},
+		Ports: store, Settings: store, Audit: store, Prober: worktreeenv.PlatformProber{}, FS: worktreeenv.OSFileSystem{},
 		RepoDir: func(context.Context, core.RepoID) (string, error) { return repoDir, nil },
 		Now:     func() time.Time { return now },
 		NewID:   func(p string) string { return p + "_" + fmt.Sprint(time.Now().UnixNano()) },
@@ -370,5 +378,49 @@ func TestRealDiskProfileEndToEnd(t *testing.T) {
 	}
 	if err := svc.Release(ctx, wtRow.ID); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestProbeFailureIsLoggedWithoutDetails(t *testing.T) {
+	store := worktreeenvtest.NewStore("rep_1")
+	prober := worktreeenvtest.NewProber()
+	prober.Fail = errors.New("open /proc/net/tcp: secret-folder")
+	lg, buf := logs()
+	svc, _ := worktreeenv.New(worktreeenv.Config{
+		Ports: store, Settings: store, Audit: store, Prober: prober, FS: worktreeenvtest.NewFS(), Logger: lg,
+		RepoDir: func(context.Context, core.RepoID) (string, error) { return "/r", nil },
+		Now:     func() time.Time { return now }, NewID: func(p string) string { return p + "_x" },
+	})
+	if _, err := svc.Allocate(context.Background(), "wt_a"); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "port probe failed") || strings.Contains(out, "secret-folder") {
+		t.Fatalf("log = %q", out)
+	}
+}
+
+func TestPersistentOverlapIsAuditedOnce(t *testing.T) {
+	store := worktreeenvtest.NewStore("rep_1")
+	store.SeedBlock("wt_old1", core.PortBlock{Base: 20000, Size: 20})
+	store.SeedBlock("wt_old2", core.PortBlock{Base: 20010, Size: 20}) // overlaps the first
+	svc, _ := worktreeenv.New(worktreeenv.Config{
+		Ports: store, Settings: store, Audit: store, Prober: worktreeenvtest.NewProber(), FS: worktreeenvtest.NewFS(),
+		RepoDir: func(context.Context, core.RepoID) (string, error) { return "/r", nil },
+		Now:     func() time.Time { return now }, NewID: func(p string) string { return p + "_x" },
+	})
+	for i := range 5 {
+		if _, err := svc.Allocate(context.Background(), core.WorktreeID(fmt.Sprintf("wt_%d", i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	conflicts := 0
+	for _, e := range store.Audits() {
+		if e.Action == string(env.ActionConflict) {
+			conflicts++
+		}
+	}
+	if conflicts != 1 {
+		t.Fatalf("%d conflict audit entries for one persistent overlap, want 1", conflicts)
 	}
 }

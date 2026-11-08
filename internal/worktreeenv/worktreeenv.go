@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -116,6 +117,9 @@ type Config struct {
 	RepoDir func(ctx context.Context, repo core.RepoID) (string, error)
 	Now     func() time.Time
 	NewID   func(prefix string) string
+	// Logger receives warnings; it never gets paths or file names. Default:
+	// slog.Default().
+	Logger *slog.Logger
 	// OnProfileDone is called when a profile copy finished (the core's Publish).
 	OnProfileDone func(core.WorktreeID)
 }
@@ -124,6 +128,9 @@ type Config struct {
 type Service struct {
 	c  Config
 	mu sync.Mutex // one allocation at a time in this process; the store's unique indexes guard the rest
+	// reported holds the block conflicts already written to the audit log, so
+	// a persistent overlap is audited once per process and not on every call.
+	reported map[string]bool
 }
 
 // New returns a Service.
@@ -132,7 +139,10 @@ func New(c Config) (*Service, error) {
 		c.RepoDir == nil || c.Now == nil || c.NewID == nil {
 		return nil, errors.New("worktreeenv: ports, settings, audit, prober, file system, repo lookup, clock and id source are required")
 	}
-	return &Service{c: c}, nil
+	if c.Logger == nil {
+		c.Logger = slog.Default()
+	}
+	return &Service{c: c, reported: map[string]bool{}}, nil
 }
 
 // Prepare gets a new worktree ready: it gives it a port block and copies the

@@ -61,9 +61,14 @@ func (s *Service) loadTable(ctx context.Context, auditConflicts bool) (env.Table
 	if auditConflicts {
 		for _, c := range cmds {
 			if a, ok := c.(env.AllocAudit); ok {
+				key := fmt.Sprintf("%s/%d+%d", a.Worktree, a.Block.Base, a.Block.Size)
+				if s.reported[key] {
+					continue
+				}
 				if err := s.appendAlloc(ctx, a); err != nil {
 					return env.Table{}, err
 				}
+				s.reported[key] = true
 			}
 		}
 	}
@@ -102,7 +107,10 @@ func (s *Service) allocateOnce(ctx context.Context, w core.WorktreeID, auditConf
 			if ctx.Err() != nil {
 				return core.PortBlock{}, false, ctx.Err()
 			}
-			busy = nil // a failed probe counts as free
+			// A failed probe counts as free; say so, without the error text
+			// (it can hold file names).
+			s.c.Logger.Warn("port probe failed; treating the block as free", "lo", t.Range.Lo, "hi", hi)
+			busy = nil
 		}
 		persist, audit, refused := decide(env.Table{Range: env.Range{Lo: t.Range.Lo, Hi: hi}, Live: t.Live}, w, busy, s.c.Now())
 		if refused {

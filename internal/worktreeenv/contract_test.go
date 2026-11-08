@@ -145,14 +145,15 @@ func TestFakeProberContract(t *testing.T) {
 	})
 }
 
-func TestLoopbackProberContract(t *testing.T) {
+func TestPlatformProberContract(t *testing.T) {
 	worktreeenvtest.ProberContract(t, func(t *testing.T) worktreeenvtest.ProberEnv {
 		return worktreeenvtest.ProberEnv{
-			Prober: worktreeenv.LoopbackProber{},
+			Prober: worktreeenv.PlatformProber{},
 			Listen: func(t *testing.T) int {
-				l, err := net.Listen("tcp", "127.0.0.1:0")
+				// the wildcard address: a bind probe on 127.0.0.1 can miss this
+				l, err := net.Listen("tcp", ":0")
 				if err != nil {
-					t.Skipf("cannot listen on loopback: %v", err)
+					t.Skipf("cannot listen: %v", err)
 				}
 				t.Cleanup(func() { _ = l.Close() })
 				return l.Addr().(*net.TCPAddr).Port
