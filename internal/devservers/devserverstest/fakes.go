@@ -127,7 +127,8 @@ func (t *fakeTx) Save(_ context.Context, id string, row dsc.Row, expected int64,
 	return expected + 1, nil
 }
 
-func (t *fakeTx) AppendAudit(_ context.Context, e core.AuditEntry) error {
+func (t *fakeTx) Audit(_ context.Context, e core.AuditEntry, id core.AuditID, at time.Time) error {
+	e.ID, e.At = id, at.UTC()
 	if err := e.ID.Validate(); err != nil {
 		return err
 	}
@@ -431,3 +432,10 @@ func (h *Hub) Statuses() []string {
 }
 
 var _ devservers.Publisher = (*Hub)(nil)
+
+// LinesOf returns the log lines published for a server.
+func (h *Hub) LinesOf(id string) []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.Lines[id])
+}

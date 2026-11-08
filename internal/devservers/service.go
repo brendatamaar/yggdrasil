@@ -23,21 +23,20 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/brendatamaar/yggdrasil/internal/apperr"
-	"github.com/brendatamaar/yggdrasil/internal/audit"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	dsc "github.com/brendatamaar/yggdrasil/internal/core/devservers"
 	"github.com/brendatamaar/yggdrasil/internal/db"
 )
 
 const (
-	systemActor    = "system"
-	userActor      = "user"
-	commitTries    = 3
-	feedTimeout    = 10 * time.Second
-	announceDelay  = 250 * time.Millisecond
-	defaultDrain   = 5 * time.Second
-	logSubfolder   = "devservers"
-	logParent      = "logs"
+	systemActor   = "system"
+	userActor     = "user"
+	commitTries   = 3
+	feedTimeout   = 10 * time.Second
+	announceDelay = 250 * time.Millisecond
+	defaultDrain  = 5 * time.Second
+	logSubfolder  = "devservers"
+	logParent     = "logs"
 )
 
 // View is a server as the API shows it. Warnings are derived (DV-02).
@@ -375,7 +374,7 @@ func (s *Service) apply(ctx context.Context, key dsc.Key, actor string, mk func(
 					}
 				}
 				for _, a := range audits {
-					if err := tx.AppendAudit(ctx, a); err != nil {
+					if err := tx.Audit(ctx, a, core.AuditID(s.d.IDs("aud")), now); err != nil {
 						return err
 					}
 				}
@@ -412,12 +411,7 @@ func (s *Service) prepareAudits(key dsc.Key, id, actor string, cmds []dsc.Comman
 		if err != nil {
 			return nil, fmt.Errorf("audit detail: %w", err)
 		}
-		e, err := audit.Prepare(core.AuditEntry{Actor: actor, Action: string(w.Action), Subject: "devserver:" + id, Detail: raw},
-			s.d.Redactor, core.AuditID(s.d.IDs("aud")), now)
-		if err != nil {
-			return nil, fmt.Errorf("prepare audit entry: %w", err)
-		}
-		out = append(out, e)
+		out = append(out, core.AuditEntry{Actor: actor, Action: string(w.Action), Subject: "devserver:" + id, Detail: raw})
 	}
 	return out, nil
 }

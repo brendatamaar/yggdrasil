@@ -116,7 +116,7 @@ func envNameOK(name string) bool {
 		return false
 	}
 	for i, r := range name {
-		if !(r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || i > 0 && r >= '0' && r <= '9') {
+		if r != '_' && (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (i == 0 || r < '0' || r > '9') {
 			return false
 		}
 	}

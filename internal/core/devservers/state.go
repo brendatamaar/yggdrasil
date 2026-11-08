@@ -59,7 +59,7 @@ type Failed struct {
 	// Attempt is the attempt that failed.
 	Attempt int
 	Kind    FailKind
-	Code int // exit code for FailExitedEarly and FailCrashed
+	Code    int // exit code for FailExitedEarly and FailCrashed
 	// Message is the plain-language reason (no paths), e.g. "Install Node and try again".
 	Message string
 	At      time.Time
@@ -70,7 +70,7 @@ type Orphaned struct {
 	// Attempt is the attempt the process was started for.
 	Attempt int
 	Pid     int
-	SeenAt time.Time
+	SeenAt  time.Time
 }
 
 func (Stopped) isServer()  {}

@@ -94,7 +94,9 @@ func stepAtRest(s Server, last int, in Input) (Server, []Command) {
 	}
 }
 
-func rejectRunning() []Command { return []Command{Reject{Reason: RejectAlreadyRunning, Message: "This server is already running or stopping."}} }
+func rejectRunning() []Command {
+	return []Command{Reject{Reason: RejectAlreadyRunning, Message: "This server is already running or stopping."}}
+}
 
 func stepStarting(st Starting, in Input) (Server, []Command) {
 	switch v := in.(type) {

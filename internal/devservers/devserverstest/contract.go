@@ -137,7 +137,7 @@ func DevServerStoreContract(t *testing.T, mk func(t *testing.T) StoreHarness) {
 			if _, err := tx.Save(ctx, "dsv_a", dsc.RowOf(key(h, "dev"), dsc.Stopped{}), db.NewDevServer, storeTime); err != nil {
 				return err
 			}
-			if err := tx.AppendAudit(ctx, core.AuditEntry{ID: "aud_1", At: storeTime, Actor: "system", Action: "devserver.start", Subject: "devserver:dsv_a"}); err != nil {
+			if err := tx.Audit(ctx, core.AuditEntry{Actor: "system", Action: "devserver.start", Subject: "devserver:dsv_a"}, "aud_1", storeTime); err != nil {
 				return err
 			}
 			return sentinel
@@ -159,7 +159,7 @@ func DevServerStoreContract(t *testing.T, mk func(t *testing.T) StoreHarness) {
 			if _, err := tx.Save(ctx, "dsv_a", dsc.RowOf(key(h, "dev"), dsc.Stopped{}), db.NewDevServer, storeTime); err != nil {
 				return err
 			}
-			return tx.AppendAudit(ctx, core.AuditEntry{ID: "aud_1", At: storeTime, Actor: "system", Action: "devserver.start", Subject: "devserver:dsv_a"})
+			return tx.Audit(ctx, core.AuditEntry{Actor: "system", Action: "devserver.start", Subject: "devserver:dsv_a"}, "aud_1", storeTime)
 		})
 		if err != nil {
 			t.Fatal(err)

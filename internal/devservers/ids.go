@@ -51,7 +51,7 @@ func ParseStart(repo, worktree, command string) (dsc.Key, error) {
 		return bad("Choose one of the commands offered for this repo.")
 	}
 	for _, r := range command {
-		if !(r == '.' || r == '_' || r == '-' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z') {
+		if r != '.' && r != '_' && r != '-' && (r < '0' || r > '9') && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') {
 			return bad("Choose one of the commands offered for this repo.")
 		}
 	}

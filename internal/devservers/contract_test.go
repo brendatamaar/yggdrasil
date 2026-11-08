@@ -3,6 +3,7 @@ package devservers_test
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,7 +39,7 @@ func TestSQLiteStoreContract(t *testing.T) {
 		dir := filepath.Join(project.Path, "shop-web")
 		repo := dbtest.Repo(t, store, core.Repo{ProjectID: project.ID, Name: "shop-web", Path: dir})
 		return devserverstest.StoreHarness{
-			Store: devservers.NewSQLiteStore(store), Repo: repo.ID,
+			Store: devservers.NewSQLiteStore(store, safety.NewRedactor()), Repo: repo.ID,
 			Audit: func(subject string) []core.AuditEntry {
 				out, err := store.ListAudit(context.Background(), subject, 100)
 				if err != nil {
@@ -82,4 +83,22 @@ func TestFileSinkContract(t *testing.T) {
 		}
 		return s
 	})
+}
+
+func TestSQLiteStoreRedactsAuditEntries(t *testing.T) {
+	ctx := context.Background()
+	store := newSQLite(t)
+	s := devservers.NewSQLiteStore(store, safety.NewRedactor())
+	const tok = "ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+	err := s.Commit(ctx, func(tx devservers.Tx) error {
+		return tx.Audit(ctx, core.AuditEntry{Actor: "system", Action: "devserver.fail", Subject: "devserver:dsv_a",
+			Detail: []byte(`{"reason":"` + tok + `"}`)}, "aud_1", time.Now())
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := store.ListAudit(ctx, "devserver:dsv_a", 10)
+	if err != nil || len(rows) != 1 || strings.Contains(string(rows[0].Detail), "ghp_") {
+		t.Fatalf("rows = %+v, %v", rows, err)
+	}
 }

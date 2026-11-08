@@ -108,7 +108,6 @@ func nullPid(pid int) sql.NullInt64 {
 	return sql.NullInt64{Int64: int64(pid), Valid: pid != 0}
 }
 
-
 // SaveDevServer inserts (expected == NewDevServer; ErrConflict when the ID
 // exists, ErrNotFound when the repo or worktree does not) or updates a server
 // that is still at expected (ErrConflict if the version moved, ErrNotFound if
