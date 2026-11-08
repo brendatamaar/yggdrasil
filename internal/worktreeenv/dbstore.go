@@ -118,17 +118,14 @@ func (d DBStore) PutRepoEnv(ctx context.Context, repo core.RepoID, e RepoEnv, at
 	if err != nil {
 		return err
 	}
-	rec, err := d.S.GetRepoEnvSettings(ctx, repo)
-	if err != nil {
-		return mapErr(err)
-	}
-	rec.ProfilePaths = make([]string, len(e.Profile))
+	paths := make([]string, len(e.Profile))
 	for i, p := range e.Profile {
-		rec.ProfilePaths[i] = string(p)
+		paths[i] = string(p)
 	}
-	rec.AgentCopy, rec.UpdatedAt = e.AgentCopy, at
+	// One statement that touches only the profile columns, so a concurrent
+	// change of the compose columns is not overwritten.
 	return mapErr(d.S.Commit(ctx, func(tx *db.Tx) error {
-		if err := tx.PutRepoEnvSettings(ctx, rec); err != nil {
+		if err := tx.PutRepoEnvProfile(ctx, repo, paths, e.AgentCopy, at); err != nil {
 			return err
 		}
 		return tx.AppendAudit(ctx, audit)

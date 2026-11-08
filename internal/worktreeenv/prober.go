@@ -2,29 +2,19 @@ package worktreeenv
 
 import (
 	"context"
-	"net"
-	"strconv"
+
+	"github.com/brendatamaar/yggdrasil/internal/platform"
 )
 
-// LoopbackProber finds busy ports by trying to listen on them on the loopback
-// address. A port that cannot be bound is busy. The listeners are closed at
-// once; nothing is served.
-type LoopbackProber struct{}
+// PlatformProber finds busy ports from the operating system's listener table
+// (platform.BusyPorts): one read, no bind attempts, and a port bound to any
+// address counts as busy.
+type PlatformProber struct{}
 
 // Busy implements PortProber.
-func (LoopbackProber) Busy(ctx context.Context, lo, hi int) ([]int, error) {
-	var busy []int
-	var lc net.ListenConfig
-	for p := lo; p <= hi; p++ {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		l, err := lc.Listen(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(p)))
-		if err != nil {
-			busy = append(busy, p)
-			continue
-		}
-		_ = l.Close()
+func (PlatformProber) Busy(ctx context.Context, lo, hi int) ([]int, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	return busy, nil
+	return platform.BusyPorts(lo, hi)
 }

@@ -1,3 +1,12 @@
+-- name: UpsertRepoEnvProfile :exec
+-- Writes only the profile columns; the compose columns of an existing row are not touched.
+INSERT INTO repo_env_settings (repo_id, profile_paths, agent_copy, updated_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT (repo_id) DO UPDATE SET
+    profile_paths = excluded.profile_paths,
+    agent_copy = excluded.agent_copy,
+    updated_at = excluded.updated_at;
+
 -- name: GetRepoEnvSettings :one
 SELECT * FROM repo_env_settings WHERE repo_id = ?;
 

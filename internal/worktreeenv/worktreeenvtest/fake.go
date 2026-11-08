@@ -47,6 +47,14 @@ func (s *Store) Audits() []core.AuditEntry {
 	return append([]core.AuditEntry(nil), s.audits...)
 }
 
+// SeedBlock puts a live block into the store without the checks of SaveBlock,
+// as old rows written under an earlier range would be.
+func (s *Store) SeedBlock(w core.WorktreeID, b core.PortBlock) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.blocks[w] = b
+}
+
 // LoadBlocks implements worktreeenv.PortStore.
 func (s *Store) LoadBlocks(context.Context) (map[core.WorktreeID]core.PortBlock, error) {
 	s.mu.Lock()

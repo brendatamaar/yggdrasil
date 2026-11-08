@@ -124,6 +124,34 @@ func (s *Store) GetRepoEnvSettings(ctx context.Context, repo core.RepoID) (RepoE
 	return RepoEnvRecord{Repo: repo}, nil
 }
 
+// PutRepoEnvProfile writes only the profile paths and the agent-copy toggle
+// of a repo (an upsert). The compose columns of an existing row are left as
+// they are, in the same statement, so a concurrent compose change is never
+// lost. Call it with AppendAudit in the same Store.Commit; an unknown repo is
+// ErrNotFound.
+func (tx *Tx) PutRepoEnvProfile(ctx context.Context, repo core.RepoID, paths []string, agentCopy bool, at time.Time) error {
+	if err := repo.Validate(); err != nil {
+		return err
+	}
+	if err := needTime("repo env profile", at); err != nil {
+		return err
+	}
+	if paths == nil {
+		paths = []string{}
+	}
+	raw, err := json.Marshal(paths)
+	if err != nil {
+		return fmt.Errorf("encode profile paths: %w", err)
+	}
+	err = tx.q.UpsertRepoEnvProfile(ctx, gen.UpsertRepoEnvProfileParams{
+		RepoID: string(repo), ProfilePaths: string(raw), AgentCopy: b2i(agentCopy), UpdatedAt: fmtTime(at),
+	})
+	if err != nil {
+		return fmt.Errorf("put repo env profile %s: %w", repo, err)
+	}
+	return nil
+}
+
 // PutRepoEnvSettings writes the settings (an upsert). Call it with AppendAudit
 // in the same Store.Commit (invariant 8); an unknown repo is ErrNotFound.
 func (tx *Tx) PutRepoEnvSettings(ctx context.Context, rec RepoEnvRecord) error {
