@@ -73,6 +73,11 @@ type Deps struct {
 	// WorktreeDiff serves a task worktree's diff for review (RV-01).
 	WorktreeDiff WorktreeDiffer
 
+	// Phase5 holds the services of the Phase 5 areas (dev servers, worktree
+	// environment, terminal). They publish to the hub, so they are usually
+	// bound after New with SetPhase5Services; a nil service answers 501.
+	Phase5 Phase5Services
+
 	// Clock and IDs are the shell's time and randomness for handlers that
 	// make core inputs (docs/AGENTS.md 5.11). Defaults: time.Now().UTC() and
 	// db.NewID.
@@ -112,6 +117,8 @@ type Server struct {
 	writeModes bool
 
 	p4       atomic.Pointer[Phase4Services]
+	p5       atomic.Pointer[Phase5Services]
+	logSeq   logSeq
 	composer ComposerService
 	mcp      MCPService
 	clock    func() time.Time
@@ -173,6 +180,7 @@ func New(d Deps) (*Server, error) {
 	s.agents = d.Agents
 	s.tasks, s.writeModes = d.Tasks, d.WriteModes
 	s.p4.Store(&Phase4Services{Verification: d.Verification, Review: d.Review, ChangeSets: d.ChangeSets, Landing: d.Landing, WorktreeDiff: d.WorktreeDiff})
+	s.p5.Store(&d.Phase5)
 	s.clock, s.ids = d.Clock, d.IDs
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }
@@ -213,6 +221,9 @@ func (s *Server) Handler() http.Handler {
 	s.routesChangeSets(mux)
 	s.routesLanding(mux)
 	s.routesWorktreeDiff(mux)
+	s.routesDevServers(mux)
+	s.routesWorktreeEnv(mux)
+	s.routesTerminal(mux)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, ErrNotFound, "That API endpoint doesn't exist.", "")
 	})

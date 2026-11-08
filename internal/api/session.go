@@ -94,7 +94,7 @@ func sessionGated(path string) bool {
 	if sessionExempt(path) {
 		return false
 	}
-	return path == "/ws" || path == "/api" || strings.HasPrefix(path, "/api/")
+	return path == "/ws" || path == "/ws/terminal" || path == "/api" || strings.HasPrefix(path, "/api/")
 }
 
 // session is the middleware: it trades the launch token for a cookie and
