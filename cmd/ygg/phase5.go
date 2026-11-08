@@ -42,6 +42,8 @@ type phase5Hooks struct {
 	start platform.StartFunc
 	ports func(pid int) ([]int, error)
 	pty   terminal.PTYStarter
+	// resolve replaces platform.Resolve (no real npm on the test machine).
+	resolve func(name, dir string, env []string) (string, error)
 }
 
 // errNotTracked says a repo or worktree is not (or no longer) tracked.
@@ -229,7 +231,7 @@ func (a devServerAPI) Servers(ctx context.Context) ([]devservers.View, error) {
 			return nil, fmt.Errorf("list repos of %s: %w", p.ID, err)
 		}
 		for _, r := range repos {
-			views, err := a.Service.List(ctx, r.ID)
+			views, err := a.List(ctx, r.ID)
 			if err != nil {
 				return nil, fmt.Errorf("list dev servers of %s: %w", r.ID, err)
 			}
@@ -251,7 +253,7 @@ func (a devServerAPI) RepoName(ctx context.Context, id core.RepoID) string {
 
 func newDevServers(ctx context.Context, cfg config, store *db.Store, tsk *tasks.Service, envSvc *worktreeenv.Service, hub devservers.Publisher, red safety.Redactor, log *slog.Logger) (*devservers.Service, error) {
 	dirs := trackedDirs{store}
-	start, ports := platform.StartFunc(platform.Start), platform.ListeningPorts
+	start, ports, resolve := platform.StartFunc(platform.Start), platform.ListeningPorts, platform.Resolve
 	if h := cfg.phase5; h != nil {
 		if h.start != nil {
 			start = h.start
@@ -259,11 +261,14 @@ func newDevServers(ctx context.Context, cfg config, store *db.Store, tsk *tasks.
 		if h.ports != nil {
 			ports = h.ports
 		}
+		if h.resolve != nil {
+			resolve = h.resolve
+		}
 	}
 	svc, err := devservers.New(ctx, devservers.Deps{
 		Store: devservers.NewSQLiteStore(store, red), Repos: devRepos{dirs},
 		Trust: trustSource{svc: tsk}, Templates: devTemplates{dirs}, Blocks: devBlocks{envSvc},
-		Start: start, KillTask: platform.KillTask, Resolve: platform.Resolve, Ports: ports,
+		Start: start, KillTask: platform.KillTask, Resolve: resolve, Ports: ports,
 		Orphans: devservers.RealOrphans(cfg.dataDir),
 		Env:     safety.NewEnvBuilder(), Redactor: red, Hub: hub,
 		Clock: devservers.RealClock{}, IDs: db.NewID, Log: log, DataDir: cfg.dataDir,
@@ -534,7 +539,7 @@ func newTerminal(cfg config, store *db.Store, red safety.Redactor, log *slog.Log
 		start = cfg.phase5.pty
 	}
 	svc, err := terminal.New(terminal.Config{
-		Start: start,
+		Start:   start,
 		Folders: terminalFolders{trackedDirs{store}}, Env: safety.NewEnvBuilder(),
 		Audit: terminalAudit{store: store, red: red}, Log: log,
 	})
