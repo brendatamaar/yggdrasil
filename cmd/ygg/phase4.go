@@ -184,6 +184,9 @@ type proposalFanout struct {
 	next proposals.Publisher
 	svc  atomic.Pointer[changesets.Service]
 	log  func(msg string, args ...any)
+	// after, when set, runs once per delivered proposal ID (the sweep that
+	// frees the port blocks of removed worktrees, WE-02). Set before run.
+	after func(context.Context)
 
 	mu      sync.Mutex
 	pending []core.ProposalID
@@ -226,6 +229,9 @@ func (f *proposalFanout) run(ctx context.Context) error {
 			id := f.pending[0]
 			f.pending = f.pending[1:]
 			f.mu.Unlock()
+			if f.after != nil {
+				f.after(ctx)
+			}
 			svc := f.svc.Load()
 			if svc == nil {
 				continue

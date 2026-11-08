@@ -21,6 +21,7 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/builds/toolchains"
 	"github.com/brendatamaar/yggdrasil/internal/changesets"
 	"github.com/brendatamaar/yggdrasil/internal/db"
+	"github.com/brendatamaar/yggdrasil/internal/devservers"
 	"github.com/brendatamaar/yggdrasil/internal/git"
 	"github.com/brendatamaar/yggdrasil/internal/hosts"
 	"github.com/brendatamaar/yggdrasil/internal/hosts/hostclients"
@@ -30,7 +31,9 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/repos"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 	"github.com/brendatamaar/yggdrasil/internal/tasks"
+	"github.com/brendatamaar/yggdrasil/internal/terminal"
 	"github.com/brendatamaar/yggdrasil/internal/verify"
+	"github.com/brendatamaar/yggdrasil/internal/worktreeenv"
 )
 
 // app is the running Yggdrasil: the database, the audit log, the agents and
@@ -66,6 +69,11 @@ type app struct {
 	verify     *verify.Service
 	changesets *changesets.Service
 	fanout     *proposalFanout
+	// devservers, terminal and envSvc are the Phase 5 services; run starts
+	// them and closes the first two before the store closes.
+	devservers *devservers.Service
+	terminal   *terminal.Service
+	envSvc     *worktreeenv.Service
 }
 
 // newLogger writes redacted text logs: no token reaches a log (invariant 4).
@@ -205,8 +213,14 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		_ = d.Close()
 		return nil, err
 	}
+	envHub := &lateEnvHub{}
+	envSvc, err := newWorktreeEnv(store, redactor, envHub, log)
+	if err != nil {
+		_ = d.Close()
+		return nil, err
+	}
 	taskHub := &api.HubAdapter{}
-	taskSvc, err := newTasks(store, adapters, g, taskHub, redactor, checkoutLock, cfg.dataDir, cfg.writeModes, propSvc.PendingCount, mcpSvc, log)
+	taskSvc, err := newTasks(store, adapters, g, taskHub, redactor, checkoutLock, cfg.dataDir, cfg.writeModes, propSvc.PendingCount, mcpSvc, envSvc, log)
 	if err != nil {
 		_ = d.Close()
 		return nil, err
@@ -269,7 +283,27 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		Landing:      api.NewLandingService(store, g, propSvc),
 		WorktreeDiff: api.NewWorktreeDiffer(store, g),
 	})
+	envHub.Set(srv.PublishWorktreeEnv)
+	// The Phase 5 services publish to the server, so they come after it.
+	devSvc, err := newDevServers(ctx, cfg, store, taskSvc, envSvc, srv, redactor, log)
+	if err != nil {
+		_ = d.Close()
+		return nil, err
+	}
+	termSvc, err := newTerminal(cfg, store, redactor, log)
+	if err != nil {
+		devSvc.Close(ctx)
+		_ = d.Close()
+		return nil, err
+	}
+	srv.SetPhase5Services(api.Phase5Services{
+		DevServers:  devServerAPI{Service: devSvc, store: store},
+		WorktreeEnv: newWorktreeEnvAPI(envSvc, store, redactor),
+		Terminal:    termSvc,
+	})
+	fanout.after = func(ctx context.Context) { releaseRemoved(ctx, store, envSvc, log) }
 	return &app{
+		devservers: devSvc, terminal: termSvc, envSvc: envSvc,
 		cfg: cfg, log: log, db: d, store: store, srv: srv, status: status, builds: buildSvc, hosts: hostSvc, actions: actions,
 		feeder: feeder, tasks: taskSvc, proposals: propSvc, mcp: mcpSvc,
 		verify: verifySvc, changesets: csSvc, fanout: fanout,
@@ -285,6 +319,7 @@ func (a *app) run(ctx context.Context, ln net.Listener) error {
 	// Recovery of tasks that were running at the last shutdown comes before
 	// anything is served; Close below stops every run before the store closes.
 	if err := a.tasks.Start(ctx); err != nil {
+		a.closePhase5()
 		_ = a.tasks.Close()
 		return errors.Join(fmt.Errorf("start tasks: %w", err), a.db.Close())
 	}
@@ -292,8 +327,16 @@ func (a *app) run(ctx context.Context, ln net.Listener) error {
 	// never executed again on their own.
 	if err := a.proposals.Start(ctx); err != nil {
 		a.proposals.Close()
+		a.closePhase5()
 		return errors.Join(fmt.Errorf("start proposals: %w", err), a.tasks.Close(), a.db.Close())
 	}
+	// Dev servers that were running at the last shutdown are reconciled
+	// (stopped or marked orphaned) before anything is served (DV-03). A
+	// failure is not fatal: the rows are tried again at the next start.
+	if err := a.devservers.Reconcile(ctx); err != nil {
+		a.log.Warn("could not reconcile the dev servers of the last run", "err", err)
+	}
+	releaseRemoved(ctx, a.store, a.envSvc, a.log)
 	group, gctx := errgroup.WithContext(ctx)
 	group.Go(func() error { return a.status.Start(gctx) })
 	group.Go(func() error { return a.builds.Start(gctx) })
@@ -307,6 +350,8 @@ func (a *app) run(ctx context.Context, ln net.Listener) error {
 	group.Go(func() error { return a.fanout.run(gctx) })
 	group.Go(func() error { return a.srv.Run(gctx, ln) })
 	serveErr := group.Wait()
+	// Dev servers and terminals stop before anything the store serves them.
+	a.closePhase5()
 	a.proposals.Close()
 	tasksErr := a.tasks.Close()
 	a.hosts.Close()
