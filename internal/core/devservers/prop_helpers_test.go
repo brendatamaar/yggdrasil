@@ -76,6 +76,11 @@ func randPorts(r *rand.Rand) []Port {
 // the run has used; closed says Yggdrasil is shutting down (the shell then
 // sends no StartRequested).
 func gen(r *rand.Rand, cur Server, maxAttempt int, closed bool, now time.Time) Input {
+	if r.Intn(10) < 6 {
+		if in := wellSequenced(r, cur, maxAttempt, closed, now); in != nil {
+			return in
+		}
+	}
 	att := attemptOf(cur)
 	if r.Intn(4) == 0 {
 		att += r.Intn(3) - 1 // stale or future
@@ -107,13 +112,15 @@ func gen(r *rand.Rand, cur Server, maxAttempt int, closed bool, now time.Time) I
 		c := []StopCause{CauseUserStop, CauseRestart, CauseAppShutdown}
 		return StopRequested{Cause: c[r.Intn(3)], Now: now}
 	case 11:
-		if r.Intn(3) == 0 {
+		switch r.Intn(12) {
+		case 0:
 			return ShutdownRequested{Now: now}
-		}
-		if r.Intn(2) == 0 {
+		case 1:
 			return Recovered{Liveness: Dead{}, Now: now}
+		case 2:
+			return Recovered{Liveness: Alive{Pid: r.Intn(3)}, Now: now}
 		}
-		return Recovered{Liveness: Alive{Pid: r.Intn(3)}, Now: now}
+		return StopRequested{Cause: CauseUserStop, Now: now}
 	}
 	return OrphanStopped{Now: now}
 }
@@ -172,6 +179,52 @@ func count[T Command](cmds []Command) int {
 func unchanged(prev, next Server, cmds []Command) error {
 	if !reflect.DeepEqual(prev, next) || len(cmds) != 0 {
 		return fmt.Errorf("expected no change and no commands")
+	}
+	return nil
+}
+
+// wellSequenced is the input a healthy run would send next, so the random
+// runs reach Running, Stopping and Orphaned often.
+func wellSequenced(r *rand.Rand, cur Server, maxAttempt int, closed bool, now time.Time) Input {
+	att := attemptOf(cur)
+	switch cur.(type) {
+	case Stopped, Failed:
+		if closed {
+			return nil
+		}
+		return StartRequested{Attempt: maxAttempt + 1, Now: now, Template: templates[r.Intn(3)], Block: blocks[1+r.Intn(2)]}
+	case Starting:
+		switch r.Intn(4) {
+		case 0:
+			return Started{Attempt: att, Pid: 1 + r.Intn(100), Now: now}
+		case 1:
+			return PortsObserved{Attempt: att, Ports: []Port{20000 + Port(r.Intn(25))}, Now: now}
+		case 2:
+			return Wake{Attempt: att, Kind: WakeSettle, Now: now}
+		}
+		return Exited{Attempt: att, Code: r.Intn(2), Now: now}
+	case Running:
+		switch r.Intn(5) {
+		case 0:
+			return PortsObserved{Attempt: att, Ports: randPorts(r), Now: now}
+		case 1:
+			return Wake{Attempt: att, Kind: WakePoll, Now: now}
+		case 2:
+			return OutputAnnounced{Attempt: att, Ports: randPorts(r)}
+		case 3:
+			return Exited{Attempt: att, Code: r.Intn(2), Now: now}
+		}
+		return StopRequested{Cause: []StopCause{CauseUserStop, CauseRestart}[r.Intn(2)], Now: now}
+	case Stopping:
+		if r.Intn(2) == 0 {
+			return Exited{Attempt: att, Code: r.Intn(2), Now: now}
+		}
+		return Wake{Attempt: att, Kind: WakeKillGrace, Now: now}
+	case Orphaned:
+		if r.Intn(2) == 0 {
+			return StopRequested{Cause: CauseUserStop, Now: now}
+		}
+		return OrphanStopped{Now: now}
 	}
 	return nil
 }
