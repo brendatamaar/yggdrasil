@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -45,5 +46,32 @@ func TestResolveVenvMissing(t *testing.T) {
 	}
 	if _, err := Resolve(".venv/python", t.TempDir(), nil); !errors.Is(err, ErrNoEnv) {
 		t.Errorf("nil env: %v, want ErrNoEnv", err)
+	}
+}
+
+func TestResolvePythonBase(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a Unix-style fake interpreter")
+	}
+	bin := t.TempDir()
+	want := filepath.Join(bin, "python3")
+	if err := os.WriteFile(want, []byte("#!/bin/sh\n"), 0o700); err != nil { //nolint:gosec // test fake must be executable
+		t.Fatal(err)
+	}
+	// A venv named by VIRTUAL_ENV must never be used.
+	venv := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(venv, "bin"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(venv, "bin", "python3"), []byte("#!/bin/sh\n"), 0o700); err != nil { //nolint:gosec // test fake
+		t.Fatal(err)
+	}
+	env := []string{"PATH=" + bin, "VIRTUAL_ENV=" + venv}
+	got, err := Resolve("python-base", t.TempDir(), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }

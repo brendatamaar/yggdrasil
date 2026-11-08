@@ -24,6 +24,9 @@ func Resolve(name, dir string, env []string) (string, error) {
 	if isVenvName(name) {
 		return resolveVenv(name, dir)
 	}
+	if name == pythonBaseName {
+		return PythonBase(env)
+	}
 	if dir != "" && filepath.Base(name) == name {
 		if w := wrapperFile(name); w != "" {
 			if p := filepath.Join(dir, w); isRegular(p) {
@@ -37,6 +40,11 @@ func Resolve(name, dir string, env []string) (string, error) {
 // venvName is the portable spelling of the project's virtual-environment
 // interpreter that toolchain modules use (".venv/python", either separator).
 const venvName = ".venv/python"
+
+// pythonBaseName is the reserved Argv[0] that toolchain modules use for the
+// interpreter that creates a new venv, before .venv exists. Resolve maps it
+// through PythonBase.
+const pythonBaseName = "python-base"
 
 func isVenvName(name string) bool {
 	return strings.ReplaceAll(name, `\`, "/") == venvName
