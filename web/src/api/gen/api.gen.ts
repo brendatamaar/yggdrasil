@@ -952,7 +952,7 @@ export interface DevServerPortDTO {
  * failed server; it holds no paths.
  */
 export interface DevServerDTO {
-  id: any /* core.DevServerID */;
+  id: core.DevServerID;
   repoId: core.RepoID;
   repoName: string;
   worktreeId?: core.WorktreeID;
@@ -981,7 +981,7 @@ export interface DevServerChangedMessage {
  * DevServerLogMessage is one log line on "devserver:<id>". Lines are redacted.
  */
 export interface DevServerLogMessage {
-  id: any /* core.DevServerID */;
+  id: core.DevServerID;
   seq: number /* uint64 */;
   stream: string; // "stdout" or "stderr"
   line: string;

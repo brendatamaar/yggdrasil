@@ -37,6 +37,6 @@ export function parseServerChanged(data: unknown): DevServerDTO | null {
 export function parseServerLog(data: unknown): DevServerLogMessage | null {
   if (typeof data !== "object" || data === null) return null;
   const o = data as Record<string, unknown>;
-  if (typeof o.seq !== "number" || typeof o.line !== "string" || typeof o.stream !== "string") return null;
+  if (typeof o.id !== "string" || typeof o.seq !== "number" || typeof o.line !== "string" || typeof o.stream !== "string") return null;
   return { id: o.id, seq: o.seq, stream: o.stream, line: o.line };
 }

@@ -74,6 +74,8 @@ packages:
       core.TaskID: core.TaskID
       core.BuildID: core.BuildID
       core.WorktreeID: core.WorktreeID
+      core.DevServerID: core.DevServerID
+      core.TerminalSessionID: core.TerminalSessionID
       core.WorktreeStatus: core.WorktreeStatus
       core.ProposalID: core.ProposalID
       core.ChangeSetID: core.ChangeSetID
