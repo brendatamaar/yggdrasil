@@ -101,9 +101,21 @@ func TestPrepareFailureIsLoggedByDefault(t *testing.T) {
 // is recorded with the plain path instead of being orphaned.
 func TestEnsureRecordsWorktreeWhenLongPathFails(t *testing.T) {
 	t.Cleanup(worktrees.SetLongPath(func(string) (string, error) { return "", errors.New("no long path") }))
-	e, repos := newPrepared(t, nil, nil)
+	var buf bytes.Buffer
+	e, err := worktrees.New(worktrees.Config{
+		Git: worktreestest.NewGit(), Store: worktreestest.NewStore(), Rand: &worktreestest.Rand{}, Now: time.Now, NewID: newID,
+		DataDir: filepath.Join(t.TempDir(), "data"), Logger: slog.New(slog.NewTextHandler(&buf, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repos := []worktrees.RepoRef{{ID: "rep_1", Path: filepath.Join(t.TempDir(), "shop-api"), DefaultBranch: "main"}}
 	got, err := e.Ensure(context.Background(), "tsk_1", repos)
 	if err != nil || len(got) != 1 || got[0].Path == "" {
 		t.Fatalf("Ensure = %+v, %v", got, err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "worktree="+string(got[0].ID)) {
+		t.Fatalf("the fallback was not logged: %q", out)
 	}
 }
