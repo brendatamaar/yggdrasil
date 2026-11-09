@@ -77,6 +77,7 @@ type Service struct {
 	reg     ct.Registry
 	live    map[core.TerminalSessionID]*live
 	audits  []AuditEntry
+	retry   []AuditEntry                     // entries that failed all tries, tried again by the next flush
 	openErr map[core.TerminalSessionID]error // failed open audits, read by Redeem
 	timers  map[timerKey]func() bool
 	closed  bool
@@ -287,6 +288,16 @@ func (s *Service) scheduleWake(kind ct.WakeKind, at time.Time) {
 func (s *Service) flushAudit() {
 	s.auditMu.Lock()
 	defer s.auditMu.Unlock()
+	s.mu.Lock()
+	s.audits = append(s.retry, s.audits...) // earlier failures first: step order
+	s.retry = nil
+	s.mu.Unlock()
+	var failed []AuditEntry
+	defer func() {
+		s.mu.Lock()
+		s.retry = append(s.retry, failed...)
+		s.mu.Unlock()
+	}()
 	for {
 		s.mu.Lock()
 		if len(s.audits) == 0 {
@@ -310,6 +321,8 @@ func (s *Service) flushAudit() {
 			s.mu.Lock()
 			s.openErr[e.Session] = err
 			s.mu.Unlock()
+		} else {
+			failed = append(failed, e) // kept for the next call and the flush at shutdown (invariant 8)
 		}
 	}
 }
@@ -420,10 +433,12 @@ func (s *Service) Close(ctx context.Context) error {
 	select {
 	case <-done:
 		s.cancel()
+		s.flushAudit() // last attempt at the entries that could not be written
 		return nil
 	case <-ctx.Done():
 		s.cancel() // kills the remaining shells through their contexts
 		<-done
+		s.flushAudit()
 		return fmt.Errorf("terminal sessions did not close in time: %w", ctx.Err())
 	}
 }

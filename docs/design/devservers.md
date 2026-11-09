@@ -77,6 +77,8 @@ Clock and attempt numbers arrive as input fields.
 | any | input with a stale `Attempt` | | unchanged | none |
 | any other (state, input) pair | | | unchanged | none |
 
+Decision (Phase 5 follow-up): a second `StopRequested` in `Orphaned` stays a repeat of `StopOrphan` and its audit, because `Orphaned` carries no "stop in flight" marker and this repeat is the user's retry after `OrphanStopFailed`; making it idempotent would remove the retry. A `StartRequested` in `Failed{StopFailed}` stays allowed (the row above): the user has no other way out, the new attempt has its own process id and the job object ends the old tree when `ygg` ends.
+
 After `ShutdownRequested` the shell stops sending `StartRequested`; the core also refuses it through a `Closed` marker on the service (not on the server): the service checks before calling `Step`. Servers already in `Stopped`/`Failed` need nothing.
 
 ## Invariants

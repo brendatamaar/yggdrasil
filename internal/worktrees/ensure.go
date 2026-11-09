@@ -77,6 +77,9 @@ type Config struct {
 	Logger *slog.Logger
 }
 
+// longPath is platform.LongPath; a test replaces it to make it fail.
+var longPath = platform.LongPath
+
 // Ensurer creates worktrees.
 type Ensurer struct{ c Config }
 
@@ -213,9 +216,11 @@ func (x *exec) run(c cw.Command) cw.Input {
 		if _, err := e.c.Git.WorktreeAdd(x.ctx, r.Path, dir, v.Branch, v.Base); err != nil {
 			return cw.AddFailed{Seq: v.Seq, Cause: x.gitCause(err)}
 		}
-		long, err := platform.LongPath(dir)
+		long, err := longPath(dir)
 		if err != nil {
-			return cw.AddFailed{Seq: v.Seq, Cause: x.gitCause(err)}
+			// The worktree exists on disk: record it with the plain path rather
+			// than orphan it (a failed AddFailed here would leave it unrecorded).
+			long = dir
 		}
 		now := e.c.Now().UTC()
 		return cw.Added{
