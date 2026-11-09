@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -181,7 +182,7 @@ func newComposeRig(t *testing.T) *composeRig {
 			return core.PortBlock{Base: 20040, Size: 20}, true, nil
 		},
 		Now:      func() time.Time { return time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC) },
-		NewID:    func(p string) string { return p + "_" + string(rune('a'+n.Add(1))) },
+		NewID:    func(p string) string { return p + "_" + strconv.Itoa(int(n.Add(1))) },
 		OnChange: func(core.WorktreeID) { r.changes.Add(1) },
 	})
 	if err != nil {
