@@ -78,17 +78,20 @@ export function upsertServer(list: readonly DevServerDTO[] | undefined, next: De
   return base.some((s) => serverId(s) === id) ? base.map((s) => (serverId(s) === id ? next : s)) : [...base, next];
 }
 
-/** Merges log lines by sequence number: no duplicates, in order, capped to the newest LOG_CAP. */
+/** A line is identified by (epoch, seq): seq restarts at 1 when Yggdrasil restarts. */
+export const lineKey = (l: Pick<DevServerLogMessage, "epoch" | "seq">): string => `${String(l.epoch)}:${String(l.seq)}`;
+
+/** Merges log lines by (epoch, seq): no duplicates, in order, capped to the newest LOG_CAP. */
 export function mergeLog(
   current: readonly DevServerLogMessage[],
   incoming: readonly DevServerLogMessage[],
   cap = LOG_CAP,
 ): DevServerLogMessage[] {
   if (incoming.length === 0) return current as DevServerLogMessage[];
-  const bySeq = new Map<number, DevServerLogMessage>();
-  for (const l of current) bySeq.set(l.seq, l);
-  for (const l of incoming) bySeq.set(l.seq, l);
-  const merged = [...bySeq.values()].sort((a, b) => a.seq - b.seq);
+  const byKey = new Map<string, DevServerLogMessage>();
+  for (const l of current) byKey.set(lineKey(l), l);
+  for (const l of incoming) byKey.set(lineKey(l), l);
+  const merged = [...byKey.values()].sort((a, b) => a.epoch - b.epoch || a.seq - b.seq);
   return merged.length > cap ? merged.slice(merged.length - cap) : merged;
 }
 

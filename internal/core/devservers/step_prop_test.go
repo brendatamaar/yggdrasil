@@ -498,8 +498,8 @@ func TestStepHappyPath(t *testing.T) {
 	if st, ok := s.(Stopping); !ok || st.KillAttempt != KillFirst || !has[KillProcess](cmds) {
 		t.Fatalf("stop: %#v", s)
 	}
-	s, _ = Step(s, Wake{Attempt: 1, Kind: WakeKillGrace, Now: epoch})
-	s, _ = Step(s, Wake{Attempt: 1, Kind: WakeKillGrace, Now: epoch})
+	s, _ = Step(s, Wake{Attempt: 1, Kind: WakeKillGrace, Now: epoch.Add(KillGraceUser)})
+	s, _ = Step(s, Wake{Attempt: 1, Kind: WakeKillGrace, Now: epoch.Add(2 * KillGraceUser)})
 	if f, ok := s.(Failed); !ok || f.Kind != FailStopFailed {
 		t.Fatalf("second grace: %#v", s)
 	}

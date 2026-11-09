@@ -40,7 +40,10 @@ export async function fetchServerLog(id: string, tail: number): Promise<DevServe
   const n = r.lines.length;
   return {
     ...r,
-    lines: r.lines.map((l, i) => ((l as { seq?: unknown }).seq === undefined ? { ...l, seq: i - n } : l)),
+    lines: r.lines.map((l, i) => {
+      const o = l as { seq?: unknown; epoch?: unknown };
+      return { ...l, epoch: typeof o.epoch === "number" ? o.epoch : 0, seq: o.seq === undefined ? i - n : l.seq };
+    }),
   };
 }
 
@@ -59,5 +62,6 @@ export function parseServerLog(data: unknown): DevServerLogMessage | null {
   if (typeof data !== "object" || data === null) return null;
   const o = data as Record<string, unknown>;
   if (typeof o.id !== "string" || typeof o.seq !== "number" || typeof o.line !== "string" || typeof o.stream !== "string") return null;
-  return { id: o.id, seq: o.seq, stream: o.stream, line: o.line };
+  // A message from before epochs existed has none: it counts as epoch 0.
+  return { id: o.id, epoch: typeof o.epoch === "number" ? o.epoch : 0, seq: o.seq, stream: o.stream, line: o.line };
 }

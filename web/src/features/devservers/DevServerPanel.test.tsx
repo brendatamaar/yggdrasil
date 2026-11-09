@@ -77,7 +77,7 @@ describe("DevServerPanel", () => {
   it("shows the log tail, appends streamed lines, and notes an incomplete log", async () => {
     const h = setup([server()], (c) =>
       c.path === "/api/devservers/s1/log?tail=200"
-        ? { body: { incomplete: true, lines: [{ id: "s1", seq: 1, stream: "stdout", line: "ready on 41002" }] } }
+        ? { body: { incomplete: true, lines: [{ id: "s1", epoch: 1, seq: 1, stream: "stdout", line: "ready on 41002" }] } }
         : undefined,
     );
     fireEvent.click(await screen.findByRole("button", { name: /Show log/ }));
@@ -85,15 +85,15 @@ describe("DevServerPanel", () => {
     expect(within(log).getByText("ready on 41002")).toBeTruthy();
     expect(screen.getByText(/Some output was lost/)).toBeTruthy();
     act(() => {
-      h.push("devserver:s1", { id: "s1", seq: 2, stream: "stderr", line: "warning: slow start" });
-      h.push("devserver:s1", { id: "s1", seq: 2, stream: "stderr", line: "warning: slow start" });
+      h.push("devserver:s1", { id: "s1", epoch: 1, seq: 2, stream: "stderr", line: "warning: slow start" });
+      h.push("devserver:s1", { id: "s1", epoch: 1, seq: 2, stream: "stderr", line: "warning: slow start" });
     });
     expect(await within(log).findAllByText("warning: slow start")).toHaveLength(1);
   });
 
   it("pauses auto-scroll when the person scrolls up and offers to resume", async () => {
     setup([server()], (c) =>
-      c.path === "/api/devservers/s1/log?tail=200" ? { body: { incomplete: false, lines: [{ id: "s1", seq: 1, stream: "stdout", line: "x" }] } } : undefined,
+      c.path === "/api/devservers/s1/log?tail=200" ? { body: { incomplete: false, lines: [{ id: "s1", epoch: 1, seq: 1, stream: "stdout", line: "x" }] } } : undefined,
     );
     fireEvent.click(await screen.findByRole("button", { name: /Show log/ }));
     const log = await screen.findByRole("log");
@@ -140,7 +140,7 @@ describe("DevServerPanel", () => {
 
   it("a tail refetch after live lines gives no duplicates and no reordering", async () => {
     let tail = [1, 2];
-    const mk = (n: number) => ({ id: "s1", seq: n, stream: "stdout", line: `line ${String(n)}` });
+    const mk = (n: number) => ({ id: "s1", epoch: 1, seq: n, stream: "stdout", line: `line ${String(n)}` });
     const h = setup([server()], (c) =>
       c.path === "/api/devservers/s1/log?tail=200" ? { body: { incomplete: false, lines: tail.map(mk) } } : undefined,
     );

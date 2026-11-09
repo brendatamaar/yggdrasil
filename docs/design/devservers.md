@@ -16,7 +16,7 @@ One pure piece: `Step(Server, Input) (Server, []Command)`, one `Server` per key 
 | `Stopped` | `Last` (Never / Exited{Code} / UserStopped / Interrupted), `At` | at rest; may start |
 | `Starting` | `Attempt`, `Since`, `Block` (may be empty for a main checkout without a block), `Expanded` (argv + env as data) | process requested; not yet seen listening |
 | `Running` | `Attempt`, `Since`, `Pid`, `Ports` (sorted, unique, observed from the OS), `Announced` (ports the output printed), `Warnings` | alive |
-| `Stopping` | `Attempt`, `Cause` (UserStop / Restart / AppShutdown), `KillAttempt` (1 or 2), `Since` | kill requested |
+| `Stopping` | `Attempt`, `Cause` (UserStop / Restart / AppShutdown), `KillAttempt` (1 or 2), `Since`, `GraceUntil` (end of the current kill attempt's grace; not stored) | kill requested |
 | `Failed` | `Reason` (StartFailed / ExitedEarly{Code} / Crashed{Code} / StopFailed), `At` | at rest; may start again |
 | `Orphaned` | `Pid`, `SeenAt` | non-Windows only: a process from a crashed run is still alive |
 
@@ -65,9 +65,9 @@ Clock and attempt numbers arrive as input fields.
 | `Starting{pid known}`/`Running` | `StopRequested{c}` | | `Stopping{a, c, 1}` | `KillProcess{a}`, `ScheduleWake{KillGrace, +10 s}`, `Audit{devserver.stop}`, `Publish` |
 | `Starting{pid known}`/`Running` | `ShutdownRequested` | | `Stopping{a, AppShutdown, 1}` | `KillProcess{a}`, `ScheduleWake{KillGrace, +5 s}`, `Audit` |
 | `Stopping{a}` | `Exited{a}` | | `Stopped{UserStopped}` (Cause AppShutdown: `Stopped{Interrupted}`) | `Audit`, `Publish` |
-| `Stopping{a, c, k}` | `StopRequested` | the user presses Stop again | `Stopping{a, c, 2}` (cause unchanged) | `KillProcess{a}`, `ScheduleWake{KillGrace, +grace}` (replaces the pending one), `Audit{devserver.stop, escalated}`, `Publish` |
-| `Stopping{a, c, 1}` | `Wake{a, KillGrace}` | | `Stopping{a, c, 2}` | `KillProcess{a}`, `ScheduleWake{KillGrace, +10 s}` |
-| `Stopping{a, c, 2}` | `Wake{a, KillGrace}` | | `Failed{StopFailed}` | `Audit`, `Publish` (the job object still ends the tree when `ygg` ends) |
+| `Stopping{a, c, k}` | `StopRequested` | the user presses Stop again | `Stopping{a, c, 2}` (cause unchanged, `GraceUntil` = Now + grace) | `KillProcess{a}`, `ScheduleWake{KillGrace, +grace}` (replaces the pending one), `Audit{devserver.stop, escalated}`, `Publish` |
+| `Stopping{a, c, 1}` | `Wake{a, KillGrace}` | `Now >= GraceUntil` (an earlier wake is stale and changes nothing) | `Stopping{a, c, 2}` (`GraceUntil` = Now + grace) | `KillProcess{a}`, `ScheduleWake{KillGrace, +10 s}` |
+| `Stopping{a, c, 2}` | `Wake{a, KillGrace}` | `Now >= GraceUntil` | `Failed{StopFailed}` | `Audit`, `Publish` (the job object still ends the tree when `ygg` ends) |
 | `Stopped`/`Failed`/`Orphaned` | `ShutdownRequested` | | unchanged | none |
 | `Starting`/`Running`/`Stopping` | `Recovered{Dead}` | | `Stopped{Interrupted}` | `Audit`, `Publish` |
 | `Starting`/`Running`/`Stopping` | `Recovered{Alive{pid}}` | non-Windows (the shell never sends `Alive` on Windows) | `Orphaned{pid}` | `Publish` |
@@ -201,3 +201,10 @@ Migration `00006` (F3) `dev_servers(id, repo_id, worktree_id nullable, command_k
 2. **Main-checkout servers have no block.** A server started in a main checkout (not a worktree) gets no `PORT` injection and no warning; the framework default applies. Recommendation: yes (WE-02 is about worktrees).
 3. **Restart policy.** No automatic restart, ever (D5). Recommendation: yes.
 4. **Servers survive a browser tab close** and stop only on explicit stop or when `ygg` ends. Recommendation: yes.
+
+## Shell notes (phase 5 gate-3 fixes)
+
+- **Log epoch.** `Seq` restarts at 1 when `ygg` restarts. Every `LogLine` and `DevServerLogMessage` also carries `Epoch` (milliseconds at service start, read from the shell's clock, never in the core). A line is identified by `(Epoch, Seq)`; the UI orders and dedupes by that pair.
+- **Stale grace wake.** `Stopping.GraceUntil` is the end of the current kill attempt's grace; a `KillGrace` wake with `Now < GraceUntil` is stale (the user's second Stop replaced the attempt) and is ignored. `GraceUntil` is not persisted: a stored `Stopping` row is recovered at startup, and a zero value accepts any wake.
+- **ByID re-checks tracking.** `Service.ByID` resolves the row's target through `Repos.Dir` (the run-folder check), so a server of an untracked repo or worktree is NotFound, for the log endpoint too.
+- **Catalog.** `devservers.Catalog` lists the dev commands of a target: the folder always comes from `Repos.Dir` (tracked, no symlink or junction leaf), the manifest scan is cached for 30 s per target (`Invalidate(repo)`, `InvalidateAll()`), and command keys (`dev` first, then the slug of the step name, `-2`, `-3` on a clash) are derived once per scan, so the placeholders in the list and `DevServer` (it implements `Templates`) always agree.

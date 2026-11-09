@@ -38,10 +38,32 @@ const (
 // the sink assigns it, starting at 1 and never reusing one, and both the tail
 // and the live publish carry the same value. A client merges the two by
 // replacing on Seq and sorting by it.
+//
+// Seq restarts at 1 when Yggdrasil restarts, so a line is identified by
+// (Epoch, Seq): Epoch is fixed for one run of the service (the shell gives it
+// at start, from the clock) and grows from one run to the next. A client
+// orders and dedupes by that pair.
 type LogLine struct {
+	Epoch  int64
 	Seq    uint64
 	Stream Stream
 	Line   string
+}
+
+// SinkOption configures a log sink.
+type SinkOption func(*sinkOpts)
+
+type sinkOpts struct{ epoch int64 }
+
+// WithEpoch stamps every line of the sink with epoch (see LogLine).
+func WithEpoch(epoch int64) SinkOption { return func(o *sinkOpts) { o.epoch = epoch } }
+
+func epochOf(opts []SinkOption) int64 {
+	var o sinkOpts
+	for _, f := range opts {
+		f(&o)
+	}
+	return o.epoch
 }
 
 // LogSink receives the output lines of one server. Lines are redacted before
@@ -66,6 +88,7 @@ type sinkParts struct {
 	size    int
 	publish func(LogLine)
 	file    *rotatingFile
+	epoch   int64
 }
 
 // logSink is the ring + file + publish implementation of LogSink.
@@ -79,23 +102,24 @@ type logSink struct {
 	seq     uint64
 	publish func(LogLine)
 	file    *rotatingFile
+	epoch   int64
 }
 
 // NewMemorySink returns a LogSink that keeps the last size lines in memory
 // and publishes each (redacted) line. publish may be nil. redact must not be
 // nil.
-func NewMemorySink(redact Redact, size int, publish func(LogLine)) (LogSink, error) {
+func NewMemorySink(redact Redact, size int, publish func(LogLine), opts ...SinkOption) (LogSink, error) {
 	if redact == nil {
 		return nil, ErrNoRedactor
 	}
-	return newSink(sinkParts{redact: redact, size: size, publish: publish}), nil
+	return newSink(sinkParts{redact: redact, size: size, publish: publish, epoch: epochOf(opts)}), nil
 }
 
 // NewFileSink is NewMemorySink plus a log file in dir named id.log. The file
 // rotates at maxBytes and keeps LogFilesKept files (id.log, id.log.1, ...).
 // A disk error stops the file, adds one warning line to the ring, and the
 // ring keeps working.
-func NewFileSink(dir, id string, redact Redact, size int, maxBytes int64, publish func(LogLine)) (LogSink, error) {
+func NewFileSink(dir, id string, redact Redact, size int, maxBytes int64, publish func(LogLine), opts ...SinkOption) (LogSink, error) {
 	if redact == nil {
 		return nil, ErrNoRedactor
 	}
@@ -106,14 +130,14 @@ func NewFileSink(dir, id string, redact Redact, size int, maxBytes int64, publis
 	if err != nil {
 		return nil, err
 	}
-	return newSink(sinkParts{redact: redact, size: size, publish: publish, file: f}), nil
+	return newSink(sinkParts{redact: redact, size: size, publish: publish, file: f, epoch: epochOf(opts)}), nil
 }
 
 func newSink(p sinkParts) *logSink {
 	if p.size < 1 {
 		p.size = RingLines
 	}
-	return &logSink{redact: p.redact, ring: make([]LogLine, p.size), publish: p.publish, file: p.file}
+	return &logSink{redact: p.redact, ring: make([]LogLine, p.size), publish: p.publish, file: p.file, epoch: p.epoch}
 }
 
 func (l *logSink) Write(stream Stream, line string) {
@@ -146,7 +170,7 @@ func (l *logSink) Write(stream Stream, line string) {
 
 func (l *logSink) push(stream Stream, line string) LogLine {
 	l.seq++
-	ln := LogLine{Seq: l.seq, Stream: stream, Line: line}
+	ln := LogLine{Epoch: l.epoch, Seq: l.seq, Stream: stream, Line: line}
 	if l.n < len(l.ring) {
 		l.ring[(l.start+l.n)%len(l.ring)] = ln
 		l.n++

@@ -72,10 +72,13 @@ type DevServerChangedMessage struct {
 
 // DevServerLogMessage is one log line on "devserver:<id>". Lines are redacted.
 type DevServerLogMessage struct {
-	ID     core.DevServerID `json:"id"`
-	Seq    uint64           `json:"seq"`
-	Stream string           `json:"stream"` // "stdout" or "stderr"
-	Line   string           `json:"line"`
+	ID core.DevServerID `json:"id"`
+	// Epoch tells one run of Yggdrasil from the next: Seq restarts at 1 after a
+	// restart, so a line is identified by (Epoch, Seq).
+	Epoch  int64  `json:"epoch"`
+	Seq    uint64 `json:"seq"`
+	Stream string `json:"stream"` // "stdout" or "stderr"
+	Line   string `json:"line"`
 }
 
 // DevServerLogResponse is the body of GET /api/devservers/{id}/log.
