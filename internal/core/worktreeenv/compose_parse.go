@@ -1,7 +1,6 @@
 package worktreeenv
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -89,7 +88,7 @@ func (r PsResult) Validate() error {
 // never -v, --volumes, --rmi or --remove-orphans. The file is relative to the
 // worktree, which is the working directory.
 func Argv(op ComposeOp, project ProjectName, file RelPath) ([]string, error) {
-	base := []string{"docker", "compose", "-p", string(project), "-f", string(file)}
+	base := []string{"docker", "compose", "-p", string(project), "--file", string(file)}
 	switch op {
 	case OpUp:
 		return append(base, "up", "-d"), nil
@@ -113,23 +112,23 @@ type psRow struct {
 // gives PsNotRunning. Output that is not JSON is an error; the shell then
 // treats the project as PsUnavailable.
 func ParsePs(out []byte) (PsResult, error) {
-	out = bytes.TrimSpace(out)
-	if len(out) == 0 {
+	text := strings.TrimSpace(string(out))
+	if text == "" {
 		return PsNotRunning, nil
 	}
 	var rows []psRow
-	if out[0] == '[' {
-		if err := json.Unmarshal(out, &rows); err != nil {
+	if text[0] == '[' {
+		if err := json.Unmarshal([]byte(text), &rows); err != nil {
 			return "", ErrPsUndecodable
 		}
 	} else {
-		for _, line := range bytes.Split(out, []byte("\n")) {
-			line = bytes.TrimSpace(line)
-			if len(line) == 0 {
+		for _, line := range strings.Split(text, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
 				continue
 			}
 			var r psRow
-			if err := json.Unmarshal(line, &r); err != nil {
+			if err := json.Unmarshal([]byte(line), &r); err != nil {
 				return "", ErrPsUndecodable
 			}
 			rows = append(rows, r)

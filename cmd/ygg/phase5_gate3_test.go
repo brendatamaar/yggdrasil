@@ -126,27 +126,32 @@ func TestPhase5LinkedFolderIsRefusedForDevServersAndTerminals(t *testing.T) {
 	}
 }
 
-// Compose is not built: a request that sets any compose field is refused with
-// 503 and nothing is stored, not even the profile of the same request.
-func TestPhase5ComposeSettingsAreRefusedNotDropped(t *testing.T) {
+// Compose settings (WE-03) are stored with the request, not refused or
+// dropped; a file that is not a compose file, or compose on without a file, is
+// a 400 that stores nothing, not even the profile of the same request.
+func TestPhase5ComposeSettingsAreStored(t *testing.T) {
 	r := newPhase5Rig(t)
 	url := r.base + "/api/repos/" + string(r.repo) + "/env"
 	for name, put := range map[string]api.RepoEnvDTO{
-		"file only":    {RepoID: r.repo, ProfilePaths: []string{".env"}, ComposeFile: "docker-compose.yml"},
-		"enabled":      {RepoID: r.repo, ProfilePaths: []string{".env"}, ComposeEnabled: true, ComposeFile: "docker-compose.yml"},
 		"enabled only": {RepoID: r.repo, ProfilePaths: []string{".env"}, ComposeEnabled: true},
+		"not yaml":     {RepoID: r.repo, ProfilePaths: []string{".env"}, ComposeFile: "docker-compose.txt"},
+		"outside":      {RepoID: r.repo, ProfilePaths: []string{".env"}, ComposeFile: "../docker-compose.yml"},
 	} {
 		code, data := apiDo(t, http.MethodPut, url, put, appClient)
-		if code != 503 && (name != "enabled only" || code != 400) {
-			t.Errorf("%s: PUT = %d %s, want 503", name, code, data)
+		if code != 400 {
+			t.Errorf("%s: PUT = %d %s, want 400", name, code, data)
 		}
 		var e api.RepoEnvDTO
-		if getJSON(t, url, &e); len(e.ProfilePaths) != 0 {
-			t.Errorf("%s: the request stored %v", name, e.ProfilePaths)
+		if getJSON(t, url, &e); len(e.ProfilePaths) != 0 || e.ComposeEnabled {
+			t.Errorf("%s: the request stored %+v", name, e)
 		}
 	}
-	// Without compose fields the same request is accepted.
-	if code, data := apiDo(t, http.MethodPut, url, api.RepoEnvDTO{RepoID: r.repo, ProfilePaths: []string{".env"}}, appClient); code != 200 {
-		t.Fatalf("PUT without compose = %d %s", code, data)
+	want := api.RepoEnvDTO{RepoID: r.repo, ProfilePaths: []string{".env"}, ComposeEnabled: true, ComposeFile: "deploy/docker-compose.yml"}
+	if code, data := apiDo(t, http.MethodPut, url, want, appClient); code != 200 {
+		t.Fatalf("PUT = %d %s", code, data)
+	}
+	var got api.RepoEnvDTO
+	if getJSON(t, url, &got); !got.ComposeEnabled || got.ComposeFile != "deploy/docker-compose.yml" || len(got.ProfilePaths) != 1 {
+		t.Fatalf("stored %+v", got)
 	}
 }

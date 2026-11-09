@@ -167,10 +167,10 @@ func TestArgvTable(t *testing.T) {
 		op   ComposeOp
 		want string
 	}{
-		{OpUp, "docker compose -p ygg-feat-1 -f deploy/compose.yml up -d"},
-		{OpStop, "docker compose -p ygg-feat-1 -f deploy/compose.yml stop"},
-		{OpDown, "docker compose -p ygg-feat-1 -f deploy/compose.yml down"},
-		{OpPs, "docker compose -p ygg-feat-1 -f deploy/compose.yml ps --format json"},
+		{OpUp, "docker compose -p ygg-feat-1 --file deploy/compose.yml up -d"},
+		{OpStop, "docker compose -p ygg-feat-1 --file deploy/compose.yml stop"},
+		{OpDown, "docker compose -p ygg-feat-1 --file deploy/compose.yml down"},
+		{OpPs, "docker compose -p ygg-feat-1 --file deploy/compose.yml ps --format json"},
 	}
 	for _, c := range cases {
 		got, err := Argv(c.op, "ygg-feat-1", "deploy/compose.yml")

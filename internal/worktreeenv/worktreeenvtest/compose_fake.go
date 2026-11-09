@@ -56,7 +56,7 @@ func (r *ComposeRunner) Run(ctx context.Context, c worktreeenv.ComposeCall) work
 	r.calls = append(r.calls, c)
 	f, gate := r.Result, r.Gate
 	r.mu.Unlock()
-	if gate != nil {
+	if gate != nil && c.Op != env.OpPs {
 		select {
 		case <-gate:
 		case <-ctx.Done():

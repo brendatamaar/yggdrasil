@@ -1,0 +1,462 @@
+package worktreeenv_test
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/brendatamaar/yggdrasil/internal/core"
+	env "github.com/brendatamaar/yggdrasil/internal/core/worktreeenv"
+	"github.com/brendatamaar/yggdrasil/internal/platform"
+	"github.com/brendatamaar/yggdrasil/internal/platform/platformtest"
+	"github.com/brendatamaar/yggdrasil/internal/safety"
+	"github.com/brendatamaar/yggdrasil/internal/worktreeenv"
+	"github.com/brendatamaar/yggdrasil/internal/worktreeenv/worktreeenvtest"
+)
+
+// ---- runner contract ------------------------------------------------------
+
+func TestFakeComposeRunnerContract(t *testing.T) {
+	worktreeenvtest.ComposeRunnerContract(t, func(t *testing.T) worktreeenvtest.ComposeRunnerEnv {
+		missing := &worktreeenvtest.ComposeRunner{Result: func(worktreeenv.ComposeCall) worktreeenv.ComposeResult {
+			return worktreeenv.ComposeResult{Failure: env.FailDockerMissing, Summary: worktreeenv.MsgDockerMissing}
+		}}
+		failing := &worktreeenvtest.ComposeRunner{Result: func(worktreeenv.ComposeCall) worktreeenv.ComposeResult {
+			return worktreeenv.ComposeResult{Failure: env.FailComposeError, Summary: "no such file"}
+		}}
+		return worktreeenvtest.ComposeRunnerEnv{Runner: failing, NoDocker: missing, Dir: t.TempDir()}
+	})
+}
+
+// emptyPath is an env builder whose PATH holds nothing, so docker is missing.
+type emptyPath struct{ path string }
+
+func (e emptyPath) Build(o safety.EnvOptions) ([]string, error) {
+	out := []string{"PATH=" + e.path}
+	for k, v := range o.Extra {
+		out = append(out, k+"="+v)
+	}
+	return out, nil
+}
+
+func TestPlatformComposeRunnerContract(t *testing.T) {
+	worktreeenvtest.ComposeRunnerContract(t, func(t *testing.T) worktreeenvtest.ComposeRunnerEnv {
+		dir := t.TempDir()
+		e := worktreeenvtest.ComposeRunnerEnv{
+			Dir:      dir,
+			NoDocker: worktreeenv.PlatformComposeRunner{Env: emptyPath{path: dir}},
+		}
+		if _, err := platform.Resolve("docker", dir, safetyEnv(t)); err == nil {
+			e.Runner = worktreeenv.PlatformComposeRunner{Env: safety.NewEnvBuilder(), Timeout: 30 * time.Second}
+		}
+		return e
+	})
+}
+
+func safetyEnv(t *testing.T) []string {
+	t.Helper()
+	e, err := safety.NewEnvBuilder().Build(safety.EnvOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e
+}
+
+// ---- runner with a fake process -------------------------------------------
+
+func fakeRunner(f *platformtest.Fake) worktreeenv.PlatformComposeRunner {
+	return worktreeenv.PlatformComposeRunner{
+		Env: safety.NewEnvBuilder(), Start: f.Start,
+		Resolve: func(name, _ string, _ []string) (string, error) { return "/usr/bin/" + name, nil },
+	}
+}
+
+func TestComposeRunnerArgvAndEnv(t *testing.T) {
+	t.Setenv("GITLAB_TOKEN", "glpat-secret")
+	t.Setenv("VIRTUAL_ENV", "/x")
+	for op, want := range map[env.ComposeOp]string{
+		env.OpUp:   "compose -p ygg-a --file deploy/c.yml up -d",
+		env.OpStop: "compose -p ygg-a --file deploy/c.yml stop",
+		env.OpDown: "compose -p ygg-a --file deploy/c.yml down",
+		env.OpPs:   "compose -p ygg-a --file deploy/c.yml ps --format json",
+	} {
+		f := &platformtest.Fake{}
+		f.Push(platformtest.Script{Stdout: `{"State":"running"}`})
+		res := fakeRunner(f).Run(context.Background(), worktreeenv.ComposeCall{
+			Op: op, Project: "ygg-a", File: "deploy/c.yml", Dir: "/wt", Env: map[string]string{"YGG_PORT_BASE": "20000", "YGG_PORT_3": "20003"},
+		})
+		if res.Failure != "" {
+			t.Fatalf("%s: %+v", op, res)
+		}
+		spec := f.Started()[0]
+		if got := strings.Join(spec.Argv[1:], " "); got != want || spec.Argv[0] != "/usr/bin/docker" {
+			t.Errorf("%s: argv %v", op, spec.Argv)
+		}
+		joined := strings.Join(spec.Env, "\n")
+		for _, bad := range []string{"GITLAB_TOKEN", "glpat-secret", "VIRTUAL_ENV"} {
+			if strings.Contains(joined, bad) {
+				t.Errorf("%s leaked into the child environment", bad)
+			}
+		}
+		if !slices.Contains(spec.Env, "YGG_PORT_BASE=20000") || !slices.Contains(spec.Env, "YGG_PORT_3=20003") {
+			t.Errorf("port variables missing: %v", spec.Env)
+		}
+		if spec.Dir != "/wt" {
+			t.Errorf("dir %q", spec.Dir)
+		}
+		if (op == env.OpPs) != (len(res.Output) > 0) {
+			t.Errorf("%s: output kept only for ps: %q", op, res.Output)
+		}
+	}
+}
+
+func TestComposeRunnerFailures(t *testing.T) {
+	call := worktreeenv.ComposeCall{Op: env.OpUp, Project: "ygg-a", File: "c.yml", Dir: "/wt"}
+	cases := []struct {
+		name   string
+		script platformtest.Script
+		kind   env.FailKind
+		has    string
+	}{
+		{"daemon down", platformtest.Script{Exit: 1, Stderr: "Cannot connect to the Docker daemon at unix:///x. Is the docker daemon running?"}, env.FailDaemonDown, "not running"},
+		{"windows daemon down", platformtest.Script{Exit: 1, Stderr: "error during connect: open //./pipe/docker_engine"}, env.FailDaemonDown, ""},
+		{"compose error", platformtest.Script{Exit: 1, Stderr: "yaml: line 3: mapping values are not allowed\n"}, env.FailComposeError, "mapping values"},
+		{"token is redacted", platformtest.Script{Exit: 1, Stderr: "pull failed: Authorization: Bearer abcdefghijklmnop1234567890"}, env.FailComposeError, ""},
+	}
+	for _, c := range cases {
+		f := &platformtest.Fake{}
+		f.Push(c.script)
+		res := fakeRunner(f).Run(context.Background(), call)
+		if res.Failure != c.kind || !strings.Contains(res.Summary, c.has) {
+			t.Errorf("%s: %+v", c.name, res)
+		}
+		if strings.Contains(res.Summary, "abcdefghijklmnop1234567890") {
+			t.Errorf("%s: token in summary", c.name)
+		}
+	}
+	// docker not found by Resolve
+	r := fakeRunner(&platformtest.Fake{})
+	r.Resolve = func(string, string, []string) (string, error) { return "", platform.ErrNotFound }
+	if res := r.Run(context.Background(), call); res.Failure != env.FailDockerMissing {
+		t.Errorf("%+v", res)
+	}
+}
+
+// ---- service --------------------------------------------------------------
+
+type composeRig struct {
+	svc     *worktreeenv.ComposeService
+	store   *worktreeenvtest.Store
+	runner  *worktreeenvtest.ComposeRunner
+	files   *worktreeenvtest.ComposeFiles
+	wt      core.Worktree
+	cancel  context.CancelFunc
+	changes atomic.Int32
+}
+
+func newComposeRig(t *testing.T) *composeRig {
+	t.Helper()
+	r := &composeRig{
+		store: worktreeenvtest.NewStore("rep_1"), runner: &worktreeenvtest.ComposeRunner{}, files: &worktreeenvtest.ComposeFiles{},
+		wt: core.Worktree{ID: "Wt_Amber Fox", RepoID: "rep_1", Path: "/wt/amber"},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	r.cancel = cancel
+	var n atomic.Int32
+	svc, err := worktreeenv.NewComposeService(ctx, worktreeenv.ComposeConfig{
+		Store: r.store, Audit: r.store, Runner: r.runner, Files: r.files,
+		Worktree: func(_ context.Context, id core.WorktreeID) (core.Worktree, error) {
+			if id != r.wt.ID {
+				return core.Worktree{}, worktreeenv.ErrNotFound
+			}
+			return r.wt, nil
+		},
+		Block: func(context.Context, core.WorktreeID) (core.PortBlock, bool, error) {
+			return core.PortBlock{Base: 20040, Size: 20}, true, nil
+		},
+		Now:      func() time.Time { return time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC) },
+		NewID:    func(p string) string { return p + "_" + string(rune('a'+n.Add(1))) },
+		OnChange: func(core.WorktreeID) { r.changes.Add(1) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.svc = svc
+	t.Cleanup(func() { cancel(); svc.Wait() })
+	r.files.Put(r.wt.Path, "compose.yml", "services: {db: {ports: ['${YGG_PORT_0}:5432']}}")
+	return r
+}
+
+func (r *composeRig) enable(t *testing.T) {
+	t.Helper()
+	if err := r.svc.Configure(context.Background(), "rep_1", true, "compose.yml"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (r *composeRig) waitFor(t *testing.T, pred func(env.Service) bool) worktreeenv.ComposeStatus {
+	t.Helper()
+	for range 400 {
+		st, err := r.svc.Status(context.Background(), r.wt.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pred(st.State) {
+			return st
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("state never reached")
+	return worktreeenv.ComposeStatus{}
+}
+
+// ops are the calls other than the startup `ps`.
+func (r *composeRig) ops() []worktreeenv.ComposeCall {
+	var out []worktreeenv.ComposeCall
+	for _, c := range r.runner.Calls() {
+		if c.Op != env.OpPs {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func (r *composeRig) actions() []string {
+	var out []string
+	for _, a := range r.store.Audits() {
+		out = append(out, a.Action)
+	}
+	return out
+}
+
+func TestComposeOffByDefault(t *testing.T) {
+	r := newComposeRig(t)
+	st, err := r.svc.Status(context.Background(), r.wt.ID)
+	if err != nil || st.State != (env.Off{}) {
+		t.Fatalf("%+v %v", st, err)
+	}
+	if _, err := r.svc.Up(context.Background(), r.wt.ID); !errors.Is(err, worktreeenv.ErrComposeOff) {
+		t.Fatalf("got %v", err)
+	}
+	if len(r.ops()) != 0 {
+		t.Fatal("Off ran docker")
+	}
+}
+
+func TestComposeConfirmUpStopDownAudited(t *testing.T) {
+	ctx := context.Background()
+	r := newComposeRig(t)
+	r.enable(t)
+	st, _ := r.svc.Status(ctx, r.wt.ID)
+	if _, ok := st.State.(env.NeedsConfirm); !ok || st.Hash == "" || st.Note != "" {
+		t.Fatalf("%+v", st)
+	}
+	// up before confirm: refused, nothing runs
+	if _, err := r.svc.Up(ctx, r.wt.ID); !errors.Is(err, worktreeenv.ErrComposeConfirm) {
+		t.Fatalf("got %v", err)
+	}
+	if len(r.ops()) != 0 {
+		t.Fatal("ran before confirmation")
+	}
+	// a stale hash does not confirm
+	if _, err := r.svc.Confirm(ctx, r.wt.ID, "deadbeef"); !errors.Is(err, worktreeenv.ErrComposeStale) {
+		t.Fatalf("got %v", err)
+	}
+	if _, err := r.svc.Confirm(ctx, r.wt.ID, st.Hash); err != nil {
+		t.Fatal(err)
+	}
+	set, _ := r.svc.Settings(ctx, "rep_1")
+	if set.ConfirmedHash != st.Hash {
+		t.Fatal("confirmed hash not stored")
+	}
+	if _, err := r.svc.Up(ctx, r.wt.ID); err != nil {
+		t.Fatal(err)
+	}
+	r.waitFor(t, func(s env.Service) bool { _, ok := s.(env.Up); return ok })
+	if _, err := r.svc.Stop(ctx, r.wt.ID); err != nil {
+		t.Fatal(err)
+	}
+	r.waitFor(t, func(s env.Service) bool { _, ok := s.(env.Down); return ok })
+	if _, err := r.svc.Down(ctx, r.wt.ID); err != nil {
+		t.Fatal(err)
+	}
+	r.waitFor(t, func(s env.Service) bool { _, ok := s.(env.Down); return ok && len(r.ops()) == 3 })
+
+	var ops []env.ComposeOp
+	for _, c := range r.ops() {
+		ops = append(ops, c.Op)
+		if !strings.HasPrefix(string(c.Project), "ygg-") || len(c.Project) > 44 || c.File != "compose.yml" || c.Dir != r.wt.Path {
+			t.Errorf("call %+v", c)
+		}
+		if c.Env["YGG_PORT_BASE"] != "20040" || c.Env["YGG_PORT_19"] != "20059" || len(c.Env) != 21 {
+			t.Errorf("env %v", c.Env)
+		}
+	}
+	if !slices.Equal(ops, []env.ComposeOp{env.OpUp, env.OpStop, env.OpDown}) {
+		t.Fatalf("ops %v", ops)
+	}
+	got := r.actions()
+	for _, want := range []string{"worktreeenv.compose_settings", env.ActionComposeEnabled, env.ActionComposeConfirmed, env.ActionComposeUp,
+		env.ActionComposeStarted, env.ActionComposeStop, env.ActionComposeStopped, env.ActionComposeDown} {
+		if !slices.Contains(got, want) {
+			t.Errorf("audit lacks %s: %v", want, got)
+		}
+	}
+	if r.changes.Load() == 0 {
+		t.Error("nothing published")
+	}
+}
+
+func TestComposeChangedFileNeedsReconfirm(t *testing.T) {
+	ctx := context.Background()
+	r := newComposeRig(t)
+	r.enable(t)
+	st, _ := r.svc.Status(ctx, r.wt.ID)
+	_, _ = r.svc.Confirm(ctx, r.wt.ID, st.Hash)
+	r.waitFor(t, func(s env.Service) bool { _, ok := s.(env.Down); return ok })
+	// an agent edits the file
+	r.files.Put(r.wt.Path, "compose.yml", "services: {db: {volumes: ['/:/host']}}")
+	if _, err := r.svc.Up(ctx, r.wt.ID); !errors.Is(err, worktreeenv.ErrComposeConfirm) {
+		t.Fatalf("got %v", err)
+	}
+	if len(r.ops()) != 0 {
+		t.Fatal("ran a changed file")
+	}
+	st, _ = r.svc.Status(ctx, r.wt.ID)
+	if _, ok := st.State.(env.NeedsConfirm); !ok {
+		t.Fatalf("%+v", st.State)
+	}
+}
+
+func TestComposeUnreadableOrEscapingFile(t *testing.T) {
+	ctx := context.Background()
+	r := newComposeRig(t)
+	if err := r.svc.Configure(ctx, "rep_1", true, "../x.yml"); err == nil {
+		t.Fatal("a file outside the repo was accepted")
+	}
+	if err := r.svc.Configure(ctx, "rep_1", true, "compose.txt"); err == nil {
+		t.Fatal("a non-yaml file was accepted")
+	}
+	if err := r.svc.Configure(ctx, "rep_1", true, "missing.yml"); err != nil {
+		t.Fatal(err)
+	}
+	st, err := r.svc.Status(ctx, r.wt.ID)
+	if err != nil || st.State != (env.Off{}) || st.Note == "" {
+		t.Fatalf("%+v %v", st, err)
+	}
+	if _, err := r.svc.Up(ctx, r.wt.ID); err == nil || len(r.ops()) != 0 {
+		t.Fatalf("up on an unreadable file: %v", err)
+	}
+}
+
+func TestComposeFailureAndDockerMissing(t *testing.T) {
+	ctx := context.Background()
+	r := newComposeRig(t)
+	r.runner.Result = func(c worktreeenv.ComposeCall) worktreeenv.ComposeResult {
+		return worktreeenv.ComposeResult{Failure: env.FailDockerMissing, Summary: worktreeenv.MsgDockerMissing}
+	}
+	r.enable(t)
+	st, _ := r.svc.Status(ctx, r.wt.ID)
+	_, _ = r.svc.Confirm(ctx, r.wt.ID, st.Hash)
+	// startup recovery found docker missing at the first look; the state is Failed or NeedsConfirm
+	_, _ = r.svc.Up(ctx, r.wt.ID)
+	st = r.waitFor(t, func(s env.Service) bool { _, ok := s.(env.ComposeFailed); return ok })
+	if st.Note != worktreeenv.MsgDockerMissing {
+		t.Fatalf("note %q", st.Note)
+	}
+	if !slices.Contains(r.actions(), env.ActionComposeFail) {
+		t.Fatal("failure not audited")
+	}
+}
+
+func TestComposeOneOperationAtATime(t *testing.T) {
+	ctx := context.Background()
+	r := newComposeRig(t)
+	r.runner.Gate = make(chan struct{})
+	r.enable(t)
+	st, _ := r.svc.Status(ctx, r.wt.ID)
+	_, _ = r.svc.Confirm(ctx, r.wt.ID, st.Hash)
+	if _, err := r.svc.Up(ctx, r.wt.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.svc.Down(ctx, r.wt.ID); !errors.Is(err, worktreeenv.ErrComposeBusy) {
+		t.Fatalf("got %v", err)
+	}
+	r.runner.Gate <- struct{}{}
+	r.waitFor(t, func(s env.Service) bool { _, ok := s.(env.Up); return ok })
+	if n := len(r.ops()); n != 1 {
+		t.Fatalf("calls %d", n)
+	}
+}
+
+func TestComposeRecoversRunningProject(t *testing.T) {
+	ctx := context.Background()
+	r := newComposeRig(t)
+	r.runner.Result = func(c worktreeenv.ComposeCall) worktreeenv.ComposeResult {
+		return worktreeenv.ComposeResult{Output: env.FormatPs(env.PsRunning)}
+	}
+	r.enable(t)
+	st, _ := r.svc.Status(ctx, r.wt.ID)
+	if _, ok := st.State.(env.Up); !ok {
+		t.Fatalf("a running project must show as up after a restart: %+v", st.State)
+	}
+	for _, c := range r.runner.Calls() {
+		if c.Op != env.OpPs {
+			t.Fatalf("startup ran %s", c.Op)
+		}
+	}
+}
+
+func TestComposeShutdownRunsNothing(t *testing.T) {
+	ctx := context.Background()
+	r := newComposeRig(t)
+	r.enable(t)
+	st, _ := r.svc.Status(ctx, r.wt.ID)
+	_, _ = r.svc.Confirm(ctx, r.wt.ID, st.Hash)
+	_, _ = r.svc.Up(ctx, r.wt.ID)
+	r.waitFor(t, func(s env.Service) bool { _, ok := s.(env.Up); return ok })
+	before := len(r.ops())
+	r.cancel()
+	r.svc.Wait()
+	if len(r.ops()) != before {
+		t.Fatal("something ran at shutdown")
+	}
+}
+
+func TestComposeUnknownWorktreeAndNoDeletion(t *testing.T) {
+	r := newComposeRig(t)
+	if _, err := r.svc.Status(context.Background(), "wt_other"); !errors.Is(err, worktreeenv.ErrNotFound) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestOSComposeFilesRefusesLinks(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "c.yml"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "ok.yml"), []byte("services: {}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "c.yml"), filepath.Join(root, "link.yml")); err != nil {
+		t.Skip("no symlinks")
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "dir")); err != nil {
+		t.Skip("no symlinks")
+	}
+	var f worktreeenv.OSComposeFiles
+	if b, err := f.Read(root, "ok.yml"); err != nil || string(b) != "services: {}" {
+		t.Fatalf("%q %v", b, err)
+	}
+	for _, rel := range []env.RelPath{"link.yml", "dir/c.yml", "missing.yml", "ok.yml/x"} {
+		if _, err := f.Read(root, rel); !errors.Is(err, worktreeenv.ErrComposeFile) {
+			t.Errorf("%s: %v", rel, err)
+		}
+	}
+}
