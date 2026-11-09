@@ -2099,12 +2099,12 @@ export interface WorktreeEnvChangedMessage {
   env: WorktreeEnvDTO;
 }
 /**
- * ComposeConfirmRequest is the optional body of POST
- * /api/worktrees/{id}/compose/confirm. Hash is the composeHash the user was
- * shown; when the file has changed since, nothing is confirmed (409).
+ * ComposeConfirmRequest is the body of POST /api/worktrees/{id}/compose/confirm.
+ * Hash is the composeHash the user was shown and is required (400 without it);
+ * when the file has changed since, nothing is confirmed (409).
  */
 export interface ComposeConfirmRequest {
-  hash?: string;
+  hash: string;
 }
 
 //////////

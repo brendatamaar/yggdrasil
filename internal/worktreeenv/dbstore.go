@@ -188,8 +188,13 @@ type ComposeStore interface {
 	// ComposeSettings returns the settings (defaults for a repo without any;
 	// an unknown repo is ErrNotFound).
 	ComposeSettings(ctx context.Context, repo core.RepoID) (ComposeSettings, error)
-	// PutComposeSettings stores the settings and the audit entry in one commit.
-	PutComposeSettings(ctx context.Context, repo core.RepoID, c ComposeSettings, at time.Time, audit core.AuditEntry) error
+	// UpdateComposeSettings reads the settings, calls mut with them and, when
+	// mut returns write=true, stores the result and the audit entry in one
+	// transaction. The read and the write cannot be separated by another
+	// write, so a stale value is never written back. An error from mut is
+	// returned as it is and nothing is written.
+	UpdateComposeSettings(ctx context.Context, repo core.RepoID, at time.Time, audit core.AuditEntry,
+		mut func(ComposeSettings) (next ComposeSettings, write bool, err error)) error
 }
 
 var _ ComposeStore = DBStore{}
@@ -200,33 +205,47 @@ func (d DBStore) ComposeSettings(ctx context.Context, repo core.RepoID) (Compose
 	if err != nil {
 		return ComposeSettings{}, mapErr(err)
 	}
+	return composeOf(rec)
+}
+
+func composeOf(rec db.RepoEnvRecord) (ComposeSettings, error) {
 	out := ComposeSettings{Enabled: rec.ComposeEnabled, ConfirmedHash: rec.ComposeConfirmedHash}
 	if rec.ComposeFile != "" {
 		f, err := env.ParseComposeFile(rec.ComposeFile)
 		if err != nil {
-			return ComposeSettings{}, fmt.Errorf("stored compose file of repo %s: %w", repo, err)
+			return ComposeSettings{}, fmt.Errorf("stored compose file of repo %s: %w", rec.Repo, err)
 		}
 		out.File = f
 	}
 	return out, nil
 }
 
-// PutComposeSettings implements ComposeStore. The profile columns are read
-// and written back unchanged in the same statement set; a concurrent profile
-// edit within that window is the one thing this can lose (the settings row has
-// no compose-only upsert yet).
-func (d DBStore) PutComposeSettings(ctx context.Context, repo core.RepoID, c ComposeSettings, at time.Time, audit core.AuditEntry) error {
+// UpdateComposeSettings implements ComposeStore. Every write to the settings
+// goes through Store.Commit, which has one write connection, so commits are
+// serialised; the read inside the callback goes through the reader and sees
+// the last committed row, which no other commit can change before this one
+// ends. The profile columns are written back as read.
+func (d DBStore) UpdateComposeSettings(ctx context.Context, repo core.RepoID, at time.Time, audit core.AuditEntry,
+	mut func(ComposeSettings) (ComposeSettings, bool, error)) error {
 	audit, err := d.prep(audit)
 	if err != nil {
 		return err
 	}
-	rec, err := d.S.GetRepoEnvSettings(ctx, repo)
-	if err != nil {
-		return mapErr(err)
-	}
-	rec.ComposeEnabled, rec.ComposeFile, rec.ComposeConfirmedHash = c.Enabled, string(c.File), c.ConfirmedHash
-	rec.UpdatedAt = at
 	return mapErr(d.S.Commit(ctx, func(tx *db.Tx) error {
+		rec, err := d.S.GetRepoEnvSettings(ctx, repo)
+		if err != nil {
+			return err
+		}
+		cur, err := composeOf(rec)
+		if err != nil {
+			return err
+		}
+		next, write, err := mut(cur)
+		if err != nil || !write {
+			return err
+		}
+		rec.ComposeEnabled, rec.ComposeFile, rec.ComposeConfirmedHash = next.Enabled, string(next.File), next.ConfirmedHash
+		rec.UpdatedAt = at
 		if err := tx.PutRepoEnvSettings(ctx, rec); err != nil {
 			return err
 		}

@@ -157,28 +157,33 @@ func TestOpsAreClosedSet(t *testing.T) {
 	if err := ComposeOp("down -v").Validate(); err == nil {
 		t.Fatal("an unknown op must be rejected")
 	}
-	if _, err := Argv("down -v", "ygg-a", "c.yml"); err == nil {
+	if _, err := Argv("down -v", "ygg-a", "c.yml", false); err == nil {
 		t.Fatal("Argv must refuse an unknown op")
 	}
 }
 
 func TestArgvTable(t *testing.T) {
 	cases := []struct {
-		op   ComposeOp
-		want string
+		op     ComposeOp
+		file   RelPath
+		hasEnv bool
+		want   string
 	}{
-		{OpUp, "docker compose -p ygg-feat-1 --file deploy/compose.yml up -d"},
-		{OpStop, "docker compose -p ygg-feat-1 --file deploy/compose.yml stop"},
-		{OpDown, "docker compose -p ygg-feat-1 --file deploy/compose.yml down"},
-		{OpPs, "docker compose -p ygg-feat-1 --file deploy/compose.yml ps --format json"},
+		{OpUp, "deploy/compose.yml", false, "docker compose -p ygg-feat-1 --file - --project-directory deploy up -d"},
+		{OpUp, "deploy/compose.yml", true, "docker compose -p ygg-feat-1 --file - --project-directory deploy --env-file deploy/.env up -d"},
+		{OpStop, "deploy/compose.yml", true, "docker compose -p ygg-feat-1 --file - --project-directory deploy --env-file deploy/.env stop"},
+		{OpDown, "deploy/compose.yml", false, "docker compose -p ygg-feat-1 --file - --project-directory deploy down"},
+		{OpPs, "compose.yml", false, "docker compose -p ygg-feat-1 --file - ps --format json"},
+		{OpUp, "compose.yml", true, "docker compose -p ygg-feat-1 --file - --env-file .env up -d"},
+		{OpDown, "a/b/c.yaml", true, "docker compose -p ygg-feat-1 --file - --project-directory a/b --env-file a/b/.env down"},
 	}
 	for _, c := range cases {
-		got, err := Argv(c.op, "ygg-feat-1", "deploy/compose.yml")
+		got, err := Argv(c.op, "ygg-feat-1", c.file, c.hasEnv)
 		if err != nil || strings.Join(got, " ") != c.want {
 			t.Errorf("%s: %v %v", c.op, got, err)
 		}
 		for _, a := range got {
-			if slices.Contains([]string{"-v", "--volumes", "--rmi", "--remove-orphans"}, a) {
+			if slices.Contains([]string{"-v", "--volumes", "--rmi", "--remove-orphans", "-f"}, a) {
 				t.Errorf("%s: forbidden flag %s", c.op, a)
 			}
 		}

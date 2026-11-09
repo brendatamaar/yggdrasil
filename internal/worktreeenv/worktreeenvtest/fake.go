@@ -27,6 +27,9 @@ type Store struct {
 	composes map[core.RepoID]worktreeenv.ComposeSettings
 	rng      *env.Range
 	audits   []core.AuditEntry
+	// AuditErr, if set, is asked before an audit entry is stored; a non-nil
+	// answer fails the write and stores nothing.
+	AuditErr func(core.AuditEntry) error
 }
 
 // NewStore returns an empty store that knows the given repos.
@@ -142,6 +145,11 @@ func (s *Store) SetPortRange(_ context.Context, r env.Range, audit core.AuditEnt
 func (s *Store) Append(_ context.Context, e core.AuditEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.AuditErr != nil {
+		if err := s.AuditErr(e); err != nil {
+			return err
+		}
+	}
 	s.audits = append(s.audits, e)
 	return nil
 }

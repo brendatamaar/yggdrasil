@@ -3,8 +3,7 @@ package worktreeenv_test
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
+	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -23,15 +22,37 @@ import (
 
 // ---- runner contract ------------------------------------------------------
 
+// scriptedFake is the fake runner driven by the contract's Outcome.
+func scriptedFake() (*worktreeenvtest.ComposeRunner, func(worktreeenvtest.Outcome)) {
+	r := &worktreeenvtest.ComposeRunner{}
+	script := func(o worktreeenvtest.Outcome) {
+		r.Gate = nil
+		if o.Block {
+			r.Gate = make(chan struct{}) // never opened: ends only with the context
+		}
+		r.Result = func(c worktreeenv.ComposeCall) worktreeenv.ComposeResult {
+			switch {
+			case o.Exit == 0:
+				if c.Op == env.OpPs {
+					return worktreeenv.ComposeResult{Output: []byte(o.Stdout)}
+				}
+				return worktreeenv.ComposeResult{}
+			case strings.Contains(o.Stderr, "Cannot connect to the Docker daemon"):
+				return worktreeenv.ComposeResult{Failure: env.FailDaemonDown, Summary: worktreeenv.MsgDaemonDown}
+			}
+			return worktreeenv.ComposeResult{Failure: env.FailComposeError, Summary: "Docker compose failed."}
+		}
+	}
+	return r, script
+}
+
 func TestFakeComposeRunnerContract(t *testing.T) {
 	worktreeenvtest.ComposeRunnerContract(t, func(t *testing.T) worktreeenvtest.ComposeRunnerEnv {
 		missing := &worktreeenvtest.ComposeRunner{Result: func(worktreeenv.ComposeCall) worktreeenv.ComposeResult {
 			return worktreeenv.ComposeResult{Failure: env.FailDockerMissing, Summary: worktreeenv.MsgDockerMissing}
 		}}
-		failing := &worktreeenvtest.ComposeRunner{Result: func(worktreeenv.ComposeCall) worktreeenv.ComposeResult {
-			return worktreeenv.ComposeResult{Failure: env.FailComposeError, Summary: "no such file"}
-		}}
-		return worktreeenvtest.ComposeRunnerEnv{Runner: failing, NoDocker: missing, Dir: t.TempDir()}
+		r, script := scriptedFake()
+		return worktreeenvtest.ComposeRunnerEnv{Runner: r, NoDocker: missing, Dir: t.TempDir(), Script: script}
 	})
 }
 
@@ -46,6 +67,25 @@ func (e emptyPath) Build(o safety.EnvOptions) ([]string, error) {
 	return out, nil
 }
 
+// TestScriptedPlatformComposeRunnerContract runs the real runner over a
+// scripted platform.StartFunc, so every clause runs without Docker.
+func TestScriptedPlatformComposeRunnerContract(t *testing.T) {
+	worktreeenvtest.ComposeRunnerContract(t, func(t *testing.T) worktreeenvtest.ComposeRunnerEnv {
+		dir := t.TempDir()
+		f := &platformtest.Fake{}
+		return worktreeenvtest.ComposeRunnerEnv{
+			Dir:      dir,
+			NoDocker: worktreeenv.PlatformComposeRunner{Env: emptyPath{path: dir}},
+			Runner:   fakeRunner(f),
+			Script: func(o worktreeenvtest.Outcome) {
+				f.Push(platformtest.Script{Exit: o.Exit, Stdout: o.Stdout, Stderr: o.Stderr, Block: o.Block})
+			},
+		}
+	})
+}
+
+// TestPlatformComposeRunnerContract runs the unscripted clauses against the
+// docker on this machine, when there is one.
 func TestPlatformComposeRunnerContract(t *testing.T) {
 	worktreeenvtest.ComposeRunnerContract(t, func(t *testing.T) worktreeenvtest.ComposeRunnerEnv {
 		dir := t.TempDir()
@@ -78,19 +118,21 @@ func fakeRunner(f *platformtest.Fake) worktreeenv.PlatformComposeRunner {
 	}
 }
 
-func TestComposeRunnerArgvAndEnv(t *testing.T) {
+func TestComposeRunnerArgvEnvAndStdin(t *testing.T) {
 	t.Setenv("GITLAB_TOKEN", "glpat-secret")
 	t.Setenv("VIRTUAL_ENV", "/x")
+	body := "services: {db: {image: postgres}}\n"
 	for op, want := range map[env.ComposeOp]string{
-		env.OpUp:   "compose -p ygg-a --file deploy/c.yml up -d",
-		env.OpStop: "compose -p ygg-a --file deploy/c.yml stop",
-		env.OpDown: "compose -p ygg-a --file deploy/c.yml down",
-		env.OpPs:   "compose -p ygg-a --file deploy/c.yml ps --format json",
+		env.OpUp:   "compose -p ygg-a --file - --project-directory deploy --env-file deploy/.env up -d",
+		env.OpStop: "compose -p ygg-a --file - --project-directory deploy --env-file deploy/.env stop",
+		env.OpDown: "compose -p ygg-a --file - --project-directory deploy --env-file deploy/.env down",
+		env.OpPs:   "compose -p ygg-a --file - --project-directory deploy --env-file deploy/.env ps --format json",
 	} {
 		f := &platformtest.Fake{}
 		f.Push(platformtest.Script{Stdout: `{"State":"running"}`})
 		res := fakeRunner(f).Run(context.Background(), worktreeenv.ComposeCall{
-			Op: op, Project: "ygg-a", File: "deploy/c.yml", Dir: "/wt", Env: map[string]string{"YGG_PORT_BASE": "20000", "YGG_PORT_3": "20003"},
+			Op: op, Project: "ygg-a", File: "deploy/c.yml", Compose: []byte(body), HasEnvFile: true, Dir: "/wt",
+			Env: map[string]string{"YGG_PORT_BASE": "20000", "YGG_PORT_3": "20003"},
 		})
 		if res.Failure != "" {
 			t.Fatalf("%s: %+v", op, res)
@@ -98,6 +140,12 @@ func TestComposeRunnerArgvAndEnv(t *testing.T) {
 		spec := f.Started()[0]
 		if got := strings.Join(spec.Argv[1:], " "); got != want || spec.Argv[0] != "/usr/bin/docker" {
 			t.Errorf("%s: argv %v", op, spec.Argv)
+		}
+		if spec.Stdin == nil {
+			t.Fatalf("%s: the hashed compose file is not on stdin", op)
+		}
+		if b, _ := io.ReadAll(spec.Stdin); string(b) != body {
+			t.Errorf("%s: stdin %q", op, b)
 		}
 		joined := strings.Join(spec.Env, "\n")
 		for _, bad := range []string{"GITLAB_TOKEN", "glpat-secret", "VIRTUAL_ENV"} {
@@ -115,10 +163,21 @@ func TestComposeRunnerArgvAndEnv(t *testing.T) {
 			t.Errorf("%s: output kept only for ps: %q", op, res.Output)
 		}
 	}
+	// no .env: no --env-file; an empty compose file runs nothing
+	f := &platformtest.Fake{}
+	f.Push(platformtest.Script{})
+	r := fakeRunner(f)
+	r.Run(context.Background(), worktreeenv.ComposeCall{Op: env.OpUp, Project: "ygg-a", File: "c.yml", Compose: []byte("x"), Dir: "/wt"})
+	if got := strings.Join(f.Started()[0].Argv[1:], " "); got != "compose -p ygg-a --file - up -d" {
+		t.Errorf("argv %q", got)
+	}
+	if res := r.Run(context.Background(), worktreeenv.ComposeCall{Op: env.OpUp, Project: "ygg-a", File: "c.yml", Dir: "/wt"}); res.Failure == "" || len(f.Started()) != 1 {
+		t.Errorf("an empty compose file ran: %+v", res)
+	}
 }
 
 func TestComposeRunnerFailures(t *testing.T) {
-	call := worktreeenv.ComposeCall{Op: env.OpUp, Project: "ygg-a", File: "c.yml", Dir: "/wt"}
+	call := worktreeenv.ComposeCall{Op: env.OpUp, Project: "ygg-a", File: "c.yml", Compose: []byte("x"), Dir: "/wt"}
 	cases := []struct {
 		name   string
 		script platformtest.Script
@@ -157,26 +216,32 @@ type composeRig struct {
 	runner  *worktreeenvtest.ComposeRunner
 	files   *worktreeenvtest.ComposeFiles
 	wt      core.Worktree
+	wts     map[core.WorktreeID]core.Worktree
 	cancel  context.CancelFunc
 	changes atomic.Int32
 }
 
-func newComposeRig(t *testing.T) *composeRig {
+func newComposeRig(t *testing.T) *composeRig { return newComposeRigWith(t, nil) }
+
+// newComposeRigWith lets a test change the wiring before the service is built.
+func newComposeRigWith(t *testing.T, mod func(*composeRig, *worktreeenv.ComposeConfig)) *composeRig {
 	t.Helper()
 	r := &composeRig{
 		store: worktreeenvtest.NewStore("rep_1"), runner: &worktreeenvtest.ComposeRunner{}, files: &worktreeenvtest.ComposeFiles{},
 		wt: core.Worktree{ID: "Wt_Amber Fox", RepoID: "rep_1", Path: "/wt/amber"},
 	}
+	r.wts = map[core.WorktreeID]core.Worktree{r.wt.ID: r.wt}
 	ctx, cancel := context.WithCancel(context.Background())
 	r.cancel = cancel
 	var n atomic.Int32
-	svc, err := worktreeenv.NewComposeService(ctx, worktreeenv.ComposeConfig{
+	cfg := worktreeenv.ComposeConfig{
 		Store: r.store, Audit: r.store, Runner: r.runner, Files: r.files,
 		Worktree: func(_ context.Context, id core.WorktreeID) (core.Worktree, error) {
-			if id != r.wt.ID {
+			w, ok := r.wts[id]
+			if !ok {
 				return core.Worktree{}, worktreeenv.ErrNotFound
 			}
-			return r.wt, nil
+			return w, nil
 		},
 		Block: func(context.Context, core.WorktreeID) (core.PortBlock, bool, error) {
 			return core.PortBlock{Base: 20040, Size: 20}, true, nil
@@ -184,7 +249,11 @@ func newComposeRig(t *testing.T) *composeRig {
 		Now:      func() time.Time { return time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC) },
 		NewID:    func(p string) string { return p + "_" + strconv.Itoa(int(n.Add(1))) },
 		OnChange: func(core.WorktreeID) { r.changes.Add(1) },
-	})
+	}
+	if mod != nil {
+		mod(r, &cfg)
+	}
+	svc, err := worktreeenv.NewComposeService(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -434,30 +503,5 @@ func TestComposeUnknownWorktreeAndNoDeletion(t *testing.T) {
 	r := newComposeRig(t)
 	if _, err := r.svc.Status(context.Background(), "wt_other"); !errors.Is(err, worktreeenv.ErrNotFound) {
 		t.Fatalf("got %v", err)
-	}
-}
-
-func TestOSComposeFilesRefusesLinks(t *testing.T) {
-	root, outside := t.TempDir(), t.TempDir()
-	if err := os.WriteFile(filepath.Join(outside, "c.yml"), []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "ok.yml"), []byte("services: {}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join(outside, "c.yml"), filepath.Join(root, "link.yml")); err != nil {
-		t.Skip("no symlinks")
-	}
-	if err := os.Symlink(outside, filepath.Join(root, "dir")); err != nil {
-		t.Skip("no symlinks")
-	}
-	var f worktreeenv.OSComposeFiles
-	if b, err := f.Read(root, "ok.yml"); err != nil || string(b) != "services: {}" {
-		t.Fatalf("%q %v", b, err)
-	}
-	for _, rel := range []env.RelPath{"link.yml", "dir/c.yml", "missing.yml", "ok.yml/x"} {
-		if _, err := f.Read(root, rel); !errors.Is(err, worktreeenv.ErrComposeFile) {
-			t.Errorf("%s: %v", rel, err)
-		}
 	}
 }

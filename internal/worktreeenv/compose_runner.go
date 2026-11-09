@@ -19,6 +19,12 @@ type ComposeCall struct {
 	Op      env.ComposeOp
 	Project env.ProjectName
 	File    env.RelPath
+	// Compose is the compose file as it was hashed; it is passed on standard
+	// input (`--file -`), so docker runs exactly these bytes.
+	Compose []byte
+	// HasEnvFile says the `.env` next to File exists and was hashed; only then
+	// is it passed with --env-file.
+	HasEnvFile bool
 	// Dir is the worktree folder; File is relative to it.
 	Dir string
 	// Env holds the extra variables (YGG_PORT_BASE, YGG_PORT_0..n). The runner
@@ -75,9 +81,12 @@ func (c *capped) Write(p []byte) (int, error) {
 // Run implements ComposeRunner.
 func (r PlatformComposeRunner) Run(ctx context.Context, c ComposeCall) ComposeResult {
 	fail := func(k env.FailKind, msg string) ComposeResult { return ComposeResult{Failure: k, Summary: msg} }
-	argv, err := env.Argv(c.Op, c.Project, c.File)
+	argv, err := env.Argv(c.Op, c.Project, c.File, c.HasEnvFile)
 	if err != nil {
 		return fail(env.FailComposeError, "That compose operation is not allowed.")
+	}
+	if len(c.Compose) == 0 {
+		return fail(env.FailComposeError, "The compose file is empty, so nothing was run.")
 	}
 	if r.Env == nil {
 		return fail(env.FailComposeError, "Docker compose could not be started: no clean environment.")
@@ -109,7 +118,7 @@ func (r PlatformComposeRunner) Run(ctx context.Context, c ComposeCall) ComposeRe
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	var out, errOut capped
-	p, err := start(ctx, platform.Spec{Argv: argv, Dir: c.Dir, Env: clean, Stdout: &out, Stderr: &errOut})
+	p, err := start(ctx, platform.Spec{Argv: argv, Dir: c.Dir, Env: clean, Stdin: bytes.NewReader(c.Compose), Stdout: &out, Stderr: &errOut})
 	if errors.Is(err, platform.ErrNotFound) {
 		return fail(env.FailDockerMissing, MsgDockerMissing)
 	}

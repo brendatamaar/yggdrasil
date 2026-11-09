@@ -3,6 +3,7 @@ package devservers
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -42,8 +43,17 @@ type Catalog struct {
 	clock  Clock
 	detect Detector
 
-	mu    sync.Mutex
-	cache map[Target]catalogEntry
+	mu     sync.Mutex
+	cache  map[Target]catalogEntry
+	flight map[Target]*scan // scans in progress, one per target
+	gen    uint64           // bumped by Invalidate so a scan that began before it is not cached
+}
+
+// scan is one detector run that concurrent callers of the same target share.
+type scan struct {
+	dir  string
+	done chan struct{}
+	cmds []DevCommand
 }
 
 type catalogEntry struct {
@@ -65,7 +75,7 @@ func NewCatalog(repos Repos, clock Clock, opts ...CatalogOption) *Catalog {
 	if clock == nil {
 		clock = RealClock{}
 	}
-	c := &Catalog{repos: repos, clock: clock, detect: DetectDevCommands, cache: map[Target]catalogEntry{}}
+	c := &Catalog{repos: repos, clock: clock, detect: DetectDevCommands, cache: map[Target]catalogEntry{}, flight: map[Target]*scan{}}
 	for _, o := range opts {
 		o(c)
 	}
@@ -73,7 +83,9 @@ func NewCatalog(repos Repos, clock Clock, opts ...CatalogOption) *Catalog {
 }
 
 // Commands returns the commands the target offers, sorted by key. An error
-// from Repos (untracked, refused folder) is returned as it is.
+// from Repos (untracked, refused folder) is returned as it is. The result is a
+// copy: callers may change it. Callers that miss the cache at the same time
+// share one run of the detector.
 func (c *Catalog) Commands(ctx context.Context, t Target) ([]DevCommand, error) {
 	dir, err := c.repos.Dir(ctx, t)
 	if err != nil {
@@ -81,17 +93,61 @@ func (c *Catalog) Commands(ctx context.Context, t Target) ([]DevCommand, error) 
 	}
 	now := c.clock.Now()
 	c.mu.Lock()
-	e, ok := c.cache[t]
-	c.mu.Unlock()
-	if ok && e.dir == dir && now.Sub(e.at) < CatalogTTL && !now.Before(e.at) {
-		return e.cmds, nil
+	if e, ok := c.cache[t]; ok && e.dir == dir && now.Sub(e.at) < CatalogTTL && !now.Before(e.at) {
+		out := cloneCommands(e.cmds)
+		c.mu.Unlock()
+		return out, nil
 	}
-	cmds := slices.Clone(c.detect(dir))
-	slices.SortFunc(cmds, func(a, b DevCommand) int { return strings.Compare(a.Key, b.Key) })
-	c.mu.Lock()
-	c.cache[t] = catalogEntry{dir: dir, at: now, cmds: cmds}
+	if f, ok := c.flight[t]; ok && f.dir == dir {
+		c.mu.Unlock()
+		select {
+		case <-f.done:
+			return cloneCommands(f.cmds), nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	f := &scan{dir: dir, done: make(chan struct{})}
+	c.flight[t] = f
+	gen := c.gen
 	c.mu.Unlock()
-	return cmds, nil
+
+	// The detector runs without the lock; the flight is always closed, even
+	// when the detector panics, so no waiter is left behind.
+	defer func() {
+		c.mu.Lock()
+		if c.flight[t] == f {
+			delete(c.flight, t)
+		}
+		c.mu.Unlock()
+		close(f.done)
+	}()
+	cmds := cloneCommands(c.detect(dir))
+	slices.SortFunc(cmds, func(a, b DevCommand) int { return strings.Compare(a.Key, b.Key) })
+	f.cmds = cmds
+	c.mu.Lock()
+	if c.gen == gen {
+		c.cache[t] = catalogEntry{dir: dir, at: now, cmds: cmds}
+	}
+	c.mu.Unlock()
+	return cloneCommands(cmds), nil
+}
+
+// cloneCommands copies the commands with their argument lists and
+// environments, so a reader cannot change what the next reader gets.
+func cloneCommands(in []DevCommand) []DevCommand {
+	if in == nil {
+		return nil
+	}
+	out := make([]DevCommand, len(in))
+	for i, c := range in {
+		out[i] = c
+		out[i].Argv = slices.Clone(c.Argv)
+		if c.Env != nil {
+			out[i].Env = maps.Clone(c.Env)
+		}
+	}
+	return out
 }
 
 // Invalidate forgets the scans of a repo and its worktrees: call it when the
@@ -99,6 +155,7 @@ func (c *Catalog) Commands(ctx context.Context, t Target) ([]DevCommand, error) 
 func (c *Catalog) Invalidate(repo core.RepoID) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.gen++
 	for t := range c.cache {
 		if t.Repo == repo {
 			delete(c.cache, t)
@@ -110,6 +167,7 @@ func (c *Catalog) Invalidate(repo core.RepoID) {
 func (c *Catalog) InvalidateAll() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.gen++
 	clear(c.cache)
 }
 

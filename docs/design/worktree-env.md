@@ -131,7 +131,7 @@ Port probing goes through `platform.BusyPorts(lo, hi)`: one read of the operatin
 | # | Invariant | Property test |
 |---|---|---|
 | C1 | `RunCompose{Up}` is emitted only from `Down` or `Failed` with a confirmed hash equal to the file's current hash | `TestPropUpNeedsConfirmedHash` |
-| C2 | The only ops ever emitted are `Up`, `Stop`, `Down`, `Ps`; a table test pins the exact argv per op (`docker compose -p ygg-<name> --file <file> up -d`, `stop`, `down`, `ps --format json`) | `TestOpsAreClosedSet`, `TestArgvTable` |
+| C2 | The only ops ever emitted are `Up`, `Stop`, `Down`, `Ps`; a table test pins the exact argv per op (`docker compose -p ygg-<name> --file - [--project-directory <dir>] [--env-file <dir>/.env] up -d`, `stop`, `down`, `ps --format json`; the compose file comes on standard input) | `TestOpsAreClosedSet`, `TestArgvTable` |
 | C3 | At most one live operation per worktree | `TestPropOneOperation` |
 | C4 | `Off` emits no `RunCompose` | `TestPropOffRunsNothing` |
 | C5 | A changed file never lets `Up` run until reconfirmed | `TestPropChangedFileNeedsConfirm` |
@@ -157,6 +157,16 @@ interpret RunCompose
   → platform.Start(ctx, docker compose argv fixed by Op, Dir = worktree)
   → Step(OpFinished)
 ```
+
+### 3.1 What the confirmation covers (round 2 of the final gate)
+
+- **The hash covers the compose file and the sibling `.env`** in the same folder (`core.ComposeHash`: both parts length-prefixed; an absent `.env` hashes like an empty one). Both are read with the same link and reparse-point refusal and 1 MB cap as the profile copy (`ComposeFiles.Read` / `ReadOptional`). `--env-file <dir>/.env` is passed only when that file exists, so docker reads no other environment file; `--project-directory <dir>` is passed when the compose file is in a folder, so relative paths mean the same as before.
+- **A compose file that reads other files is refused**, with a plain message and no run: top-level `include:`, and `extends:` or `env_file:` anywhere (`core.ScanComposeFile`, a line-level scan that over-refuses on purpose; table tests and a fuzz target). The shell treats such a file as having no hash, so it can be neither confirmed nor started.
+- **Executed bytes equal hashed bytes.** The shell reads and hashes the file again in the goroutine that runs docker, after any waiting; for `up`, a hash different from the confirmed one means nothing runs, the operation ends `ComposeFailed`, and `FileChanged` moves the state to `NeedsConfirm`. The compose file is passed on standard input (`--file -`), so it cannot change between that hash and docker reading it. Residual window: the `.env` is read by docker from disk, so it can still change between the re-hash and that read. `stop` and `down` use the file as it is now (they only act on what ygg started, and a changed file must not stop the user from stopping it); they refuse an unreadable or indirect file, so a project whose compose file was deleted must be stopped with docker directly.
+- **Bind mounts to host paths are the user's call.** The file can mount any host folder; ygg shows the file and the user decides. The confirmation stops a file the user has not seen, not a file the user has approved.
+- **The confirmed hash is per repo.** Another worktree of the repo with the same content (same compose file and `.env`) is confirmed too. The audit entry of that automatic confirmation (`compose.confirmed` or `compose.enabled`) carries `autoConfirmed: true` and `sourceWorktree`, the worktree where the user last confirmed (kept in memory, so it is empty after a restart; the hash in the entry still identifies the content).
+- **The API requires the hash** of the file the user was shown to confirm (400 without it), and the service says so when an action does nothing in the current state (409), instead of answering success.
+- **The service never holds its lock while docker runs.** Startup recovery (`ps`) runs outside the lock and is bound to the service context; operations end in exactly one `OpFinished` even when the port-block lookup or the audit write fails (audit retried once, then the transition is made in memory), so a state is never left in Starting or Stopping without a goroutine. Disabling compose forgets that recovery ran, so enabling it again while containers still run shows them as up.
 
 Ports are "offset into the block" by environment, not by rewriting the compose file; if the file never mentions `YGG_PORT`, the UI shows a warning.
 
