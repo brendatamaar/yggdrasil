@@ -42,9 +42,9 @@ func TestComposeEndAuditHasADeterministicIDAndIsWrittenOnce(t *testing.T) {
 			ids = append(ids, string(a.ID))
 		}
 	}
-	want := string(r.wt.ID) + ":1:0"
-	if len(ids) != 1 || ids[0] != want {
-		t.Fatalf("started entries = %v, want [%s]", ids, want)
+	// <worktree>:<boot>:<attempt>:<index>
+	if len(ids) != 1 || !strings.HasPrefix(ids[0], string(r.wt.ID)+":") || !strings.HasSuffix(ids[0], ":1:0") {
+		t.Fatalf("started entries = %v", ids)
 	}
 }
 
@@ -52,8 +52,8 @@ func TestComposeEndAuditHasADeterministicIDAndIsWrittenOnce(t *testing.T) {
 func TestComposeQueueDedupesByID(t *testing.T) {
 	r := newComposeRig(t)
 	e := core.AuditEntry{ID: "Wt_x:1:0", At: time.Unix(1, 0), Actor: "system", Action: "worktreeenv.compose_started", Subject: "worktree:Wt_x", Detail: []byte("{}")}
-	r.svc.QueueAudit(e)
-	r.svc.QueueAudit(e)
+	r.svc.QueueAudit(e, true)
+	r.svc.QueueAudit(e, true)
 	if _, err := r.svc.Status(context.Background(), r.wt.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestComposeQueueDedupesByID(t *testing.T) {
 	if n := count(); n != 1 {
 		t.Fatalf("entry written %d times", n)
 	}
-	r.svc.QueueAudit(e) // already written: not queued again
+	r.svc.QueueAudit(e, true) // already written: not queued again
 	_, _ = r.svc.Status(context.Background(), r.wt.ID)
 	if n := count(); n != 1 {
 		t.Fatalf("written again after it was done: %d", n)

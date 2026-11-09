@@ -61,7 +61,20 @@ type ComposeConfig struct {
 	// OnChange is called after a worktree's compose status changed (the
 	// core's ComposePublish). It is never called with the lock held.
 	OnChange func(core.WorktreeID)
+	// AuditQueueMax caps the audit entries kept for a retry while the sink is
+	// down; the oldest are dropped and counted. Default 1000.
+	AuditQueueMax int
+	// AuditRememberMax caps how many written end-of-operation IDs are
+	// remembered (oldest evicted first). Default 4096.
+	AuditRememberMax int
+	// WaitTimeout bounds Wait when an operation does not end. Default 10 s.
+	WaitTimeout time.Duration
 }
+
+// maxFlushFailures is how many failed flushes an audit entry gets before it is
+// quarantined (dropped and counted), so one entry that can never be written
+// cannot block the entries behind it.
+const maxFlushFailures = 10
 
 // ComposeStatus is the compose state of one worktree for display.
 type ComposeStatus struct {
@@ -99,12 +112,25 @@ type ComposeService struct {
 	confirmedBy map[core.RepoID]core.WorktreeID
 	// queued holds audit entries that could not be written (invariant 8). They
 	// are retried by the next call and at Wait, oldest first.
-	queued  []core.AuditEntry
+	queued  []queuedAudit
+	dropped int        // entries dropped from the queue (full or quarantined)
 	flushMu sync.Mutex // one flusher at a time keeps the order
 	// written holds the IDs of end-of-operation entries (deterministic IDs)
 	// that were already written, so a repeat of the write, whether by a retry
 	// of the transition or by the queue, never writes one twice.
-	written map[core.AuditID]struct{}
+	written      map[core.AuditID]struct{}
+	writtenOrder []core.AuditID
+	// boot is a random token of this process. It is part of the audit IDs of
+	// operation ends, so IDs of different runs (attempt counters restart at 1)
+	// never collide in the audit log's primary key.
+	boot string
+}
+
+// queuedAudit is an audit entry waiting for a retry.
+type queuedAudit struct {
+	e     core.AuditEntry
+	det   bool // its ID is deterministic: remember it once written
+	fails int  // failed flushes so far
 }
 
 type composeEntry struct {
@@ -165,12 +191,31 @@ func NewComposeService(ctx context.Context, c ComposeConfig) (*ComposeService, e
 	if c.Redact == nil {
 		c.Redact = safety.NewRedactor()
 	}
-	return &ComposeService{c: c, ctx: ctx, states: map[core.WorktreeID]*composeEntry{}, confirmedBy: map[core.RepoID]core.WorktreeID{}, written: map[core.AuditID]struct{}{}}, nil
+	if c.AuditQueueMax <= 0 {
+		c.AuditQueueMax = 1000
+	}
+	if c.AuditRememberMax <= 0 {
+		c.AuditRememberMax = 4096
+	}
+	if c.WaitTimeout <= 0 {
+		c.WaitTimeout = 10 * time.Second
+	}
+	return &ComposeService{c: c, ctx: ctx, states: map[core.WorktreeID]*composeEntry{}, confirmedBy: map[core.RepoID]core.WorktreeID{}, written: map[core.AuditID]struct{}{}, boot: c.NewID("boot")}, nil
 }
 
-// Wait blocks until the running operations have ended (after ctx is cancelled).
+// Wait blocks until the running operations have ended, but at most
+// ComposeConfig.WaitTimeout: a docker call that does not return must not hold
+// up the shutdown. Then it makes a last attempt at queued audit entries.
 func (s *ComposeService) Wait() {
-	s.wg.Wait()
+	done := make(chan struct{})
+	go func() { s.wg.Wait(); close(done) }()
+	t := time.NewTimer(s.c.WaitTimeout)
+	defer t.Stop()
+	select {
+	case <-done:
+	case <-t.C:
+		s.c.Logger.Warn("compose operations did not end in time; shutting down anyway")
+	}
 	s.flushAudits(10 * time.Second) // last attempt at queued entries
 }
 
@@ -200,53 +245,78 @@ func (s *ComposeService) confirmedByOf(repo core.RepoID) core.WorktreeID {
 }
 
 // queueAudit keeps an entry that could not be written for a later retry. An
-// entry that is already written or queued (same ID) is not queued again.
-func (s *ComposeService) queueAudit(e core.AuditEntry) {
+// entry that is already written or queued (same ID) is not queued again. The
+// queue is capped: the oldest entries go first and are counted.
+func (s *ComposeService) queueAudit(e core.AuditEntry, det bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, done := s.written[e.ID]; done {
 		return
 	}
 	for _, q := range s.queued {
-		if q.ID == e.ID {
+		if q.e.ID == e.ID {
 			return
 		}
 	}
-	s.queued = append(s.queued, e)
+	s.queued = append(s.queued, queuedAudit{e: e, det: det})
+	if over := len(s.queued) - s.c.AuditQueueMax; over > 0 {
+		s.dropped += over
+		s.queued = s.queued[over:]
+		s.c.Logger.Error("compose audit queue full: entries dropped", "dropped", over, "dropped_total", s.dropped)
+	}
 }
 
-// appendOnce writes an audit entry unless an entry with that ID was already
-// written. Only deterministic IDs are remembered (see auditID).
-func (s *ComposeService) appendOnce(ctx context.Context, e core.AuditEntry) error {
+// remember notes that a deterministic ID was written. The set is capped.
+func (s *ComposeService) rememberLocked(id core.AuditID) {
+	if _, ok := s.written[id]; ok {
+		return
+	}
+	s.written[id] = struct{}{}
+	s.writtenOrder = append(s.writtenOrder, id)
+	for len(s.writtenOrder) > s.c.AuditRememberMax {
+		delete(s.written, s.writtenOrder[0])
+		s.writtenOrder = s.writtenOrder[1:]
+	}
+}
+
+// appendOnce writes an audit entry once. An ID that was already written (this
+// process remembers it, or the log refuses it as a duplicate key) counts as
+// written, which also settles two writers racing on the same ID. det says the
+// ID is deterministic, so it is remembered.
+func (s *ComposeService) appendOnce(ctx context.Context, e core.AuditEntry, det bool) error {
 	s.mu.Lock()
 	_, done := s.written[e.ID]
 	s.mu.Unlock()
 	if done {
 		return nil
 	}
-	if err := s.c.Audit.Append(ctx, e); err != nil {
-		return err
+	err := s.c.Audit.Append(ctx, e)
+	if err != nil {
+		if !errors.Is(err, ErrConflict) {
+			return err
+		}
+		// The key is taken: the entry is already in the log.
+		s.c.Logger.Info("compose audit entry was already written", "audit", e.ID)
 	}
-	if isDeterministicAuditID(e.ID) {
+	if det {
 		s.mu.Lock()
-		s.written[e.ID] = struct{}{}
+		s.rememberLocked(e.ID)
 		s.mu.Unlock()
 	}
 	return nil
 }
 
 // auditID is the ID of the idx-th audit entry of an input. The end of an
-// operation gets <worktree>:<attempt>:<idx>, so the entry is the same wherever
-// it is built (the transition or the retry queue) and can be written once.
-// Other inputs get a fresh ID.
-func (s *ComposeService) auditID(wt core.Worktree, in env.ComposeInput, idx int) string {
+// operation gets <worktree>:<boot>:<attempt>:<idx> (det is true): the same
+// wherever it is built (the transition or the retry queue), so it is written
+// once, and different from the IDs of earlier runs of ygg. Other inputs get a
+// fresh ID.
+func (s *ComposeService) auditID(wt core.Worktree, in env.ComposeInput, idx int) (id string, det bool) {
 	if v, ok := in.(env.OpFinished); ok {
-		return fmt.Sprintf("%s:%d:%d", wt.ID, v.Attempt, idx)
+		return fmt.Sprintf("%s:%s:%d:%d", wt.ID, s.boot, v.Attempt, idx), true
 	}
-	return s.c.NewID("aud")
+	return s.c.NewID("aud"), false
 }
-
-func isDeterministicAuditID(id core.AuditID) bool { return strings.Contains(string(id), ":") }
 
 // flushAudits writes the queued entries, oldest first, within total, and stops
 // at the first failure (they stay queued). It never holds a worktree lock or
@@ -263,17 +333,34 @@ func (s *ComposeService) flushAudits(total time.Duration) {
 			s.mu.Unlock()
 			return
 		}
-		e := s.queued[0]
+		q := s.queued[0]
 		s.mu.Unlock()
-		if err := s.appendOnce(ctx, e); err != nil {
-			s.c.Logger.Error("compose audit entry still not written; it stays queued", "audit", e.ID, "subject", e.Subject, "err", err)
-			return
-		}
+		err := s.appendOnce(ctx, q.e, q.det)
 		s.mu.Lock()
-		if len(s.queued) > 0 && s.queued[0].ID == e.ID {
+		if len(s.queued) == 0 || s.queued[0].e.ID != q.e.ID {
+			s.mu.Unlock() // the queue changed under us (cap): look again
+			if err != nil {
+				return
+			}
+			continue
+		}
+		if err == nil {
 			s.queued = s.queued[1:]
+			s.mu.Unlock()
+			continue
+		}
+		s.queued[0].fails++
+		if s.queued[0].fails >= maxFlushFailures {
+			// Quarantine: it must not block the entries behind it.
+			s.queued = s.queued[1:]
+			s.dropped++
+			s.mu.Unlock()
+			s.c.Logger.Error("compose audit entry could not be written and was dropped", "audit", q.e.ID, "subject", q.e.Subject, "dropped_total", s.dropped, "err", err)
+			continue
 		}
 		s.mu.Unlock()
+		s.c.Logger.Error("compose audit entry still not written; it stays queued", "audit", q.e.ID, "subject", q.e.Subject, "err", err)
+		return
 	}
 }
 
@@ -503,7 +590,8 @@ func (s *ComposeService) apply(ctx context.Context, wt core.Worktree, e *compose
 			continue
 		}
 		idx++
-		entry, err := s.buildAudit(s.auditID(wt, in, idx), wt, e, next, a, project, actor, now)
+		id, det := s.auditID(wt, in, idx)
+		entry, err := s.buildAudit(id, wt, e, next, a, project, actor, now)
 		if err != nil {
 			return applyResult{}, err
 		}
@@ -514,7 +602,7 @@ func (s *ComposeService) apply(ctx context.Context, wt core.Worktree, e *compose
 			confirmedNow = !e.auto
 			continue
 		}
-		if err := s.appendOnce(ctx, entry); err != nil {
+		if err := s.appendOnce(ctx, entry, det); err != nil {
 			return applyResult{}, fmt.Errorf("write audit entry: %w", err)
 		}
 	}
@@ -668,7 +756,7 @@ func (s *ComposeService) queueAudits(wt core.Worktree, e *composeEntry, in env.C
 			continue
 		}
 		idx++
-		id := s.auditID(wt, in, idx)
+		id, det := s.auditID(wt, in, idx)
 		var entry core.AuditEntry
 		var err error
 		if perr == nil {
@@ -677,9 +765,9 @@ func (s *ComposeService) queueAudits(wt core.Worktree, e *composeEntry, in env.C
 		if perr != nil || err != nil {
 			// Better a minimal entry than none (invariant 8).
 			s.c.Logger.Error("compose audit entry reduced to its minimum", "worktree", wt.ID, "audit", id)
-			entry = auditEntry(id, "system", a.Action, wtSubject(wt.ID), now, []byte("{}"))
+			entry = auditEntry(id, "system", a.Action, wtSubject(wt.ID), now, []byte(`{"degraded":true}`))
 		}
-		s.queueAudit(entry)
+		s.queueAudit(entry, det)
 	}
 }
 

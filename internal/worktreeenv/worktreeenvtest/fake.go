@@ -6,6 +6,7 @@ package worktreeenvtest
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"path"
 	"sort"
 	"strings"
@@ -148,6 +149,11 @@ func (s *Store) Append(_ context.Context, e core.AuditEntry) error {
 	if s.AuditErr != nil {
 		if err := s.AuditErr(e); err != nil {
 			return err
+		}
+	}
+	for _, a := range s.audits { // like the audit log's primary key
+		if a.ID == e.ID {
+			return fmt.Errorf("audit id %q is taken: %w", e.ID, worktreeenv.ErrConflict)
 		}
 	}
 	s.audits = append(s.audits, e)
