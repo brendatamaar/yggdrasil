@@ -343,7 +343,7 @@ func TestInvariant_3_compose_env_is_clean_env_plus_port_vars(t *testing.T) {
 			Env: safety.NewEnvBuilder(), Start: f.Start,
 			Resolve: func(name, _ string, _ []string) (string, error) { return "/usr/bin/" + name, nil },
 		}
-		call := worktreeenv.ComposeCall{Op: op, Project: "ygg-a", File: "compose.yml", Dir: "/wt", Env: map[string]string{"YGG_PORT_BASE": "20000", "YGG_PORT_0": "20000"}}
+		call := worktreeenv.ComposeCall{Op: op, Project: "ygg-a", File: "compose.yml", Compose: []byte("services: {}"), Dir: "/wt", Env: map[string]string{"YGG_PORT_BASE": "20000", "YGG_PORT_0": "20000"}}
 		if res := runner.Run(ctx, call); res.Failure != "" {
 			t.Fatalf("%s: %+v", op, res)
 		}
@@ -372,7 +372,7 @@ func TestInvariant_3_compose_failure_summary_is_redacted(t *testing.T) {
 		Env: safety.NewEnvBuilder(), Start: f.Start,
 		Resolve: func(name, _ string, _ []string) (string, error) { return "/usr/bin/" + name, nil },
 	}
-	res := runner.Run(context.Background(), worktreeenv.ComposeCall{Op: env.OpUp, Project: "ygg-a", File: "c.yml", Dir: "/wt"})
+	res := runner.Run(context.Background(), worktreeenv.ComposeCall{Op: env.OpUp, Project: "ygg-a", File: "c.yml", Compose: []byte("x"), Dir: "/wt"})
 	if res.Failure != env.FailComposeError || strings.Contains(res.Summary, secret) {
 		t.Fatalf("%+v", res)
 	}

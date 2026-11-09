@@ -20,17 +20,27 @@ func (s *Store) ComposeSettings(_ context.Context, repo core.RepoID) (worktreeen
 	return s.composes[repo], nil
 }
 
-// PutComposeSettings implements worktreeenv.ComposeStore.
-func (s *Store) PutComposeSettings(_ context.Context, repo core.RepoID, c worktreeenv.ComposeSettings, _ time.Time, audit core.AuditEntry) error {
+// UpdateComposeSettings implements worktreeenv.ComposeStore.
+func (s *Store) UpdateComposeSettings(_ context.Context, repo core.RepoID, _ time.Time, audit core.AuditEntry,
+	mut func(worktreeenv.ComposeSettings) (worktreeenv.ComposeSettings, bool, error)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.repos[repo] {
 		return worktreeenv.ErrNotFound
 	}
+	next, write, err := mut(s.composes[repo])
+	if err != nil || !write {
+		return err
+	}
+	if s.AuditErr != nil {
+		if err := s.AuditErr(audit); err != nil {
+			return err
+		}
+	}
 	if s.composes == nil {
 		s.composes = map[core.RepoID]worktreeenv.ComposeSettings{}
 	}
-	s.composes[repo] = c
+	s.composes[repo] = next
 	s.audits = append(s.audits, audit)
 	return nil
 }
@@ -49,7 +59,7 @@ type ComposeRunner struct {
 
 // Run implements worktreeenv.ComposeRunner.
 func (r *ComposeRunner) Run(ctx context.Context, c worktreeenv.ComposeCall) worktreeenv.ComposeResult {
-	if _, err := env.Argv(c.Op, c.Project, c.File); err != nil {
+	if _, err := env.Argv(c.Op, c.Project, c.File, c.HasEnvFile); err != nil {
 		return worktreeenv.ComposeResult{Failure: env.FailComposeError, Summary: "That compose operation is not allowed."}
 	}
 	r.mu.Lock()
@@ -80,6 +90,10 @@ func (r *ComposeRunner) Calls() []worktreeenv.ComposeCall {
 type ComposeFiles struct {
 	mu    sync.Mutex
 	files map[string][]byte
+	reads map[string]int
+	// Hook, if set, is called before every read with the path and how many
+	// times that path has been read (1 for the first). It may call Put.
+	Hook func(rel env.RelPath, n int)
 }
 
 // Put sets a file.
@@ -92,16 +106,46 @@ func (f *ComposeFiles) Put(root string, rel env.RelPath, data string) {
 	f.files[root+"|"+string(rel)] = []byte(data)
 }
 
+// Reads is how many times rel has been read below root.
+func (f *ComposeFiles) Reads(root string, rel env.RelPath) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.reads[root+"|"+string(rel)]
+}
+
 // Read implements worktreeenv.ComposeFiles.
 func (f *ComposeFiles) Read(root string, rel env.RelPath) ([]byte, error) {
+	b, ok, err := f.ReadOptional(root, rel)
+	if err == nil && !ok {
+		return nil, worktreeenv.ErrComposeFile
+	}
+	return b, err
+}
+
+// ReadOptional implements worktreeenv.ComposeFiles.
+func (f *ComposeFiles) ReadOptional(root string, rel env.RelPath) ([]byte, bool, error) {
+	f.mu.Lock()
+	if f.reads == nil {
+		f.reads = map[string]int{}
+	}
+	key := root + "|" + string(rel)
+	f.reads[key]++
+	n, hook := f.reads[key], f.Hook
+	f.mu.Unlock()
+	if hook != nil {
+		hook(rel, n)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if rel.Validate() != nil {
-		return nil, worktreeenv.ErrComposeFile
+		return nil, false, worktreeenv.ErrComposeFile
 	}
-	b, ok := f.files[root+"|"+string(rel)]
-	if !ok || len(b) > worktreeenv.MaxComposeFile {
-		return nil, worktreeenv.ErrComposeFile
+	b, ok := f.files[key]
+	if !ok {
+		return nil, false, nil
 	}
-	return append([]byte(nil), b...), nil
+	if len(b) > worktreeenv.MaxComposeFile {
+		return nil, false, worktreeenv.ErrComposeFile
+	}
+	return append([]byte(nil), b...), true, nil
 }

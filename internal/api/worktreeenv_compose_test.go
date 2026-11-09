@@ -29,7 +29,7 @@ func (c *composeEnv) ComposeAction(_ context.Context, w core.WorktreeID, a Compo
 func TestComposeEndpointsCallTheService(t *testing.T) {
 	f := &composeEnv{}
 	e := newEnv(t, func(d *Deps) { d.Phase5 = Phase5Services{WorktreeEnv: f} })
-	for _, op := range []string{"up", "stop", "down", "confirm"} {
+	for _, op := range []string{"up", "stop", "down"} {
 		resp, data := e.do(t, "POST", "/api/worktrees/wt_1/compose/"+op, nil)
 		var out WorktreeEnvDTO
 		if resp.StatusCode != 200 || json.Unmarshal(data, &out) != nil || out.Compose != ComposeDown || out.Profile == nil {
@@ -39,9 +39,18 @@ func TestComposeEndpointsCallTheService(t *testing.T) {
 	if resp, _ := e.do(t, "POST", "/api/worktrees/wt_1/compose/confirm", ComposeConfirmRequest{Hash: "abc"}); resp.StatusCode != 200 {
 		t.Errorf("confirm with hash = %d", resp.StatusCode)
 	}
-	want := []string{"wt_1:up:", "wt_1:stop:", "wt_1:down:", "wt_1:confirm:", "wt_1:confirm:abc"}
+	want := []string{"wt_1:up:", "wt_1:stop:", "wt_1:down:", "wt_1:confirm:abc"}
 	if fmt.Sprint(f.actions) != fmt.Sprint(want) {
 		t.Fatalf("actions = %v", f.actions)
+	}
+	// a confirmation says what it confirms: no body, no hash and an empty hash are 400
+	for name, body := range map[string]any{"no body": nil, "empty hash": ComposeConfirmRequest{}, "empty object": map[string]string{}} {
+		if resp, data := e.do(t, "POST", "/api/worktrees/wt_1/compose/confirm", body); resp.StatusCode != 400 {
+			t.Errorf("confirm with %s = %d %s, want 400", name, resp.StatusCode, data)
+		}
+	}
+	if len(f.actions) != 4 {
+		t.Errorf("a confirmation without a hash reached the service: %v", f.actions)
 	}
 	// the action comes from the route: there is no route for anything else
 	if resp, _ := e.do(t, "POST", "/api/worktrees/wt_1/compose/down-v", nil); resp.StatusCode == 200 {
@@ -66,6 +75,7 @@ func TestComposeEndpointErrorsMapToStatuses(t *testing.T) {
 		"confirm first": {&worktreeenv.Error{Msg: "Confirm the file first.", Err: worktreeenv.ErrComposeConfirm}, 409},
 		"busy":          {&worktreeenv.Error{Msg: "Still running.", Err: worktreeenv.ErrComposeBusy}, 409},
 		"stale":         {&worktreeenv.Error{Msg: "File changed.", Err: worktreeenv.ErrComposeStale}, 409},
+		"no-op":         {&worktreeenv.Error{Msg: "Nothing to do.", Err: worktreeenv.ErrComposeNoop}, 409},
 		"not tracked":   {worktreeenv.ErrNotFound, 404},
 	} {
 		f := &composeEnv{err: tc.err}

@@ -69,9 +69,9 @@ type WorktreeEnvChangedMessage struct {
 	Env WorktreeEnvDTO `json:"env"`
 }
 
-// ComposeConfirmRequest is the optional body of POST
-// /api/worktrees/{id}/compose/confirm. Hash is the composeHash the user was
-// shown; when the file has changed since, nothing is confirmed (409).
+// ComposeConfirmRequest is the body of POST /api/worktrees/{id}/compose/confirm.
+// Hash is the composeHash the user was shown and is required (400 without it);
+// when the file has changed since, nothing is confirmed (409).
 type ComposeConfirmRequest struct {
-	Hash string `json:"hash,omitempty"`
+	Hash string `json:"hash"`
 }

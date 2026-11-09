@@ -79,9 +79,17 @@ func (s *Server) handleCompose(a ComposeAction) http.HandlerFunc {
 			return
 		}
 		var hash string
-		if a == ComposeActionConfirm && r.ContentLength != 0 {
+		if a == ComposeActionConfirm {
+			// A confirmation says which version of the file it confirms.
 			var req ComposeConfirmRequest
-			if !decodeBody(w, r, &req) {
+			if r.ContentLength == 0 || !decodeBody(w, r, &req) {
+				if r.ContentLength == 0 {
+					badRequest(w, "Say which version of the compose file you are confirming.", "Send the composeHash that was shown with the worktree.")
+				}
+				return
+			}
+			if req.Hash == "" {
+				badRequest(w, "Say which version of the compose file you are confirming.", "Send the composeHash that was shown with the worktree.")
 				return
 			}
 			hash = req.Hash
@@ -112,7 +120,7 @@ func envErr(err error) error {
 	switch {
 	case errors.Is(err, worktreeenv.ErrNotFound):
 		return apperr.New(apperr.NotFound, "That repo or worktree isn't tracked (any more).", err)
-	case errors.Is(err, worktreeenv.ErrComposeBusy), errors.Is(err, worktreeenv.ErrComposeConfirm), errors.Is(err, worktreeenv.ErrComposeStale):
+	case errors.Is(err, worktreeenv.ErrComposeBusy), errors.Is(err, worktreeenv.ErrComposeConfirm), errors.Is(err, worktreeenv.ErrComposeStale), errors.Is(err, worktreeenv.ErrComposeNoop):
 		msg := "That can't be done right now."
 		if errors.As(err, &ee) {
 			msg = ee.UserMessage()

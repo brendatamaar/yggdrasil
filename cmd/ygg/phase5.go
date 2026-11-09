@@ -395,7 +395,7 @@ func envRefusal(err error) error {
 		return nil
 	case errors.Is(err, errNotTracked), errors.Is(err, db.ErrNotFound), errors.Is(err, worktreeenv.ErrNotFound):
 		return apperr.New(apperr.NotFound, "That repo or worktree is not tracked any more.", err)
-	case errors.Is(err, worktreeenv.ErrComposeBusy), errors.Is(err, worktreeenv.ErrComposeConfirm), errors.Is(err, worktreeenv.ErrComposeStale):
+	case errors.Is(err, worktreeenv.ErrComposeBusy), errors.Is(err, worktreeenv.ErrComposeConfirm), errors.Is(err, worktreeenv.ErrComposeStale), errors.Is(err, worktreeenv.ErrComposeNoop):
 		msg := "That can't be done right now."
 		if errors.As(err, &we) {
 			msg = we.UserMessage()

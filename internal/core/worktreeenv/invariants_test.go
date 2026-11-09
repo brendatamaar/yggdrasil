@@ -54,32 +54,34 @@ func TestInvariant_1_profile_copy_never_overwrites(t *testing.T) {
 // one; every other op string is refused.
 func TestInvariant_1_compose_argv_never_destructive(t *testing.T) {
 	forbidden := []string{"-v", "--volumes", "--rmi", "--remove-orphans", "--force-recreate", "-f", "rm", "kill", "--timeout", "-t"}
-	allowedFlags := []string{"-p", "--file", "-d", "--format"}
+	allowedFlags := []string{"-p", "--file", "-", "-d", "--format", "--project-directory", "--env-file"}
 	for _, op := range []ComposeOp{OpUp, OpStop, OpDown, OpPs} {
 		for _, file := range []string{"compose.yml", "deploy dir/compose.yaml"} {
-			rel, err := ParseComposeFile(file)
-			if err != nil {
-				t.Fatal(err)
-			}
-			argv, err := Argv(op, "ygg-a", rel)
-			if err != nil {
-				t.Fatalf("%s: %v", op, err)
-			}
-			for i, a := range argv {
-				if slices.Contains(forbidden, a) {
-					t.Errorf("%s: forbidden argument %q", op, a)
+			for _, hasEnv := range []bool{false, true} {
+				rel, err := ParseComposeFile(file)
+				if err != nil {
+					t.Fatal(err)
 				}
-				if strings.HasPrefix(a, "-") && !slices.Contains(allowedFlags, a) {
-					t.Errorf("%s: unexpected flag %q at %d", op, a, i)
+				argv, err := Argv(op, "ygg-a", rel, hasEnv)
+				if err != nil {
+					t.Fatalf("%s: %v", op, err)
 				}
-			}
-			if argv[0] != "docker" || argv[1] != "compose" || argv[2] != "-p" || argv[3] != "ygg-a" || argv[4] != "--file" || argv[5] != string(rel) {
-				t.Errorf("%s: prefix %v", op, argv[:6])
+				for i, a := range argv {
+					if slices.Contains(forbidden, a) {
+						t.Errorf("%s: forbidden argument %q", op, a)
+					}
+					if strings.HasPrefix(a, "-") && !slices.Contains(allowedFlags, a) {
+						t.Errorf("%s: unexpected flag %q at %d", op, a, i)
+					}
+				}
+				if argv[0] != "docker" || argv[1] != "compose" || argv[2] != "-p" || argv[3] != "ygg-a" || argv[4] != "--file" || argv[5] != "-" {
+					t.Errorf("%s: prefix %v", op, argv[:6])
+				}
 			}
 		}
 	}
 	for _, bad := range []ComposeOp{"", "UP", "down -v", "down --volumes", "rm", "kill", "down\x00", "up -d --remove-orphans", "pull", "exec"} {
-		if _, err := Argv(bad, "ygg-a", "compose.yml"); err == nil {
+		if _, err := Argv(bad, "ygg-a", "compose.yml", false); err == nil {
 			t.Errorf("op %q must be refused", bad)
 		}
 	}
