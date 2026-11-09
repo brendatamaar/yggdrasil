@@ -234,7 +234,13 @@ func TestPhase5TerminalOpenAndCloseAreAudited(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- r.a.terminal.Open(ctx, token, sock) }()
 	r.waitAudit(t, "terminal.open")
+	// The open is audited before the shell starts (fail closed), so wait for it.
 	specs := r.pty.Specs()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if specs = r.pty.Specs(); len(specs) > 0 {
+			break
+		}
+	}
 	if len(specs) != 1 || specs[0].Dir != r.wtDir {
 		t.Fatalf("shell specs = %+v, want one in the worktree", specs)
 	}
