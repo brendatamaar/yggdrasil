@@ -285,7 +285,7 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	})
 	envHub.Set(srv.PublishWorktreeEnv)
 	// The Phase 5 services publish to the server, so they come after it.
-	devSvc, err := newDevServers(ctx, cfg, store, taskSvc, envSvc, srv, redactor, log)
+	devSvc, devCat, err := newDevServers(ctx, cfg, store, taskSvc, envSvc, srv, redactor, log)
 	if err != nil {
 		_ = d.Close()
 		return nil, err
@@ -303,7 +303,7 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		return nil, err
 	}
 	srv.SetPhase5Services(api.Phase5Services{
-		DevServers:  devServerAPI{Service: devSvc, store: store},
+		DevServers:  devServerAPI{Service: devSvc, store: store, cat: devCat},
 		WorktreeEnv: envAPI,
 		Terminal:    termSvc,
 	})

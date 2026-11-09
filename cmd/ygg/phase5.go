@@ -7,18 +7,12 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"maps"
-	"os"
-	"slices"
-	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/api"
 	"github.com/brendatamaar/yggdrasil/internal/apperr"
 	"github.com/brendatamaar/yggdrasil/internal/audit"
-	"github.com/brendatamaar/yggdrasil/internal/builds"
-	"github.com/brendatamaar/yggdrasil/internal/builds/toolchains"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	ct "github.com/brendatamaar/yggdrasil/internal/core/terminal"
 	wenv "github.com/brendatamaar/yggdrasil/internal/core/worktreeenv"
@@ -156,70 +150,6 @@ func devRefusal(err error) error {
 	return err
 }
 
-// devTemplates implements devservers.Templates from the toolchains' dev-server
-// steps. The first step offered is "dev"; further ones are named after the
-// step. (No per-repo dev-server override exists in the build settings yet.)
-type devTemplates struct{ dirs trackedDirs }
-
-func (t devTemplates) DevServer(ctx context.Context, target devservers.Target, command string) ([]string, map[string]string, error) {
-	dir, err := t.dirs.Dir(ctx, target.Repo, target.Worktree)
-	if err != nil {
-		return nil, nil, devRefusal(err)
-	}
-	step, ok := devSteps(dir)[command]
-	if !ok {
-		return nil, nil, apperr.New(apperr.Invalid, "This repo has no dev server command by that name. Choose one of the commands offered for it.", nil)
-	}
-	envMap := map[string]string{}
-	for _, kv := range step.Env {
-		k, v, _ := strings.Cut(kv, "=")
-		envMap[k] = v
-	}
-	return slices.Clone(step.Argv), envMap, nil
-}
-
-// devSteps lists the dev-server steps the detected toolchains of dir offer,
-// by command key.
-func devSteps(dir string) map[string]builds.Step {
-	out := map[string]builds.Step{}
-	for _, m := range toolchains.DetectAll(os.DirFS(dir)) {
-		for _, s := range m.Toolchain.Commands(m.Detection).DevServer {
-			key := "dev"
-			if len(out) > 0 {
-				key = commandKey(s.Name)
-			}
-			base := key
-			for n := 2; ; n++ {
-				if _, taken := out[key]; !taken {
-					break
-				}
-				key = fmt.Sprintf("%s-%d", base, n)
-			}
-			out[key] = s
-		}
-	}
-	return out
-}
-
-// commandKey makes a command key from a step name: lower-case letters,
-// digits and '-'.
-func commandKey(name string) string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(name) {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-		case b.Len() > 0 && !strings.HasSuffix(b.String(), "-"):
-			b.WriteByte('-')
-		}
-	}
-	k := strings.Trim(b.String(), "-")
-	if k == "" || len(k) > 48 {
-		return "dev-server"
-	}
-	return k
-}
-
 // devBlocks implements devservers.BlockSource: a worktree gets its port block
 // (allocated on first use); a main checkout gets none, so nothing is injected.
 type devBlocks struct{ env *worktreeenv.Service }
@@ -239,6 +169,7 @@ func (b devBlocks) BlockFor(ctx context.Context, t devservers.Target) (core.Port
 type devServerAPI struct {
 	*devservers.Service
 	store *db.Store
+	cat   *devservers.Catalog
 }
 
 var _ api.DevServerService = devServerAPI{}
@@ -277,13 +208,12 @@ func (a devServerAPI) Servers(ctx context.Context) ([]devservers.View, error) {
 				targets = append(targets, devservers.Target{Repo: r.ID, Worktree: w})
 			}
 			for _, t := range targets {
-				dir, err := (trackedDirs{a.store}).Dir(ctx, t.Repo, t.Worktree)
+				cmds, err := a.cat.Commands(ctx, t)
 				if err != nil {
 					continue // not usable (moved, refused path): nothing to offer
 				}
-				steps := devSteps(dir)
-				for _, command := range slices.Sorted(maps.Keys(steps)) {
-					key := t.Key(command)
+				for _, command := range cmds {
+					key := t.Key(command.Key)
 					if !have[devservers.IDOf(key)] {
 						out = append(out, a.Placeholder(key))
 					}
@@ -325,7 +255,7 @@ func (a devServerAPI) RepoName(ctx context.Context, id core.RepoID) string {
 	return r.Name
 }
 
-func newDevServers(ctx context.Context, cfg config, store *db.Store, tsk *tasks.Service, envSvc *worktreeenv.Service, hub devservers.Publisher, red safety.Redactor, log *slog.Logger) (*devservers.Service, error) {
+func newDevServers(ctx context.Context, cfg config, store *db.Store, tsk *tasks.Service, envSvc *worktreeenv.Service, hub devservers.Publisher, red safety.Redactor, log *slog.Logger) (*devservers.Service, *devservers.Catalog, error) {
 	dirs := trackedDirs{store}
 	start, ports, resolve := platform.StartFunc(platform.Start), platform.ListeningPorts, platform.Resolve
 	if h := cfg.phase5; h != nil {
@@ -339,18 +269,19 @@ func newDevServers(ctx context.Context, cfg config, store *db.Store, tsk *tasks.
 			resolve = h.resolve
 		}
 	}
+	cat := devservers.NewCatalog(devRepos{dirs}, devservers.RealClock{})
 	svc, err := devservers.New(ctx, devservers.Deps{
 		Store: devservers.NewSQLiteStore(store, red), Repos: devRepos{dirs},
-		Trust: trustSource{svc: tsk}, Templates: devTemplates{dirs}, Blocks: devBlocks{envSvc},
+		Trust: trustSource{svc: tsk}, Templates: cat, Blocks: devBlocks{envSvc},
 		Start: start, KillTask: platform.KillTask, Resolve: resolve, Ports: ports,
 		Orphans: devservers.RealOrphans(cfg.dataDir),
 		Env:     safety.NewEnvBuilder(), Redactor: red, Hub: hub,
 		Clock: devservers.RealClock{}, IDs: db.NewID, Log: log, DataDir: cfg.dataDir,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("start dev servers: %w", err)
+		return nil, nil, fmt.Errorf("start dev servers: %w", err)
 	}
-	return svc, nil
+	return svc, cat, nil
 }
 
 // ---- worktree environment -------------------------------------------------

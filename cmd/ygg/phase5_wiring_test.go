@@ -325,14 +325,6 @@ func TestPhase5RemovedWorktreeReleasesItsPortBlock(t *testing.T) {
 	}
 }
 
-func TestCommandKey(t *testing.T) {
-	for in, want := range map[string]string{"Run": "run", "dev server": "dev-server", "  ": "dev-server", "Start API!": "start-api"} {
-		if got := commandKey(in); got != want {
-			t.Errorf("commandKey(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func listsServer(l api.DevServersResponse, id core.DevServerID, status api.DevServerStatus) bool {
 	for _, d := range l.Servers {
 		if d.ID == id {
