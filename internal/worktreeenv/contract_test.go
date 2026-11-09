@@ -22,7 +22,7 @@ func TestFakeStoreContract(t *testing.T) {
 		s := worktreeenvtest.NewStore("rep_1")
 		var n atomic.Int32
 		return worktreeenvtest.StoreEnv{
-			Ports: s, Settings: s, Repo: "rep_1",
+			Ports: s, Settings: s, Audit: s, Repo: "rep_1",
 			NewWorktree: func() core.WorktreeID { return core.WorktreeID(fmt.Sprintf("wt_%d", n.Add(1))) },
 			Audits: func(subject string) int {
 				c := 0
@@ -55,7 +55,7 @@ func TestSQLiteStoreContract(t *testing.T) {
 		store := worktreeenv.DBStore{S: s}
 		var n atomic.Int32
 		return worktreeenvtest.StoreEnv{
-			Ports: store, Settings: store, Repo: repo.ID,
+			Ports: store, Settings: store, Audit: store, Repo: repo.ID,
 			NewWorktree: func() core.WorktreeID {
 				task := dbtest.Task(t, s, core.Task{ProjectID: project.ID, Scope: core.ScopeRepo, Mode: core.ModeCode, RepoIDs: []core.RepoID{repo.ID}})
 				name := fmt.Sprintf("wt%d", n.Add(1))

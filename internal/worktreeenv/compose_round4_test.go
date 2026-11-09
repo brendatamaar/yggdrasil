@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -83,6 +84,9 @@ func TestComposeEndAuditAfterARestartIsWritten(t *testing.T) {
 	if len(ids) != 2 || ids[0] == ids[1] {
 		t.Fatalf("started entries after a restart = %v", ids)
 	}
+	if svc2.Boot() == r.svc.Boot() {
+		t.Fatalf("both runs have the boot token %q", svc2.Boot())
+	}
 	if svc2.QueueLen() != 0 {
 		t.Fatalf("the second run queued %d entries", svc2.QueueLen())
 	}
@@ -92,7 +96,11 @@ func TestComposeEndAuditAfterARestartIsWritten(t *testing.T) {
 // entries behind it. A permanently failing one is quarantined after a number of
 // flushes, also without blocking.
 func TestComposePoisonedHeadDoesNotBlockTheQueue(t *testing.T) {
-	r := newComposeRig(t)
+	var clock atomic.Int64 // unix seconds
+	clock.Store(time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC).Unix())
+	r := newComposeRigWith(t, func(_ *composeRig, cfg *worktreeenv.ComposeConfig) {
+		cfg.Now = func() time.Time { return time.Unix(clock.Load(), 0).UTC() }
+	})
 	if err := r.store.Append(context.Background(), entryWith("taken")); err != nil {
 		t.Fatal(err)
 	}
@@ -121,6 +129,12 @@ func TestComposePoisonedHeadDoesNotBlockTheQueue(t *testing.T) {
 	for range 12 {
 		r.svc.FlushAudits()
 	}
+	// Many failures but a short outage: nothing is lost yet.
+	if r.svc.QueueLen() != 2 || r.svc.Dropped() != 0 {
+		t.Fatalf("a short outage cost an entry: queue %d dropped %d", r.svc.QueueLen(), r.svc.Dropped())
+	}
+	clock.Add(6 * 60) // six minutes later
+	r.svc.FlushAudits()
 	if r.svc.QueueLen() != 0 || r.svc.Dropped() != 1 {
 		t.Fatalf("queue %d dropped %d: the bad entry was not quarantined", r.svc.QueueLen(), r.svc.Dropped())
 	}
@@ -184,6 +198,11 @@ func TestComposeQueueAndRememberedSetAreCapped(t *testing.T) {
 	if r.svc.Remembered() != 3 {
 		t.Fatalf("remembered %d IDs, want 3", r.svc.Remembered())
 	}
+	// w0 was evicted from the remembered set: writing it again hits the log's
+	// duplicate key, which counts as written.
+	if err := r.svc.AppendOnce(context.Background(), entryWith("w0"), true); err != nil {
+		t.Fatalf("an evicted ID written again: %v", err)
+	}
 }
 
 // Wait does not hang on an operation that does not end.
@@ -192,7 +211,9 @@ func TestComposeWaitIsBounded(t *testing.T) {
 		cfg.WaitTimeout = 100 * time.Millisecond
 	})
 	r.confirmedDown(t)
-	r.runner.Gate = make(chan struct{}) // the up never returns
+	gate := make(chan struct{})
+	r.runner.Gate = gate // the up never returns
+	t.Cleanup(func() { close(gate) })
 	r.up(t)
 	for range 400 {
 		if len(r.ops()) > 0 {
@@ -206,5 +227,44 @@ func TestComposeWaitIsBounded(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("Wait hung on a docker call that does not return")
+	}
+}
+
+// The quarantine and the queue cap run while other writers queue entries; run
+// under -race.
+func TestComposeQuarantineRacesWithQueueing(t *testing.T) {
+	var clock atomic.Int64
+	clock.Store(time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC).Unix())
+	r := newComposeRigWith(t, func(_ *composeRig, cfg *worktreeenv.ComposeConfig) {
+		cfg.Now = func() time.Time { return time.Unix(clock.Load(), 0).UTC() }
+		cfg.AuditQueueMax = 50 // a full queue makes queueAudit write the drop count too
+	})
+	r.store.AuditErr = func(e core.AuditEntry) error {
+		if strings.HasPrefix(string(e.ID), "bad") {
+			return errors.New("cannot be stored")
+		}
+		return nil
+	}
+	var stop atomic.Bool
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { // flusher: every failing head is quarantined after a few flushes
+		defer wg.Done()
+		defer stop.Store(true)
+		for range 3000 {
+			clock.Add(120)
+			r.svc.FlushAudits()
+		}
+	}()
+	go func() { // writer: keeps the queue full, so queueAudit writes the drop count too
+		defer wg.Done()
+		for i := 0; !stop.Load(); i++ {
+			r.svc.QueueAudit(entryWith("bad"+strconv.Itoa(i)), true)
+			_ = r.svc.Dropped()
+		}
+	}()
+	wg.Wait()
+	if r.svc.Dropped() == 0 {
+		t.Fatal("nothing was dropped: the test did not exercise the counter")
 	}
 }

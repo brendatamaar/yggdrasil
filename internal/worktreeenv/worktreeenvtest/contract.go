@@ -24,6 +24,8 @@ type StoreEnv struct {
 	NewWorktree func() core.WorktreeID
 	// Repo is a repo the settings store knows; the store does not know "rep_unknown".
 	Repo core.RepoID
+	// Audit is the audit sink of the same store.
+	Audit worktreeenv.AuditSink
 	// Audits returns how many audit entries exist for the subject.
 	Audits func(subject string) int
 }
@@ -37,6 +39,20 @@ func StoreContract(t *testing.T, mk func(t *testing.T) StoreEnv) {
 	t.Helper()
 	ctx := context.Background()
 	blk := func(base int) core.PortBlock { return core.PortBlock{Base: base, Size: 20} }
+
+	t.Run("a repeated audit ID is ErrConflict and writes nothing", func(t *testing.T) {
+		e := mk(t)
+		subject := "worktree:contract-dup"
+		if err := e.Audit.Append(ctx, entry("aud_dup", subject)); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.Audit.Append(ctx, entry("aud_dup", subject)); !errors.Is(err, worktreeenv.ErrConflict) {
+			t.Fatalf("second append = %v, want ErrConflict", err)
+		}
+		if n := e.Audits(subject); n != 1 {
+			t.Fatalf("audit entries = %d, want 1", n)
+		}
+	})
 
 	t.Run("ports round trip with audit", func(t *testing.T) {
 		e := mk(t)
