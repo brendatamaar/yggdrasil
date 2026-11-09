@@ -34,16 +34,68 @@ type WorktreeEnvService interface {
 	CopyProfile(ctx context.Context, w core.WorktreeID) (WorktreeEnvDTO, error)
 }
 
+// ComposeAction is the closed set of compose actions a user can ask for.
+type ComposeAction string
+
+// The closed set of ComposeAction values.
+const (
+	ComposeActionConfirm ComposeAction = "confirm"
+	ComposeActionUp      ComposeAction = "up"
+	ComposeActionStop    ComposeAction = "stop"
+	ComposeActionDown    ComposeAction = "down"
+)
+
+// ComposeAPI is implemented by the same adapter as WorktreeEnvService when
+// docker compose is built in (WE-03). Without it the compose endpoints answer
+// 501. Each action is a user-confirmed request; for ComposeActionConfirm, hash
+// is the compose file hash the user was shown ("" confirms the current file).
+// Errors wrap the worktreeenv.ErrCompose* sentinels in *worktreeenv.Error.
+type ComposeAPI interface {
+	ComposeAction(ctx context.Context, w core.WorktreeID, a ComposeAction, hash string) (WorktreeEnvDTO, error)
+}
+
 func (s *Server) routesWorktreeEnv(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/repos/{id}/env", s.handleGetRepoEnv)
 	mux.HandleFunc("PUT /api/repos/{id}/env", s.handlePutRepoEnv)
 	mux.HandleFunc("GET /api/worktrees/{id}/env", s.handleGetWorktreeEnv)
 	mux.HandleFunc("POST /api/worktrees/{id}/profile/copy", s.handleCopyProfile)
-	// Compose (WE-03) is built later (task E2): the routes exist and say so.
-	for _, op := range []string{"confirm", "up", "stop", "down"} {
-		mux.HandleFunc("POST /api/worktrees/{id}/compose/"+op, func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /api/worktrees/{id}/compose", s.handleGetWorktreeEnv)
+	for _, a := range []ComposeAction{ComposeActionConfirm, ComposeActionUp, ComposeActionStop, ComposeActionDown} {
+		mux.HandleFunc("POST /api/worktrees/{id}/compose/"+string(a), s.handleCompose(a))
+	}
+}
+
+// handleCompose is one compose action (WE-03). The action comes from the
+// route, never from the body, so the set of things that can run is closed.
+func (s *Server) handleCompose(a ComposeAction) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		svc, ok := s.phase5().WorktreeEnv.(ComposeAPI)
+		if !ok || svc == nil {
 			notReady(w, "Docker compose for a worktree")
-		})
+			return
+		}
+		id, ok := envWorktreeID(w, r)
+		if !ok {
+			return
+		}
+		var hash string
+		if a == ComposeActionConfirm && r.ContentLength != 0 {
+			var req ComposeConfirmRequest
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			hash = req.Hash
+		}
+		out, err := svc.ComposeAction(r.Context(), id, a, hash)
+		if err != nil {
+			s.fail(w, r, envErr(err))
+			return
+		}
+		if out.Profile == nil {
+			out.Profile = []ProfileEntryResult{}
+		}
+		writeJSON(w, http.StatusOK, out)
+		s.PublishWorktreeEnv(id)
 	}
 }
 
@@ -60,6 +112,12 @@ func envErr(err error) error {
 	switch {
 	case errors.Is(err, worktreeenv.ErrNotFound):
 		return apperr.New(apperr.NotFound, "That repo or worktree isn't tracked (any more).", err)
+	case errors.Is(err, worktreeenv.ErrComposeBusy), errors.Is(err, worktreeenv.ErrComposeConfirm), errors.Is(err, worktreeenv.ErrComposeStale):
+		msg := "That can't be done right now."
+		if errors.As(err, &ee) {
+			msg = ee.UserMessage()
+		}
+		return apperr.New(apperr.Conflict, msg, err)
 	case errors.Is(err, worktreeenv.ErrConflict):
 		return apperr.New(apperr.Conflict, "This worktree's ports changed while you were working. Reload and try again.", err)
 	case errors.As(err, &ee):
@@ -123,11 +181,11 @@ func parseRepoEnv(id core.RepoID, in RepoEnvDTO) (RepoEnvDTO, error) {
 		out.ProfilePaths = append(out.ProfilePaths, string(p))
 	}
 	if in.ComposeFile != "" {
-		cf, err := wenv.ParseProfile([]string{in.ComposeFile})
+		cf, err := wenv.ParseComposeFile(in.ComposeFile)
 		if err != nil {
-			return RepoEnvDTO{}, apperr.New(apperr.Invalid, "The compose file must be a path inside the repo: "+err.Error()+".", err)
+			return RepoEnvDTO{}, apperr.New(apperr.Invalid, "The compose file must be a .yml or .yaml file inside the repo: "+err.Error()+".", err)
 		}
-		out.ComposeFile = string(cf[0])
+		out.ComposeFile = string(cf)
 	}
 	if out.ComposeEnabled && out.ComposeFile == "" {
 		return RepoEnvDTO{}, apperr.New(apperr.Invalid, "Choose the compose file before turning compose on.", errors.New("compose enabled without a file"))

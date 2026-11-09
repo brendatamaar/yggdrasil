@@ -2098,6 +2098,14 @@ export interface WorktreeEnvDTO {
 export interface WorktreeEnvChangedMessage {
   env: WorktreeEnvDTO;
 }
+/**
+ * ComposeConfirmRequest is the optional body of POST
+ * /api/worktrees/{id}/compose/confirm. Hash is the composeHash the user was
+ * shown; when the file has changed since, nothing is confirmed (409).
+ */
+export interface ComposeConfirmRequest {
+  hash?: string;
+}
 
 //////////
 // source: types_worktrees.go

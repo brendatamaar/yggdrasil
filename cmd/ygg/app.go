@@ -296,9 +296,15 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		_ = d.Close()
 		return nil, err
 	}
+	envAPI, err := newWorktreeEnvAPI(ctx, envSvc, store, redactor, envHub, log)
+	if err != nil {
+		devSvc.Close(ctx)
+		_ = d.Close()
+		return nil, err
+	}
 	srv.SetPhase5Services(api.Phase5Services{
 		DevServers:  devServerAPI{Service: devSvc, store: store},
-		WorktreeEnv: newWorktreeEnvAPI(envSvc, store, redactor),
+		WorktreeEnv: envAPI,
 		Terminal:    termSvc,
 	})
 	fanout.after = func(ctx context.Context) { releaseRemoved(ctx, store, envSvc, log) }

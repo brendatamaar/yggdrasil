@@ -124,14 +124,14 @@ Port probing goes through `platform.BusyPorts(lo, hi)`: one read of the operatin
 | startup | `Recovered{Running}` | | `Up` | none |
 | startup | `Recovered{NotRunning/Unavailable}` | | `Down` / `Failed{DockerMissing}` | none |
 
-`RunCompose{Op}` has a closed `Op` set: `Up`, `Stop`, `Down`, `Ps`. The command has **no field for extra arguments**, so `-v`, `--volumes`, `--rmi`, `-f` outside the worktree and `--remove-orphans` cannot be expressed.
+`RunCompose{Op}` has a closed `Op` set: `Up`, `Stop`, `Down`, `Ps`. The command has **no field for extra arguments**, so `-v`, `--volumes`, `--rmi`, `--file` outside the worktree and `--remove-orphans` cannot be expressed.
 
 ### Invariants
 
 | # | Invariant | Property test |
 |---|---|---|
 | C1 | `RunCompose{Up}` is emitted only from `Down` or `Failed` with a confirmed hash equal to the file's current hash | `TestPropUpNeedsConfirmedHash` |
-| C2 | The only ops ever emitted are `Up`, `Stop`, `Down`, `Ps`; a table test pins the exact argv per op (`docker compose -p ygg-<name> -f <file> up -d`, `stop`, `down`, `ps --format json`) | `TestOpsAreClosedSet`, `TestArgvTable` |
+| C2 | The only ops ever emitted are `Up`, `Stop`, `Down`, `Ps`; a table test pins the exact argv per op (`docker compose -p ygg-<name> --file <file> up -d`, `stop`, `down`, `ps --format json`) | `TestOpsAreClosedSet`, `TestArgvTable` |
 | C3 | At most one live operation per worktree | `TestPropOneOperation` |
 | C4 | `Off` emits no `RunCompose` | `TestPropOffRunsNothing` |
 | C5 | A changed file never lets `Up` run until reconfirmed | `TestPropChangedFileNeedsConfirm` |

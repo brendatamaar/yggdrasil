@@ -75,8 +75,13 @@ const (
 // ComposeInput is a closed set.
 type ComposeInput interface{ isComposeInput() }
 
-// Enabled turns compose on for the repo with the current file hash.
-type Enabled struct{ Hash string }
+// Enabled turns compose on for the repo. Hash is the current hash of the
+// compose file; Confirmed is the hash the user confirmed earlier (empty when
+// none). Both come from the shell, which computes the hash.
+type Enabled struct {
+	Hash      string
+	Confirmed string
+}
 
 // Disabled turns compose off; containers are left as they are.
 type Disabled struct{}
@@ -88,8 +93,11 @@ type Confirmed struct{ Hash string }
 type FileChanged struct{ Hash string }
 
 // UpRequested, StopRequested and DownRequested are the user's actions.
+// UpRequested carries the hash of the compose file as it is right now, so the
+// check against the confirmed hash happens in the core (invariant C1).
 type (
 	UpRequested struct {
+		Hash    string
 		Attempt int
 		Now     Now
 	}
@@ -111,10 +119,11 @@ type OpFinished struct {
 	Now     Now
 }
 
-// RecoveredPs is fed once at startup.
+// RecoveredPs is fed once at startup, after Enabled, with what `compose ps`
+// found. A project found running while the file is unconfirmed is shown as Up
+// with no confirmed hash, so a later Up needs a confirmation first.
 type RecoveredPs struct {
 	Result PsResult
-	Hash   string
 	Now    Now
 }
 
@@ -162,8 +171,3 @@ func (RunCompose) isComposeCommand()     {}
 func (ComposeAudit) isComposeCommand()   {}
 func (ComposePublish) isComposeCommand() {}
 func (ComposeReject) isComposeCommand()  {}
-
-// Compose is the compose-lifecycle decision. Foundation stub; task E2 implements it.
-func Compose(s Service, in ComposeInput) (Service, []ComposeCommand) {
-	return s, nil
-}

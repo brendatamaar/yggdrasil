@@ -9,10 +9,8 @@ import (
 	"log/slog"
 	"maps"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -406,29 +404,56 @@ func releaseRemoved(ctx context.Context, store *db.Store, svc *worktreeenv.Servi
 	}
 }
 
-// worktreeEnvAPI implements api.WorktreeEnvService. The last profile-copy
-// results are kept in memory only (lost on restart); compose is "off" until
-// compose exists (task E2).
+// worktreeEnvAPI implements api.WorktreeEnvService and api.ComposeAPI. The
+// last profile-copy results live in the worktreeenv service (in memory, lost
+// on restart); the compose state lives in the compose service.
 type worktreeEnvAPI struct {
-	svc   *worktreeenv.Service
-	store *db.Store
-	dbs   worktreeenv.DBStore
-	now   func() time.Time
-
-	mu   sync.Mutex
-	last map[core.WorktreeID]copyResult
+	svc     *worktreeenv.Service
+	compose *worktreeenv.ComposeService
+	store   *db.Store
+	dbs     worktreeenv.DBStore
 }
 
-type copyResult struct {
-	entries []api.ProfileEntryResult
-	at      time.Time
-}
+var (
+	_ api.WorktreeEnvService = (*worktreeEnvAPI)(nil)
+	_ api.ComposeAPI         = (*worktreeEnvAPI)(nil)
+)
 
-var _ api.WorktreeEnvService = (*worktreeEnvAPI)(nil)
-
-func newWorktreeEnvAPI(svc *worktreeenv.Service, store *db.Store, red safety.Redactor) *worktreeEnvAPI {
-	return &worktreeEnvAPI{svc: svc, store: store, dbs: worktreeenv.DBStore{S: store, Redactor: red},
-		now: func() time.Time { return time.Now().UTC() }, last: map[core.WorktreeID]copyResult{}}
+// newWorktreeEnvAPI builds the adapter and the compose service. Compose runs
+// `docker compose` through platform.Start with the clean environment; ctx
+// owns those processes (the containers outlive it on purpose). hub tells the
+// API server that a compose project changed.
+func newWorktreeEnvAPI(ctx context.Context, svc *worktreeenv.Service, store *db.Store, red safety.Redactor, hub *lateEnvHub, log *slog.Logger) (*worktreeEnvAPI, error) {
+	dbs := worktreeenv.DBStore{S: store, Redactor: red}
+	dirs := trackedDirs{store}
+	compose, err := worktreeenv.NewComposeService(ctx, worktreeenv.ComposeConfig{
+		Store: dbs, Audit: dbs,
+		Runner: worktreeenv.PlatformComposeRunner{Env: safety.NewEnvBuilder(), Redact: red},
+		Files:  worktreeenv.OSComposeFiles{},
+		Worktree: func(ctx context.Context, id core.WorktreeID) (core.Worktree, error) {
+			w, err := store.GetWorktree(ctx, id)
+			if err != nil {
+				return core.Worktree{}, envRefusal(err)
+			}
+			dir, err := dirs.WorktreeDir(ctx, w.RepoID, id)
+			if err != nil {
+				return core.Worktree{}, envRefusal(err)
+			}
+			w.Path = dir
+			return w, nil
+		},
+		Block: func(ctx context.Context, id core.WorktreeID) (core.PortBlock, bool, error) {
+			blocks, err := dbs.LoadBlocks(ctx)
+			b, ok := blocks[id]
+			return b, ok, err
+		},
+		Now: func() time.Time { return time.Now().UTC() }, NewID: db.NewID,
+		Logger: log, Redact: red, OnChange: hub.Publish,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("start docker compose support: %w", err)
+	}
+	return &worktreeEnvAPI{svc: svc, compose: compose, store: store, dbs: dbs}, nil
 }
 
 // envRefusal classifies the errors of the worktree environment.
@@ -439,6 +464,12 @@ func envRefusal(err error) error {
 		return nil
 	case errors.Is(err, errNotTracked), errors.Is(err, db.ErrNotFound), errors.Is(err, worktreeenv.ErrNotFound):
 		return apperr.New(apperr.NotFound, "That repo or worktree is not tracked any more.", err)
+	case errors.Is(err, worktreeenv.ErrComposeBusy), errors.Is(err, worktreeenv.ErrComposeConfirm), errors.Is(err, worktreeenv.ErrComposeStale):
+		msg := "That can't be done right now."
+		if errors.As(err, &we) {
+			msg = we.UserMessage()
+		}
+		return apperr.New(apperr.Conflict, msg, err)
 	case errors.As(err, &we):
 		return apperr.New(apperr.Invalid, we.UserMessage(), err)
 	case errors.Is(err, worktreeenv.ErrRangeFull):
@@ -455,27 +486,31 @@ func (a *worktreeEnvAPI) repoDTO(ctx context.Context, repo core.RepoID) (api.Rep
 	if err != nil {
 		return api.RepoEnvDTO{}, envRefusal(err)
 	}
+	cs, err := a.compose.Settings(ctx, repo)
+	if err != nil {
+		return api.RepoEnvDTO{}, envRefusal(err)
+	}
 	paths := make([]string, len(e.Profile))
 	for i, p := range e.Profile {
 		paths[i] = string(p)
 	}
-	return api.RepoEnvDTO{RepoID: repo, ProfilePaths: paths, AgentCopy: e.AgentCopy}, nil
+	return api.RepoEnvDTO{RepoID: repo, ProfilePaths: paths, AgentCopy: e.AgentCopy, ComposeEnabled: cs.Enabled, ComposeFile: string(cs.File)}, nil
 }
 
 func (a *worktreeEnvAPI) RepoEnv(ctx context.Context, repo core.RepoID) (api.RepoEnvDTO, error) {
 	return a.repoDTO(ctx, repo)
 }
 
+// SetRepoEnv stores the profile and the compose opt-in. The compose file is
+// parsed again by the compose service; changing it clears the confirmation.
 func (a *worktreeEnvAPI) SetRepoEnv(ctx context.Context, repo core.RepoID, in api.RepoEnvDTO) (api.RepoEnvDTO, error) {
 	if _, err := (trackedDirs{a.store}).RepoDir(ctx, repo); err != nil {
 		return api.RepoEnvDTO{}, envRefusal(err)
 	}
-	// Compose is not built yet (E2). Nothing of it is stored, so a request that
-	// sets any compose field is refused, never half applied.
-	if in.ComposeEnabled || in.ComposeFile != "" {
-		return api.RepoEnvDTO{}, apperr.New(apperr.Unavailable, "Docker compose is not available yet, so its settings cannot be saved.", nil)
-	}
 	if err := a.svc.SetProfile(ctx, repo, in.ProfilePaths, in.AgentCopy); err != nil {
+		return api.RepoEnvDTO{}, envRefusal(err)
+	}
+	if err := a.compose.Configure(ctx, repo, in.ComposeEnabled, in.ComposeFile); err != nil {
 		return api.RepoEnvDTO{}, envRefusal(err)
 	}
 	return a.repoDTO(ctx, repo)
@@ -492,6 +527,67 @@ func (a *worktreeEnvAPI) WorktreeEnv(ctx context.Context, id core.WorktreeID) (a
 	return a.dto(ctx, id)
 }
 
+func composeStatusOf(st worktreeenv.ComposeStatus) api.ComposeStatus {
+	switch st.State.(type) {
+	case wenv.Off:
+		if st.Note != "" {
+			return api.ComposeFailed // enabled, but the file cannot be read
+		}
+		return api.ComposeOff
+	case wenv.NeedsConfirm:
+		return api.ComposeNeedsConfirm
+	case wenv.Down:
+		return api.ComposeDown
+	case wenv.ComposeStarting:
+		return api.ComposeStarting
+	case wenv.Up:
+		return api.ComposeUp
+	case wenv.ComposeStopping:
+		return api.ComposeStopping
+	case wenv.ComposeFailed:
+		return api.ComposeFailed
+	}
+	return api.ComposeOff
+}
+
+// skipText is the plain-language reason of a skipped profile entry.
+func skipText(r wenv.SkipReason) string {
+	switch r {
+	case wenv.SkipSourceMissing:
+		return "The file does not exist in the repo."
+	case wenv.SkipNotRegularFile:
+		return "Only regular files are copied; this is a folder or a link."
+	case wenv.SkipDestExists:
+		return "The file already exists in the worktree, so it was left alone."
+	case wenv.SkipTooLarge:
+		return "The file is too large to copy."
+	case wenv.SkipBudgetExceeded:
+		return "The profile is larger than the copy limit."
+	case wenv.SkipAgentTasksOff:
+		return "Copying for agent tasks is turned off for this repo."
+	case wenv.SkipTooManyEntries:
+		return "The profile lists more files than are copied."
+	}
+	return "The file could not be read."
+}
+
+func profileDTO(results []worktreeenv.EntryResult) []api.ProfileEntryResult {
+	out := make([]api.ProfileEntryResult, 0, len(results))
+	for _, r := range results {
+		e := api.ProfileEntryResult{Path: string(r.Entry)}
+		switch v := r.Result.(type) {
+		case wenv.Copied:
+			e.Result = "copied"
+		case wenv.Skipped:
+			e.Result, e.Reason = "skipped", skipText(v.Reason)
+		case wenv.CopyFailed:
+			e.Result, e.Reason = "failed", v.Reason
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
 func (a *worktreeEnvAPI) dto(ctx context.Context, id core.WorktreeID) (api.WorktreeEnvDTO, error) {
 	out := api.WorktreeEnvDTO{WorktreeID: id, Profile: []api.ProfileEntryResult{}, Compose: api.ComposeOff}
 	blocks, err := a.dbs.LoadBlocks(ctx)
@@ -501,54 +597,56 @@ func (a *worktreeEnvAPI) dto(ctx context.Context, id core.WorktreeID) (api.Workt
 	if b, ok := blocks[id]; ok {
 		out.BlockBase, out.BlockSize = b.Base, b.Size
 	}
-	a.mu.Lock()
-	if r, ok := a.last[id]; ok {
-		out.Profile, out.UpdatedAt = slices.Clone(r.entries), r.at
+	if l, ok := a.svc.LastProfile(id); ok {
+		out.Profile, out.UpdatedAt = profileDTO(l.Results), l.At
 	}
-	a.mu.Unlock()
+	st, err := a.compose.Status(ctx, id)
+	if err != nil {
+		return api.WorktreeEnvDTO{}, envRefusal(err)
+	}
+	out.Compose, out.ComposeHash, out.ComposeNote = composeStatusOf(st), st.Hash, st.Note
+	if st.UpdatedAt.After(out.UpdatedAt) {
+		out.UpdatedAt = st.UpdatedAt
+	}
 	return out, nil
 }
 
 // CopyProfile copies the repo's profile into the worktree as a user action
-// (WE-01). The per-entry result is derived from the files before and after,
-// since the service reports only success or failure.
+// (WE-01). The per-entry result comes from the core, through the service.
 func (a *worktreeEnvAPI) CopyProfile(ctx context.Context, id core.WorktreeID) (api.WorktreeEnvDTO, error) {
 	w, err := a.store.GetWorktree(ctx, id)
 	if err != nil {
 		return api.WorktreeEnvDTO{}, envRefusal(err)
 	}
-	if _, err := (trackedDirs{a.store}).WorktreeDir(ctx, w.RepoID, id); err != nil {
-		return api.WorktreeEnvDTO{}, envRefusal(err)
-	}
-	settings, err := a.dbs.RepoEnv(ctx, w.RepoID)
+	dir, err := (trackedDirs{a.store}).WorktreeDir(ctx, w.RepoID, id)
 	if err != nil {
 		return api.WorktreeEnvDTO{}, envRefusal(err)
 	}
-	exists := func(rel wenv.RelPath) bool {
-		_, err := os.Lstat(filepath.Join(w.Path, filepath.FromSlash(string(rel))))
-		return err == nil
-	}
-	before := map[wenv.RelPath]bool{}
-	for _, p := range settings.Profile {
-		before[p] = exists(p)
-	}
-	if err := a.svc.CopyProfile(ctx, w, wenv.TriggerUserConfirmed); err != nil {
+	w.Path = dir
+	if _, err := a.svc.CopyProfile(ctx, w, wenv.TriggerUserConfirmed); err != nil {
 		return api.WorktreeEnvDTO{}, envRefusal(err)
 	}
-	res := make([]api.ProfileEntryResult, 0, len(settings.Profile))
-	for _, p := range settings.Profile {
-		switch {
-		case before[p]:
-			res = append(res, api.ProfileEntryResult{Path: string(p), Result: "skipped", Reason: "The file already exists in the worktree, so it was left alone."})
-		case exists(p):
-			res = append(res, api.ProfileEntryResult{Path: string(p), Result: "copied"})
-		default:
-			res = append(res, api.ProfileEntryResult{Path: string(p), Result: "skipped", Reason: "The file was not copied. It may be missing in the repo or not allowed."})
-		}
+	return a.dto(ctx, id)
+}
+
+// ComposeAction runs one user-confirmed compose action (WE-03).
+func (a *worktreeEnvAPI) ComposeAction(ctx context.Context, id core.WorktreeID, act api.ComposeAction, hash string) (api.WorktreeEnvDTO, error) {
+	var err error
+	switch act {
+	case api.ComposeActionConfirm:
+		_, err = a.compose.Confirm(ctx, id, hash)
+	case api.ComposeActionUp:
+		_, err = a.compose.Up(ctx, id)
+	case api.ComposeActionStop:
+		_, err = a.compose.Stop(ctx, id)
+	case api.ComposeActionDown:
+		_, err = a.compose.Down(ctx, id)
+	default:
+		return api.WorktreeEnvDTO{}, apperr.New(apperr.Invalid, "That compose action does not exist.", nil)
 	}
-	a.mu.Lock()
-	a.last[id] = copyResult{entries: res, at: a.now()}
-	a.mu.Unlock()
+	if err != nil {
+		return api.WorktreeEnvDTO{}, envRefusal(err)
+	}
 	return a.dto(ctx, id)
 }
 
