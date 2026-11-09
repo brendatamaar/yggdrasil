@@ -109,13 +109,14 @@ describe("WorktreeEnvPanel", () => {
   });
 
   it("asks to review and confirm a changed compose file", async () => {
-    const h = setup(wenv({ compose: "needs_confirm" }), (c) =>
+    const h = setup(wenv({ compose: "needs_confirm", composeHash: "abc123" }), (c) =>
       c.path === "/api/worktrees/w1/compose/confirm" ? { body: wenv({ compose: "down" }) } : undefined,
     );
     expect(await screen.findByText(/The compose file changed: review it and confirm/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Confirm compose file" }));
     expect(await screen.findByRole("button", { name: "Start compose" })).toBeTruthy();
-    expect(h.api.calls.some((c) => c.path === "/api/worktrees/w1/compose/confirm")).toBe(true);
+    const sent = h.api.calls.find((c) => c.path === "/api/worktrees/w1/compose/confirm");
+    expect(sent?.body).toEqual({ hash: "abc123" });
   });
 
   it("says compose is not available yet when the server answers 501", async () => {

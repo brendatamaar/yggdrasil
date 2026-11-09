@@ -74,21 +74,21 @@ export function WorktreeEnvPanel({ worktreeId, title }: { worktreeId: string; ti
               ) : null}
               <div className="flex flex-wrap gap-2">
                 {q.data.compose === ComposeNeedsConfirm ? (
-                  <button type="button" className={btn} disabled={compose.isPending} onClick={() => { compose.mutate("confirm"); }}>
+                  <button type="button" className={btn} disabled={compose.isPending} onClick={() => { compose.mutate({ action: "confirm", hash: q.data.composeHash }); }}>
                     Confirm compose file
                   </button>
                 ) : null}
                 {q.data.compose === ComposeDown || q.data.compose === ComposeFailed ? (
-                  <button type="button" className={btn} disabled={compose.isPending} onClick={() => { compose.mutate("up"); }}>
+                  <button type="button" className={btn} disabled={compose.isPending} onClick={() => { compose.mutate({ action: "up" }); }}>
                     Start compose
                   </button>
                 ) : null}
                 {q.data.compose === ComposeUp ? (
                   <>
-                    <button type="button" className={btn} disabled={compose.isPending} onClick={() => { compose.mutate("stop"); }}>
+                    <button type="button" className={btn} disabled={compose.isPending} onClick={() => { compose.mutate({ action: "stop" }); }}>
                       Stop compose
                     </button>
-                    <button type="button" className={btn} disabled={compose.isPending} onClick={() => { compose.mutate("down"); }}>
+                    <button type="button" className={btn} disabled={compose.isPending} onClick={() => { compose.mutate({ action: "down" }); }}>
                       Take compose down
                     </button>
                   </>

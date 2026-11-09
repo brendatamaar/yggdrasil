@@ -69,7 +69,7 @@ export function useCopyProfile(worktreeId: string) {
 export function useComposeAction(worktreeId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (action: ComposeAction) => runComposeAction(worktreeId, action),
+    mutationFn: (v: { action: ComposeAction; hash?: string }) => runComposeAction(worktreeId, v.action, v.hash),
     onSuccess: (env) => {
       qc.setQueryData(envKeys.worktree(worktreeId), env);
     },

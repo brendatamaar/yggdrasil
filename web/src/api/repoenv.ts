@@ -12,8 +12,12 @@ export const copyProfile = (worktreeId: string) =>
   apiFetch<WorktreeEnvDTO>(`/api/worktrees/${enc(worktreeId)}/profile/copy`, post);
 
 export type ComposeAction = "confirm" | "up" | "stop" | "down";
-export const runComposeAction = (worktreeId: string, action: ComposeAction) =>
-  apiFetch<WorktreeEnvDTO>(`/api/worktrees/${enc(worktreeId)}/compose/${action}`, post);
+/** "confirm" must carry the composeHash the user was shown; the server refuses it without one. */
+export const runComposeAction = (worktreeId: string, action: ComposeAction, hash?: string) =>
+  apiFetch<WorktreeEnvDTO>(
+    `/api/worktrees/${enc(worktreeId)}/compose/${action}`,
+    action === "confirm" ? { ...post, body: JSON.stringify({ hash: hash ?? "" }) } : post,
+  );
 
 /** The server answers 501 until compose is available: the UI shows "not available yet". */
 export const isNotAvailable = (e: unknown) => e instanceof ApiError && e.status === 501;
