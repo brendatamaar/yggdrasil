@@ -84,15 +84,24 @@ type ComposeService struct {
 	ctx context.Context
 	wg  sync.WaitGroup
 
+	// mu guards only the maps and the queue below. It is never held across IO.
+	// Each worktree has its own lock (composeEntry.mu) that serializes its
+	// operations, including the IO they do, so one slow worktree never blocks
+	// another.
 	mu     sync.Mutex
 	states map[core.WorktreeID]*composeEntry
 	// confirmedBy is the worktree where the user last confirmed a file of the
 	// repo, kept for the audit entry of the worktrees that are confirmed by
 	// the same content (memory only; empty after a restart).
 	confirmedBy map[core.RepoID]core.WorktreeID
+	// queued holds audit entries that could not be written (invariant 8). They
+	// are retried by the next call and at Wait, oldest first.
+	queued  []core.AuditEntry
+	flushMu sync.Mutex // one flusher at a time keeps the order
 }
 
 type composeEntry struct {
+	mu      sync.Mutex // serializes the operations of this worktree
 	svc     env.Service
 	attempt int
 	loaded  bool   // startup recovery (ps) has run
@@ -153,7 +162,69 @@ func NewComposeService(ctx context.Context, c ComposeConfig) (*ComposeService, e
 }
 
 // Wait blocks until the running operations have ended (after ctx is cancelled).
-func (s *ComposeService) Wait() { s.wg.Wait() }
+func (s *ComposeService) Wait() {
+	s.wg.Wait()
+	s.flushAudits(context.WithoutCancel(s.ctx)) // last attempt at queued entries
+}
+
+// entryFor returns the entry of a worktree, creating it. It holds s.mu only
+// for the map access.
+func (s *ComposeService) entryFor(wid core.WorktreeID) *composeEntry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e := s.states[wid]
+	if e == nil {
+		e = &composeEntry{svc: env.Off{}}
+		s.states[wid] = e
+	}
+	return e
+}
+
+func (s *ComposeService) lookup(wid core.WorktreeID) *composeEntry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.states[wid]
+}
+
+func (s *ComposeService) confirmedByOf(repo core.RepoID) core.WorktreeID {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.confirmedBy[repo]
+}
+
+// queueAudit keeps an entry that could not be written for a later retry.
+func (s *ComposeService) queueAudit(e core.AuditEntry) {
+	s.mu.Lock()
+	s.queued = append(s.queued, e)
+	s.mu.Unlock()
+}
+
+// flushAudits writes the queued entries, oldest first, and stops at the first
+// failure (they stay queued). It never holds a worktree lock or s.mu across the
+// write.
+func (s *ComposeService) flushAudits(ctx context.Context) {
+	s.flushMu.Lock()
+	defer s.flushMu.Unlock()
+	for {
+		s.mu.Lock()
+		if len(s.queued) == 0 {
+			s.mu.Unlock()
+			return
+		}
+		e := s.queued[0]
+		s.mu.Unlock()
+		actx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err := s.c.Audit.Append(actx, e)
+		cancel()
+		if err != nil {
+			s.c.Logger.Error("compose audit entry still not written; it stays queued", "audit", e.ID, "subject", e.Subject, "err", err)
+			return
+		}
+		s.mu.Lock()
+		s.queued = s.queued[1:]
+		s.mu.Unlock()
+	}
+}
 
 // Settings returns a repo's compose settings.
 func (s *ComposeService) Settings(ctx context.Context, repo core.RepoID) (ComposeSettings, error) {
@@ -198,17 +269,21 @@ func (s *ComposeService) Configure(ctx context.Context, repo core.RepoID, enable
 // Status returns the compose state of a worktree, bringing it in line with the
 // settings and the file first.
 func (s *ComposeService) Status(ctx context.Context, wid core.WorktreeID) (ComposeStatus, error) {
-	s.mu.Lock()
-	st, notify, job, err := s.statusLocked(ctx, wid)
-	s.mu.Unlock()
+	s.flushAudits(ctx)
+	if _, err := s.c.Worktree(ctx, wid); err != nil { // untracked: no entry is created
+		return ComposeStatus{}, err
+	}
+	e := s.entryFor(wid)
+	e.mu.Lock()
+	st, notify, job, err := s.statusLocked(ctx, wid, e)
+	e.mu.Unlock()
 	s.notify(wid, notify)
 	if err != nil || job == nil {
 		return st, err
 	}
 	// Startup recovery asks docker, which can be slow: never with the lock held.
 	res := s.runPs(job)
-	s.mu.Lock()
-	e := s.states[wid]
+	e.mu.Lock()
 	e.loading = false
 	notify = false
 	if _, off := e.svc.(env.Off); !off {
@@ -219,8 +294,8 @@ func (s *ComposeService) Status(ctx context.Context, wid core.WorktreeID) (Compo
 			s.c.Logger.Warn("record the recovered compose state", "worktree", wid, "err", aerr)
 		}
 	}
-	st = s.viewLocked(wid)
-	s.mu.Unlock()
+	st = s.viewLocked(e)
+	e.mu.Unlock()
 	s.notify(wid, notify)
 	return st, nil
 }
@@ -275,14 +350,14 @@ func (s *ComposeService) act(ctx context.Context, wid core.WorktreeID, mk func(*
 	if _, err := s.Status(ctx, wid); err != nil {
 		return ComposeStatus{}, err
 	}
-	s.mu.Lock()
-	st, notify, job, err := s.statusLocked(ctx, wid)
+	e := s.entryFor(wid) // tracked: Status just found it
+	e.mu.Lock()
+	st, notify, job, err := s.statusLocked(ctx, wid, e)
 	if job != nil {
-		s.states[wid].loading = false // recovery is retried by the next status read
+		e.loading = false // recovery is retried by the next status read
 	}
 	if err == nil {
 		wt, _ := s.c.Worktree(ctx, wid) // tracked: checked by statusLocked
-		e := s.states[wid]
 		switch {
 		case e.refused:
 			err = &Error{Msg: msgIndirect, Err: env.ErrComposeIndirect}
@@ -302,10 +377,10 @@ func (s *ComposeService) act(ctx context.Context, wid core.WorktreeID, mk func(*
 			}
 		}
 		if err == nil {
-			st = s.viewLocked(wid)
+			st = s.viewLocked(e)
 		}
 	}
-	s.mu.Unlock()
+	e.mu.Unlock()
 	s.notify(wid, notify)
 	return st, err
 }
@@ -375,25 +450,10 @@ func (s *ComposeService) apply(ctx context.Context, wt core.Worktree, e *compose
 		if !ok {
 			continue
 		}
-		fail, summary := "", ""
-		switch v := next.(type) {
-		case env.ComposeFailed:
-			fail, summary = string(v.Kind), v.Summary
-		}
-		d := map[string]any{
-			"project": string(project), "file": string(e.file), "hash": e.hash, "attempt": e.attempt,
-			"failure": fail, "summary": s.c.Redact.Redact(summary),
-		}
-		if e.auto && (a.Action == env.ActionComposeConfirmed || a.Action == env.ActionComposeEnabled) {
-			// The content was confirmed earlier for this repo (maybe in another worktree).
-			d["autoConfirmed"] = true
-			d["sourceWorktree"] = string(e.autoSource)
-		}
-		detail, err := json.Marshal(d)
+		entry, err := s.buildAudit(wt, e, next, a, project, actor, now)
 		if err != nil {
-			return applyResult{}, fmt.Errorf("encode audit detail: %w", err)
+			return applyResult{}, err
 		}
-		entry := auditEntry(s.c.NewID("aud"), actor, a.Action, wtSubject(wt.ID), now, detail)
 		if a.Action == env.ActionComposeConfirmed {
 			if err := s.persistConfirmed(ctx, wt.RepoID, e, entry, now); err != nil {
 				return applyResult{}, err
@@ -406,13 +466,38 @@ func (s *ComposeService) apply(ctx context.Context, wt core.Worktree, e *compose
 		}
 	}
 	if confirmedNow {
+		s.mu.Lock()
 		s.confirmedBy[wt.RepoID] = wt.ID
+		s.mu.Unlock()
 	}
 	e.svc, e.at = next, now
 	for _, rc := range run {
 		s.start(wt, e, rc)
 	}
 	return res, rejected
+}
+
+// buildAudit is the audit entry of one core audit command.
+func (s *ComposeService) buildAudit(wt core.Worktree, e *composeEntry, next env.Service, a env.ComposeAudit, project env.ProjectName, actor string, now time.Time) (core.AuditEntry, error) {
+	fail, summary := "", ""
+	switch v := next.(type) {
+	case env.ComposeFailed:
+		fail, summary = string(v.Kind), v.Summary
+	}
+	d := map[string]any{
+		"project": string(project), "file": string(e.file), "hash": e.hash, "attempt": e.attempt,
+		"failure": fail, "summary": s.c.Redact.Redact(summary),
+	}
+	if e.auto && (a.Action == env.ActionComposeConfirmed || a.Action == env.ActionComposeEnabled) {
+		// The content was confirmed earlier for this repo (maybe in another worktree).
+		d["autoConfirmed"] = true
+		d["sourceWorktree"] = string(e.autoSource)
+	}
+	detail, err := json.Marshal(d)
+	if err != nil {
+		return core.AuditEntry{}, fmt.Errorf("encode audit detail: %w", err)
+	}
+	return auditEntry(s.c.NewID("aud"), actor, a.Action, wtSubject(wt.ID), now, detail), nil
 }
 
 // persistConfirmed stores the confirmed hash with the audit entry in one
@@ -486,9 +571,11 @@ func (s *ComposeService) finish(wt core.Worktree, in env.OpFinished, changed str
 	// The audit write must outlive a cancelled service context.
 	actx, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), 10*time.Second)
 	defer cancel()
-	s.mu.Lock()
+	s.flushAudits(actx)
+	cur := s.lookup(wt.ID)
 	notify := false
-	if cur := s.states[wt.ID]; cur != nil {
+	if cur != nil {
+		cur.mu.Lock()
 		var err error
 		var r applyResult
 		for try := 0; try < 2; try++ {
@@ -498,7 +585,8 @@ func (s *ComposeService) finish(wt core.Worktree, in env.OpFinished, changed str
 			s.c.Logger.Warn("record the end of a compose operation", "worktree", wt.ID, "try", try+1, "err", err)
 		}
 		if err != nil {
-			next, _ := env.Compose(cur.svc, in)
+			next, cmds := env.Compose(cur.svc, in)
+			s.queueAudits(wt, cur, next, cmds)
 			cur.svc, cur.at = next, s.c.Now().UTC()
 			r.publish = true
 		}
@@ -510,9 +598,32 @@ func (s *ComposeService) finish(wt core.Worktree, in env.OpFinished, changed str
 				notify = notify || r.publish
 			}
 		}
+		cur.mu.Unlock()
 	}
-	s.mu.Unlock()
 	s.notify(wt.ID, notify) // never with the lock held
+}
+
+// queueAudits keeps the audit entries of a transition that was made in memory
+// because its audit write failed, so they are written later (invariant 8).
+func (s *ComposeService) queueAudits(wt core.Worktree, e *composeEntry, next env.Service, cmds []env.ComposeCommand) {
+	project, err := s.project(wt.ID)
+	if err != nil {
+		s.c.Logger.Error("compose audit entry lost: no project name", "worktree", wt.ID)
+		return
+	}
+	now := s.c.Now().UTC()
+	for _, c := range cmds {
+		a, ok := c.(env.ComposeAudit)
+		if !ok {
+			continue
+		}
+		entry, err := s.buildAudit(wt, e, next, a, project, "system", now)
+		if err != nil {
+			s.c.Logger.Error("compose audit entry lost", "worktree", wt.ID, "err", err)
+			continue
+		}
+		s.queueAudit(entry)
+	}
 }
 
 func (s *ComposeService) runSafely(call ComposeCall) (res ComposeResult) {
@@ -594,7 +705,7 @@ func (s *ComposeService) project(w core.WorktreeID) (env.ProjectName, error) {
 // statusLocked brings the entry in line with the settings and the file. It
 // returns a recovery job when `docker compose ps` has to run; the caller runs
 // it after releasing the lock.
-func (s *ComposeService) statusLocked(ctx context.Context, wid core.WorktreeID) (ComposeStatus, bool, *psJob, error) {
+func (s *ComposeService) statusLocked(ctx context.Context, wid core.WorktreeID, e *composeEntry) (ComposeStatus, bool, *psJob, error) {
 	wt, err := s.c.Worktree(ctx, wid)
 	if err != nil {
 		return ComposeStatus{}, false, nil, err
@@ -602,11 +713,6 @@ func (s *ComposeService) statusLocked(ctx context.Context, wid core.WorktreeID) 
 	set, err := s.c.Store.ComposeSettings(ctx, wt.RepoID)
 	if err != nil {
 		return ComposeStatus{}, false, nil, fmt.Errorf("load compose settings of repo %s: %w", wt.RepoID, err)
-	}
-	e := s.states[wid]
-	if e == nil {
-		e = &composeEntry{svc: env.Off{}}
-		s.states[wid] = e
 	}
 	notify := false
 	feed := func(in env.ComposeInput) error {
@@ -625,7 +731,7 @@ func (s *ComposeService) statusLocked(ctx context.Context, wid core.WorktreeID) 
 		if isOff(e.svc) {
 			e.loaded, e.fed = false, "" // a later Enabled looks at docker again
 		}
-		return s.viewLocked(wid), notify, nil, nil
+		return s.viewLocked(e), notify, nil, nil
 	}
 	// The stored settings are the truth: when the repo now names another file,
 	// or the confirmation the entry rests on is not the stored one, start from
@@ -643,10 +749,10 @@ func (s *ComposeService) statusLocked(ctx context.Context, wid core.WorktreeID) 
 	e.fileGone, e.refused = snap.err != nil, snap.refused != nil
 	e.hash, e.noPorts = snap.hash, snap.noPorts
 	if e.hash == "" {
-		return s.viewLocked(wid), notify, nil, nil
+		return s.viewLocked(e), notify, nil, nil
 	}
 	autoConfirm := set.ConfirmedHash == e.hash
-	e.auto, e.autoSource = autoConfirm, s.confirmedBy[wt.RepoID]
+	e.auto, e.autoSource = autoConfirm, s.confirmedByOf(wt.RepoID)
 	defer func() { e.auto = false }()
 	switch e.svc.(type) {
 	case env.Off:
@@ -675,7 +781,7 @@ func (s *ComposeService) statusLocked(ctx context.Context, wid core.WorktreeID) 
 		e.loading = true
 		job = &psJob{wt: wt, file: e.file, snap: snap}
 	}
-	return s.viewLocked(wid), notify, job, nil
+	return s.viewLocked(e), notify, job, nil
 }
 
 // restConfirmedDiffers reports a state at rest (Down, ComposeFailed) whose
@@ -729,8 +835,7 @@ func (s *ComposeService) runPs(job *psJob) env.PsResult {
 }
 
 // viewLocked is the display form of an entry.
-func (s *ComposeService) viewLocked(wid core.WorktreeID) ComposeStatus {
-	e := s.states[wid]
+func (s *ComposeService) viewLocked(e *composeEntry) ComposeStatus {
 	st := ComposeStatus{State: e.svc, File: e.file, Hash: e.hash, UpdatedAt: e.at}
 	if e.refused {
 		st.Note = msgIndirect

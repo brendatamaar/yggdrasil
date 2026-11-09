@@ -537,7 +537,7 @@ func (s *Service) prepareAudits(key dsc.Key, id, actor string, cmds []dsc.Comman
 func (s *Service) feed(key dsc.Key, in dsc.Input) {
 	tries := 1
 	switch in.(type) {
-	case dsc.Exited, dsc.StartFailed, dsc.OrphanStopped, dsc.OrphanStopFailed, dsc.Wake:
+	case dsc.Exited, dsc.StartFailed, dsc.Started, dsc.OrphanStopped, dsc.OrphanStopFailed, dsc.Wake:
 		tries = feedTries
 	}
 	backoff := s.d.FeedBackoff

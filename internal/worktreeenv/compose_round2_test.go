@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	env "github.com/brendatamaar/yggdrasil/internal/core/worktreeenv"
 	"github.com/brendatamaar/yggdrasil/internal/worktreeenv"
+	"github.com/brendatamaar/yggdrasil/internal/worktreeenv/worktreeenvtest"
 )
 
 // confirmedDown enables compose, confirms the file as it is and waits for Down.
@@ -396,5 +398,106 @@ func TestComposeAutoConfirmRecordsTheSourceWorktree(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("no audit entry for the automatic confirmation")
+	}
+}
+
+// Invariant 8: an end-of-operation audit entry that could not be written is
+// kept and written by a later call once the sink recovers.
+func TestComposeFailedEndAuditIsQueuedAndRetried(t *testing.T) {
+	ctx := context.Background()
+	r := newComposeRig(t)
+	r.confirmedDown(t)
+	var down atomic.Bool
+	down.Store(true)
+	r.store.AuditErr = func(e core.AuditEntry) error {
+		if down.Load() && e.Action == env.ActionComposeStarted {
+			return errors.New("disk full")
+		}
+		return nil
+	}
+	r.up(t)
+	r.waitFor(t, func(s env.Service) bool { _, ok := s.(env.Up); return ok })
+	if slices.Contains(r.actions(), env.ActionComposeStarted) {
+		t.Fatal("written although the sink was down")
+	}
+	down.Store(false)
+	if _, err := r.svc.Status(ctx, r.wt.ID); err != nil { // the next call flushes the queue
+		t.Fatal(err)
+	}
+	if n := countOf(r.actions(), env.ActionComposeStarted); n != 1 {
+		t.Fatalf("queued entry written %d times: %v", n, r.actions())
+	}
+	_, _ = r.svc.Status(ctx, r.wt.ID)
+	if n := countOf(r.actions(), env.ActionComposeStarted); n != 1 {
+		t.Fatalf("written again: %d", n)
+	}
+}
+
+func countOf(all []string, a string) int {
+	n := 0
+	for _, x := range all {
+		if x == a {
+			n++
+		}
+	}
+	return n
+}
+
+// slowSettings blocks ComposeSettings for one repo until released.
+type slowSettings struct {
+	worktreeenv.ComposeStore
+	slow    core.RepoID
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *slowSettings) ComposeSettings(ctx context.Context, repo core.RepoID) (worktreeenv.ComposeSettings, error) {
+	if repo == s.slow {
+		select {
+		case s.entered <- struct{}{}:
+		default:
+		}
+		<-s.release
+	}
+	return s.ComposeStore.ComposeSettings(ctx, repo)
+}
+
+// The lock is per worktree: a slow store call for worktree A does not block
+// the status of worktree B.
+func TestComposeLockIsPerWorktree(t *testing.T) {
+	ctx := context.Background()
+	slow := &slowSettings{slow: "rep_1", entered: make(chan struct{}, 1), release: make(chan struct{})}
+	var wtB core.Worktree
+	r := newComposeRigWith(t, func(r *composeRig, cfg *worktreeenv.ComposeConfig) {
+		r.store = worktreeenvtest.NewStore("rep_1", "rep_2")
+		cfg.Audit = r.store
+		slow.ComposeStore = r.store
+		wtB = core.Worktree{ID: "wt_b", RepoID: "rep_2", Path: "/wt/b"}
+		r.wts[wtB.ID] = wtB
+		cfg.Store = slow
+	})
+	var once sync.Once
+	release := func() { once.Do(func() { close(slow.release) }) }
+	t.Cleanup(release)
+	doneA := make(chan error, 1)
+	go func() { _, err := r.svc.Status(ctx, r.wt.ID); doneA <- err }()
+	select {
+	case <-slow.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("worktree A never reached the store")
+	}
+	doneB := make(chan error, 1)
+	go func() { _, err := r.svc.Status(ctx, wtB.ID); doneB <- err }()
+	select {
+	case err := <-doneB:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("status of worktree B waited for a slow store call of worktree A")
+	}
+	release()
+	if err := <-doneA; err != nil {
+		t.Fatal(err)
 	}
 }

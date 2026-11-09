@@ -31,7 +31,7 @@ func (c *countingTerm) Redeem(context.Context, string, ct.Size) (*terminal.Sessi
 // foreign Host or Origin gets 403 and never reaches the service; the same
 // request from the page itself does reach it.
 func TestInvariant_7_phase5_endpoints_check_host_and_origin(t *testing.T) {
-	dev, wenv, term := &fakeDev{}, &fakeEnv{}, &countingTerm{}
+	dev, wenv, term := &fakeDev{}, &composeEnv{}, &countingTerm{}
 	e := newEnv(t, func(d *Deps) {
 		d.Phase5 = Phase5Services{DevServers: dev, WorktreeEnv: wenv, Terminal: term}
 	})
@@ -41,7 +41,9 @@ func TestInvariant_7_phase5_endpoints_check_host_and_origin(t *testing.T) {
 		defer dev.mu.Unlock()
 		wenv.mu.Lock()
 		defer wenv.mu.Unlock()
-		return len(dev.calls) + len(wenv.set) + len(wenv.copy) + int(term.calls.Load())
+		wenv.cmu.Lock()
+		defer wenv.cmu.Unlock()
+		return len(dev.calls) + len(wenv.set) + len(wenv.copy) + int(term.calls.Load()) + len(wenv.actions)
 	}
 	routes := []struct {
 		method, path string
@@ -56,6 +58,11 @@ func TestInvariant_7_phase5_endpoints_check_host_and_origin(t *testing.T) {
 		{"PUT", "/api/repos/repo_a/env", RepoEnvDTO{RepoID: core.RepoID("repo_a")}},
 		{"GET", "/api/worktrees/wt_1/env", nil},
 		{"POST", "/api/worktrees/wt_1/profile/copy", nil},
+		{"GET", "/api/worktrees/wt_1/compose", nil},
+		{"POST", "/api/worktrees/wt_1/compose/confirm", ComposeConfirmRequest{Hash: "abc"}},
+		{"POST", "/api/worktrees/wt_1/compose/up", nil},
+		{"POST", "/api/worktrees/wt_1/compose/stop", nil},
+		{"POST", "/api/worktrees/wt_1/compose/down", nil},
 		{"POST", "/api/terminal", TerminalTokenRequest{RepoID: "repo_a"}},
 		{"GET", "/ws/terminal?token=" + "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", nil},
 	}

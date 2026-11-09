@@ -96,3 +96,14 @@ func TestPrepareFailureIsLoggedByDefault(t *testing.T) {
 		t.Fatalf("log = %q", out)
 	}
 }
+
+// When the long-path lookup fails after the worktree was created, the worktree
+// is recorded with the plain path instead of being orphaned.
+func TestEnsureRecordsWorktreeWhenLongPathFails(t *testing.T) {
+	t.Cleanup(worktrees.SetLongPath(func(string) (string, error) { return "", errors.New("no long path") }))
+	e, repos := newPrepared(t, nil, nil)
+	got, err := e.Ensure(context.Background(), "tsk_1", repos)
+	if err != nil || len(got) != 1 || got[0].Path == "" {
+		t.Fatalf("Ensure = %+v, %v", got, err)
+	}
+}

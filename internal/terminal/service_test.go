@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -687,5 +688,39 @@ func TestRealTokenSourceContract(t *testing.T) {
 func TestNewRequiresPorts(t *testing.T) {
 	if _, err := terminal.New(terminal.Config{}); err == nil {
 		t.Fatal("empty config accepted")
+	}
+}
+
+// A close audit that cannot be written is kept and written later, at the
+// latest by Close (invariant 8).
+func TestFailedCloseAuditIsRetriedLater(t *testing.T) {
+	f := newFixture(t)
+	var down atomic.Bool
+	f.audit.Hook = func(e terminal.AuditEntry) error {
+		if e.Action == ct.AuditClose && down.Load() {
+			return errors.New("disk full")
+		}
+		return nil
+	}
+	sock, done := f.open(t)
+	f.pty(t, 0)
+	eventually(t, "open audit", func() bool { return len(f.audit.Entries()) == 1 })
+	down.Store(true)
+	sock.Disconnect()
+	if err := finished(t, done); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.audit.Entries(); len(got) != 1 {
+		t.Fatalf("close audit written although the sink was down: %+v", got)
+	}
+	down.Store(false) // the sink recovers; shutdown makes the last attempt
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := f.svc.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := f.audit.Entries()
+	if len(got) != 2 || got[1].Action != ct.AuditClose {
+		t.Fatalf("audit = %+v", got)
 	}
 }
