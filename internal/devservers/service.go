@@ -82,6 +82,8 @@ type Service struct {
 	log   *slog.Logger
 	clock Clock
 	wakes *Wakes
+	// epoch tells one run of the service from the next (LogLine.Epoch).
+	epoch int64
 
 	base   context.Context
 	cancel context.CancelFunc
@@ -138,7 +140,7 @@ func New(ctx context.Context, d Deps) (*Service, error) {
 	base, cancel := context.WithCancel(ctx)
 	g, _ := errgroup.WithContext(base)
 	return &Service{
-		d: d, log: d.Log, clock: d.Clock, wakes: NewWakes(d.Clock), base: base, cancel: cancel, g: g,
+		d: d, log: d.Log, clock: d.Clock, epoch: d.Clock.Now().UnixMilli(), wakes: NewWakes(d.Clock), base: base, cancel: cancel, g: g,
 		runs: map[string]*run{}, sinks: map[string]LogSink{}, restarts: map[string]dsc.Key{}, msgs: map[string]string{},
 		locks: map[string]*srvLock{}, drained: make(chan struct{}),
 	}, nil
@@ -398,6 +400,16 @@ func (s *Service) ByID(ctx context.Context, id string) (View, error) {
 	st, err := dsc.ServerFromRow(row.Row)
 	if err != nil {
 		return View{}, fmt.Errorf("read dev server %s: %w", id, err)
+	}
+	// The row outlives the tracking of its repo or worktree: a server of a
+	// folder that is not tracked any more does not exist for the client
+	// (invariant 6), so the same check as a start answers it.
+	t := Target{Repo: row.Row.Key.Repo, Worktree: row.Row.Key.Worktree}
+	if _, err := s.d.Repos.Dir(ctx, t); err != nil {
+		if _, ok := apperr.ClassOf(err); ok {
+			return View{}, err // NotFound for an untracked target, or the plain refusal
+		}
+		return View{}, fmt.Errorf("check the folder of dev server %s: %w", id, err)
 	}
 	return s.view(row.Row.Key, st), nil
 }

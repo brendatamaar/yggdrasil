@@ -28,10 +28,10 @@ func (s *Service) sinkFor(id string) LogSink {
 	if size < 1 {
 		size = RingLines
 	}
-	sink, err := NewFileSink(s.logDir(), id, s.d.Redactor.Redact, size, s.d.LogFileBytes, publish)
+	sink, err := NewFileSink(s.logDir(), id, s.d.Redactor.Redact, size, s.d.LogFileBytes, publish, WithEpoch(s.epoch))
 	if err != nil {
 		s.log.Warn("dev server log file unavailable; keeping the log in memory", "id", id, "err", err)
-		sink, _ = NewMemorySink(s.d.Redactor.Redact, size, publish) // the redactor is required by New
+		sink, _ = NewMemorySink(s.d.Redactor.Redact, size, publish, WithEpoch(s.epoch)) // the redactor is required by New
 	}
 	s.sinks[id] = sink
 	return sink

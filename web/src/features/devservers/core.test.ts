@@ -11,7 +11,7 @@ const server = (id: string, status: string): DevServerDTO => ({
   status,
   ports: [],
 });
-const line = (seq: number, text = `l${String(seq)}`): DevServerLogMessage => ({ id: "s1", seq, stream: "stdout", line: text });
+const line = (seq: number, text = `l${String(seq)}`, epoch = 1): DevServerLogMessage => ({ id: "s1", epoch, seq, stream: "stdout", line: text });
 
 describe("dev server helpers", () => {
   it("offers only what a state allows", () => {
@@ -51,6 +51,11 @@ describe("mergeLog", () => {
   it("dedupes by sequence number and keeps order", () => {
     expect(mergeLog([line(1), line(2)], [line(2), line(3)]).map((l) => l.seq)).toEqual([1, 2, 3]);
     expect(mergeLog([line(3)], [line(1)]).map((l) => l.seq)).toEqual([1, 3]);
+  });
+  it("keeps lines of a later run apart from the same seq of an earlier run", () => {
+    // After a restart seq starts at 1 again: (epoch, seq) keeps both, oldest run first.
+    const merged = mergeLog([line(1, "old 1", 1), line(2, "old 2", 1)], [line(1, "new 1", 2)]);
+    expect(merged.map((l) => l.line)).toEqual(["old 1", "old 2", "new 1"]);
   });
   it("keeps only the newest lines past the cap", () => {
     const lines = Array.from({ length: 10 }, (_, i) => line(i));

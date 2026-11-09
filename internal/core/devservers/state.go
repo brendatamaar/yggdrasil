@@ -52,6 +52,11 @@ type Stopping struct {
 	Since       time.Time
 	Pid         int
 	Block       core.PortBlock
+	// GraceUntil is when the current kill attempt's grace ends. A KillGrace
+	// wake that fires earlier is a stale one (from an attempt that a second
+	// Stop replaced) and is ignored. It is not stored: a stored Stopping row
+	// is recovered at startup, and a zero GraceUntil accepts any wake.
+	GraceUntil time.Time
 }
 
 // Failed is at rest; it may start again.

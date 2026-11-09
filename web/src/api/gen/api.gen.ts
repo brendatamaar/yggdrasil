@@ -982,6 +982,11 @@ export interface DevServerChangedMessage {
  */
 export interface DevServerLogMessage {
   id: core.DevServerID;
+  /**
+   * Epoch tells one run of Yggdrasil from the next: Seq restarts at 1 after a
+   * restart, so a line is identified by (Epoch, Seq).
+   */
+  epoch: number /* int64 */;
   seq: number /* uint64 */;
   stream: string; // "stdout" or "stderr"
   line: string;

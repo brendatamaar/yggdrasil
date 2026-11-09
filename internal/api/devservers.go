@@ -205,7 +205,7 @@ func (s *Server) handleDevServerLog(w http.ResponseWriter, r *http.Request) {
 }
 
 func logMessage(id core.DevServerID, l devservers.LogLine) DevServerLogMessage {
-	return DevServerLogMessage{ID: id, Seq: l.Seq, Stream: string(l.Stream), Line: l.Line}
+	return DevServerLogMessage{ID: id, Epoch: l.Epoch, Seq: l.Seq, Stream: string(l.Stream), Line: l.Line}
 }
 
 var _ devservers.Publisher = (*Server)(nil)

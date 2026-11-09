@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useReducer, useRef } from "react";
 import { describeError } from "../../api/client";
-import { followStep, type Follow } from "./core";
+import { followStep, lineKey, type Follow } from "./core";
 import { useServerLog } from "./hooks";
 
 const NEAR_BOTTOM_PX = 24;
@@ -50,7 +50,7 @@ export function LogView({ serverId, title }: { serverId: string; title: string }
       >
         {q.data.lines.length === 0 ? <p className="text-muted">No output yet.</p> : null}
         {q.data.lines.map((l) => (
-          <div key={l.seq} className={l.stream === "stderr" ? "whitespace-pre-wrap text-warn" : "whitespace-pre-wrap"}>
+          <div key={lineKey(l)} className={l.stream === "stderr" ? "whitespace-pre-wrap text-warn" : "whitespace-pre-wrap"}>
             {l.line}
           </div>
         ))}
