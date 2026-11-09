@@ -4,7 +4,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/brendatamaar/yggdrasil/internal/devservers"
@@ -98,7 +97,7 @@ func TestFakePortsContract(t *testing.T) {
 }
 
 func TestRealPortsContract(t *testing.T) {
-	if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+	if _, err := platform.ListeningPorts(os.Getpid()); err != nil {
 		t.Skip("port detection is implemented on Windows and Linux only")
 	}
 	devserverstest.PortsContract(t, func(t *testing.T) devserverstest.PortsHarness {

@@ -51,7 +51,7 @@ func TestParseTokenLastCharacterIsCanonical(t *testing.T) {
 // Different tokens never share a hash; the same token always does.
 func TestHashTokenIsDeterministicAndSeparates(t *testing.T) {
 	a, b := strings.Repeat("A", TokenLen), strings.Repeat("A", TokenLen-1)+"E"
-	if HashToken(a) != HashToken(a) || HashToken(a) == HashToken(b) {
+	if h := HashToken(a); h != HashToken(strings.Clone(a)) || h == HashToken(b) {
 		t.Fatal("hash is not a function of the token")
 	}
 	if strings.Contains(string(HashToken(a)), a) {

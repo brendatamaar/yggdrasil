@@ -35,7 +35,7 @@ func TestInvariant_7_phase5_endpoints_check_host_and_origin(t *testing.T) {
 	e := newEnv(t, func(d *Deps) {
 		d.Phase5 = Phase5Services{DevServers: dev, WorktreeEnv: wenv, Terminal: term}
 	})
-	id := string(devservers.IDOf(dsc.Key{Repo: "repo_a", Worktree: "wt_1", CommandKey: "dev"}))
+	id := devservers.IDOf(dsc.Key{Repo: "repo_a", Worktree: "wt_1", CommandKey: "dev"})
 	calls := func() int {
 		dev.mu.Lock()
 		defer dev.mu.Unlock()
