@@ -71,10 +71,15 @@ type ComposeConfig struct {
 	WaitTimeout time.Duration
 }
 
-// maxFlushFailures is how many failed flushes an audit entry gets before it is
-// quarantined (dropped and counted), so one entry that can never be written
-// cannot block the entries behind it.
-const maxFlushFailures = 10
+// An audit entry is quarantined (dropped and counted) only after maxFlushFailures
+// failed flushes AND quarantineAfter since its first failure, so a short outage
+// of the sink never costs an entry, while one entry that can never be written
+// still cannot block the entries behind it for good. The queue cap is the only
+// bound by count.
+const (
+	maxFlushFailures = 10
+	quarantineAfter  = 5 * time.Minute
+)
 
 // ComposeStatus is the compose state of one worktree for display.
 type ComposeStatus struct {
@@ -129,8 +134,9 @@ type ComposeService struct {
 // queuedAudit is an audit entry waiting for a retry.
 type queuedAudit struct {
 	e     core.AuditEntry
-	det   bool // its ID is deterministic: remember it once written
-	fails int  // failed flushes so far
+	det   bool      // its ID is deterministic: remember it once written
+	fails int       // failed flushes so far
+	first time.Time // when it first failed to be written
 }
 
 type composeEntry struct {
@@ -217,6 +223,12 @@ func (s *ComposeService) Wait() {
 		s.c.Logger.Warn("compose operations did not end in time; shutting down anyway")
 	}
 	s.flushAudits(10 * time.Second) // last attempt at queued entries
+	s.mu.Lock()
+	left, dropped := len(s.queued), s.dropped
+	s.mu.Unlock()
+	if left+dropped > 0 {
+		s.c.Logger.Error("compose audit entries not written at shutdown", "unwritten", left, "dropped", dropped)
+	}
 }
 
 // entryFor returns the entry of a worktree, creating it. It holds s.mu only
@@ -266,7 +278,7 @@ func (s *ComposeService) queueAudit(e core.AuditEntry, det bool) {
 	}
 }
 
-// remember notes that a deterministic ID was written. The set is capped.
+// rememberLocked notes that a deterministic ID was written. The set is capped.
 func (s *ComposeService) rememberLocked(id core.AuditID) {
 	if _, ok := s.written[id]; ok {
 		return
@@ -340,6 +352,7 @@ func (s *ComposeService) flushAudits(total time.Duration) {
 		if len(s.queued) == 0 || s.queued[0].e.ID != q.e.ID {
 			s.mu.Unlock() // the queue changed under us (cap): look again
 			if err != nil {
+				s.c.Logger.Warn("compose audit entry not written while the queue changed", "audit", q.e.ID, "err", err)
 				return
 			}
 			continue
@@ -349,13 +362,18 @@ func (s *ComposeService) flushAudits(total time.Duration) {
 			s.mu.Unlock()
 			continue
 		}
+		now := s.c.Now()
 		s.queued[0].fails++
-		if s.queued[0].fails >= maxFlushFailures {
+		if s.queued[0].first.IsZero() {
+			s.queued[0].first = now
+		}
+		if s.queued[0].fails >= maxFlushFailures && now.Sub(s.queued[0].first) >= quarantineAfter {
 			// Quarantine: it must not block the entries behind it.
 			s.queued = s.queued[1:]
 			s.dropped++
+			total := s.dropped // read under the lock
 			s.mu.Unlock()
-			s.c.Logger.Error("compose audit entry could not be written and was dropped", "audit", q.e.ID, "subject", q.e.Subject, "dropped_total", s.dropped, "err", err)
+			s.c.Logger.Error("compose audit entry could not be written and was dropped", "audit", q.e.ID, "subject", q.e.Subject, "dropped_total", total, "err", err)
 			continue
 		}
 		s.mu.Unlock()

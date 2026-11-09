@@ -25,3 +25,6 @@ func (s *ComposeService) Remembered() int {
 
 // FlushAudits runs one flush (for tests).
 func (s *ComposeService) FlushAudits() { s.flushAudits(1e9) }
+
+// Boot is the boot token (for tests).
+func (s *ComposeService) Boot() string { return s.boot }

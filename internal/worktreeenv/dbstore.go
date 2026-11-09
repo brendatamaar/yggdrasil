@@ -170,7 +170,7 @@ func (d DBStore) Append(ctx context.Context, e core.AuditEntry) error {
 	if err != nil {
 		return err
 	}
-	return d.S.Commit(ctx, func(tx *db.Tx) error { return tx.AppendAudit(ctx, e) })
+	return mapErr(d.S.Commit(ctx, func(tx *db.Tx) error { return tx.AppendAudit(ctx, e) }))
 }
 
 // ComposeSettings are a repo's compose opt-in (WE-03). Off by default.
