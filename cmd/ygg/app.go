@@ -72,6 +72,7 @@ type app struct {
 	// devservers, terminal and envSvc are the Phase 5 services; run starts
 	// them and closes the first two before the store closes.
 	devservers *devservers.Service
+	compose    *worktreeenv.ComposeService
 	terminal   *terminal.Service
 	envSvc     *worktreeenv.Service
 }
@@ -309,7 +310,7 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	})
 	fanout.after = func(ctx context.Context) { releaseRemoved(ctx, store, envSvc, log) }
 	return &app{
-		devservers: devSvc, terminal: termSvc, envSvc: envSvc,
+		devservers: devSvc, terminal: termSvc, envSvc: envSvc, compose: envAPI.compose,
 		cfg: cfg, log: log, db: d, store: store, srv: srv, status: status, builds: buildSvc, hosts: hostSvc, actions: actions,
 		feeder: feeder, tasks: taskSvc, proposals: propSvc, mcp: mcpSvc,
 		verify: verifySvc, changesets: csSvc, fanout: fanout,

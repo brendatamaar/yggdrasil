@@ -666,6 +666,11 @@ func (a *app) closePhase5() {
 	if a.devservers != nil {
 		a.devservers.Close(ctx)
 	}
+	if a.compose != nil {
+		// Compose containers outlive ygg on purpose; this only ends the
+		// in-flight operations and makes a last attempt at queued audit entries.
+		a.compose.Wait()
+	}
 	if a.terminal != nil {
 		// A shell that will not end must not hold up the shutdown for good.
 		tctx, cancel := context.WithTimeout(ctx, terminalCloseTimeout)
