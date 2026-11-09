@@ -43,6 +43,9 @@ type Config struct {
 	// AuditBackoff is the first wait before a failed close audit is retried;
 	// it doubles on each of 3 retries. Default 50 ms.
 	AuditBackoff time.Duration
+	// AuditQueueMax caps the entries kept for a later retry when the audit
+	// sink is down. Default 1000; the oldest are dropped first and counted.
+	AuditQueueMax int
 
 	Log *slog.Logger
 }
@@ -78,6 +81,7 @@ type Service struct {
 	live    map[core.TerminalSessionID]*live
 	audits  []AuditEntry
 	retry   []AuditEntry                     // entries that failed all tries, tried again by the next flush
+	lost    int                              // entries dropped because the retry queue was full
 	openErr map[core.TerminalSessionID]error // failed open audits, read by Redeem
 	timers  map[timerKey]func() bool
 	closed  bool
@@ -117,6 +121,9 @@ func New(c Config) (*Service, error) {
 	}
 	if c.AuditBackoff <= 0 {
 		c.AuditBackoff = 50 * time.Millisecond
+	}
+	if c.AuditQueueMax <= 0 {
+		c.AuditQueueMax = 1000
 	}
 	if c.Log == nil {
 		c.Log = slog.New(slog.DiscardHandler)
@@ -283,47 +290,65 @@ func (s *Service) scheduleWake(kind ct.WakeKind, at time.Time) {
 
 // flushAudit writes queued entries, oldest first, one writer at a time.
 // A failed terminal.open is remembered for Redeem, which refuses the open
-// (fail closed, invariant 8). Any other entry is retried with a growing wait
-// and, if it still fails, logged with IDs only.
+// (fail closed, invariant 8): open entries are always tried, once. Any other
+// entry that failed earlier gets one try; a new one gets several with a growing
+// wait. When one fails, the rest of the non-open entries are kept for the next
+// call without more tries (a dead sink is not hammered under auditMu). The kept
+// queue is capped; dropped entries are counted and logged with IDs only.
 func (s *Service) flushAudit() {
 	s.auditMu.Lock()
 	defer s.auditMu.Unlock()
 	s.mu.Lock()
-	s.audits = append(s.retry, s.audits...) // earlier failures first: step order
+	old := s.retry
 	s.retry = nil
 	s.mu.Unlock()
-	var failed []AuditEntry
-	defer func() {
-		s.mu.Lock()
-		s.retry = append(s.retry, failed...)
-		s.mu.Unlock()
-	}()
-	for {
-		s.mu.Lock()
-		if len(s.audits) == 0 {
-			s.mu.Unlock()
+
+	var kept []AuditEntry
+	down := false
+	process := func(e AuditEntry, previouslyFailed bool) {
+		if e.Action != ct.AuditOpen && down {
+			kept = append(kept, e)
 			return
 		}
-		e := s.audits[0]
-		s.audits = s.audits[1:]
-		s.mu.Unlock()
-
 		attempts := 4
-		if e.Action == ct.AuditOpen {
+		if e.Action == ct.AuditOpen || previouslyFailed {
 			attempts = 1
 		}
 		err := s.record(e, attempts)
 		if err == nil {
-			continue
+			return
 		}
 		s.cfg.Log.Error("terminal audit write failed", "action", e.Action, "session", e.Session, "attempts", attempts, "err", err)
 		if e.Action == ct.AuditOpen {
 			s.mu.Lock()
 			s.openErr[e.Session] = err
 			s.mu.Unlock()
-		} else {
-			failed = append(failed, e) // kept for the next call and the flush at shutdown (invariant 8)
+			return
 		}
+		down = true
+		kept = append(kept, e) // kept for the next call and the flush at shutdown (invariant 8)
+	}
+	for _, e := range old {
+		process(e, true)
+	}
+	for {
+		s.mu.Lock()
+		if len(s.audits) == 0 {
+			s.mu.Unlock()
+			break
+		}
+		e := s.audits[0]
+		s.audits = s.audits[1:]
+		s.mu.Unlock()
+		process(e, false)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.retry = append(kept, s.retry...)
+	if over := len(s.retry) - s.cfg.AuditQueueMax; over > 0 {
+		s.lost += over
+		s.retry = s.retry[over:] // the oldest go first
+		s.cfg.Log.Error("terminal audit queue full: entries dropped", "dropped", over, "dropped_total", s.lost)
 	}
 }
 
@@ -434,11 +459,23 @@ func (s *Service) Close(ctx context.Context) error {
 	case <-done:
 		s.cancel()
 		s.flushAudit() // last attempt at the entries that could not be written
+		s.logLostAudits()
 		return nil
 	case <-ctx.Done():
 		s.cancel() // kills the remaining shells through their contexts
 		<-done
 		s.flushAudit()
+		s.logLostAudits()
 		return fmt.Errorf("terminal sessions did not close in time: %w", ctx.Err())
+	}
+}
+
+// logLostAudits says how many audit entries could not be written at all.
+func (s *Service) logLostAudits() {
+	s.mu.Lock()
+	n, dropped := len(s.retry), s.lost
+	s.mu.Unlock()
+	if n+dropped > 0 {
+		s.cfg.Log.Error("terminal audit entries lost at shutdown", "unwritten", n, "dropped", dropped)
 	}
 }

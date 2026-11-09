@@ -36,6 +36,9 @@ var (
 	ErrComposeHashRequired = errors.New("worktreeenv: confirmation needs the hash of the file shown")
 )
 
+// statusFlushTimeout bounds the retry of queued audit entries done by a read.
+const statusFlushTimeout = time.Second
+
 // msgIndirect is shown when the compose file reads other files.
 const msgIndirect = "The compose file uses include:, extends: or env_file:, which pull in files that cannot be shown to you for confirmation. Put the whole setup in this one file (a .env next to it is allowed)."
 
@@ -98,6 +101,10 @@ type ComposeService struct {
 	// are retried by the next call and at Wait, oldest first.
 	queued  []core.AuditEntry
 	flushMu sync.Mutex // one flusher at a time keeps the order
+	// written holds the IDs of end-of-operation entries (deterministic IDs)
+	// that were already written, so a repeat of the write, whether by a retry
+	// of the transition or by the queue, never writes one twice.
+	written map[core.AuditID]struct{}
 }
 
 type composeEntry struct {
@@ -158,13 +165,13 @@ func NewComposeService(ctx context.Context, c ComposeConfig) (*ComposeService, e
 	if c.Redact == nil {
 		c.Redact = safety.NewRedactor()
 	}
-	return &ComposeService{c: c, ctx: ctx, states: map[core.WorktreeID]*composeEntry{}, confirmedBy: map[core.RepoID]core.WorktreeID{}}, nil
+	return &ComposeService{c: c, ctx: ctx, states: map[core.WorktreeID]*composeEntry{}, confirmedBy: map[core.RepoID]core.WorktreeID{}, written: map[core.AuditID]struct{}{}}, nil
 }
 
 // Wait blocks until the running operations have ended (after ctx is cancelled).
 func (s *ComposeService) Wait() {
 	s.wg.Wait()
-	s.flushAudits(context.WithoutCancel(s.ctx)) // last attempt at queued entries
+	s.flushAudits(10 * time.Second) // last attempt at queued entries
 }
 
 // entryFor returns the entry of a worktree, creating it. It holds s.mu only
@@ -192,19 +199,64 @@ func (s *ComposeService) confirmedByOf(repo core.RepoID) core.WorktreeID {
 	return s.confirmedBy[repo]
 }
 
-// queueAudit keeps an entry that could not be written for a later retry.
+// queueAudit keeps an entry that could not be written for a later retry. An
+// entry that is already written or queued (same ID) is not queued again.
 func (s *ComposeService) queueAudit(e core.AuditEntry) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, done := s.written[e.ID]; done {
+		return
+	}
+	for _, q := range s.queued {
+		if q.ID == e.ID {
+			return
+		}
+	}
 	s.queued = append(s.queued, e)
-	s.mu.Unlock()
 }
 
-// flushAudits writes the queued entries, oldest first, and stops at the first
-// failure (they stay queued). It never holds a worktree lock or s.mu across the
-// write.
-func (s *ComposeService) flushAudits(ctx context.Context) {
+// appendOnce writes an audit entry unless an entry with that ID was already
+// written. Only deterministic IDs are remembered (see auditID).
+func (s *ComposeService) appendOnce(ctx context.Context, e core.AuditEntry) error {
+	s.mu.Lock()
+	_, done := s.written[e.ID]
+	s.mu.Unlock()
+	if done {
+		return nil
+	}
+	if err := s.c.Audit.Append(ctx, e); err != nil {
+		return err
+	}
+	if isDeterministicAuditID(e.ID) {
+		s.mu.Lock()
+		s.written[e.ID] = struct{}{}
+		s.mu.Unlock()
+	}
+	return nil
+}
+
+// auditID is the ID of the idx-th audit entry of an input. The end of an
+// operation gets <worktree>:<attempt>:<idx>, so the entry is the same wherever
+// it is built (the transition or the retry queue) and can be written once.
+// Other inputs get a fresh ID.
+func (s *ComposeService) auditID(wt core.Worktree, in env.ComposeInput, idx int) string {
+	if v, ok := in.(env.OpFinished); ok {
+		return fmt.Sprintf("%s:%d:%d", wt.ID, v.Attempt, idx)
+	}
+	return s.c.NewID("aud")
+}
+
+func isDeterministicAuditID(id core.AuditID) bool { return strings.Contains(string(id), ":") }
+
+// flushAudits writes the queued entries, oldest first, within total, and stops
+// at the first failure (they stay queued). It never holds a worktree lock or
+// s.mu across a write, and runs on its own context: a request's context or
+// another retry's deadline must not decide whether an entry is written.
+func (s *ComposeService) flushAudits(total time.Duration) {
 	s.flushMu.Lock()
 	defer s.flushMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), total)
+	defer cancel()
 	for {
 		s.mu.Lock()
 		if len(s.queued) == 0 {
@@ -213,15 +265,14 @@ func (s *ComposeService) flushAudits(ctx context.Context) {
 		}
 		e := s.queued[0]
 		s.mu.Unlock()
-		actx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		err := s.c.Audit.Append(actx, e)
-		cancel()
-		if err != nil {
+		if err := s.appendOnce(ctx, e); err != nil {
 			s.c.Logger.Error("compose audit entry still not written; it stays queued", "audit", e.ID, "subject", e.Subject, "err", err)
 			return
 		}
 		s.mu.Lock()
-		s.queued = s.queued[1:]
+		if len(s.queued) > 0 && s.queued[0].ID == e.ID {
+			s.queued = s.queued[1:]
+		}
 		s.mu.Unlock()
 	}
 }
@@ -269,7 +320,7 @@ func (s *ComposeService) Configure(ctx context.Context, repo core.RepoID, enable
 // Status returns the compose state of a worktree, bringing it in line with the
 // settings and the file first.
 func (s *ComposeService) Status(ctx context.Context, wid core.WorktreeID) (ComposeStatus, error) {
-	s.flushAudits(ctx)
+	s.flushAudits(statusFlushTimeout)                 // a read must not wait long for audit IO
 	if _, err := s.c.Worktree(ctx, wid); err != nil { // untracked: no entry is created
 		return ComposeStatus{}, err
 	}
@@ -445,12 +496,14 @@ func (s *ComposeService) apply(ctx context.Context, wt core.Worktree, e *compose
 	}
 	now := s.c.Now().UTC()
 	confirmedNow := false
+	idx := -1
 	for _, c := range cmds {
 		a, ok := c.(env.ComposeAudit)
 		if !ok {
 			continue
 		}
-		entry, err := s.buildAudit(wt, e, next, a, project, actor, now)
+		idx++
+		entry, err := s.buildAudit(s.auditID(wt, in, idx), wt, e, next, a, project, actor, now)
 		if err != nil {
 			return applyResult{}, err
 		}
@@ -461,7 +514,7 @@ func (s *ComposeService) apply(ctx context.Context, wt core.Worktree, e *compose
 			confirmedNow = !e.auto
 			continue
 		}
-		if err := s.c.Audit.Append(ctx, entry); err != nil {
+		if err := s.appendOnce(ctx, entry); err != nil {
 			return applyResult{}, fmt.Errorf("write audit entry: %w", err)
 		}
 	}
@@ -478,7 +531,7 @@ func (s *ComposeService) apply(ctx context.Context, wt core.Worktree, e *compose
 }
 
 // buildAudit is the audit entry of one core audit command.
-func (s *ComposeService) buildAudit(wt core.Worktree, e *composeEntry, next env.Service, a env.ComposeAudit, project env.ProjectName, actor string, now time.Time) (core.AuditEntry, error) {
+func (s *ComposeService) buildAudit(id string, wt core.Worktree, e *composeEntry, next env.Service, a env.ComposeAudit, project env.ProjectName, actor string, now time.Time) (core.AuditEntry, error) {
 	fail, summary := "", ""
 	switch v := next.(type) {
 	case env.ComposeFailed:
@@ -497,7 +550,7 @@ func (s *ComposeService) buildAudit(wt core.Worktree, e *composeEntry, next env.
 	if err != nil {
 		return core.AuditEntry{}, fmt.Errorf("encode audit detail: %w", err)
 	}
-	return auditEntry(s.c.NewID("aud"), actor, a.Action, wtSubject(wt.ID), now, detail), nil
+	return auditEntry(id, actor, a.Action, wtSubject(wt.ID), now, detail), nil
 }
 
 // persistConfirmed stores the confirmed hash with the audit entry in one
@@ -571,7 +624,7 @@ func (s *ComposeService) finish(wt core.Worktree, in env.OpFinished, changed str
 	// The audit write must outlive a cancelled service context.
 	actx, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), 10*time.Second)
 	defer cancel()
-	s.flushAudits(actx)
+	s.flushAudits(10 * time.Second) // its own context, not the apply retries' deadline
 	cur := s.lookup(wt.ID)
 	notify := false
 	if cur != nil {
@@ -586,7 +639,7 @@ func (s *ComposeService) finish(wt core.Worktree, in env.OpFinished, changed str
 		}
 		if err != nil {
 			next, cmds := env.Compose(cur.svc, in)
-			s.queueAudits(wt, cur, next, cmds)
+			s.queueAudits(wt, cur, in, next, cmds)
 			cur.svc, cur.at = next, s.c.Now().UTC()
 			r.publish = true
 		}
@@ -605,22 +658,26 @@ func (s *ComposeService) finish(wt core.Worktree, in env.OpFinished, changed str
 
 // queueAudits keeps the audit entries of a transition that was made in memory
 // because its audit write failed, so they are written later (invariant 8).
-func (s *ComposeService) queueAudits(wt core.Worktree, e *composeEntry, next env.Service, cmds []env.ComposeCommand) {
-	project, err := s.project(wt.ID)
-	if err != nil {
-		s.c.Logger.Error("compose audit entry lost: no project name", "worktree", wt.ID)
-		return
-	}
+func (s *ComposeService) queueAudits(wt core.Worktree, e *composeEntry, in env.ComposeInput, next env.Service, cmds []env.ComposeCommand) {
+	project, perr := s.project(wt.ID)
 	now := s.c.Now().UTC()
+	idx := -1
 	for _, c := range cmds {
 		a, ok := c.(env.ComposeAudit)
 		if !ok {
 			continue
 		}
-		entry, err := s.buildAudit(wt, e, next, a, project, "system", now)
-		if err != nil {
-			s.c.Logger.Error("compose audit entry lost", "worktree", wt.ID, "err", err)
-			continue
+		idx++
+		id := s.auditID(wt, in, idx)
+		var entry core.AuditEntry
+		var err error
+		if perr == nil {
+			entry, err = s.buildAudit(id, wt, e, next, a, project, "system", now)
+		}
+		if perr != nil || err != nil {
+			// Better a minimal entry than none (invariant 8).
+			s.c.Logger.Error("compose audit entry reduced to its minimum", "worktree", wt.ID, "audit", id)
+			entry = auditEntry(id, "system", a.Action, wtSubject(wt.ID), now, []byte("{}"))
 		}
 		s.queueAudit(entry)
 	}

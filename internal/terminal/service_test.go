@@ -724,3 +724,85 @@ func TestFailedCloseAuditIsRetriedLater(t *testing.T) {
 		t.Fatalf("audit = %+v", got)
 	}
 }
+
+type syncBuf struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
+// closeOne opens a session and disconnects it, so one close audit is produced.
+func (f *fixture) closeOne(t *testing.T, idx int) {
+	t.Helper()
+	sock, done := f.open(t)
+	f.pty(t, idx)
+	eventually(t, "open audit", func() bool { return len(f.audit.Entries()) > 0 })
+	sock.Disconnect()
+	if err := finished(t, done); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A dead sink is not hammered: after the first failure the rest of the queue is
+// kept without further tries.
+func TestDeadAuditSinkIsNotHammered(t *testing.T) {
+	f := newFixture(t)
+	var closeTries atomic.Int32
+	f.audit.Hook = func(e terminal.AuditEntry) error {
+		if e.Action == ct.AuditClose {
+			closeTries.Add(1)
+			return errors.New("disk full")
+		}
+		return nil
+	}
+	for i := 0; i < 3; i++ {
+		f.closeOne(t, i)
+	}
+	// Three entries are queued. One more flush makes exactly one attempt.
+	before := closeTries.Load()
+	f.svc.CloseSession("ts_none")
+	if n := closeTries.Load() - before; n != 1 {
+		t.Fatalf("a flush of 3 queued entries made %d attempts, want 1", n)
+	}
+}
+
+// The retry queue is capped; dropped entries are counted and Close says how many
+// were lost.
+func TestAuditRetryQueueIsCappedAndLossIsLogged(t *testing.T) {
+	logs := &syncBuf{}
+	f := newFixture(t, func(c *terminal.Config) {
+		c.AuditQueueMax = 2
+		c.Log = slog.New(slog.NewTextHandler(logs, nil))
+	})
+	f.audit.Hook = func(e terminal.AuditEntry) error {
+		if e.Action == ct.AuditClose {
+			return errors.New("disk full")
+		}
+		return nil
+	}
+	for i := 0; i < 4; i++ {
+		f.closeOne(t, i)
+	}
+	if !strings.Contains(logs.String(), "entries dropped") {
+		t.Fatalf("no drop was logged:\n%s", logs.String())
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
+	defer cancel()
+	if err := f.svc.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logs.String(), "lost at shutdown") {
+		t.Fatalf("Close did not report the lost entries:\n%s", logs.String())
+	}
+}

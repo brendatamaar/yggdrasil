@@ -166,7 +166,7 @@ Tests: `Run(initial, inputs)` for the core; the shell with `platformtest.Fake`, 
 
 - The platform job ID (`Spec.TaskID`) and the orphan record are keyed by `(server id, attempt)` (`ProcessID`), so a restart during `Starting` cannot kill or forget the new attempt's process.
 - If `BlockFor` reports a full port range (`worktreeenv.ErrRangeFull`), the server starts without injection and the view carries a warning; a template that needs `{port}` is then rejected as `BadTemplate`.
-- `Exited`, `StartFailed` and `OrphanStopped` are retried with bounded backoff when the commit fails; attempt fencing makes a repeat harmless.
+- `Exited`, `StartFailed`, `Started`, `OrphanStopped`, `OrphanStopFailed` and `Wake` are retried with bounded backoff when the commit fails (inputs retried on commit failure); attempt fencing makes a repeat harmless. If `Started` is never recorded, the later `Exited` still ends the attempt.
 - State changes are serialised per server (keyed mutex), not by one service lock; publishing happens after the commit, in order per server.
 - Redaction runs on the whole line before it is cut, and an over-long unterminated line is emitted with a 1 KiB redacted tail carried into the next chunk.
 

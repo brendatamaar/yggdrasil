@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -222,9 +223,21 @@ func (x *exec) run(c cw.Command) cw.Input {
 			// than orphan it (a failed AddFailed here would leave it unrecorded).
 			long = dir
 		}
+		wid := core.WorktreeID(e.c.NewID("wt"))
+		if err != nil {
+			lg := e.c.Logger
+			if lg == nil {
+				lg = slog.Default()
+			}
+			var pe *fs.PathError
+			if errors.As(err, &pe) {
+				err = pe.Err // a path error's text names the path; keep only the cause
+			}
+			lg.Warn("could not expand the path of a new worktree; recorded with the plain path", "worktree", wid, "err", err)
+		}
 		now := e.c.Now().UTC()
 		return cw.Added{
-			Seq: v.Seq, ID: core.WorktreeID(e.c.NewID("wt")), AuditID: core.AuditID(e.c.NewID("aud")),
+			Seq: v.Seq, ID: wid, AuditID: core.AuditID(e.c.NewID("aud")),
 			Path: long, At: now,
 		}
 	case cw.RecordWorktree:
