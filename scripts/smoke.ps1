@@ -4,7 +4,7 @@
   docs/phases/phase-1.md).
 
 .DESCRIPTION
-  Default: checks 1 to 8 with the demo agent and a fake Claude Code shim. No
+  Default: checks 1 to 9 with the demo agent and a fake Claude Code shim. No
   real agent, no network. Used by `task smoke` and CI.
 
   -RealAgent: checks 6b, 6c and 6d with the real Claude Code CLI (model haiku,
@@ -521,6 +521,69 @@ function Invoke-DefaultChecks {
             } while ($alive.Count -gt 0 -and (Get-Date) -lt $deadline)
             if ($alive.Count -gt 0) { throw "still running 5 s after ygg was killed: $(($alive | ForEach-Object { "$($_.Name) $($_.ProcessId)" }) -join ', ')" }
             "shim in '...\Program Files\nodejs' got the prompt on stdin; ygg killed with $($tree.Count) descendants ($shell cmd.exe, $($ping.Count) marked ping): none left within 5 s"
+        } finally {
+            if (-not $srv.Process.HasExited) { Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    # Phase 5 (DV-05, PL-03): a dev server started through the API dies with
+    # ygg. A tiny Node server is the dev command (`npm run dev`); it needs no
+    # packages. ygg is killed like in check 8, then no process of the tree may
+    # be left: no node, npm, cmd, dotnet, python or uvicorn below it.
+    Invoke-Check '9' 'dev server dies with ygg' {
+        if (-not (Get-Command node -CommandType Application -ErrorAction SilentlyContinue)) { throw 'node is not on the PATH (install Node.js to run this check)' }
+        # The repo is seeded first, so the new ygg finds it when it starts.
+        $dev = Join-Path $TempRoot 'shop dev'
+        $serverJs = "require('http').createServer((q, r) => r.end('shop-dev ok')).listen(Number(process.env.PORT || 18555), '127.0.0.1');`n"
+        New-TestRepo $dev @{
+            'package.json' = '{"name":"shop-dev","version":"1.0.0","scripts":{"dev":"node server.js"}}' + "`n"
+            'server.js'    = $serverJs
+        }
+        $ids = Invoke-Seed $dev
+        $srv = Start-Server @{}
+        try {
+            # Find the dev command of the repo, and start it.
+            $list = Invoke-Http GET '/api/devservers'
+            if ($list.Status -ne 200) { throw "GET /api/devservers answered $($list.Status)" }
+            $entry = @((ConvertFrom-Json $list.Body).servers | Where-Object { $_.repoId -eq $ids.Repo }) | Select-Object -First 1
+            if (-not $entry) { throw "no dev command offered for the repo: $(Get-Tail $list.Body 3)" }
+            $body = '{"repoId":' + (ConvertTo-JsonString $entry.repoId) + ',"command":' + (ConvertTo-JsonString $entry.command) + '}'
+            $start = Invoke-Http POST "/api/devservers/$($entry.id)/start" $body
+            if ($start.Status -ne 200) { throw "start answered $($start.Status): $($start.Body)" }
+            # Wait until it is running and has a node process in its tree.
+            $deadline = (Get-Date).AddSeconds(60)
+            $tree = @()
+            $status = ''
+            while ((Get-Date) -lt $deadline) {
+                $tree = @(Get-Descendants $srv.Id)
+                $one = @((ConvertFrom-Json (Invoke-Http GET '/api/devservers').Body).servers | Where-Object { $_.id -eq $entry.id }) | Select-Object -First 1
+                $status = $one.status
+                if ($status -eq 'running' -and @($tree | Where-Object { $_.Name -ieq 'node.exe' }).Count -gt 0) { break }
+                if ($srv.Process.HasExited) { throw 'ygg exited by itself' }
+                Start-Sleep -Milliseconds 250
+            }
+            Add-OwnedTree $tree
+            if ($status -ne 'running') { throw "the dev server is '$status' after 60 s" }
+
+            Stop-Process -Id $srv.Id -Force  # like End task in Task Manager
+            $alive = @()
+            $deadline = (Get-Date).AddSeconds(10)
+            do {
+                Start-Sleep -Milliseconds 250
+                $alive = @($tree | Where-Object {
+                        $c = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$($_.ProcessId)" -ErrorAction SilentlyContinue
+                        $null -ne $c -and $c.CreationDate -eq $_.CreationDate
+                    })
+            } while ($alive.Count -gt 0 -and (Get-Date) -lt $deadline)
+            if ($alive.Count -gt 0) { throw "still running 10 s after ygg was killed: $(($alive | ForEach-Object { "$($_.Name) $($_.ProcessId)" }) -join ', ')" }
+            # Belt and braces: no interpreter whose command line names this
+            # repo folder is left. A developer's own node or python elsewhere
+            # is neither touched nor counted.
+            $stray = @(Get-ProcessTable | Where-Object {
+                    $_.Name -imatch '^(node|dotnet|python|pythonw|uvicorn)(\.exe)?$' -and $_.CommandLine -and $_.CommandLine.Contains($dev)
+                })
+            if ($stray.Count -gt 0) { throw "left over: $(($stray | ForEach-Object { "$($_.Name) $($_.ProcessId)" }) -join ', ')" }
+            "dev server started through the API ($($tree.Count) processes below ygg); ygg killed: none left within 10 s"
         } finally {
             if (-not $srv.Process.HasExited) { Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue }
         }
