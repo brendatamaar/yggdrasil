@@ -145,14 +145,14 @@ Goal: prompt → isolated work → verified → reviewed → shipped, across rep
 
 Goal: parallel worktrees can each run their own app without collisions, in every v1 ecosystem.
 
-- [ ] Toolchain modules for Go, .NET and Python (uv, Poetry, pip + venv), each with detection, fast verify chain, bootstrap and dev-server commands (BL-12–BL-14, WE-05, D9).
-- [ ] Python worktree bootstrap: `uv sync`, `poetry install`, or a new `.venv` + `pip install`; venv path resolution and clean-environment rules on Windows.
-- [ ] Dev servers per repo or worktree for all modules, port detection, live logs, cleanup via job objects (DV-01–DV-03, DV-05).
-- [ ] Terminal dock with single-use socket tokens (DV-04).
-- [ ] Bootstrap profiles for new worktrees (WE-01).
-- [ ] Port ranges per worktree (WE-02).
-- [ ] Optional per-worktree docker compose services (WE-03).
-- [ ] Widget: Running services (UI-03).
+- [x] Toolchain modules for Go, .NET and Python (uv, Poetry, pip + venv), each with detection, fast verify chain, bootstrap and dev-server commands (BL-12–BL-14, WE-05, D9).
+- [x] Python worktree bootstrap: `uv sync`, `poetry install`, or a new `.venv` + `pip install`; venv path resolution and clean-environment rules on Windows.
+- [x] Dev servers per repo or worktree for all modules, port detection, live logs, cleanup via job objects (DV-01–DV-03, DV-05).
+- [x] Terminal dock with single-use socket tokens (DV-04).
+- [x] Bootstrap profiles for new worktrees (WE-01).
+- [x] Port ranges per worktree (WE-02).
+- [x] Optional per-worktree docker compose services (WE-03).
+- [x] Widget: Running services (UI-03).
 
 **Exit:** two worktrees of the same frontend+backend pair run side by side with no port conflicts; killing Yggdrasil leaves no processes behind; a Python (uv) repo and a .NET repo in the demo project pass verification in fresh worktrees.
 

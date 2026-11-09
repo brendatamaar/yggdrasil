@@ -96,6 +96,19 @@ manager (listed even when absent).
 **Artifacts.** `dist/**`, `build/**`, `out/**`, prefixed with `Detection.Dir`
 when the manifest is in a sub folder (forward slashes, relative to the repo).
 
+## Worked examples: Go, .NET and Python
+
+The three Phase 5 modules follow the same shape as Node; what differs:
+
+- **Go** (`golang`): detected by `go.mod`. Verify is `go vet ./...` then `go build ./...` (tests run only with the full-tests opt-in); bootstrap is `go mod download`; the dev server is `go run .` (no port injection, so a program that ignores `PORT` can collide and the UI warns).
+- **.NET** (`dotnet`): detected by a solution or project file. Bootstrap is `dotnet restore`, verify is `dotnet build --no-restore` (tests run only with the full-tests opt-in); the dev server is `dotnet run --project <target>`. A missing `dotnet` is a plain-language verification failure, not a crash.
+- **Python** (`python`): detected by `pyproject.toml` or `requirements.txt`; the installer is picked by files only. `uv.lock` or a `[tool.uv]` table means `uv sync` (`--frozen` with a lock file); a `[tool.poetry]` table means `poetry install` with `POETRY_VIRTUALENVS_IN_PROJECT=true`; otherwise `python -m venv .venv` then the venv's Python with `-m pip install -r requirements.txt`.
+
+Two rules for Python-style modules:
+
+- **`.venv/python` convention.** Commands name the interpreter as `python`; `internal/platform` resolves it to `.venv\Scripts\python.exe` on Windows and `.venv/bin/python` elsewhere. The clean environment drops `VIRTUAL_ENV`, `CONDA_PREFIX` and `PYTHONPATH`.
+- **`python-base` marker.** The command that creates the venv cannot use the venv's interpreter, which does not exist yet. A step whose argv starts with `python-base` runs the system Python (resolved by `platform.PythonBase`); use it only for creating the venv.
+
 ## Tests
 
 - Detection: positive and negative cases with `testing/fstest.MapFS` (manifests
