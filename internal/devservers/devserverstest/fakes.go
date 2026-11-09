@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"sync"
@@ -359,7 +360,7 @@ func (t *Templates) DevServer(_ context.Context, _ devservers.Target, command st
 	if !ok {
 		return nil, nil, apperr.New(apperr.Invalid, "That command is not offered for this repo.", nil)
 	}
-	return slices.Clone(c.Argv), c.Env, nil
+	return slices.Clone(c.Argv), maps.Clone(c.Env), nil
 }
 
 // Blocks is a fake devservers.BlockSource: the same block per worktree
