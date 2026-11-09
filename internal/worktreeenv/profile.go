@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	env "github.com/brendatamaar/yggdrasil/internal/core/worktreeenv"
@@ -17,19 +19,22 @@ import (
 //
 // The core decides which files are copied; this function observes the files,
 // runs the copies and writes the audit entry.
-func (s *Service) CopyProfile(ctx context.Context, w core.Worktree, trigger env.Trigger) error {
+//
+// It returns the core's result for every entry, in the order of the repo's
+// profile, and keeps them as the worktree's last result (LastProfile).
+func (s *Service) CopyProfile(ctx context.Context, w core.Worktree, trigger env.Trigger) ([]EntryResult, error) {
 	settings, err := s.c.Settings.RepoEnv(ctx, w.RepoID)
 	if err != nil {
-		return fmt.Errorf("load profile settings of repo %s: %w", w.RepoID, err)
+		return nil, fmt.Errorf("load profile settings of repo %s: %w", w.RepoID, err)
 	}
 	if len(settings.Profile) == 0 {
-		return nil
+		return nil, nil
 	}
 	var repoDir string
 	if trigger != env.TriggerAgentTask || settings.AgentCopy {
 		repoDir, err = s.c.RepoDir(ctx, w.RepoID)
 		if err != nil {
-			return fmt.Errorf("find repo %s: %w", w.RepoID, err)
+			return nil, fmt.Errorf("find repo %s: %w", w.RepoID, err)
 		}
 	}
 	job, cmds := env.Profile(env.JobIdle{}, env.CopyRequested{
@@ -37,7 +42,7 @@ func (s *Service) CopyProfile(ctx context.Context, w core.Worktree, trigger env.
 	})
 	for len(cmds) > 0 {
 		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("copy profile files: %w", err)
+			return nil, fmt.Errorf("copy profile files: %w", err)
 		}
 		c := cmds[0]
 		cmds = cmds[1:]
@@ -57,7 +62,7 @@ func (s *Service) CopyProfile(ctx context.Context, w core.Worktree, trigger env.
 			}
 		case env.ProfileAudit:
 			if err := s.auditProfile(ctx, v); err != nil {
-				return err
+				return nil, err
 			}
 		case env.ProfilePublish:
 			if s.c.OnProfileDone != nil {
@@ -70,10 +75,42 @@ func (s *Service) CopyProfile(ctx context.Context, w core.Worktree, trigger env.
 			cmds = append(cmds, next...)
 		}
 	}
-	if _, ok := job.(env.JobDone); !ok {
-		return errors.New("worktreeenv: internal error: profile copy did not finish")
+	done, ok := job.(env.JobDone)
+	if !ok {
+		return nil, errors.New("worktreeenv: internal error: profile copy did not finish")
 	}
-	return nil
+	out := make([]EntryResult, 0, len(settings.Profile))
+	for _, p := range settings.Profile {
+		if r, ok := done.Results[p]; ok {
+			out = append(out, EntryResult{Entry: p, Result: r})
+		}
+	}
+	s.mu.Lock()
+	s.lastProfile[w.ID] = LastProfile{Results: slices.Clone(out), At: s.c.Now().UTC()}
+	s.mu.Unlock()
+	return out, nil
+}
+
+// EntryResult is the core's result for one profile entry.
+type EntryResult struct {
+	Entry  env.RelPath
+	Result env.Result // env.Copied, env.Skipped or env.CopyFailed
+}
+
+// LastProfile is the result of the latest profile copy of a worktree.
+type LastProfile struct {
+	Results []EntryResult
+	At      time.Time
+}
+
+// LastProfile returns the latest profile copy result of the worktree in this
+// process (it is not stored; false after a restart or before any copy).
+func (s *Service) LastProfile(w core.WorktreeID) (LastProfile, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	l, ok := s.lastProfile[w]
+	l.Results = slices.Clone(l.Results)
+	return l, ok
 }
 
 // copyFailure is the plain-language reason; it holds no paths.

@@ -24,6 +24,7 @@ type Store struct {
 	released []core.WorktreeID
 	envs     map[core.RepoID]worktreeenv.RepoEnv
 	repos    map[core.RepoID]bool
+	composes map[core.RepoID]worktreeenv.ComposeSettings
 	rng      *env.Range
 	audits   []core.AuditEntry
 }

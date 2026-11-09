@@ -222,7 +222,7 @@ func TestProfileCopyUserStarted(t *testing.T) {
 	if err := r.svc.SetProfile(ctx, "rep_1", []string{".env", `config\local.json`, "linked.env", "gone.env"}, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.svc.CopyProfile(ctx, wt("rep_1"), env.TriggerUserStarted); err != nil {
+	if _, err := r.svc.CopyProfile(ctx, wt("rep_1"), env.TriggerUserStarted); err != nil {
 		t.Fatal(err)
 	}
 	if got, ok := r.fs.Read("/wt/amber-fox", ".env"); !ok || string(got) != "TOKEN=fictional\r\n" {
@@ -267,7 +267,7 @@ func TestProfileCopyAgentTaskToggle(t *testing.T) {
 	if err := r.svc.SetProfile(ctx, "rep_1", []string{".env"}, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.svc.CopyProfile(ctx, wt("rep_1"), env.TriggerAgentTask); err != nil {
+	if _, err := r.svc.CopyProfile(ctx, wt("rep_1"), env.TriggerAgentTask); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := r.fs.Read("/wt/amber-fox", ".env"); ok {
@@ -283,7 +283,7 @@ func TestProfileCopyAgentTaskToggle(t *testing.T) {
 	if err := r.svc.SetProfile(ctx, "rep_1", []string{".env"}, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.svc.CopyProfile(ctx, wt("rep_1"), env.TriggerAgentTask); err != nil {
+	if _, err := r.svc.CopyProfile(ctx, wt("rep_1"), env.TriggerAgentTask); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := r.fs.Read("/wt/amber-fox", ".env"); !ok {
@@ -373,7 +373,7 @@ func TestRealDiskProfileEndToEnd(t *testing.T) {
 		t.Fatalf("block %v %v", b, err)
 	}
 	// second copy: file exists, nothing changes, nothing fails
-	if err := svc.CopyProfile(ctx, wtRow, env.TriggerUserConfirmed); err != nil {
+	if _, err := svc.CopyProfile(ctx, wtRow, env.TriggerUserConfirmed); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.Release(ctx, wtRow.ID); err != nil {

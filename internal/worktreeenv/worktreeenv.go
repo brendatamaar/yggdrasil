@@ -130,7 +130,8 @@ type Service struct {
 	mu sync.Mutex // one allocation at a time in this process; the store's unique indexes guard the rest
 	// reported holds the block conflicts already written to the audit log, so
 	// a persistent overlap is audited once per process and not on every call.
-	reported map[string]bool
+	reported    map[string]bool
+	lastProfile map[core.WorktreeID]LastProfile // guarded by mu
 }
 
 // New returns a Service.
@@ -142,7 +143,7 @@ func New(c Config) (*Service, error) {
 	if c.Logger == nil {
 		c.Logger = slog.Default()
 	}
-	return &Service{c: c, reported: map[string]bool{}}, nil
+	return &Service{c: c, reported: map[string]bool{}, lastProfile: map[core.WorktreeID]LastProfile{}}, nil
 }
 
 // Prepare gets a new worktree ready: it gives it a port block and copies the
@@ -154,7 +155,7 @@ func (s *Service) Prepare(ctx context.Context, w core.Worktree, trigger env.Trig
 	if _, err := s.Allocate(ctx, w.ID); err != nil {
 		errs = append(errs, err)
 	}
-	if err := s.CopyProfile(ctx, w, trigger); err != nil {
+	if _, err := s.CopyProfile(ctx, w, trigger); err != nil {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
