@@ -264,3 +264,18 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   map was extended and current test-engineer steered to capture these as failing
   regressions and hand off ownership before lead production edits. Safety PASS
   does not override this functional gate failure. Batch 1 remains unstarted.
+
+- Codex foundation test branch t3/phase6-foundation-tests (f52de6c) was reviewed
+  and merged at 4d5811b. It adds tests only, with seven controlled mutation
+  failures demonstrated and restored. The four reported defect groups initially
+  failed deliberately; lead production repairs now make all four pass. DB,
+  core/newrepos, core/proposals and architecture tests pass.
+- Repairs: Uncertain requires a real stage and matching init/publish resume;
+  persisted effects validate proof shape/kind/stage on insertion, settlement
+  and load, with a separate typed CommentReceipt; terminal effects cannot be
+  resettled; init file receipts bind to confirmed file-content hashes; remote
+  and origin receipts must agree; state/resume parsers reject foreign fields
+  even when explicitly zero or null. Full checks and new dual reviews pending.
+- Human separately authorized deleting /tmp/go-build2074738072 (abandoned
+  399 MiB build scratch); that exact directory was removed. This grants no
+  broader cache, file or branch deletion authorization.
