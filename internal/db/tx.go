@@ -96,6 +96,9 @@ func (tx *Tx) CreateTask(ctx context.Context, t core.Task) (core.Task, error) {
 		Title: t.Title, Prompt: t.Prompt, Scope: string(t.Scope), Mode: string(t.Mode), Agent: t.Agent,
 		Model: t.Model, Status: string(t.Status), SessionID: t.SessionID,
 		CreatedAt: fmtTime(t.CreatedAt), UpdatedAt: fmtTime(t.UpdatedAt), FinishedAt: fmtNullTime(t.FinishedAt),
+		SourceKind: string(sourceKindOf(t.Source)), SourceInstance: sourceField(t.Source, func(s core.TaskSource) string { return s.Instance }),
+		SourceProject: sourceField(t.Source, func(s core.TaskSource) string { return s.Project }),
+		SourceNumber:  int64(sourceNumberOf(t.Source)), DedupKey: sourceField(t.Source, func(s core.TaskSource) string { return s.DedupKey }),
 	})
 	if err != nil {
 		// Inserting a task can only fire the sub-task triggers, so a trigger

@@ -25,15 +25,17 @@ func TestMigration00005KeepsDataBothWays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.DownTo(ctx, 4); err != nil {
-		t.Fatalf("down to 00004: %v", err)
-	}
-
+	// The Store's queries read columns of the latest schema (repos.readiness),
+	// so seed through it first and then step the schema down to 00004: the
+	// down migrations keep ordinary projects, repos and tasks.
 	s := NewStore(d, nil)
 	p, r := seed(t, s)
 	task, err := s.CreateTask(ctx, newTask(p, r, nil))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := m.DownTo(ctx, 4); err != nil {
+		t.Fatalf("down to 00004: %v", err)
 	}
 	tid, rid := string(task.ID), string(r.ID)
 	must(`INSERT INTO worktrees (id, repo_id, task_id, name, path, branch, status, created_at, base_commit)

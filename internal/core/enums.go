@@ -70,6 +70,50 @@ const (
 	// ProposalRemoveWorktree removes a clean worktree after confirmation
 	// (RV-06).
 	ProposalRemoveWorktree ProposalKind = "remove_worktree"
+
+	// Phase 6 kinds. They are defined and parsed in the foundation, but no
+	// executor runs them yet: core/proposals.Step refuses to create them until
+	// the proposal-extension task enables each one (docs/design/phase-6-*.md).
+
+	// ProposalIgnoreEntries appends exact entries to the repo's own
+	// .gitignore (WS-09). It can name no other file.
+	ProposalIgnoreEntries ProposalKind = "ignore_entries"
+	// ProposalReviewComment posts one comment on a merge request, pinned to
+	// the head the review saw (AC-02).
+	ProposalReviewComment ProposalKind = "review_comment"
+	// ProposalInitRepo initializes a reserved new repo (NR-01).
+	ProposalInitRepo ProposalKind = "init_repo"
+	// ProposalPullFF fast-forwards the main checkout from its upstream, never
+	// merging (AC-04).
+	ProposalPullFF ProposalKind = "pull_ff"
+)
+
+// RepoReadiness says whether a repo row may be used by ordinary code.
+// A reserved repo is a new repo that is only named so far: it has no
+// directory yet and is invisible to agents, MCP, builds, terminals, dev
+// servers and every ordinary listing until initialization succeeds
+// (docs/design/phase-6-newrepos.md). Rows that existed before migration 00007
+// are ready.
+type RepoReadiness string
+
+const (
+	RepoReserved RepoReadiness = "reserved"
+	RepoReady    RepoReadiness = "ready"
+)
+
+// TaskSourceKind says where a task came from beyond the user typing it.
+type TaskSourceKind string
+
+const (
+	// SourceUser is an ordinary task (the stored default, shown as empty).
+	SourceUser TaskSourceKind = ""
+	// SourceIssue is a draft imported from a host issue (AC-05). Its Source
+	// carries the issue identity and the dedup key.
+	SourceIssue TaskSourceKind = "issue"
+	// SourceRepoSetup is the internal draft that owns a new repo's
+	// initialization proposal. It never starts an agent and is not listed on
+	// the board.
+	SourceRepoSetup TaskSourceKind = "repo_setup"
 )
 
 // ProposalStatus is the lifecycle of a proposal.
@@ -176,7 +220,8 @@ func (k ProposalKind) Validate() error {
 	switch k {
 	case ProposalCommit, ProposalPush, ProposalMergeRequest, ProposalInstall,
 		ProposalPublish, ProposalAgentFile, ProposalDeleteFiles, ProposalSubtasks,
-		ProposalMergeLocal, ProposalRemoveWorktree:
+		ProposalMergeLocal, ProposalRemoveWorktree,
+		ProposalIgnoreEntries, ProposalReviewComment, ProposalInitRepo, ProposalPullFF:
 		return nil
 	}
 	return fmt.Errorf("unknown proposal kind %q", string(k))
@@ -234,4 +279,22 @@ func (s ChangeSetStatus) Validate() error {
 		return nil
 	}
 	return fmt.Errorf("unknown change set status %q", string(s))
+}
+
+// Validate reports whether r is a known readiness.
+func (r RepoReadiness) Validate() error {
+	switch r {
+	case RepoReserved, RepoReady:
+		return nil
+	}
+	return fmt.Errorf("unknown repo readiness %q", string(r))
+}
+
+// Validate reports whether k is a known source kind.
+func (k TaskSourceKind) Validate() error {
+	switch k {
+	case SourceUser, SourceIssue, SourceRepoSetup:
+		return nil
+	}
+	return fmt.Errorf("unknown task source kind %q", string(k))
 }

@@ -40,8 +40,12 @@ type Repo struct {
 	DefaultBranch string    `json:"defaultBranch"`
 	// Trusted is set once the user has accepted the repo's own agent hooks
 	// and MCP servers (SF-09).
-	Trusted   bool      `json:"trusted"`
-	CreatedAt time.Time `json:"createdAt"`
+	Trusted bool `json:"trusted"`
+	// Readiness is empty or "ready" for an ordinary repo and "reserved" for a
+	// new repo that is not initialized yet. Ordinary queries never return a
+	// reserved repo; only the narrow setup path does.
+	Readiness RepoReadiness `json:"readiness,omitempty"`
+	CreatedAt time.Time     `json:"createdAt"`
 }
 
 // Validate checks the fields that must hold before a repo is stored. The
@@ -115,6 +119,10 @@ type Task struct {
 	Agent   string     `json:"agent"`
 	Model   string     `json:"model,omitempty"`
 	Status  TaskStatus `json:"status"`
+	// Source says where the task came from when it was not typed by the user:
+	// an imported issue or an internal repo-setup draft. Nil for an ordinary
+	// task.
+	Source *TaskSource `json:"source,omitempty"`
 	// SessionID is the agent's resumable session, when it reports one.
 	SessionID  string     `json:"sessionId,omitempty"`
 	CreatedAt  time.Time  `json:"createdAt"`
@@ -123,6 +131,18 @@ type Task struct {
 	// Version is the row version for expected-version updates. It is a
 	// storage detail and never leaves the server.
 	Version int64 `json:"-"`
+}
+
+// TaskSource is the provenance of a task that did not start as a user prompt.
+// Instance, Project and Number identify a host issue (SourceIssue) and are
+// empty for SourceRepoSetup. DedupKey is derived from them by the core, never
+// typed by a caller, and is unique per project.
+type TaskSource struct {
+	Kind     TaskSourceKind `json:"kind"`
+	Instance string         `json:"instance,omitempty"`
+	Project  string         `json:"project,omitempty"`
+	Number   int            `json:"number,omitempty"`
+	DedupKey string         `json:"dedupKey,omitempty"`
 }
 
 // Validate checks the fields that must hold before a task is stored.
@@ -145,7 +165,46 @@ func (t Task) Validate() error {
 	if len(t.RepoIDs) == 0 {
 		return fmt.Errorf("task %s has no repo in scope", t.ID)
 	}
+	if t.Source != nil {
+		if err := t.Source.Validate(); err != nil {
+			return fmt.Errorf("task %s: %w", t.ID, err)
+		}
+		// A repo-setup draft never leaves draft: no agent runs in it.
+		if t.Source.Kind == SourceRepoSetup && t.Status != TaskDraft {
+			return fmt.Errorf("task %s is a repo-setup draft and cannot leave the draft status", t.ID)
+		}
+	}
 	return nil
+}
+
+// Validate checks that the source has the fields its kind needs and none it
+// does not: an issue has an instance, project and positive number and a dedup
+// key; every other kind has none of them.
+func (s TaskSource) Validate() error {
+	if err := s.Kind.Validate(); err != nil {
+		return err
+	}
+	switch s.Kind {
+	case SourceIssue:
+		if s.Instance == "" || s.Project == "" || s.Number <= 0 || s.DedupKey == "" {
+			return errors.New("an imported issue needs its host, project, number and dedup key")
+		}
+		if want := IssueDedupKey(s.Instance, s.Project, s.Number); s.DedupKey != want {
+			return errors.New("the issue dedup key does not match its identity")
+		}
+	default:
+		if s.Instance != "" || s.Project != "" || s.Number != 0 || s.DedupKey != "" {
+			return fmt.Errorf("a %q task has no issue identity", string(s.Kind))
+		}
+	}
+	return nil
+}
+
+// IssueDedupKey is the stable identity of one host issue: "issue:<instance>/
+// <project>#<number>". Importing the same issue into a project twice finds the
+// first draft by this key.
+func IssueDedupKey(instance, project string, number int) string {
+	return fmt.Sprintf("issue:%s/%s#%d", instance, project, number)
 }
 
 // ChangeSet groups all proposals one task produced across repos (RV-03).

@@ -21,6 +21,17 @@ type (
 	// one terminal session (docs/design/devservers.md, terminal.md).
 	DevServerID       string
 	TerminalSessionID string
+	// RequestID is the idempotency key of one workspace-action submission
+	// (docs/design/phase-6-actions.md). The browser generates it once per
+	// submission; the server binds it to a digest of the request.
+	RequestID string
+	// NoticeID names one notification in the server history
+	// (docs/design/phase-6-notifications.md).
+	NoticeID string
+	// OperationID names one new-repo initialization or publish operation
+	// (docs/design/phase-6-newrepos.md). It is also the base of the
+	// non-secret marker put in a created remote's description.
+	OperationID string
 )
 
 // ErrInvalidID is returned for empty IDs or IDs with whitespace.
@@ -62,3 +73,12 @@ func (id DevServerID) Validate() error { return checkID("dev server id", string(
 
 // Validate reports whether the ID is well formed.
 func (id TerminalSessionID) Validate() error { return checkID("terminal session id", string(id)) }
+
+// Validate reports whether the ID is well formed.
+func (id RequestID) Validate() error { return checkID("request id", string(id)) }
+
+// Validate reports whether the ID is well formed.
+func (id NoticeID) Validate() error { return checkID("notice id", string(id)) }
+
+// Validate reports whether the ID is well formed.
+func (id OperationID) Validate() error { return checkID("operation id", string(id)) }

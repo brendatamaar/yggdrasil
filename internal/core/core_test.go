@@ -77,11 +77,13 @@ func TestEnumsAcceptEveryConstantAndRejectOthers(t *testing.T) {
 		"TaskScope":       {[]validator{ScopeRepo, ScopeProject}, []validator{TaskScope(""), TaskScope("all")}},
 		"TaskStatus":      {[]validator{TaskDraft, TaskQueued, TaskRunning, TaskNeedsYou, TaskReview, TaskDone, TaskFailed, TaskCancelled}, []validator{TaskStatus(""), TaskStatus("paused")}},
 		"WorktreeStatus":  {[]validator{WorktreeActive, WorktreeMerged, WorktreeRemoved}, []validator{WorktreeStatus(""), WorktreeStatus("gone")}},
-		"ProposalKind":    {[]validator{ProposalCommit, ProposalPush, ProposalMergeRequest, ProposalInstall, ProposalPublish, ProposalAgentFile, ProposalDeleteFiles, ProposalSubtasks}, []validator{ProposalKind(""), ProposalKind("rm_rf")}},
+		"ProposalKind":    {[]validator{ProposalCommit, ProposalPush, ProposalMergeRequest, ProposalInstall, ProposalPublish, ProposalAgentFile, ProposalDeleteFiles, ProposalSubtasks, ProposalIgnoreEntries, ProposalReviewComment, ProposalInitRepo, ProposalPullFF}, []validator{ProposalKind(""), ProposalKind("rm_rf")}},
 		"ProposalStatus":  {[]validator{ProposalPending, ProposalConfirmed, ProposalRejected, ProposalExecuted, ProposalFailed}, []validator{ProposalStatus(""), ProposalStatus("maybe")}},
 		"ChangeSetStatus": {[]validator{ChangeSetOpen, ChangeSetShipped, ChangeSetClosed}, []validator{ChangeSetStatus(""), ChangeSetStatus("lost")}},
 		"BuildStatus":     {[]validator{BuildQueued, BuildRunning, BuildSucceeded, BuildFailed, BuildCancelled, BuildInterrupted}, []validator{BuildStatus(""), BuildStatus("stuck"), BuildStatus("skipped")}},
 		"StepStatus":      {[]validator{StepQueued, StepRunning, StepSucceeded, StepFailed, StepCancelled, StepSkipped, StepInterrupted}, []validator{StepStatus(""), StepStatus("stuck")}},
+		"RepoReadiness":   {[]validator{RepoReserved, RepoReady}, []validator{RepoReadiness(""), RepoReadiness("half")}},
+		"TaskSourceKind":  {[]validator{SourceUser, SourceIssue, SourceRepoSetup}, []validator{TaskSourceKind("email")}},
 		"StepOutcome":     {[]validator{OutcomeSucceeded, OutcomeFailed, OutcomeStartFailed, OutcomeCancelled, OutcomeInterrupted}, []validator{StepOutcome(""), StepOutcome("bogus")}},
 	}
 	for name, g := range groups {
@@ -162,5 +164,36 @@ func TestRepoValidate(t *testing.T) {
 		if err := r.Validate(); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+func TestTaskSourceValidate(t *testing.T) {
+	good := TaskSource{Kind: SourceIssue, Instance: "git.acme.dev", Project: "acme/shop-api", Number: 4, DedupKey: IssueDedupKey("git.acme.dev", "acme/shop-api", 4)}
+	if err := good.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := (TaskSource{Kind: SourceRepoSetup}).Validate(); err != nil {
+		t.Error(err)
+	}
+	for name, s := range map[string]TaskSource{
+		"issue without key":     {Kind: SourceIssue, Instance: "h", Project: "p", Number: 1},
+		"issue wrong key":       {Kind: SourceIssue, Instance: "h", Project: "p", Number: 1, DedupKey: "issue:other#1"},
+		"issue number zero":     {Kind: SourceIssue, Instance: "h", Project: "p", DedupKey: "x"},
+		"setup with an issue":   {Kind: SourceRepoSetup, Instance: "h"},
+		"user with a dedup key": {Kind: SourceUser, DedupKey: "x"},
+		"unknown kind":          {Kind: "email"},
+	} {
+		if s.Validate() == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+	// A repo-setup draft never leaves draft.
+	task := Task{ID: "tsk_1", Mode: ModeAsk, Scope: ScopeRepo, Status: TaskQueued, RepoIDs: []RepoID{"rep_1"}, Source: &TaskSource{Kind: SourceRepoSetup}}
+	if task.Validate() == nil {
+		t.Error("a queued repo-setup task was accepted")
+	}
+	task.Status = TaskDraft
+	if err := task.Validate(); err != nil {
+		t.Errorf("a repo-setup draft was refused: %v", err)
 	}
 }

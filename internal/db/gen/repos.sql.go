@@ -58,14 +58,49 @@ func (q *Queries) CreateRepo(ctx context.Context, arg CreateRepoParams) error {
 	return err
 }
 
+const createReservedRepo = `-- name: CreateReservedRepo :exec
+
+INSERT INTO repos (id, project_id, name, path, rel_path, default_branch, trusted, readiness, created_at)
+VALUES (?, ?, ?, ?, ?, '', 0, 'reserved', ?)
+`
+
+type CreateReservedRepoParams struct {
+	ID        string
+	ProjectID string
+	Name      string
+	Path      string
+	RelPath   string
+	CreatedAt string
+}
+
+// Reserved repos (NR-01): the narrow setup path. A reservation only names a
+// tracked project's future child folder; it creates nothing on disk.
+func (q *Queries) CreateReservedRepo(ctx context.Context, arg CreateReservedRepoParams) error {
+	_, err := q.db.ExecContext(ctx, createReservedRepo,
+		arg.ID,
+		arg.ProjectID,
+		arg.Name,
+		arg.Path,
+		arg.RelPath,
+		arg.CreatedAt,
+	)
+	return err
+}
+
 const getRepo = `-- name: GetRepo :one
 
-SELECT id, project_id, name, path, default_branch, trusted, created_at, trust_hash, untracked_at, rel_path FROM repos WHERE id = ? AND untracked_at IS NULL
+SELECT id, project_id, name, path, default_branch, trusted, created_at, trust_hash, untracked_at, rel_path, readiness FROM repos WHERE id = ? AND untracked_at IS NULL AND readiness = 'ready'
 `
 
 // Untracked repos (untracked_at set) are invisible to GetRepo and
 // ListReposByProject, which the API lists and task creation use (SF-02).
 // GetRepoIncludingUntracked serves history views (builds of an untracked repo).
+//
+// RESERVED repos (readiness = 'reserved', a new repo that is only named) are
+// invisible to EVERY ordinary query below: agents, MCP, builds, terminals, dev
+// servers, status and the API all reach repos through these reads, so the
+// filter is here in SQL, not in the UI (docs/design/phase-6-newrepos.md). Only
+// the Reserved* queries of phase6.sql see them.
 func (q *Queries) GetRepo(ctx context.Context, id string) (Repo, error) {
 	row := q.db.QueryRowContext(ctx, getRepo, id)
 	var i Repo
@@ -80,12 +115,13 @@ func (q *Queries) GetRepo(ctx context.Context, id string) (Repo, error) {
 		&i.TrustHash,
 		&i.UntrackedAt,
 		&i.RelPath,
+		&i.Readiness,
 	)
 	return i, err
 }
 
 const getRepoIncludingUntracked = `-- name: GetRepoIncludingUntracked :one
-SELECT id, project_id, name, path, default_branch, trusted, created_at, trust_hash, untracked_at, rel_path FROM repos WHERE id = ?
+SELECT id, project_id, name, path, default_branch, trusted, created_at, trust_hash, untracked_at, rel_path, readiness FROM repos WHERE id = ? AND readiness = 'ready'
 `
 
 func (q *Queries) GetRepoIncludingUntracked(ctx context.Context, id string) (Repo, error) {
@@ -102,13 +138,37 @@ func (q *Queries) GetRepoIncludingUntracked(ctx context.Context, id string) (Rep
 		&i.TrustHash,
 		&i.UntrackedAt,
 		&i.RelPath,
+		&i.Readiness,
+	)
+	return i, err
+}
+
+const getReservedRepo = `-- name: GetReservedRepo :one
+SELECT id, project_id, name, path, default_branch, trusted, created_at, trust_hash, untracked_at, rel_path, readiness FROM repos WHERE id = ? AND readiness = 'reserved' AND untracked_at IS NULL
+`
+
+func (q *Queries) GetReservedRepo(ctx context.Context, id string) (Repo, error) {
+	row := q.db.QueryRowContext(ctx, getReservedRepo, id)
+	var i Repo
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Path,
+		&i.DefaultBranch,
+		&i.Trusted,
+		&i.CreatedAt,
+		&i.TrustHash,
+		&i.UntrackedAt,
+		&i.RelPath,
+		&i.Readiness,
 	)
 	return i, err
 }
 
 const listAllRepos = `-- name: ListAllRepos :many
 
-SELECT id, project_id, name, path, default_branch, trusted, created_at, trust_hash, untracked_at, rel_path FROM repos ORDER BY id
+SELECT id, project_id, name, path, default_branch, trusted, created_at, trust_hash, untracked_at, rel_path, readiness FROM repos WHERE readiness = 'ready' ORDER BY id
 `
 
 // Workspace loading and decisions of the repo-tracking step. They see
@@ -133,6 +193,7 @@ func (q *Queries) ListAllRepos(ctx context.Context) ([]Repo, error) {
 			&i.TrustHash,
 			&i.UntrackedAt,
 			&i.RelPath,
+			&i.Readiness,
 		); err != nil {
 			return nil, err
 		}
@@ -211,7 +272,7 @@ func (q *Queries) ListBusyTaskRepos(ctx context.Context) ([]string, error) {
 }
 
 const listReposByProject = `-- name: ListReposByProject :many
-SELECT id, project_id, name, path, default_branch, trusted, created_at, trust_hash, untracked_at, rel_path FROM repos WHERE project_id = ? AND untracked_at IS NULL ORDER BY name
+SELECT id, project_id, name, path, default_branch, trusted, created_at, trust_hash, untracked_at, rel_path, readiness FROM repos WHERE project_id = ? AND untracked_at IS NULL AND readiness = 'ready' ORDER BY name
 `
 
 func (q *Queries) ListReposByProject(ctx context.Context, projectID string) ([]Repo, error) {
@@ -234,6 +295,7 @@ func (q *Queries) ListReposByProject(ctx context.Context, projectID string) ([]R
 			&i.TrustHash,
 			&i.UntrackedAt,
 			&i.RelPath,
+			&i.Readiness,
 		); err != nil {
 			return nil, err
 		}
@@ -248,8 +310,65 @@ func (q *Queries) ListReposByProject(ctx context.Context, projectID string) ([]R
 	return items, nil
 }
 
+const listReservedRepos = `-- name: ListReservedRepos :many
+SELECT id, project_id, name, path, default_branch, trusted, created_at, trust_hash, untracked_at, rel_path, readiness FROM repos WHERE readiness = 'reserved' AND untracked_at IS NULL ORDER BY id
+`
+
+func (q *Queries) ListReservedRepos(ctx context.Context) ([]Repo, error) {
+	rows, err := q.db.QueryContext(ctx, listReservedRepos)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Repo{}
+	for rows.Next() {
+		var i Repo
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Name,
+			&i.Path,
+			&i.DefaultBranch,
+			&i.Trusted,
+			&i.CreatedAt,
+			&i.TrustHash,
+			&i.UntrackedAt,
+			&i.RelPath,
+			&i.Readiness,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markRepoReady = `-- name: MarkRepoReady :execrows
+UPDATE repos SET readiness = 'ready', default_branch = ? WHERE id = ? AND readiness = 'reserved' AND untracked_at IS NULL
+`
+
+type MarkRepoReadyParams struct {
+	DefaultBranch string
+	ID            string
+}
+
+// A reserved repo becomes ready exactly once, from the finalize stage.
+func (q *Queries) MarkRepoReady(ctx context.Context, arg MarkRepoReadyParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markRepoReady, arg.DefaultBranch, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const setRepoTrusted = `-- name: SetRepoTrusted :execrows
-UPDATE repos SET trusted = ? WHERE id = ? AND untracked_at IS NULL
+UPDATE repos SET trusted = ? WHERE id = ? AND untracked_at IS NULL AND readiness = 'ready'
 `
 
 type SetRepoTrustedParams struct {

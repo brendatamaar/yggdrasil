@@ -14,7 +14,8 @@ import (
 // wsTopic is a WebSocket subscription topic, a closed set (tasksTopic,
 // taskTopic, reposTopic, repoTopic, buildsTopic, buildTopic, hostsTopic,
 // proposalsTopic, boardTopic, verificationsTopic, changeSetsTopic,
-// devserversTopic, devserverTopic, worktreeEnvTopic).
+// devserversTopic, devserverTopic, worktreeEnvTopic, noticesTopic, actionsTopic,
+// newReposTopic).
 // Outside data becomes a wsTopic only through parseTopic, so a value is
 // always valid.
 
@@ -50,6 +51,19 @@ type boardTopic struct{} // a task moved between board columns, or maxAgents cha
 type verificationsTopic struct{} // a verification of any task changed state
 
 type changeSetsTopic struct{} // a change set or the review notes of a task changed
+
+type noticesTopic struct{} // a notification was committed (history invalidation)
+
+type actionsTopic struct{} // a workspace action request changed state
+
+type newReposTopic struct{} // a new-repo operation changed state or stage
+
+func (noticesTopic) isTopic()        {}
+func (actionsTopic) isTopic()        {}
+func (newReposTopic) isTopic()       {}
+func (noticesTopic) String() string  { return TopicNotices }
+func (actionsTopic) String() string  { return TopicActions }
+func (newReposTopic) String() string { return TopicNewRepos }
 
 func (verificationsTopic) isTopic() {}
 func (changeSetsTopic) isTopic()    {}
@@ -89,7 +103,7 @@ func (t buildTopic) String() string {
 
 // parseTopic accepts the fixed names "tasks", "repos", "builds", "hosts",
 // "proposals", "board", "verifications", "changesets", "devservers" and
-// "worktreeenv", and "task:<id>", "repo:<id>", "build:<id>" and
+// "worktreeenv", "notices", "actions" and "newrepos", and "task:<id>", "repo:<id>", "build:<id>" and
 // "devserver:<id>" with a valid ID.
 func parseTopic(s string) (wsTopic, error) {
 	switch s {
@@ -113,6 +127,12 @@ func parseTopic(s string) (wsTopic, error) {
 		return devserversTopic{}, nil
 	case TopicWorktreeEnv:
 		return worktreeEnvTopic{}, nil
+	case TopicNotices:
+		return noticesTopic{}, nil
+	case TopicActions:
+		return actionsTopic{}, nil
+	case TopicNewRepos:
+		return newReposTopic{}, nil
 	}
 	if id, ok := strings.CutPrefix(s, TopicTaskPrefix); ok {
 		tid := core.TaskID(id)

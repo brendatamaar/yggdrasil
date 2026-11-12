@@ -84,6 +84,8 @@ func canonical(a Action) string {
 		c.s(v.Title)
 	case RemoveWorktree:
 		c.s(string(v.Worktree))
+	default:
+		canonicalPhase6(&c, a)
 	}
 	return c.b.String()
 }
@@ -174,7 +176,8 @@ func Describe(a Action) []Line {
 		add("Only a worktree Yggdrasil created, with no uncommitted changes and no task or build running in it, can be removed. The branch is kept.")
 		add("If something is using files in the folder, nothing is removed and you can retry after closing it.")
 	default:
-		return nil
+		lines, _ := describePhase6(a)
+		return lines
 	}
 	return out
 }

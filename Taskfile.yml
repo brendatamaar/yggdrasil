@@ -83,10 +83,15 @@ tasks:
         vars: { SCRIPT: test }
 
   test:e2e:
-    desc: UI end-to-end tests (Playwright)
+    desc: UI end-to-end tests (Playwright, against the built bin/ygg in a throwaway data folder)
+    # Browsers are installed once with `pnpm -C web exec playwright install chromium`
+    # (a download; CI does it in its own step). A missing browser fails the
+    # run: it is never counted as a pass.
     cmds:
-      - echo "no end-to-end tests yet (Playwright arrives with the first UI flows)"
-    silent: true
+      - task: build
+      - |
+        # A fresh data folder per run; the OS clears its temp folder.
+        YGG_E2E_DATA_DIR="$(mktemp -d)" pnpm -C web run test:e2e
 
   lint:
     desc: golangci-lint and ESLint

@@ -62,6 +62,7 @@ packages:
       - worktreeenv.go
       - terminal.go
       - terminal_ws.go
+      - phase6.go
     frontmatter: |
       import type * as agents from "./agents.gen";
       import type * as core from "./core.gen";
@@ -79,6 +80,9 @@ packages:
       core.WorktreeStatus: core.WorktreeStatus
       core.ProposalID: core.ProposalID
       core.ChangeSetID: core.ChangeSetID
+      core.RequestID: core.RequestID
+      core.NoticeID: core.NoticeID
+      core.OperationID: core.OperationID
       core.ProposalKind: core.ProposalKind
       core.ProposalStatus: core.ProposalStatus
       core.BuildStatus: core.BuildStatus

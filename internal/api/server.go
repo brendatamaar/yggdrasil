@@ -78,6 +78,12 @@ type Deps struct {
 	// bound after New with SetPhase5Services; a nil service answers 501.
 	Phase5 Phase5Services
 
+	// Phase6 holds the services of the Phase 6 areas (workspace actions, host
+	// context, drafts, noise, notifications, standup, new repos). Like Phase5
+	// they publish to the hub, so they are usually bound after New with
+	// SetPhase6Services; a nil service answers 501.
+	Phase6 Phase6Services
+
 	// Clock and IDs are the shell's time and randomness for handlers that
 	// make core inputs (docs/AGENTS.md 5.11). Defaults: time.Now().UTC() and
 	// db.NewID.
@@ -118,6 +124,7 @@ type Server struct {
 
 	p4       atomic.Pointer[Phase4Services]
 	p5       atomic.Pointer[Phase5Services]
+	p6       atomic.Pointer[Phase6Services]
 	composer ComposerService
 	mcp      MCPService
 	clock    func() time.Time
@@ -180,6 +187,7 @@ func New(d Deps) (*Server, error) {
 	s.tasks, s.writeModes = d.Tasks, d.WriteModes
 	s.p4.Store(&Phase4Services{Verification: d.Verification, Review: d.Review, ChangeSets: d.ChangeSets, Landing: d.Landing, WorktreeDiff: d.WorktreeDiff})
 	s.p5.Store(&d.Phase5)
+	s.p6.Store(&d.Phase6)
 	s.clock, s.ids = d.Clock, d.IDs
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }

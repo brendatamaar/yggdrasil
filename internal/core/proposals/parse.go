@@ -9,20 +9,15 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/core"
 )
 
-// supported reports whether a kind can be created in Phase 3. Publish
-// (Phase 6) and subtasks (Phase 7) are refused so that no proposal that cannot
-// run is ever created.
+// supported reports whether a kind can be created: it must be Enabled. The
+// Phase 6 kinds (publish, ignore, review comment, init, pull) are defined but
+// not enabled until their executors exist, and subtasks (Phase 7) are refused,
+// so that no proposal that cannot run is ever created.
 func supported(k core.ProposalKind) error {
-	if k.Validate() != nil {
+	if k.Validate() != nil || !Enabled(k) {
 		return fmt.Errorf("%w: %q", ErrUnsupportedKind, string(k))
 	}
-	switch k {
-	case core.ProposalCommit, core.ProposalPush, core.ProposalMergeRequest,
-		core.ProposalAgentFile, core.ProposalDeleteFiles, core.ProposalInstall,
-		core.ProposalMergeLocal, core.ProposalRemoveWorktree:
-		return nil
-	}
-	return fmt.Errorf("%w: %q", ErrUnsupportedKind, string(k))
+	return nil
 }
 
 // The wire shapes of the arguments and of the stored payload. They are the
@@ -401,6 +396,9 @@ func RowOf(a Action) (core.ProposalKind, []byte) {
 	case RemoveWorktree:
 		v = removeWorktreeArgs{string(x.Worktree)}
 	default:
+		if k, b, ok := phase6RowOf(a); ok {
+			return k, b
+		}
 		return "", nil
 	}
 	b, err := json.Marshal(v)

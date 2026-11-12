@@ -175,7 +175,7 @@ func repoFrom(r gen.Repo) (core.Repo, error) {
 	at, err := parseTime(r.CreatedAt)
 	return core.Repo{
 		ID: core.RepoID(r.ID), ProjectID: core.ProjectID(r.ProjectID), Name: r.Name, Path: r.Path,
-		DefaultBranch: r.DefaultBranch, Trusted: r.Trusted != 0, CreatedAt: at,
+		DefaultBranch: r.DefaultBranch, Trusted: r.Trusted != 0, Readiness: core.RepoReadiness(r.Readiness), CreatedAt: at,
 	}, err
 }
 
@@ -253,7 +253,21 @@ func (s *Store) taskFrom(ctx context.Context, q *gen.Queries, r gen.Task) (core.
 		Title: r.Title, Prompt: r.Prompt, Scope: core.TaskScope(r.Scope), RepoIDs: ids,
 		Mode: core.TaskMode(r.Mode), Agent: r.Agent, Model: r.Model, Status: core.TaskStatus(r.Status),
 		SessionID: r.SessionID, CreatedAt: created, UpdatedAt: upd, FinishedAt: fin, Version: r.Version,
+		Source: taskSourceOf(r),
 	}, nil
+}
+
+// taskSourceOf rebuilds the provenance of a stored task. An ordinary task has
+// none (nil). The row is not trusted blindly: Task.Validate re-checks the
+// pieces and the dedup key when the task is next written.
+func taskSourceOf(r gen.Task) *core.TaskSource {
+	if r.SourceKind == "" {
+		return nil
+	}
+	return &core.TaskSource{
+		Kind: core.TaskSourceKind(r.SourceKind), Instance: r.SourceInstance, Project: r.SourceProject,
+		Number: int(r.SourceNumber), DedupKey: r.DedupKey,
+	}
 }
 
 // GetTask returns one task with its repo scope.
@@ -625,4 +639,25 @@ func (s *Store) ListAudit(ctx context.Context, subject string, limit int) ([]cor
 		out = append(out, e)
 	}
 	return out, nil
+}
+
+func sourceKindOf(s *core.TaskSource) core.TaskSourceKind {
+	if s == nil {
+		return core.SourceUser
+	}
+	return s.Kind
+}
+
+func sourceField(s *core.TaskSource, f func(core.TaskSource) string) string {
+	if s == nil {
+		return ""
+	}
+	return f(*s)
+}
+
+func sourceNumberOf(s *core.TaskSource) int {
+	if s == nil {
+		return 0
+	}
+	return s.Number
 }
