@@ -45,3 +45,23 @@ Run all five required checks after repairs; use low concurrency for this constra
 machine and report disk/build failures separately. Show each new test can fail with
 a temporary controlled mutation/negative control, restore all mutations, commit only
 tests/helpers/fixtures. No real repos, hosts, model calls or agent CLIs.
+
+## Additional functional recheck regressions
+
+The next recheck found three additional Must-fix boundary defects. Extend the map:
+
+- Uncertain with nil Stage/ResumeNone must fail both validators and state storage;
+  every accepted uncertain state must be decodable (round-trip invariant).
+- EffectRecord is another receipt boundary: validate on insert, settle and load.
+  Reject succeeded remote proof `{}`, metadata/body kind disagreement, and
+  stage/receipt disagreement. Comment posting needs its own typed receipt, not
+  a pretend new-repo remote proof.
+- Receipt prefixes must be internally consistent and bound to the immutable spec:
+  file hashes equal the confirmed README/ignore content; remote and origin URLs
+  agree and name the confirmed destination. Reject contradictory evidence, not
+  merely missing or reordered variants.
+- Reject known foreign state/resume JSON fields, including explicit zero values.
+
+The current test-engineer was steered with these findings and asked to finish
+with failing production regressions if needed, then release package ownership.
+Lead production repairs follow that handoff; no parallel writes to the package.

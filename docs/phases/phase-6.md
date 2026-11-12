@@ -256,3 +256,11 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   These are lead-owned shared-contract repairs, not permission for downstream
   agents to change frozen DB contracts. Apply after the current DB test ownership
   handoff, with regression coverage and required checks.
+
+- Functional foundation recheck: FAIL. Additional Must-fix findings are an
+  Uncertain state accepted for persistence but rejected on decode; EffectRecord
+  insert/settle/load bypassing receipt validation; and receipt evidence not
+  agreeing with immutable file contents or the preceding remote URL. The test
+  map was extended and current test-engineer steered to capture these as failing
+  regressions and hand off ownership before lead production edits. Safety PASS
+  does not override this functional gate failure. Batch 1 remains unstarted.
