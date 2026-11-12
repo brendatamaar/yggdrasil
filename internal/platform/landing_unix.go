@@ -45,6 +45,10 @@ func entryInfo(p string) (isLink, isDir bool, err error) {
 }
 
 // prepStagedDir makes a folder readable and writable so its content can go.
-func prepStagedDir(p string) { _ = os.Chmod(p, 0o700) }
+func prepStagedDir(p string) {
+	// G302's file mode recommendation does not apply to directories: the owner
+	// needs execute permission to traverse the confirmed, guarded staging tree.
+	_ = os.Chmod(p, 0o700) //nolint:gosec // owner-only directory access, not a file
+}
 
 func deleteEntry(p string, _ bool) error { return os.Remove(p) }
