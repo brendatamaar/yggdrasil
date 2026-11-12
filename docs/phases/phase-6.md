@@ -1,6 +1,6 @@
 # Phase 6 — Workspace actions, notifications and new repos
 
-Status: **plan and F0 designs approved; serial foundations in progress**.
+Status: **F0–F3 foundations complete and verified; Batch 1 ready to dispatch**.
 Target: `v0.7.0`. Baseline inspected: `main` at `2f96629`, Phase 5 tagged `v0.6.0`.
 This document does not authorize a tag, push, branch/file deletion, live host mutation or real agent CLI run.
 
@@ -160,7 +160,7 @@ Automated fixtures do not establish real browser permission/OS notification beha
 
 Stop after presenting this plan. No agents have been spawned and no foundations implemented. Plan approval enables F0 design work, not unresolved safety exceptions; F0's own design approval gate precedes contract implementation. Subsequent brief dispatch must cite the committed main foundations SHA. At close report requirement IDs, exit evidence, unmet checks and Windows checklist results; propose `v0.7.0` and stop. Do not tag, push or begin Phase 7 without the human's instruction.
 
-- Plan prepared against `2f96629`; foundation SHA: pending.
+- Plan prepared against `2f96629`; final foundation source SHA: `8b0da11`; verified main snapshot: `3341505`.
 - Design approvals, batch start/merge SHAs, review results, test maps, decisions/deviations and any in-flight agent state: record here during execution.
 
 - Plan validation: `git diff --check` passed. Required `task generate`, `task lint`, `task typecheck`, `task test`, and `task test:web` could not run because `task` is not installed in this environment. No implementation behavior is claimed verified.
@@ -328,3 +328,14 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   required lead-owned follow-up before Batch A, with dispatch still disabled.
   Final post-cleanup five-command verification is running; no Batch 1 dispatch
   until its results are all zero and generated output is unchanged.
+
+- Foundation gate CLOSED: all five actual Task commands passed on main at
+  3341505, with source through 8b0da11 and no generated-file changes. Results
+  are recorded in /tmp/ygg-phase6-freeze-check-results.json: generate, lint,
+  typecheck, test and test:web each exit 0 (528 frontend tests). Both final
+  independent reviews PASS with no Blocking/Must-fix findings. F0–F3 are done.
+- Batch 1 dispatch authorized now: XH, XT and XR are independent, behavior-
+  preserving extraction assignments under the approved designs. Their exact
+  batch-start/foundation dispatch commit is the commit containing this entry;
+  each brief receives its resolved SHA. No Phase 6 feature checkbox is complete
+  yet. Agent/Model immutable replay repair remains required before Batch A.

@@ -1,7 +1,7 @@
 # Phase 6 Batch 1 dispatch briefs
 
-Status: prepared; **not dispatched**. Dispatch only after foundation regression
-integration, all five required checks and both review gates pass. The lead adds
+Status: **foundation gate passed; ready for dispatch**. Foundation regressions
+are integrated, all five required checks and both review gates pass. The lead adds
 the actual committed foundation SHA and batch-start SHA to each invocation.
 
 The human approved Codex for all remaining implementation and test assignments.
