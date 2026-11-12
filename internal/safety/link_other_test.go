@@ -12,10 +12,16 @@ func denyRead(t *testing.T, file string) {
 	if os.Geteuid() == 0 {
 		t.Skip("root reads every file")
 	}
+	info, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Restore the exact original mode: a directory is 0o755, not 0o600.
+	mode := info.Mode().Perm()
 	if err := os.Chmod(file, 0); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(file, 0o600) })
+	t.Cleanup(func() { _ = os.Chmod(file, mode) })
 }
 
 func mkLink(t *testing.T, link, target string) {

@@ -81,6 +81,7 @@ func TestCodeModeEndToEnd_ProposalCommitConfirmedThroughTheAPI(t *testing.T) {
 	const file = "src/order list/orders.txt" // a folder with a space, CRLF content
 	env := searchtest.GitEnv(t)
 	repoDir := searchtest.InitRepo(t, env, map[string]string{file: "line one\r\nline two\r\n", "README.md": "# shop-api\n"})
+	setRepoAuthor(t, env, repoDir)
 	var out bytes.Buffer
 	if err := seed(context.Background(), &out, cfg, repoDir, ""); err != nil {
 		t.Fatal(err)

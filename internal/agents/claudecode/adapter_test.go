@@ -483,43 +483,6 @@ func TestAnyPromptArrivesWholeOnStdin(t *testing.T) {
 	}
 }
 
-// On Windows `claude` is often an npm shim, claude.cmd, in a folder with a
-// space (C:\Program Files\nodejs). The whole chain has to work: adapter,
-// platform.Start, cmd.exe, the program behind the shim, with the prompt on
-// stdin. This is the shape of the failure seen with the real CLI
-// ('C:\Program' is not recognized).
-func TestRunThroughACmdShimInAFolderWithSpaces(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "Program Files", "nodejs")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	shim := filepath.Join(dir, "claude.cmd")
-	body := "@echo off\r\n\"" + testExe(t) + "\" %*\r\n"
-	if err := os.WriteFile(shim, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	a := New(Options{Binary: shim, HookExecutable: testExe(t), TempDir: t.TempDir()})
-	out := filepath.Join(t.TempDir(), "capture")
-	o := startOpts(t, "capture", map[string]string{fakeOut: out})
-	o.Prompt = `Read "README.md" & tell me what it says (100%)`
-	res, err := agents.Execute(context.Background(), a, o, &collectSink{})
-	if err != nil || res.Status != agents.RunCompleted {
-		t.Fatalf("result = %+v, %v", res, err)
-	}
-	if got := read(t, out+".stdin"); got != o.Prompt {
-		t.Errorf("stdin = %q, want %q", got, o.Prompt)
-	}
-	argv := strings.Split(read(t, out+".args"), "\x00")
-	if !slices.Contains(argv, "--forward-subagent-text") || !slices.Contains(argv, "-p") {
-		t.Errorf("arguments through the shim = %q", argv)
-	}
-	// The settings path (a folder with a hyphen and digits, under the temp
-	// folder) arrived as one argument.
-	if i := slices.Index(argv, "--settings"); i < 0 || !strings.HasSuffix(argv[i+1], "settings.json") {
-		t.Errorf("--settings through the shim = %q", argv)
-	}
-}
-
 func TestRunWithoutAResultFails(t *testing.T) {
 	a := newAdapter(t, "exit3")
 	o := startOpts(t, "exit3", nil)

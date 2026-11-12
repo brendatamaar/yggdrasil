@@ -44,6 +44,7 @@ func newLandingRig(t *testing.T) *landingRig {
 	a, base := startFullApp(t, cfg)
 	env := searchtest.GitEnv(t)
 	repoDir := searchtest.InitRepo(t, env, map[string]string{"README.md": "# shop-api\n"})
+	setRepoAuthor(t, env, repoDir)
 	var out bytes.Buffer
 	if err := seed(context.Background(), &out, cfg, repoDir, ""); err != nil {
 		t.Fatal(err)
