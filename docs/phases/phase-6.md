@@ -1,6 +1,6 @@
 # Phase 6 — Workspace actions, notifications and new repos
 
-Status: **F0–F3 foundations complete and verified; Batch 1 ready to dispatch**.
+Status: **F0–F3 foundations complete and verified; Batch 1 extraction in progress**.
 Target: `v0.7.0`. Baseline inspected: `main` at `2f96629`, Phase 5 tagged `v0.6.0`.
 This document does not authorize a tag, push, branch/file deletion, live host mutation or real agent CLI run.
 
@@ -339,3 +339,16 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   batch-start/foundation dispatch commit is the commit containing this entry;
   each brief receives its resolved SHA. No Phase 6 feature checkbox is complete
   yet. Agent/Model immutable replay repair remains required before Batch A.
+
+- Batch 1 started from 1d33a88. All three Codex assignments were interrupted
+  by the provider usage limit before committing production extraction changes.
+  Preserved branches: XH t3/extract-host-context (one host characterization
+  test file); XT t3/extract-task-routing-choices (one submission test file);
+  XR t3/extract-repo-status-decisions (one repo facts characterization file).
+  No Batch 1 branch has been merged and no feature acceptance is claimed.
+- Human instructed continuation on November 13. Resume the same three isolated
+  implementation threads/worktrees with their existing briefs and ownership.
+  Re-establish characterization results before production edits; serialize
+  scoped Go compilations as well as final five-command validation to avoid
+  competing SQLite builds. Main remains at the verified foundation baseline
+  plus documentation only. No provider/model switch or scope change.
