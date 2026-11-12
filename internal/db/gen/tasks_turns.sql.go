@@ -40,7 +40,7 @@ func (q *Queries) GetLastTurn(ctx context.Context, taskID string) (TaskTurn, err
 }
 
 const getRepoTrust = `-- name: GetRepoTrust :one
-SELECT trusted, trust_hash FROM repos WHERE id = ?
+SELECT trusted, trust_hash FROM repos WHERE id = ? AND readiness = 'ready'
 `
 
 type GetRepoTrustRow struct {
@@ -180,7 +180,7 @@ func (q *Queries) ListLegacyLiveTasks(ctx context.Context) ([]ListLegacyLiveTask
 }
 
 const listLiveTasks = `-- name: ListLiveTasks :many
-SELECT id, project_id, parent_task_id, title, prompt, scope, mode, agent, model, status, session_id, created_at, updated_at, finished_at, version, current_turn, idle_outcome FROM tasks WHERE status IN ('queued', 'running') ORDER BY created_at, id
+SELECT id, project_id, parent_task_id, title, prompt, scope, mode, agent, model, status, session_id, created_at, updated_at, finished_at, version, current_turn, idle_outcome, source_kind, source_instance, source_project, source_number, dedup_key FROM tasks WHERE status IN ('queued', 'running') ORDER BY created_at, id
 `
 
 // Tasks with a turn waiting or in flight, oldest first.
@@ -211,6 +211,11 @@ func (q *Queries) ListLiveTasks(ctx context.Context) ([]Task, error) {
 			&i.Version,
 			&i.CurrentTurn,
 			&i.IdleOutcome,
+			&i.SourceKind,
+			&i.SourceInstance,
+			&i.SourceProject,
+			&i.SourceNumber,
+			&i.DedupKey,
 		); err != nil {
 			return nil, err
 		}
@@ -309,7 +314,7 @@ func (q *Queries) MaxTaskEventSeq(ctx context.Context, taskID string) (int64, er
 }
 
 const setRepoTrust = `-- name: SetRepoTrust :execrows
-UPDATE repos SET trusted = ?, trust_hash = ? WHERE id = ?
+UPDATE repos SET trusted = ?, trust_hash = ? WHERE id = ? AND readiness = 'ready'
 `
 
 type SetRepoTrustParams struct {

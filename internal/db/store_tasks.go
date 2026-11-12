@@ -236,6 +236,7 @@ func taskRowFrom(r gen.Task, repos []string) (core.Task, error) {
 		Title: r.Title, Prompt: r.Prompt, Scope: core.TaskScope(r.Scope), RepoIDs: ids,
 		Mode: core.TaskMode(r.Mode), Agent: r.Agent, Model: r.Model, Status: core.TaskStatus(r.Status),
 		SessionID: r.SessionID, CreatedAt: created, UpdatedAt: upd, FinishedAt: fin, Version: r.Version,
+		Source: taskSourceOf(r),
 	}, nil
 }
 

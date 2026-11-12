@@ -49,7 +49,7 @@ WHERE id = ? AND version = ? AND status IN ('queued', 'running') AND current_tur
 SELECT CAST(COALESCE(MAX(seq), 0) AS INTEGER) FROM task_events WHERE task_id = ?;
 
 -- name: SetRepoTrust :execrows
-UPDATE repos SET trusted = ?, trust_hash = ? WHERE id = ?;
+UPDATE repos SET trusted = ?, trust_hash = ? WHERE id = ? AND readiness = 'ready';
 
 -- name: GetRepoTrust :one
-SELECT trusted, trust_hash FROM repos WHERE id = ?;
+SELECT trusted, trust_hash FROM repos WHERE id = ? AND readiness = 'ready';

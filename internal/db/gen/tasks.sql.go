@@ -10,6 +10,29 @@ import (
 	"database/sql"
 )
 
+const addSetupTaskRepo = `-- name: AddSetupTaskRepo :execrows
+INSERT INTO task_repos (task_id, repo_id)
+SELECT ?1, r.id FROM repos r
+WHERE r.id = ?2 AND r.untracked_at IS NULL AND r.readiness = 'reserved'
+  AND r.project_id = (SELECT t.project_id FROM tasks t WHERE t.id = ?1 AND t.source_kind = 'repo_setup')
+`
+
+type AddSetupTaskRepoParams struct {
+	TaskID string
+	RepoID string
+}
+
+// The narrow setup path: only a RESERVED repo, only for a repo-setup draft of
+// the same project, inside the reservation transaction. Ordinary AddTaskRepo
+// never accepts a reserved repo.
+func (q *Queries) AddSetupTaskRepo(ctx context.Context, arg AddSetupTaskRepoParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, addSetupTaskRepo, arg.TaskID, arg.RepoID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const addTaskDependency = `-- name: AddTaskDependency :exec
 INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES (?, ?)
 `
@@ -27,7 +50,7 @@ func (q *Queries) AddTaskDependency(ctx context.Context, arg AddTaskDependencyPa
 const addTaskRepo = `-- name: AddTaskRepo :execrows
 INSERT INTO task_repos (task_id, repo_id)
 SELECT ?1, r.id FROM repos r
-WHERE r.id = ?2 AND r.untracked_at IS NULL
+WHERE r.id = ?2 AND r.untracked_at IS NULL AND r.readiness = 'ready'
   AND r.project_id = (SELECT t.project_id FROM tasks t WHERE t.id = ?1)
 `
 
@@ -36,9 +59,9 @@ type AddTaskRepoParams struct {
 	RepoID string
 }
 
-// A task only gets a repo that is still tracked and belongs to the task's
-// project; checked inside the write transaction (invariant 6). Zero rows
-// means the repo was untracked (or isn't the project's) meanwhile.
+// A task only gets a repo that is still tracked, READY and belongs to the
+// task's project; checked inside the write transaction (invariant 6). Zero
+// rows means the repo was untracked, is only reserved, or isn't the project's.
 func (q *Queries) AddTaskRepo(ctx context.Context, arg AddTaskRepoParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, addTaskRepo, arg.TaskID, arg.RepoID)
 	if err != nil {
@@ -60,25 +83,31 @@ func (q *Queries) CountTrackedProject(ctx context.Context, id string) (int64, er
 
 const createTask = `-- name: CreateTask :exec
 INSERT INTO tasks (id, project_id, parent_task_id, title, prompt, scope, mode, agent, model,
-                   status, session_id, created_at, updated_at, finished_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   status, session_id, created_at, updated_at, finished_at,
+                   source_kind, source_instance, source_project, source_number, dedup_key)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateTaskParams struct {
-	ID           string
-	ProjectID    string
-	ParentTaskID sql.NullString
-	Title        string
-	Prompt       string
-	Scope        string
-	Mode         string
-	Agent        string
-	Model        string
-	Status       string
-	SessionID    string
-	CreatedAt    string
-	UpdatedAt    string
-	FinishedAt   sql.NullString
+	ID             string
+	ProjectID      string
+	ParentTaskID   sql.NullString
+	Title          string
+	Prompt         string
+	Scope          string
+	Mode           string
+	Agent          string
+	Model          string
+	Status         string
+	SessionID      string
+	CreatedAt      string
+	UpdatedAt      string
+	FinishedAt     sql.NullString
+	SourceKind     string
+	SourceInstance string
+	SourceProject  string
+	SourceNumber   int64
+	DedupKey       string
 }
 
 func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) error {
@@ -97,12 +126,53 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) error {
 		arg.CreatedAt,
 		arg.UpdatedAt,
 		arg.FinishedAt,
+		arg.SourceKind,
+		arg.SourceInstance,
+		arg.SourceProject,
+		arg.SourceNumber,
+		arg.DedupKey,
 	)
 	return err
 }
 
+const getSetupTaskByRepo = `-- name: GetSetupTaskByRepo :one
+SELECT t.id, t.project_id, t.parent_task_id, t.title, t.prompt, t.scope, t.mode, t.agent, t.model, t.status, t.session_id, t.created_at, t.updated_at, t.finished_at, t.version, t.current_turn, t.idle_outcome, t.source_kind, t.source_instance, t.source_project, t.source_number, t.dedup_key FROM tasks t JOIN task_repos tr ON tr.task_id = t.id
+WHERE tr.repo_id = ? AND t.source_kind = 'repo_setup'
+`
+
+// The setup draft that owns a reserved repo.
+func (q *Queries) GetSetupTaskByRepo(ctx context.Context, repoID string) (Task, error) {
+	row := q.db.QueryRowContext(ctx, getSetupTaskByRepo, repoID)
+	var i Task
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ParentTaskID,
+		&i.Title,
+		&i.Prompt,
+		&i.Scope,
+		&i.Mode,
+		&i.Agent,
+		&i.Model,
+		&i.Status,
+		&i.SessionID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.Version,
+		&i.CurrentTurn,
+		&i.IdleOutcome,
+		&i.SourceKind,
+		&i.SourceInstance,
+		&i.SourceProject,
+		&i.SourceNumber,
+		&i.DedupKey,
+	)
+	return i, err
+}
+
 const getTask = `-- name: GetTask :one
-SELECT id, project_id, parent_task_id, title, prompt, scope, mode, agent, model, status, session_id, created_at, updated_at, finished_at, version, current_turn, idle_outcome FROM tasks WHERE id = ?
+SELECT id, project_id, parent_task_id, title, prompt, scope, mode, agent, model, status, session_id, created_at, updated_at, finished_at, version, current_turn, idle_outcome, source_kind, source_instance, source_project, source_number, dedup_key FROM tasks WHERE id = ?
 `
 
 func (q *Queries) GetTask(ctx context.Context, id string) (Task, error) {
@@ -126,12 +196,57 @@ func (q *Queries) GetTask(ctx context.Context, id string) (Task, error) {
 		&i.Version,
 		&i.CurrentTurn,
 		&i.IdleOutcome,
+		&i.SourceKind,
+		&i.SourceInstance,
+		&i.SourceProject,
+		&i.SourceNumber,
+		&i.DedupKey,
+	)
+	return i, err
+}
+
+const getTaskByDedupKey = `-- name: GetTaskByDedupKey :one
+SELECT id, project_id, parent_task_id, title, prompt, scope, mode, agent, model, status, session_id, created_at, updated_at, finished_at, version, current_turn, idle_outcome, source_kind, source_instance, source_project, source_number, dedup_key FROM tasks WHERE project_id = ? AND dedup_key = ?
+`
+
+type GetTaskByDedupKeyParams struct {
+	ProjectID string
+	DedupKey  string
+}
+
+// The first draft imported for an issue in this project, if any (AC-05 dedup).
+func (q *Queries) GetTaskByDedupKey(ctx context.Context, arg GetTaskByDedupKeyParams) (Task, error) {
+	row := q.db.QueryRowContext(ctx, getTaskByDedupKey, arg.ProjectID, arg.DedupKey)
+	var i Task
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ParentTaskID,
+		&i.Title,
+		&i.Prompt,
+		&i.Scope,
+		&i.Mode,
+		&i.Agent,
+		&i.Model,
+		&i.Status,
+		&i.SessionID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.Version,
+		&i.CurrentTurn,
+		&i.IdleOutcome,
+		&i.SourceKind,
+		&i.SourceInstance,
+		&i.SourceProject,
+		&i.SourceNumber,
+		&i.DedupKey,
 	)
 	return i, err
 }
 
 const listSubTasks = `-- name: ListSubTasks :many
-SELECT id, project_id, parent_task_id, title, prompt, scope, mode, agent, model, status, session_id, created_at, updated_at, finished_at, version, current_turn, idle_outcome FROM tasks WHERE parent_task_id = ? ORDER BY created_at, id
+SELECT id, project_id, parent_task_id, title, prompt, scope, mode, agent, model, status, session_id, created_at, updated_at, finished_at, version, current_turn, idle_outcome, source_kind, source_instance, source_project, source_number, dedup_key FROM tasks WHERE parent_task_id = ? ORDER BY created_at, id
 `
 
 func (q *Queries) ListSubTasks(ctx context.Context, parentTaskID sql.NullString) ([]Task, error) {
@@ -161,6 +276,11 @@ func (q *Queries) ListSubTasks(ctx context.Context, parentTaskID sql.NullString)
 			&i.Version,
 			&i.CurrentTurn,
 			&i.IdleOutcome,
+			&i.SourceKind,
+			&i.SourceInstance,
+			&i.SourceProject,
+			&i.SourceNumber,
+			&i.DedupKey,
 		); err != nil {
 			return nil, err
 		}
@@ -230,9 +350,11 @@ func (q *Queries) ListTaskRepos(ctx context.Context, taskID string) ([]string, e
 }
 
 const listTasksByProject = `-- name: ListTasksByProject :many
-SELECT id, project_id, parent_task_id, title, prompt, scope, mode, agent, model, status, session_id, created_at, updated_at, finished_at, version, current_turn, idle_outcome FROM tasks WHERE project_id = ? ORDER BY created_at, id
+SELECT id, project_id, parent_task_id, title, prompt, scope, mode, agent, model, status, session_id, created_at, updated_at, finished_at, version, current_turn, idle_outcome, source_kind, source_instance, source_project, source_number, dedup_key FROM tasks WHERE project_id = ? AND source_kind <> 'repo_setup' ORDER BY created_at, id
 `
 
+// The internal repo-setup draft belongs to the new-repo flow, not to the board
+// or any ordinary list.
 func (q *Queries) ListTasksByProject(ctx context.Context, projectID string) ([]Task, error) {
 	rows, err := q.db.QueryContext(ctx, listTasksByProject, projectID)
 	if err != nil {
@@ -260,6 +382,11 @@ func (q *Queries) ListTasksByProject(ctx context.Context, projectID string) ([]T
 			&i.Version,
 			&i.CurrentTurn,
 			&i.IdleOutcome,
+			&i.SourceKind,
+			&i.SourceInstance,
+			&i.SourceProject,
+			&i.SourceNumber,
+			&i.DedupKey,
 		); err != nil {
 			return nil, err
 		}

@@ -100,6 +100,42 @@ type DevServer struct {
 	Version     int64
 }
 
+type Notice struct {
+	Cursor         int64
+	ID             string
+	TaskID         string
+	TaskTitle      string
+	Status         string
+	SourceKind     string
+	SourceRun      string
+	SourceRevision int64
+	CreatedAt      string
+}
+
+type NoticeHighWater struct {
+	TaskID     string
+	SourceKind string
+	SourceRun  string
+	Revision   int64
+	UpdatedAt  string
+}
+
+type Outbox struct {
+	ID           string
+	SubjectKind  string
+	SubjectID    string
+	Attempt      int64
+	Stage        string
+	Payload      string
+	DueAt        string
+	ClaimedBy    string
+	ClaimedUntil sql.NullString
+	ClaimCount   int64
+	DoneAt       sql.NullString
+	Version      int64
+	CreatedAt    string
+}
+
 type Project struct {
 	ID          string
 	Name        string
@@ -130,6 +166,22 @@ type Proposal struct {
 	Retryable   int64
 }
 
+type ProposalEffect struct {
+	ID          string
+	ProposalID  string
+	OperationID string
+	Stage       string
+	Attempt     int64
+	State       string
+	ReceiptKind string
+	Receipt     string
+	Marker      string
+	RemoteID    string
+	Version     int64
+	CreatedAt   string
+	UpdatedAt   string
+}
+
 type Repo struct {
 	ID            string
 	ProjectID     string
@@ -141,6 +193,7 @@ type Repo struct {
 	TrustHash     string
 	UntrackedAt   sql.NullString
 	RelPath       string
+	Readiness     string
 }
 
 type RepoBuildSetting struct {
@@ -160,6 +213,24 @@ type RepoEnvSetting struct {
 	ComposeFile          string
 	ComposeConfirmedHash string
 	UpdatedAt            string
+}
+
+type RepoReservation struct {
+	RepoID      string
+	OperationID string
+	ProjectID   string
+	Leaf        string
+	SetupTaskID string
+	ProposalID  sql.NullString
+	Spec        string
+	SpecHash    string
+	State       string
+	Stage       string
+	Attempt     int64
+	Detail      string
+	Version     int64
+	CreatedAt   string
+	UpdatedAt   string
 }
 
 type ReviewNote struct {
@@ -186,23 +257,28 @@ type Setting struct {
 }
 
 type Task struct {
-	ID           string
-	ProjectID    string
-	ParentTaskID sql.NullString
-	Title        string
-	Prompt       string
-	Scope        string
-	Mode         string
-	Agent        string
-	Model        string
-	Status       string
-	SessionID    string
-	CreatedAt    string
-	UpdatedAt    string
-	FinishedAt   sql.NullString
-	Version      int64
-	CurrentTurn  sql.NullString
-	IdleOutcome  sql.NullString
+	ID             string
+	ProjectID      string
+	ParentTaskID   sql.NullString
+	Title          string
+	Prompt         string
+	Scope          string
+	Mode           string
+	Agent          string
+	Model          string
+	Status         string
+	SessionID      string
+	CreatedAt      string
+	UpdatedAt      string
+	FinishedAt     sql.NullString
+	Version        int64
+	CurrentTurn    sql.NullString
+	IdleOutcome    sql.NullString
+	SourceKind     string
+	SourceInstance string
+	SourceProject  string
+	SourceNumber   int64
+	DedupKey       string
 }
 
 type TaskDependency struct {
@@ -267,6 +343,28 @@ type Verification struct {
 	At          sql.NullString
 	CreatedAt   string
 	UpdatedAt   string
+}
+
+type WorkspaceActionProposal struct {
+	RequestID  string
+	ProposalID string
+}
+
+type WorkspaceActionRequest struct {
+	RequestID      string
+	Digest         string
+	RepoID         string
+	Kind           string
+	SourceID       string
+	State          string
+	Attempt        int64
+	IdempotencyKey string
+	Refusal        string
+	TaskID         sql.NullString
+	BatchID        string
+	Version        int64
+	CreatedAt      string
+	UpdatedAt      string
 }
 
 type Worktree struct {
