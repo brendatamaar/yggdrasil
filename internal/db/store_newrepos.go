@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -381,6 +382,7 @@ func DecodeReceipt(data string) (newrepos.Receipt, error) {
 }
 
 type resumeJSON struct {
+	fields   map[string]json.RawMessage
 	Kind     string                `json:"kind"`
 	Publish  *newrepos.PublishSpec `json:"publish,omitempty"`
 	Receipts []json.RawMessage     `json:"receipts,omitempty"`
@@ -445,9 +447,65 @@ func encodeResume(r newrepos.Resumable) (*resumeJSON, error) {
 	return nil, errors.New("encode resume: unknown variant")
 }
 
+func (r *resumeJSON) UnmarshalJSON(data []byte) error {
+	type plain resumeJSON
+	if err := strictJSON(string(data), (*plain)(r)); err != nil {
+		return err
+	}
+	return json.Unmarshal(data, &r.fields)
+}
+
+func rejectForeignFields(raw string, allowed ...string) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
+		return err
+	}
+	if fields == nil {
+		return errors.New("expected a JSON object")
+	}
+	for key := range fields {
+		found := false
+		for _, candidate := range allowed {
+			if key == candidate {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("field %s does not belong to this variant", key)
+		}
+	}
+	return nil
+}
+
 func decodeResume(spec newrepos.InitSpec, r *resumeJSON) (newrepos.Resumable, error) {
 	if r == nil {
 		return nil, errors.New("bad reservation in database: a stopped or uncertain operation has no resume data")
+	}
+	allowed := []string{"kind"}
+	switch r.Kind {
+	case "init":
+		allowed = append(allowed, "receipts")
+	case "publish":
+		allowed = append(allowed, "receipts", "publish")
+	case "none":
+	default:
+		return nil, fmt.Errorf("unknown resume kind %q", r.Kind)
+	}
+	raw, err := json.Marshal(r.fields)
+	if err != nil {
+		return nil, err
+	}
+	if r.fields != nil {
+		if err := rejectForeignFields(string(raw), allowed...); err != nil {
+			return nil, err
+		}
+	}
+	if r.Kind == "none" && (len(r.Receipts) != 0 || r.Publish != nil) {
+		return nil, errors.New("empty resume carries foreign data")
+	}
+	if r.Kind == "init" && r.Publish != nil {
+		return nil, errors.New("initialization resume carries publish data")
 	}
 	rc, err := decodeReceipts(r.Receipts)
 	if err != nil {
@@ -535,6 +593,16 @@ func decodeNewRepoState(spec newrepos.InitSpec, code, stage string, attempt int,
 			}
 		}
 	}()
+	allowed := map[string][]string{
+		"reserved": {}, "awaiting_confirm": {"proposal"}, "initializing": {"receipts"},
+		"ready": {"initial_head"}, "publishing": {"publish", "receipts"},
+		"published": {"remote_id", "url", "head"}, "uncertain": {"reason", "resume"}, "stopped": {"reason", "resume"},
+	}
+	if keys, ok := allowed[code]; ok {
+		if err := rejectForeignFields(detail, keys...); err != nil {
+			return nil, err
+		}
+	}
 	var d detailJSON
 	if err := strictJSON(detail, &d); err != nil {
 		return nil, fmt.Errorf("bad reservation detail in database: %w", err)
@@ -624,7 +692,8 @@ func strictJSON(s string, v any) error {
 	if err := dec.Decode(v); err != nil {
 		return err
 	}
-	if dec.More() {
+	var trailing json.RawMessage
+	if err := dec.Decode(&trailing); err != io.EOF {
 		return errors.New("trailing data")
 	}
 	return nil

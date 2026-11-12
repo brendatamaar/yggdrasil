@@ -1,6 +1,7 @@
 package newrepos
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"strconv"
 	"strings"
@@ -141,7 +142,7 @@ func ValidateState(spec InitSpec, st State) error {
 			if _, ok := stage.(InitStage); !ok {
 				return fmt.Errorf("initialization resume has a different stage kind")
 			}
-			return validatePrefix(stage, v.Done)
+			return validateInitEvidence(v.Spec, stage, v.Done)
 		case ResumePublish:
 			if err := samePublish(v.Spec); err != nil {
 				return err
@@ -149,7 +150,7 @@ func ValidateState(spec InitSpec, st State) error {
 			if _, ok := stage.(PublishStage); !ok {
 				return fmt.Errorf("publish resume has a different stage kind")
 			}
-			return validatePrefix(stage, v.Done)
+			return validatePublishEvidence(v.Spec, stage, v.Done)
 		default:
 			return fmt.Errorf("recovery state has no resume specification")
 		}
@@ -177,7 +178,7 @@ func ValidateState(spec InitSpec, st State) error {
 		if v.Attempt < 1 {
 			return fmt.Errorf("initialization needs a positive attempt")
 		}
-		return validatePrefix(v.Stage, v.Done)
+		return validateInitEvidence(v.Spec, v.Stage, v.Done)
 	case Ready:
 		if v.Repo != spec.Repo || !validObject(v.InitialHead) {
 			return fmt.Errorf("ready state has a different repo or invalid head")
@@ -189,12 +190,15 @@ func ValidateState(spec InitSpec, st State) error {
 		if v.Attempt < 1 {
 			return fmt.Errorf("publishing needs a positive attempt")
 		}
-		return validatePrefix(v.Stage, v.Done)
+		return validatePublishEvidence(v.Spec, v.Stage, v.Done)
 	case Published:
 		if v.RemoteID == "" || !validObject(v.Head) || ValidateRemoteURL(v.URL) != nil {
 			return fmt.Errorf("published state has invalid remote evidence")
 		}
 	case Uncertain:
+		if err := validateUncertainResume(v.Stage, v.Resume); err != nil {
+			return err
+		}
 		if v.Attempt < 1 {
 			return fmt.Errorf("uncertain state needs a positive attempt")
 		}
@@ -251,7 +255,7 @@ func ValidateStateShape(st State) error {
 		if v.Attempt < 1 {
 			return fmt.Errorf("publishing needs a positive attempt")
 		}
-		return validatePrefix(v.Stage, v.Done)
+		return validatePublishEvidence(v.Spec, v.Stage, v.Done)
 	case Ready:
 		if v.Repo.Validate() != nil || !validObject(v.InitialHead) {
 			return fmt.Errorf("invalid ready operation")
@@ -261,6 +265,9 @@ func ValidateStateShape(st State) error {
 			return fmt.Errorf("invalid published operation")
 		}
 	case Uncertain:
+		if err := validateUncertainResume(v.Stage, v.Resume); err != nil {
+			return err
+		}
 		if v.Attempt < 1 {
 			return fmt.Errorf("uncertain operation needs a positive attempt")
 		}
@@ -290,7 +297,7 @@ func validateResumeShape(stage Stage, resume Resumable) error {
 		if _, ok := stage.(InitStage); !ok {
 			return fmt.Errorf("resume stage is not initialization")
 		}
-		return validatePrefix(stage, v.Done)
+		return validateInitEvidence(v.Spec, stage, v.Done)
 	case ResumePublish:
 		if err := v.Spec.Validate(); err != nil {
 			return err
@@ -298,7 +305,103 @@ func validateResumeShape(stage Stage, resume Resumable) error {
 		if _, ok := stage.(PublishStage); !ok {
 			return fmt.Errorf("resume stage is not publishing")
 		}
-		return validatePrefix(stage, v.Done)
+		return validatePublishEvidence(v.Spec, stage, v.Done)
 	}
 	return fmt.Errorf("operation needs resume evidence")
+}
+
+func validateUncertainResume(stage Stage, resume Resumable) error {
+	if stage == nil {
+		return fmt.Errorf("an uncertain operation needs a stage")
+	}
+	switch resume.(type) {
+	case ResumeInit, ResumePublish:
+		return nil
+	case ResumeNone:
+		return fmt.Errorf("an uncertain operation needs its original resume specification")
+	}
+	return fmt.Errorf("an uncertain operation has no resume specification")
+}
+
+func validateInitEvidence(spec InitSpec, stage Stage, receipts []Receipt) error {
+	if err := validatePrefix(stage, receipts); err != nil {
+		return err
+	}
+	for _, r := range receipts {
+		if file, ok := r.(FileReceipt); ok {
+			content := spec.README
+			if file.Name == ".gitignore" {
+				content = spec.Ignore
+			}
+			if file.ContentHash != fmt.Sprintf("%x", sha256.Sum256([]byte(content))) {
+				return fmt.Errorf("file receipt does not match the confirmed content")
+			}
+		}
+	}
+	return nil
+}
+
+func validatePublishEvidence(spec PublishSpec, stage Stage, receipts []Receipt) error {
+	if err := validatePrefix(stage, receipts); err != nil {
+		return err
+	}
+	var remoteURL string
+	for _, r := range receipts {
+		switch v := r.(type) {
+		case RemoteReceipt:
+			remoteURL = v.URL
+		case OriginReceipt:
+			if v.URL != remoteURL {
+				return fmt.Errorf("origin receipt names a different remote")
+			}
+		case PushReceipt:
+			if v.Head != spec.ExpectedHead {
+				return fmt.Errorf("published head differs from the confirmed head")
+			}
+		case DirReceipt, GitReceipt, FileReceipt, CommitReceipt, TrackedReceipt:
+			return fmt.Errorf("publishing contains initialization evidence")
+		}
+	}
+	return nil
+}
+
+// ValidateReceiptForStage binds a complete proof to the single stage that can
+// produce it. Comment proofs have a different type and are not new-repo receipts.
+func ValidateReceiptForStage(stage Stage, receipt Receipt) error {
+	if err := ValidateReceipt(receipt); err != nil {
+		return err
+	}
+	expected := ""
+	switch v := stage.(type) {
+	case InitStage:
+		switch v {
+		case StageCreateDirectory:
+			expected = "dir"
+		case StageInitGit:
+			expected = "git"
+		case StageWriteREADME, StageWriteIgnore:
+			file, ok := receipt.(FileReceipt)
+			if !ok || (v == StageWriteREADME && file.Name != "README.md") || (v == StageWriteIgnore && file.Name != ".gitignore") {
+				return fmt.Errorf("file receipt is for a different stage")
+			}
+			expected = "file"
+		case StageFirstCommit:
+			expected = "commit"
+		case StageFinalizeTracking:
+			expected = "tracked"
+		}
+	case PublishStage:
+		switch v {
+		case StageCreateRemote:
+			expected = "remote"
+		case StageAddOrigin:
+			expected = "origin"
+		case StagePushHead:
+			expected = "push"
+		}
+	}
+	if expected == "" || receiptKind(receipt) != expected {
+		return fmt.Errorf("receipt is for a different stage")
+	}
+	return nil
 }

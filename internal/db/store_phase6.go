@@ -112,12 +112,16 @@ func effectFrom(r gen.ProposalEffect) (EffectRecord, error) {
 	if err != nil {
 		return EffectRecord{}, err
 	}
-	return EffectRecord{
+	rec := EffectRecord{
 		ID: r.ID, Proposal: core.ProposalID(r.ProposalID), Operation: core.OperationID(r.OperationID),
 		Stage: r.Stage, Attempt: int(r.Attempt), State: st, ReceiptKind: r.ReceiptKind,
 		Receipt: json.RawMessage(r.Receipt), Marker: r.Marker, RemoteID: r.RemoteID, Version: r.Version,
 		CreatedAt: cr, UpdatedAt: up,
-	}, nil
+	}
+	if err := validateEffectProof(rec); err != nil {
+		return EffectRecord{}, fmt.Errorf("bad effect in database: %w", err)
+	}
+	return rec, nil
 }
 
 // InsertEffect records the intent of an effect BEFORE it runs. The same
@@ -138,6 +142,9 @@ func (tx *Tx) InsertEffect(ctx context.Context, e EffectRecord) error {
 	}
 	if e.ID == "" {
 		e.ID = EffectID(e.Proposal, e.Stage, e.Attempt)
+	}
+	if err := validateEffectProof(e); err != nil {
+		return err
 	}
 	receipt := jsonText(e.Receipt, "{}")
 	at := fmtTime(e.CreatedAt)
@@ -161,6 +168,25 @@ func (tx *Tx) SettleEffect(ctx context.Context, id string, state EffectState, re
 	}
 	if state == EffectSucceeded && receiptKind == "" {
 		return 0, errors.New("settle effect: a succeeded effect needs a receipt")
+	}
+	row, err := tx.q.GetEffect(ctx, id)
+	if err != nil {
+		return 0, found("settle effect "+id, err)
+	}
+	current, err := effectFrom(row)
+	if err != nil {
+		return 0, err
+	}
+	if current.Version != expected || current.State == EffectSucceeded || current.State == EffectFailed {
+		return 0, ErrConflict
+	}
+	if state == EffectIntent {
+		return 0, errors.New("settlement cannot restart an effect intent")
+	}
+	next := current
+	next.State, next.ReceiptKind, next.Receipt, next.RemoteID = state, receiptKind, receipt, remoteID
+	if err := validateEffectProof(next); err != nil {
+		return 0, err
 	}
 	n, err := tx.q.SettleEffect(ctx, gen.SettleEffectParams{
 		State: string(state), ReceiptKind: receiptKind, Receipt: jsonText(receipt, "{}"), RemoteID: remoteID,
