@@ -321,3 +321,10 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   concurrency and owned RAM scratch. Batch 1 agents will use distinct labels;
   this avoids competing full builds on the constrained machine without changing
   product code, public contracts or the supported Windows Task commands.
+
+- Final functional recheck at 54bcf64: PASS, no Must-fix or Should-fix in the
+  reviewed diff. Both review gates now pass for the complete foundation repair
+  set. The documented Agent/Model replay representation correction remains a
+  required lead-owned follow-up before Batch A, with dispatch still disabled.
+  Final post-cleanup five-command verification is running; no Batch 1 dispatch
+  until its results are all zero and generated output is unchanged.
