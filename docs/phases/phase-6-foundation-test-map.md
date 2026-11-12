@@ -67,6 +67,7 @@ with failing production regressions if needed, then release package ownership.
 Lead production repairs follow that handoff; no parallel writes to the package.
 
 ## Typed effect-proof follow-up
+
 The three Must-fix defects and foreign-field rejection now pass their regression
 groups on main. The repair introduced a distinct core/proposals.CommentReceipt
 and DB EncodeCommentReceipt/DecodeCommentReceipt; test-engineer must cover its
