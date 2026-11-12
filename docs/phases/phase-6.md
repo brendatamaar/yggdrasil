@@ -237,3 +237,10 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   GOFLAGS=-p=1 and Go scratch in an executable task directory under /dev/shm.
   The pinned linter's Go1.27 formatter differs from Go1.26 gofmt for multiline
   returns; format changed files with golangci-lint fmt to match the required gate.
+
+- Recovered main baseline 77f4793/f98a8c2: all five required checks passed
+  sequentially (task generate, task lint, task typecheck, task test, task test:web),
+  with exit codes recorded in /tmp/ygg-phase6-check-results.json. No disk-full
+  or quota-failed run is counted as a pass. Foundation regression coverage is
+  still in progress under the approved Codex assignment; dual review rechecks
+  and post-merge checks remain required before Batch 1.
