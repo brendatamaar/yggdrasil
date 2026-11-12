@@ -244,3 +244,15 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   or quota-failed run is counted as a pass. Foundation regression coverage is
   still in progress under the approved Codex assignment; dual review rechecks
   and post-merge checks remain required before Batch 1.
+
+- Foundation safety recheck (Codex, through 3650531): PASS with no Blocking or
+  Must-fix findings. Prior claim-version, receipt/evidence/stage/scope and
+  browser-sandbox defects are verified fixed in code. Regression tests and the
+  functional recheck remain pending, so this is not a foundation gate closure.
+- Safety follow-ups before effects are enabled: persist/restore full immutable
+  action input (including Agent/Model) or use an explicit validated replay
+  projection before Batch A; reject state/resume detail fields belonging to a
+  different variant (even zero-valued fields) before Batch N recovery workers.
+  These are lead-owned shared-contract repairs, not permission for downstream
+  agents to change frozen DB contracts. Apply after the current DB test ownership
+  handoff, with regression coverage and required checks.
