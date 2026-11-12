@@ -25,7 +25,7 @@ func (r CommentReceipt) Validate() error {
 	if len(r.BodyHash) != 64 {
 		return invalid("the comment receipt needs a full body checksum")
 	}
-	if err := checkHexField("comment head", r.Head, false); err != nil {
+	if err := checkFullHead("comment head", r.Head); err != nil {
 		return err
 	}
 	return nil
