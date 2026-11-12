@@ -284,3 +284,10 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   and frontend checks are still running. Request a fresh pair of reviews on
   f64ed1e repairs and test-engineer coverage for the new typed comment-proof
   boundary before foundation gate closure. No feature batch has started.
+
+- Focused safety recheck found one new Must-fix in the newly added comment
+  receipt: Head used abbreviated-hash validation (7–64) instead of the exact
+  40/64-character rule already used by ReviewComment.ExpectedHead. Current test
+  agent was steered to reject abbreviated/invalid lengths and hand off ownership;
+  lead will use checkFullHead after that handoff. No concurrent production edit
+  to its owned package, no new feature work, no weakening of the identity rule.
