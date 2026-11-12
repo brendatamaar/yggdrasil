@@ -69,12 +69,14 @@ func env(m map[string]string) func(string) string {
 }
 
 func TestLoadConfig(t *testing.T) {
-	home := func() (string, error) { return `C:\Users\someone\AppData\Roaming`, nil }
+	// A temporary absolute folder is absolute on every OS; a drive-letter literal is not on Linux.
+	root := t.TempDir()
+	home := func() (string, error) { return root, nil }
 	cfg, err := loadConfig(env(nil), home)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.addr != defaultAddr || cfg.dataDir != filepath.Join(`C:\Users\someone\AppData\Roaming`, "ygg") || cfg.mockDelay != 250*time.Millisecond {
+	if cfg.addr != defaultAddr || cfg.dataDir != filepath.Join(root, "ygg") || cfg.mockDelay != 250*time.Millisecond {
 		t.Errorf("defaults = %+v", cfg)
 	}
 
