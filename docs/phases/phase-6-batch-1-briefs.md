@@ -24,8 +24,12 @@ Common brief requirements:
   checks. No new allowlist/fe:allow exception.
 - Run `task generate`, `task lint`, `task typecheck`, `task test`, `task test:web`
   and relevant targeted/race checks. Report environment failures and skips.
-  Use the pinned lint formatter for new files. Coordinate heavy checks because
-  disk space is constrained; use task-specific executable RAM Go scratch if useful.
+  Use the pinned lint formatter for new files. For this Linux orchestration host, run final mandatory checks with
+  `python3 /tmp/ygg-phase6-validate.py B1-XH` (use B1-XT or B1-XR for that task).
+  This acquires a shared lock, runs the five real Task commands sequentially
+  with low Go concurrency and owned RAM scratch, and records exact results.
+  Do not run another heavy full suite alongside that slot. Targeted tests may
+  run during implementation; report any helper or environment blocker.
 - Do the work yourself; no subagents. No push, tag, file/branch deletion, PR,
   real repos/hosts, agent CLI/model API tests, HOME override or global Git config.
 - Commit on your branch and end with the report format from your agent file.

@@ -312,3 +312,12 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   files, worktrees and branches; no further repeated directory approvals are
   needed within that generated-artifact scope. Cleared only those disposable
   caches and completed owned RAM scratch before final foundation checks.
+
+- Final safety recheck at 54bcf64: PASS, no Blocking/Must-fix or new Should-fix
+  findings. Full-head and confirmed-destination repairs and tests are verified.
+  Functional recheck and final mandatory checks are still pending.
+- Prepared a host-local validation helper (/tmp/ygg-phase6-validate.py) to run
+  the five actual Task commands under one shared file lock, with low Go
+  concurrency and owned RAM scratch. Batch 1 agents will use distinct labels;
+  this avoids competing full builds on the constrained machine without changing
+  product code, public contracts or the supported Windows Task commands.
