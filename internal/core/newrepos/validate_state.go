@@ -349,6 +349,9 @@ func validatePublishEvidence(spec PublishSpec, stage Stage, receipts []Receipt) 
 	for _, r := range receipts {
 		switch v := r.(type) {
 		case RemoteReceipt:
+			if err := spec.ValidateDestination(v.URL); err != nil {
+				return err
+			}
 			remoteURL = v.URL
 		case OriginReceipt:
 			if v.URL != remoteURL {
@@ -402,6 +405,24 @@ func ValidateReceiptForStage(stage Stage, receipt Receipt) error {
 	}
 	if expected == "" || receiptKind(receipt) != expected {
 		return fmt.Errorf("receipt is for a different stage")
+	}
+	return nil
+}
+
+// ValidateDestination binds remote evidence to the host/account/repository the
+// user confirmed. GitHub clone URLs end in .git; host and account/repo names
+// are case-insensitive, while remote/origin receipt equality remains exact.
+func (s PublishSpec) ValidateDestination(raw string) error {
+	if err := s.Validate(); err != nil {
+		return err
+	}
+	if err := ValidateRemoteURL(raw); err != nil {
+		return err
+	}
+	rest := strings.TrimPrefix(raw, "https://")
+	host, path, found := strings.Cut(rest, "/")
+	if !found || !strings.EqualFold(host, s.HostInstance) || !strings.EqualFold(path, s.Owner+"/"+s.Name+".git") {
+		return fmt.Errorf("remote receipt names a different destination than the confirmed publish specification")
 	}
 	return nil
 }
