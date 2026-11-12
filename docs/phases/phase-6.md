@@ -291,3 +291,11 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   agent was steered to reject abbreviated/invalid lengths and hand off ownership;
   lead will use checkFullHead after that handoff. No concurrent production edit
   to its owned package, no new feature work, no weakening of the identity rule.
+
+- Functional recheck also found that equal remote/origin URLs could name a
+  different destination from PublishSpec. Lead fixed core/newrepos in 2aa194c
+  (a package not owned by the active DB/core-proposals test task); the test agent
+  was steered to correct legal destination fixtures and reject wrong host/owner/
+  repo in active/resumed states. The full-head receipt fix waits for its package
+  handoff. Batch 1 briefs are prepared in
+  [phase-6-batch-1-briefs.md](phase-6-batch-1-briefs.md), not dispatched.
