@@ -161,7 +161,7 @@ func (s *Service) interpret(id core.TaskID, res applyResult) {
 		fx.wake = true
 	}
 	if fx.publish != nil {
-		s.c.Hub.Status(StatusMessage{TaskID: id, Title: res.Row.Title, Status: *fx.publish})
+		s.c.Hub.Status(StatusMessage{TaskID: id, Title: res.Row.Title, Status: *fx.publish, Revision: res.Row.Version})
 	}
 	for _, f := range fx.spawns {
 		f()

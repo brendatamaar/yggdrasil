@@ -68,6 +68,10 @@ type StatusMessage struct {
 	TaskID core.TaskID
 	Title  string
 	Status core.TaskStatus
+	// Revision is the task row version committed with this status: monotone per
+	// task, used by notifications to ignore a replayed or older transition
+	// (docs/design/phase-6-notifications.md). Zero means the producer gave none.
+	Revision int64
 }
 
 // Machine reports the room on this computer, for the maxAgents hint (D7).

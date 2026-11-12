@@ -37,7 +37,7 @@ func (h *HubAdapter) Status(m tasks.StatusMessage) {
 	if s == nil {
 		return
 	}
-	s.hub.publishNext(tasksTopic{}, TaskStatusMessage{TaskID: m.TaskID, Title: m.Title, Status: m.Status})
+	s.hub.publishNext(tasksTopic{}, TaskStatusMessage{TaskID: m.TaskID, Title: m.Title, Status: m.Status, Revision: m.Revision})
 	s.hub.publishNext(boardTopic{}, BoardChangedMessage{TaskID: m.TaskID})
 }
 

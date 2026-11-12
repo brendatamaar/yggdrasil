@@ -93,6 +93,11 @@ type TaskStatusMessage struct {
 	TaskID core.TaskID     `json:"taskId"`
 	Title  string          `json:"title"`
 	Status core.TaskStatus `json:"status"`
+	// Revision is the task row version the status was committed at: a monotone
+	// number the notification producer and the browser use to ignore a replayed
+	// or older transition. Zero (omitted) means the producer did not supply
+	// one; consumers then fall back to ordering by arrival, as before Phase 6.
+	Revision int64 `json:"revision,omitempty"`
 }
 
 // WSMessage is the envelope of every WebSocket message in both directions.
