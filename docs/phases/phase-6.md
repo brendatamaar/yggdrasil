@@ -1,0 +1,192 @@
+# Phase 6 — Workspace actions, notifications and new repos
+
+Status: **plan and F0 designs approved; serial foundations in progress**.
+Target: `v0.7.0`. Baseline inspected: `main` at `2f96629`, Phase 5 tagged `v0.6.0`.
+This document does not authorize a tag, push, branch/file deletion, live host mutation or real agent CLI run.
+
+## Scope and evidence read
+
+Follow `.claude/CLAUDE.md`, `docs/AGENTS.md` in full, and the Phase 6 checklist in `docs/PLAN.md`.
+Read PRD sections 6.1–6.2 (WS-09, GH-05/06), 6.8 (AC-01–06), 6.10 (AU-02), 6.14 (NR-01–04), 6.15 (UI-03/06/07), the entire decision log D1–D17, and the supporting agent, verification, proposal, MCP, toolchain and safety requirements. Read `docs/spikes.md` B1–B5 (including the B5 empty-settings-source and strict MCP isolation decisions); existing git-host, git-action and proposal designs inform the contracts below.
+
+Code inspected and reused:
+
+- `internal/hosts/{client,getter,service}.go`, host clients and `internal/core/hosts/types.go`: read-only polling, header-only tokens, ETags, rate limits and instance resolution already exist. `HostClient` has only `RepoState` and `Inbox`; `Pipeline` lacks the run/job identity needed to fetch logs. Do not derive identity by trusting arbitrary browser URLs.
+- `internal/repos/{actions,status_service}.go`, `internal/git/status.go`, `internal/core/repos`: ff-only action batches, shared main-checkout locks, status refresh and bounded file lists already exist. Noise detection must handle truncated status without claiming a complete scan.
+- `internal/tasks/{service,admit,apply,config}.go`, `internal/core/tasks`, API task/board contracts: reuse admission, trust, queue, Ask integrity and task relationships. Creating a message starts work; importing an issue needs a separate **draft-only** path.
+- `internal/core/proposals/{action,action_validate,types}.go`, `internal/proposals/{service,exec,exec_install}.go`: confirmation hashes, immutable actions, audit, reconciliation and install execution exist. `publish` is an enum value but has no executable action; `AgentFile` only writes protected agent files and cannot be reused for `.gitignore`.
+- `internal/api/{server,topic,tasks,tasks_service,proposals,types_board,types_hosts}.go`, `cmd/ygg/{tasks,hosts,proposals,app}.go`, sqlc queries/migrations and `tygo.yaml`: use existing wiring, hub and generation conventions. Latest migration is 00006; 00003 and 00005 have Go migrations plus sqlc schema mirrors.
+- `web/src/widgets/{needs-attention,ci-failures,merge-requests}`, widget registry, repo rows, command registry, proposal UI and board/composer: attention reasons include unreadable repo, conflicts, divergence, failed CI/build, behind and dirty state. Cover all of them, not just the five named actions.
+- `web/src/components/{LiveSync,NotificationsMenu}.tsx`, `web/src/stores/notifications.ts`: task-status in-app notifications exist, but browser delivery, verification notifications and reconnect deduplication need work. `internal/notify` is a placeholder. Standup is absent from the eleven-widget registry.
+- `Taskfile.yml`: generation is sqlc + tygo; `task test:e2e` currently only prints a placeholder. It cannot be counted as browser-test evidence until replaced with a real runner.
+
+Phase 3's unchecked OpenCode item is a carried baseline gap, not an implicit Phase 6 deliverable. Test new flows with the mock adapter; report reference-adapter limitations at close.
+
+## Product and safety decisions to settle in design
+
+These are proposed contract choices for review, not changes to the PRD or exceptions to safety rules. F0 must resolve them before F1 commits public interfaces. If a choice would weaken an invariant, stop and ask the human.
+
+1. **Attention coverage:** expose typed actions from one server catalogue, revalidated at execution. Failed CI → Ask diagnosis with bounded log attachment; optional fix → separate Code/worktree action. Failed local build → Ask diagnosis with build log. Dirty → draft commit proposals. Behind → confirmed ff-only pull and optional fast verification using existing services. Conflicts/divergence/unreadable repo → safe Ask diagnosis using only available tracked metadata, with an explanation when files cannot be read. No automatic reset, merge repair or removal. A meaningful diagnosis action remains available when a token or supported host capability is absent; explain which context is unavailable.
+2. **MR review:** fetch the MR diff and immutable head identity, draft review comments in Ask mode, then create hash-bound comment proposals. Confirmation alone may post; changed MR head requires a fresh proposal. Implement host capabilities explicitly; unsupported hosts explain their limitation and still permit a local review draft. Review text never becomes an instruction that bypasses guards.
+3. **Noise:** conservatively group likely generated/dependency directories from untracked status, with an explicit threshold and bounded sampling agreed in F0. Offer exact `.gitignore` additions as a general, narrowly scoped file-change proposal with expected-content hash, preserving existing text/CRLF. No automatic ignore edits, deletion or arbitrary write primitive.
+4. **New repo:** a user chooses a new child directory of a tracked project; validate the canonical parent and leaf, reserve a repo identity attached to that project, then confirm initialization, README/ignore contents and first commit. Recheck target absence before every write; never initialize over an existing folder/repo or clean up by deleting files. Model partial initialization and explicit resume. Finalize tracking before making it visible to agents/MCP.
+5. **Before a remote exists:** NR-02 must reuse the explicit current-branch opt-in/warning, shared lock, trust scan, write-mode switch and adapter enforcement gates (AG-08/SF-06/SF-09). No silent downgrade from Code to direct editing and no widening for a limited-enforcement adapter. A first prompt waits for successful initialization and explicit task submission. Document how this fits the existing direct-editing policy; if it needs a new safety exception, stop for a decision rather than implement one.
+6. **Publish:** GitHub user/org, private by default, explicit visibility, destination, branch and expected HEAD in the confirmation. Create remote repo → add credential-free origin → push, with durable progress. Never overwrite an existing origin, adopt an unrelated remote repo on retry, or delete a remote/local repo to roll back. Unknown network outcomes require read-only reconciliation before a human retry. Use server HTTP credentials only in headers; authenticated git transport must not pass tokens to a child process (invariant 3). F0 must choose an enforceable transport or report this as a blocker before implementation; an askpass/token environment workaround is prohibited.
+7. **Notifications:** only task title and status in visible text, including verification pass/fail. Internal IDs/revisions may support navigation/deduplication but no prompts, paths, diffs or logs enter notification payloads. Browser permission is requested from a user gesture; delivery only while backgrounded. Denied/unsupported browsers retain in-app delivery. No external channels (D11).
+8. **Standup:** bounded project/date-range aggregation of commits, MRs and builds; deterministic text, copy, then optional user-triggered Ask task to polish. No scheduled jobs or automatic model calls. Partial/unavailable sources are labelled.
+
+## Foundations — serial, lead-owned, committed to main before fan-out
+
+All F tasks are performed by the lead, sequentially. No implementation subagent worktree is created until **all** foundations are committed to `main`, generation is current and the five required checks pass. Record the contract commit SHA here before dispatch. If a shared contract later needs a change, pause dependent fan-out, make a lead-owned contract commit on main, then rebase/update briefs; agents must not invent competing interfaces.
+
+| Task | Owner / PRD IDs | Owned paths | Interfaces and definition of done | Phase 6 contribution |
+|---|---|---|---|---|
+| **F0 Design gate** | lead; all Phase 6 IDs | `docs/design/phase-6-*.md`, this plan | Run `/functional-effect:design` for each feature below **before code**, using the installed design/model instructions. Each design records closed states/inputs/commands and pure `Step`, transition table, call graph, cardinality, domain/retry/escape-hatch/die failures, boundary parsers, capabilities/fakes/contracts, invariants and named properties. New-repo/publish and comment posting require explicit crash/unknown-outcome reconciliation. Show designs and obtain their required approval before F1. Resolve the safety/public-interface questions above; no new `fe:allow`. | All checkboxes; necessary foundation for exit E6. |
+| **F1 Shared core and capabilities** | lead; GH-05/06, AC-01–06, WS-09, UI-06, AU-02, NR-01–04 | `internal/core/**` shared types and new domain skeletons; consumer interface declarations in `internal/{hosts,actions,notify,standup,newrepos,proposals,tasks,git,platform}/`; capability fake/stub declarations; `.functional-effect.json` | Commit state/input/command types and `Step(state,input)` signatures for every design. Extend existing host/proposal/task types rather than create parallel entities. Add narrowly scoped host reads/writes, draft-task creation, initialization/publish progress, ignore-edit/comment/publish/init/pull proposal contracts, notification revisions and standup inputs. `agents.Event` remains normalized; change `internal/agents/event.go` only if design proves necessary, regenerate with F3. Consumer-local interfaces; no service implementations yet. Skeletons compile and return unsupported rather than accidentally execute. Architecture tests clean. | Shared contracts for every checklist item and E6. |
+| **F2 Persistence** | lead; AC-02/05, WS-09, UI-06, NR-01–04, SF-05 | `internal/db/**` | New `00007_phase6.sql` (never edit applied migrations), queries, store adapters and sqlc output. Persist draft issue provenance/dedup key, proposal variants/progress, new-repo reservation and publish reconciliation; notification revision/delivery records as required by approved design. Reuse tasks/repos/proposals, not new top-level entities. State and audit commit together through `Store.Commit`; optimistic versions. Test upgrade from version 6 with existing data, fresh database, rerun and FK/constraint failures. No need to persist raw CI logs solely to support actions. | Reliable drafts, mutations and notifications; E6 evidence. |
+| **F3 API, events, generated contracts and checks** | lead; all Phase 6 IDs | `internal/api/**` contract/service declarations, `topic.go`, hub signatures; `tygo.yaml`, `web/src/api/gen/**`; `Taskfile.yml`, new browser-runner configuration and package lock/config if needed | Freeze DTOs for action catalogue/preview/execute, host logs/issues/MR context, draft tasks, noise findings, notifications, standup, new-repo preview/progress and publish. IDs resolve tracked scope on server, no arbitrary host URL or filesystem path inputs. Define event revision/gap behavior. Generate SQL/TS from source; no `any` mappings hiding contract breaks. Establish real Playwright task/config if used for exit evidence, with compatible dependencies. Run `task generate`, `task lint`, `task typecheck`, `task test`, `task test:web`; commit source + generated output on main. | Enables UI/API integration, all checklist items, E6. |
+
+Design documents **produced by F0 and approved by the human**:
+
+- [Host context](../design/phase-6-host-context.md): GH-05/06, AC-01/02/05; bounded reads, failures and credential boundaries.
+- [Workspace actions](../design/phase-6-actions.md): AC-01–06; catalogue, attachments, draft issue import, mode transitions and pull/verify.
+- [Noise proposals](../design/phase-6-noise.md): WS-09; sampling/classification and stale-safe ignore edit.
+- [New repo and publish](../design/phase-6-newrepos.md): NR-01–04; reservation, confirmation, partial effects, transport and reconciliation.
+- [Notifications](../design/phase-6-notifications.md): UI-06/D11; producer ordering, revisions, reconnect deduplication, browser reducer.
+- [Standup](../design/phase-6-standup.md): AU-02/UI-03; aggregation, partial sources and polish submission.
+- [UI workflows](../design/phase-6-ui.md): AC-06/UI-07 and dialogs for the above; pure reducers, loading/error/empty/denied states.
+
+## Dispatch and ownership rules
+
+Each row below is one agent invocation; suffixes name assignments, not new agent definitions. Use the repository's named agent roles and settings; never silently substitute an unavailable model/provider. Implementation uses isolated worktrees branched from committed `main`. **At most three implementation agents at once.** Each batch finishes, merges and passes its review gate before the next starts.
+
+Package ownership includes tests and helpers. Even different files in the same Go package cannot be worked on concurrently. To make this mechanically checkable, batches below partition whole package trees; one frontend agent owns **all `web/**`** in a batch. No lead edits to an agent-owned package during its run. Shared core/API/DB/generated contracts remain frozen; changing them is a separate serial lead step. Test-engineer takes over a package only after its implementation owner has merged and released it.
+
+Every brief includes PRD IDs, the approved design paths above, owned/forbidden paths, main contract SHA and interfaces, “follow the functional-effect:model skill (docs/AGENTS.md 5.11)”, the checks below, and “commit on your branch and end with the report format from your agent file”. No agent edits bookkeeping/shared contracts to resolve an integration error unilaterally.
+
+**Common DoD (every implementation row):** stated behavior and IDs implemented; boundary validation; state/audit transaction; cancellation ownership; plain-language errors; relevant tests using temp repos/recorded HTTP/mock agents; conventional commits with PRD IDs. Run `task generate`, `task lint`, `task typecheck`, `task test`, `task test:web`; generated files must stay consistent with frozen contracts. Additionally run relevant race/Windows tests. Record environmental blockers as failures to verify, not passes. A test exposing a bug is reported, fixed by the implementation owner, then rerun before closure.
+
+### Batch 1 — characterize and extract before adding features (three agents)
+
+These are explicitly separate extraction tasks, **not hidden inside feature tasks**. Use `/functional-effect:extract` on the named flow, characterization tests first. Existing pure logic is reused; extract only remaining mixed decisions, not whole-package rewrites. F0 designs precede these tasks too.
+
+| Task | Owner / PRD IDs | Owned paths | Interfaces to use / specific DoD | Exit contribution |
+|---|---|---|---|---|
+| **XH Host context resolution** | go-backend-H; GH-05/06, AC-01/02/05 | `internal/hosts/**`, `internal/core/hosts/**` | Existing `HostClient`, `Getter`, `core/hosts` inputs; F1 capability declarations. Characterize instance/project resolution and fetch-failure mapping in `service.go`; move remaining decisions to pure core with facts supplied by shell. Preserve polling, token handling and rate limits. | Enables reliable context for E6. |
+| **XT Task submission** | go-backend-T; AC-01/03/05, NR-02 | `internal/tasks/**`, `internal/core/tasks/**` | `Service.Message`, `scopeRepos`, existing `core/tasks` parser and `core/guard` admission. Characterize submission/scope/mode decisions before moving remaining pure decisions into core; trust scan, store, adapter and queue stay shell effects. No draft feature or changed behavior in this task. | Safe task entry for E6 and new-repo flow. |
+| **XR Repo facts** | go-backend-R; WS-09, AC-04 | `internal/repos/**`, `internal/core/repos/**` | Existing status-reader/refresher and git-action step. Characterize status-to-facts/truncation and pull refusal mapping, extract mixed decisions only. Preserve ff-only behavior, locking and status refresh performance. | Noise/pull context and fallback diagnoses for E6. |
+
+After merging XH/XT/XR, release their packages to Batch 2 owners. Do not concurrently test-map these same packages while Batch 2 edits them.
+
+### Batch 2 — host context, task drafts and workspace facts (three agents)
+
+| Task | Owner / PRD IDs | Owned paths | Interfaces to use / specific DoD | Exit contribution |
+|---|---|---|---|---|
+| **H Host reads and confirmed-write capabilities** | go-backend-H; GH-05/06, AC-01/02/05, NR-04 | `internal/hosts/**`, `internal/core/hosts/**` | F1 host context/read/write capabilities, `Getter`, redactor, existing instance resolver. GitLab/GitHub failed-job logs with immutable run/job IDs, issues and MR diff/head; pagination and byte/time bounds; plain unsupported/no-token/expired-token/rate-limit states; redact attachments before persistence/agent use. Confirmed-write adapters expose review-comment and GitHub create/lookup only to proposal executor; never endpoints callable directly by agents. Authenticated transport must follow F0 decision. Recorded HTTP tests, no real hosts; keep Gitea capability limitations honest. | GH boxes; CI/MR/issue context for E6; publish capability. |
+| **T Draft and direct-edit admission plumbing** | go-backend-T; AC-05, NR-02, AG-08, SF-06/07/09 | `internal/tasks/**`, `internal/core/tasks/**` | F1 draft creation/start contracts, F2 queries, existing admission and `Message`. Import creates one ordinary `draft` task linked to tracked repo/project and source issue, no turn/process/worktree until submitted; repeated import uses agreed dedup key. Explicit start goes through ordinary queue/admission. NR-02 reuses opt-in and all existing restrictions; test trusted/untrusted/limited-enforcement and no-remote transitions. | Issue-to-board action for E6; NR-02. |
+| **R Noise and standup inputs** | go-backend-R; WS-09, AU-02, AC-04 | `internal/repos/**`, `internal/core/repos/**` | F1 bounded repo-facts capability, existing status/git action services. Return deterministic candidate ignore entries with threshold/sample/truncation evidence; never write `.gitignore`. Expose bounded commit and pull outcome facts needed by standup/actions; no new automatic pull path. Temp repos with large untracked sets, CRLF, unusual paths and no false complete-scan claim. | Noise checkbox and action context for E6; standup facts. |
+
+### Batch 3 — new-repo services, proposal execution and notifications (three agents)
+
+| Task | Owner / PRD IDs | Owned paths | Interfaces to use / specific DoD | Exit contribution |
+|---|---|---|---|---|
+| **N New-repo lifecycle and safe git support** | go-backend-N; NR-01–04 | `internal/newrepos/**`, `internal/core/newrepos/**`, `internal/git/**`, `internal/platform/**` | F1 lifecycle and git/platform ports, F2 progress store, host transport from H, `platform.Start`, clean env and mainlock. Preview/reserve/initialize/finalize/publish stages callable only by confirmed executor; no automatic first task. Missing author, name collisions, untracked project, path escapes/reparse races, existing origin, partial init/create/push and restart have explicit outcomes. Implement absent-origin add/read and safe push helpers without credentials in process/env/config/URLs. OS behavior only in platform, compile darwin/linux. | All new-repo checkboxes; safe context for new repo attention items. |
+| **P Proposal extensions** | go-backend-P; AC-02/03/04, WS-09, NR-01/03/04, RV-02, MCP-05 | `internal/proposals/**`, `internal/core/proposals/**` | Frozen F1 action types/parsers/Describe/hash, existing `Service`, H write ports, N lifecycle port (fake until N merges), existing install/build and git-action ports. Execute ignore-file edit, review comment, new-repo init, publish and confirmed pull only after matching confirmation. Grouped commits use existing exact-path/hash-bound commits, not stage-all. Install stays toolchain/main-only. Revalidate scope and stale content/HEAD/MR at execution, audit all stages, reconcile ambiguous remote results without blind retry. Property and executor tests cover rejection, stale hash and duplicate confirm. | Mutation actions underpin E6; NR/WS-09 safety. |
+| **Q Notifications** | go-backend-Q; UI-06, D11 | `internal/notify/**`, `internal/core/notify/**` | F1 notification inputs/events and F2 delivery store; existing task/verification publisher ports, time/ID as inputs. Normalize Needs you, verification result and finished task transitions; bounded history and revision dedup/gap semantics per design. Task title/status only; no raw event/log forwarding. Stop workers on cancellation, persist state/audit as designed. | Notification checkbox; status of tasks launched from attention items. |
+
+N owns platform in this batch because initialization path safety/credential-free transport may need Windows support; no parallel platform-windows agent may edit that package. If specialist work is necessary, split N into sequential invocations with an explicit ownership handoff, not a fourth parallel agent.
+
+### Batch 4 — action orchestration, standup and backend test maps (three agents)
+
+| Task | Owner / PRD IDs | Owned paths | Interfaces to use / specific DoD | Exit contribution |
+|---|---|---|---|---|
+| **A Workspace action orchestration** | go-backend-A; AC-01–06, WS-09 | `internal/actions/**`, `internal/core/actions/**` | F1 catalogue/request/result contracts; H logs/issues/MR ports, T draft/start, R facts, P proposal creation, existing verify/build APIs. Pure catalogue covers every attention reason; execute rechecks current tracked scope and capability. Attach bounded source-labelled context, not host-controlled commands. Diagnose remains Ask; Fix explicitly requests Code/worktree. Review produces proposals; commit grouping uses current diff hashes. Pull uses P confirmation and existing ff-only service; never fallback merge. All action paths auditable and duplicate clicks handled per design. | Primary E6 implementation; AC-01–06 checkbox. |
+| **S Standup** | go-backend-S; AU-02, UI-03 | `internal/standup/**`, `internal/core/standup/**` | F1 aggregation ports; R commits, H cached MR reads, existing builds history. Deterministic bounded date-range summary, source labels and partial errors; explicit Ask polish through T with source text; copy is UI-only. No scheduler/network/model call hidden in a summary refresh. | Standup checkbox; reuse of workspace→task path. |
+| **TM1 Landed backend test maps** | test-engineer; GH-05/06, WS-09, NR-01–04, UI-06, AC-02/05, SF-* | Tests/helpers/fixtures only in package trees from Batches 1–3: `internal/{hosts,tasks,repos,newrepos,git,platform,proposals,notify}/**`, corresponding `internal/core/{hosts,tasks,repos,newrepos,proposals,notify}/**`; `fixtures/demo-gen/**` | Lead derives map **after each feature merges**: invariants→properties, parsers→round-trip/accepted⇒valid/rejection/fuzz, capabilities→fake+live/recorded contract suites. Show each test can fail by a controlled mutation/negative control, restore it before commit. Fake remote creation/comment/push with crash points, draft has zero agent calls, no token in child/env/config/URL/log/audit, no write before confirm. Extend fictional fixtures for attention reasons/large untracked sets. Must not touch A/S or API/web/cmd. | Safety/context evidence for E6 and other checkboxes. |
+
+### Batch 5 — API/wiring, full frontend and remaining domain tests (three agents)
+
+| Task | Owner / PRD IDs | Owned paths | Interfaces to use / specific DoD | Exit contribution |
+|---|---|---|---|---|
+| **W API, MCP and application wiring** | go-backend-W; all Phase 6 IDs; MCP-05/06 | `internal/api/**`, `cmd/ygg/**`, `internal/mcp/**`, `internal/core/mcp/**` | Frozen F1/F3 DTOs/topics and service ports; wire A/S/N/P/Q plus existing task/host/build/repo services, subscribe notifications to task and verification results, shutdown before store close. Host/Origin/session on all mutation surfaces; tracked-ID lookups, bounded bodies/errors. Register `propose_publish` and review-comment proposal tool only after executor is available; tools can propose, never confirm/post/publish. Do not implement Phase 7 `propose_subtasks`. Test API routes and MCP scope with fakes. | Connect every checkbox end to end; E6 API support. |
+| **U UI integration** | frontend; AC-01–06, WS-09, UI-03/06/07, AU-02, NR-01–04 | `web/**` except frozen generated files and foundation-owned package/runner config | Generated F3 DTOs, TanStack Query, shared command registry, existing composer/board/proposal panels. Shared feature module supplies actions to widget rows, repo rows and palette; no widget imports another widget. Cover Needs attention including failure fallbacks, CI, MR review/comment confirmation, grouped commits, pull result, issue draft import/start. Standup widget + copy/polish; new-repo/init/direct-edit warnings/install/publish confirmations; no-remote guidance. Browser notification reducer handles user permission gesture, background delivery, dedup and denied/unsupported fallback; notification server history through Query, UI-only read/permission state in Zustand. Empty states for zero projects/repos, no origin/token/issues/MRs/builds/tasks/standup, loading and errors distinct. Keyboard/Radix, dark and light theme browser inspection. No live hosts/models. | Visible E6 plus all remaining checklist UI. |
+| **TM2 Action and standup test maps** | test-engineer; AC-01–06, AU-02, SF-* | Tests/helpers only in `internal/{actions,standup}/**`, `internal/core/{actions,standup}/**` | Post-merge lead maps for A/S, same property/boundary/contracts and failure-demonstration standard as TM1. Every attention reason maps to a meaningful action; stale/untracked scope never launches; Ask→Code requires explicit request; issue import remains draft; partial standup does not become fabricated content. No edits to API/cmd/MCP/web. | Direct E6 catalogue/orchestration evidence. |
+
+### Batch 6 — integrated verification (one agent; no parallel implementation)
+
+| Task | Owner / PRD IDs | Owned paths | Interfaces to use / specific DoD | Exit contribution |
+|---|---|---|---|---|
+| **E End-to-end and remaining test maps** | test-engineer; all Phase 6 IDs and invariants 1–11 | Tests/fixtures/helpers in `cmd/ygg/**`, `internal/{api,mcp}/**`, `web/**`; `scripts/smoke.ps1`, browser tests in `web/e2e/**`; no production edits | Derive W/U maps after merge, reuse fixture generator and fake hosts/mock adapter. Add real executable Playwright cases through F3 runner and built-binary Windows smoke coverage. Table-driven `TestPhase6NeedsAttentionActions` covers every current reason plus combinations: row + repo + palette dispatch, expected mode/context/proposals, usable fallback when unavailable. Mock agent diagnosis→explicit fix→verify→confirm proposals; issue stays draft until start; ignore edit stale refusal/CRLF; init→direct-edit admission→confirmed install→private publish against fake host with restart/duplicate cases. Notification privacy, verification pass/fail, background-only browser delivery and reconnect dedup; zero/few repo empty states and standup copy/polish. Run required checks, real `task test:e2e`, `task smoke` on Windows, `task test:race`, `task build`, `task license`, `task perf` as applicable; report skips. | Final E6 evidence and all checklist acceptance. |
+
+## Integration, reviews and bookkeeping
+
+Merge one branch at a time: read report and diff, `git merge --no-ff <branch>` into main, then `task generate`, `task lint`, `task typecheck`, `task test`, `task test:web`. Fix failures before the next merge. Contract conflicts are resolved by the lead, never parallel agents. Do not mark a checklist item done merely because its backend has landed.
+
+After **each** batch, run read-only `safety-reviewer` and `functional-effect:fe-reviewer` against `git diff <batch-start>..main`; fix all Blocking/Must-fix findings and rerun both until clear. Review invocations run after implementers finish; they do not expand the implementation concurrency limit. Missing reviewer/skill availability is a reported gate blocker, never silently omitted. Before close, run `/functional-effect:review` on all touched/new packages and resolve fix-now findings. The lead maintains this plan and its decision log; updates `docs/PLAN.md`, `docs/CHANGELOG.md`, `docs/threat-model.md`, `.env.example` optional host permission documentation, and MCP documentation if changed. Ownership for those files is lead-only, between batches.
+
+For each designed feature, the lead derives its test map as soon as it lands; TM1/TM2/E execute these maps after ownership is free. Add test maps for review fixes too. Test-engineer writes the coverage; the lead does not replace that task with self-written tests. No real agent CLI/model/real host in automated tests. New dependencies require compatible licenses and justification.
+
+## PLAN checklist and exit traceability
+
+**E6 is the sole explicit Phase 6 exit criterion: every “Needs attention” item has at least one agent action.** The other rows below are Phase 6 checklist acceptance, which must also be met before close.
+
+| PLAN requirement | Contributing tasks (foundations apply to every row) | Required evidence |
+|---|---|---|
+| GH-05/06 logs and issues | XH, H, T, W, U, TM1, E | Recorded GitLab/GitHub reads, bounded logs, scope/auth failures, issue imported as an unstarted draft. |
+| AC-01–05 actions | XT, XR, H, T, R, P, A, W, U, TM1/TM2, E | Mode-correct diagnosis/fix, proposed MR comments/commits, confirmed ff-only pull or explanation, issue→draft→explicit start. |
+| AC-06 three surfaces | A, W, U, TM2, E | Same typed action from widget row, repo row and searchable keyboard palette; no duplicate action logic. |
+| WS-09 noise | XR, R, P, A, W, U, TM1, E | Threshold/sample tests; expected-content hash prevents stale edit; confirmed `.gitignore` changes preserve CRLF and user entries. |
+| UI-06/D11 notifications | Q, W, U, TM1, E | Needs-you, verification pass/fail and completion; minimal fields; browser permission/background/dedup/fallback tests. |
+| AU-02/UI-03 Standup | R, H, S, W, U, TM2, E | Commit/MR/build aggregation, partial/empty states, copy and explicit Ask polish; registered independent widget. |
+| NR-01–04 new repo/direct edits/install/publish | XT, T, H, N, P, W, U, TM1, E | Confirmed initialization, tracked-only task scope, direct-edit gate, main-only clean-env install, private user/org publish with crash reconciliation and token-free child processes. |
+| UI-07 empty states | W, U, E | Browser walkthrough of zero projects, one empty project, few repos and unavailable optional hosts; actionable next steps. |
+| **E6 every attention item has an agent action** | XH/XT/XR, H/T/R/P, A, W, U, TM1/TM2, E; Q/S/N support surrounding flows | Catalogue and browser matrix for unreadable repo, conflicts, diverged, failed CI, failed local build, behind, dirty and combined reasons. No stranded reason after ranking/limit/filtering, no action that only opens a detail page, no unsafe repair. Retest any newly introduced attention reason. |
+
+## Human verification on Windows at phase close
+
+Automated fixtures do not establish real browser permission/OS notification behavior, hosted permissions, Defender/reparse behavior or actual agent CLI compatibility. Report each item as passed, failed or pending, with no implied live-run authorization from this plan.
+
+1. On a fictional demo workspace, use widget, repo row and `Ctrl+K` for every attention reason (including unreadable/conflicted/diverged repos and failed local builds). Confirm each offers a useful agent action and explains missing context. Diagnose is Ask; Fix creates a worktree only after explicit selection. Check keyboard flow in a dark and light theme.
+2. When explicitly authorized in that session, test real GitLab/GitHub failed logs, MR review and issue import with test accounts/repos. Verify tokenless/expired/minimal-permission cases; issue drafts do not start an agent. Preview comments, reject once, then confirm on a disposable MR; stale-head comments refuse. Real agent CLI testing needs separate session agreement.
+3. Use a large untracked generated directory: ignore proposal lists exact additions; reject leaves disk unchanged; confirm preserves existing `.gitignore`/CRLF; change the file before confirming and see refusal. No generated file is deleted.
+4. With Edge/Chrome, allow notifications from a user gesture, background the tab and trigger Needs you, verification success/failure and completion. Windows toast contains only task title/status; foreground shows in-app only. Exercise denial, reconnect/reload and Windows Do Not Disturb settings; no duplicate toast for replayed events.
+5. Standup across several mock repos shows commits, MRs and builds; date range and copy work; missing host data is labelled. Polish starts an explicit Ask task and does not silently consume agent usage.
+6. Create a new repo under a tracked project with spaces/non-ASCII/long Windows paths; try an existing directory, outside path and junction escape. Confirm README/ignore/first commit contents before writes. Cancel/restart partial initialization; existing files remain intact, and recovery never deletes them. Missing git author has a useful recovery message.
+7. Before adding a remote, try direct editing: warning/opt-in, trust and single-editor lock hold; reject an unsupported limited-enforcement adapter. Confirm dependency install uses the project's toolchain, main checkout and clean env; cancel it and check descendants stop. Existing editor/Explorer survives exiting `ygg`.
+8. Only after explicit session authorization, publish a disposable repo to a test GitHub user and org. Check private default, requested visibility/permissions, credential-free origin, first push, already-existing destination/origin refusal, and recovery after an interrupted request. Never expose tokens in a child process, URL/config, log or audit. No automatic remote cleanup.
+9. Start with no projects, then an empty tracked project and one repo without remote/token/history. Each relevant page/widget explains the next step without false errors or dead actions. Run `task smoke` and the integrated suite on Windows; process/job cleanup regressions remain covered from Phase 5.
+
+## Approval boundary and execution log
+
+Stop after presenting this plan. No agents have been spawned and no foundations implemented. Plan approval enables F0 design work, not unresolved safety exceptions; F0's own design approval gate precedes contract implementation. Subsequent brief dispatch must cite the committed main foundations SHA. At close report requirement IDs, exit evidence, unmet checks and Windows checklist results; propose `v0.7.0` and stop. Do not tag, push or begin Phase 7 without the human's instruction.
+
+- Plan prepared against `2f96629`; foundation SHA: pending.
+- Design approvals, batch start/merge SHAs, review results, test maps, decisions/deviations and any in-flight agent state: record here during execution.
+
+- Plan validation: `git diff --check` passed. Required `task generate`, `task lint`, `task typecheck`, `task test`, and `task test:web` could not run because `task` is not installed in this environment. No implementation behavior is claimed verified.
+
+- Execution started after human approval of this plan. F0 produced seven concrete
+  designs in `docs/design/phase-6-*.md`. No subagent was launched, no production
+  code/schema was changed, and no shared contract was committed before approval.
+- F0 proposed decisions: noise threshold 100 total/50 sampled/half-sample generated
+  directory; server-side in-process HTTP Git transport; reserved repo readiness
+  filtered in SQL across every consumer; setup draft owns init proposal; durable
+  RequestID/digest and stage reconciliation; per-tab live notification dedup with
+  gap recovery in-app only. See designs for limits, invariants and tests.
+- Environment still lacks `task` and `pnpm` on PATH. `go`, Node and golangci-lint
+  are present. Provider capabilities include Claude Sonnet 5.5 for future named
+  implementation roles; no provider fallback or model invocation occurred.
+- F0 design approval gate remains pending. Per the approved plan and the design
+  skill's explicit “Show and stop” instruction, do not implement F1–F3 or dispatch
+  Batch 1 until the human approves these concrete designs (or explicitly waives
+  that separate gate). This is not a request to reapprove the work breakdown.
+
+- Human approved all F0 designs and instructed execution to proceed. The separate
+  F0 gate is satisfied; it must not be asked again.
+- Execution adjustment: use one isolated go-backend/Sonnet foundation agent for
+  F1–F3, with the lead integrating and verifying its single branch on main. This
+  uses the original request and CLAUDE.md step 2's explicit single-agent option;
+  it replaces the table's lead-only implementation assignment. No fan-out until
+  every shared contract, migration, core skeleton, Taskfile and generated output
+  is committed on main and the five mandatory checks pass. No parallel feature
+  implementers will run during foundations.
