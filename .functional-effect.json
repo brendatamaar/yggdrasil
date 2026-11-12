@@ -13,6 +13,10 @@
     "internal/devservers/**",
     "internal/terminal/**",
     "internal/worktreeenv/**",
+    "internal/actions/**",
+    "internal/newrepos/**",
+    "internal/notify/**",
+    "internal/standup/**",
     "web/src/main.tsx"
   ],
   "exclude": [],
