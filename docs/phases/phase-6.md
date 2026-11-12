@@ -279,3 +279,8 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
 - Human separately authorized deleting /tmp/go-build2074738072 (abandoned
   399 MiB build scratch); that exact directory was removed. This grants no
   broader cache, file or branch deletion authorization.
+
+- Post-repair generation, lint and typecheck pass again; the sequential full Go
+  and frontend checks are still running. Request a fresh pair of reviews on
+  f64ed1e repairs and test-engineer coverage for the new typed comment-proof
+  boundary before foundation gate closure. No feature batch has started.

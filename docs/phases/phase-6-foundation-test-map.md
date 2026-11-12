@@ -65,3 +65,14 @@ The next recheck found three additional Must-fix boundary defects. Extend the ma
 The current test-engineer was steered with these findings and asked to finish
 with failing production regressions if needed, then release package ownership.
 Lead production repairs follow that handoff; no parallel writes to the package.
+
+## Typed effect-proof follow-up
+The three Must-fix defects and foreign-field rejection now pass their regression
+groups on main. The repair introduced a distinct core/proposals.CommentReceipt
+and DB EncodeCommentReceipt/DecodeCommentReceipt; test-engineer must cover its
+round-trip, independent accepted-implies-valid oracle, each missing/invalid field,
+unknown field/trailing data and fuzz seeds. Exercise a comment effect's insert,
+settle and load with matching marker/host ID, and reject mismatched marker/ID,
+wrong stage/kind, unfinished effects carrying proof, duplicate terminal settlement,
+and failure or unknown results that attempt to turn back into an intent.
+Restore all controlled mutations and report incomplete expensive race/fuzz runs.
