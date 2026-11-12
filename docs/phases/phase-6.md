@@ -211,3 +211,18 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
 - Disk cleanup permission requested only for the foundation agent's accidental
   902 MiB scratch home, per CLAUDE.md's explicit no-file-deletion instruction;
   no cleanup has been performed. Avoid HOME overrides and parallel heavy checks.
+
+- T3 server restart interrupted the foundation regression assignment and running
+  shell checks. The resumed Sonnet call failed with an API rate limit. Its seven
+  partial fixture edits were reviewed, committed as 5f13a00 on
+  t3/foundation-regression-tests and merged on main as da626b7; no regression
+  coverage completion is claimed. Main remains before Batch 1.
+- Human explicitly authorized deleting the accidental scratch home. The lead
+  removed only that exact directory (making its read-only module-cache directories
+  owner-writable within the authorized target so deletion could finish). About
+  900 MiB is now free. No other cache, worktree, file or branch cleanup authorized.
+- Restart validation with sequential low-concurrency checks. Generation had passed
+  before restart; previous full test/lint runs that exhausted disk are failures,
+  not evidence of a clean foundation gate. Retry the same Sonnet test-engineer
+  assignment for the remaining mapped regressions; do not change provider/model
+  without human direction if its quota remains unavailable.
