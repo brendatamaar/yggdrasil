@@ -17,8 +17,8 @@ func foundationReceipts() []newrepos.Receipt {
 		newrepos.FileReceipt{Name: "README.md", ContentHash: strings.Repeat("a", 64)},
 		newrepos.FileReceipt{Name: ".gitignore", ContentHash: strings.Repeat("b", 64)},
 		newrepos.CommitReceipt{Commit: strings.Repeat("c", 40), Tree: strings.Repeat("d", 64), MessageHash: strings.Repeat("e", 64), Author: "Alex <alex@acme.example>"},
-		newrepos.TrackedReceipt{}, newrepos.RemoteReceipt{RemoteID: "R_shop", URL: "https://git.acme.example/acme/shop-api.git"},
-		newrepos.OriginReceipt{URL: "https://git.acme.example/acme/shop-api.git"}, newrepos.PushReceipt{Head: strings.Repeat("f", 40)},
+		newrepos.TrackedReceipt{}, newrepos.RemoteReceipt{RemoteID: "R_shop", URL: "https://git.acme.example/acme/shop-new.git"},
+		newrepos.OriginReceipt{URL: "https://git.acme.example/acme/shop-new.git"}, newrepos.PushReceipt{Head: strings.Repeat("f", 40)},
 	}
 }
 
