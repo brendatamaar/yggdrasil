@@ -28,7 +28,7 @@ func TestFoundationDefectUncertainNeedsStageAndResume(t *testing.T) {
 func TestFoundationDefectContradictoryRecoveryEvidence(t *testing.T) {
 	spec := newReposSpec("prj_shop", "rep_shop", "shop-new")
 	pub := foundationPublish(spec)
-	remote := newrepos.RemoteReceipt{RemoteID: "R_shop", URL: "https://git.acme.example/acme/shop-api.git"}
+	remote := newrepos.RemoteReceipt{RemoteID: "R_shop", URL: "https://git.acme.example/acme/shop-new.git"}
 	origin := newrepos.OriginReceipt{URL: "https://git.acme.example/acme/shop-other.git"}
 	checkFoundationState(t, spec, newrepos.Publishing{Spec: pub, Attempt: 1, Stage: newrepos.StagePushHead, Done: []newrepos.Receipt{remote, origin}}, false)
 	rs := foundationReceipts()[:4]
