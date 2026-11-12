@@ -299,3 +299,16 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   repo in active/resumed states. The full-head receipt fix waits for its package
   handoff. Batch 1 briefs are prepared in
   [phase-6-batch-1-briefs.md](phase-6-batch-1-briefs.md), not dispatched.
+
+- Comment-proof test branch t3/comment-receipt-effect-tests (50f8dea) merged
+  as e812f7d; it adds independent receipt validity/fuzz seeds, SQLite settlement
+  matrix and wrong-destination active/resume regressions. Fixture URLs were
+  corrected to the confirmed destination without weakening assertions. Lead
+  applied checkFullHead in 8b0da11 after package handoff. The full targeted
+  DB/core/proposals/newrepos/architecture suite now passes, including all
+  previously intentional failure groups.
+- The human granted routine disposal of generated Go build/lint caches and
+  completed Phase-6-owned build/test scratch for this phase. This excludes source
+  files, worktrees and branches; no further repeated directory approvals are
+  needed within that generated-artifact scope. Cleared only those disposable
+  caches and completed owned RAM scratch before final foundation checks.
