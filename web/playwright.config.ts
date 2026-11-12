@@ -14,6 +14,10 @@ declare const process: { env: Record<string, string | undefined>; platform: stri
 
 const port = Number(process.env["YGG_E2E_PORT"] ?? 4749);
 const dataDir = process.env["YGG_E2E_DATA_DIR"];
+if (!dataDir) throw new Error("Set YGG_E2E_DATA_DIR to an isolated temporary directory; use task test:e2e.");
+if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+  throw new Error("YGG_E2E_PORT must be an integer between 1024 and 65535.");
+}
 
 export default defineConfig({
   testDir: "e2e",
@@ -30,13 +34,14 @@ export default defineConfig({
   webServer: {
     command: process.platform === "win32" ? "..\\bin\\ygg.exe" : "../bin/ygg",
     url: `http://127.0.0.1:${String(port)}/api/health`,
-    reuseExistingServer: !process.env["CI"],
+    reuseExistingServer: false,
     timeout: 60_000,
     env: {
       YGG_ADDR: `127.0.0.1:${String(port)}`,
       YGG_NO_BROWSER: "1",
       YGG_INSECURE_NO_SESSION: "1",
-      ...(dataDir ? { YGG_DATA_DIR: dataDir } : {}),
+      YGG_DATA_DIR: dataDir,
+      YGG_WRITE_MODES: "0",
     },
   },
 });

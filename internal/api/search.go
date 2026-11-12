@@ -113,7 +113,7 @@ func searchResponse(st coresearch.Search, editor coresearch.Editor) SearchRespon
 // joinInside joins a repo-relative "/" path to the repo folder and reports
 // whether the result stays inside it.
 func joinInside(repoDir, rel string) (string, bool) {
-	if repoDir == "" || rel == "" || strings.ContainsRune(rel, '\\') || !filepath.IsLocal(filepath.FromSlash(rel)) {
+	if repoDir == "" || rel == "" || strings.ContainsAny(rel, `\:`) || !filepath.IsLocal(filepath.FromSlash(rel)) {
 		return "", false
 	}
 	return filepath.Join(repoDir, filepath.FromSlash(rel)), true

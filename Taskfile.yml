@@ -89,9 +89,7 @@ tasks:
     # run: it is never counted as a pass.
     cmds:
       - task: build
-      - |
-        # A fresh data folder per run; the OS clears its temp folder.
-        YGG_E2E_DATA_DIR="$(mktemp -d)" pnpm -C web run test:e2e
+      - node scripts/e2e.mjs
 
   lint:
     desc: golangci-lint and ESLint

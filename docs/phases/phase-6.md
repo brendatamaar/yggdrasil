@@ -190,3 +190,24 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   every shared contract, migration, core skeleton, Taskfile and generated output
   is committed on main and the five mandatory checks pass. No parallel feature
   implementers will run during foundations.
+
+- F1–F3 foundation branch `t3/phase-6-shared-foundations` merged with `--no-ff`
+  at `09bc226` (source commits dc5db87, 1127cad, 842b569, 897c877, 67ac4e8).
+  No feature batch dispatched. Migration 00007 uses the existing Go rebuildTx
+  plus SQL schema mirror because the proposal-kind CHECK requires FK-safe rebuild.
+  Publish action is `PublishRepo` to avoid the existing Publish hub command.
+- Foundation safety and functional reviews both found Must-fix issues: stale
+  same-worker outbox claims lacked version fencing; receipts/stage prefixes and
+  reservation scope were not fully validated; Playwright could reuse a real server.
+  Lead repairs are in progress, with tests mapped in
+  [phase-6-foundation-test-map.md](phase-6-foundation-test-map.md). New review
+  invocations are required after the regression tests land.
+- Tools now available: Task 3.54.0, Node 22 and pnpm (project pnpm 11.4.0
+  resolved by wrapper). First concurrent full checks exhausted disk; do not count
+  those runs as validation. Low-concurrency generation now passes; repaired
+  core/newrepos, archtest and DB tests pass. Full Go test reproduced inherited
+  path/shim/author fixture failures. Required checks remain an open foundation
+  gate. No PLAN feature checkbox or phase-exit criterion is marked complete.
+- Disk cleanup permission requested only for the foundation agent's accidental
+  902 MiB scratch home, per CLAUDE.md's explicit no-file-deletion instruction;
+  no cleanup has been performed. Avoid HOME overrides and parallel heavy checks.

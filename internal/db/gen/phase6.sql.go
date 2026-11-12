@@ -90,17 +90,23 @@ func (q *Queries) ClaimOutbox(ctx context.Context, arg ClaimOutboxParams) ([]Out
 
 const completeOutbox = `-- name: CompleteOutbox :execrows
 UPDATE outbox SET done_at = ?, claimed_by = '', claimed_until = NULL, version = version + 1
-WHERE id = ? AND claimed_by = ? AND done_at IS NULL
+WHERE id = ? AND claimed_by = ? AND version = ?4 AND done_at IS NULL
 `
 
 type CompleteOutboxParams struct {
-	DoneAt    sql.NullString
-	ID        string
-	ClaimedBy string
+	DoneAt       sql.NullString
+	ID           string
+	ClaimedBy    string
+	ClaimVersion int64
 }
 
 func (q *Queries) CompleteOutbox(ctx context.Context, arg CompleteOutboxParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, completeOutbox, arg.DoneAt, arg.ID, arg.ClaimedBy)
+	result, err := q.db.ExecContext(ctx, completeOutbox,
+		arg.DoneAt,
+		arg.ID,
+		arg.ClaimedBy,
+		arg.ClaimVersion,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -910,17 +916,23 @@ func (q *Queries) MinNoticeCursor(ctx context.Context) (int64, error) {
 
 const releaseOutbox = `-- name: ReleaseOutbox :execrows
 UPDATE outbox SET due_at = ?, claimed_by = '', claimed_until = NULL, version = version + 1
-WHERE id = ? AND claimed_by = ? AND done_at IS NULL
+WHERE id = ? AND claimed_by = ? AND version = ?4 AND done_at IS NULL
 `
 
 type ReleaseOutboxParams struct {
-	DueAt     string
-	ID        string
-	ClaimedBy string
+	DueAt        string
+	ID           string
+	ClaimedBy    string
+	ClaimVersion int64
 }
 
 func (q *Queries) ReleaseOutbox(ctx context.Context, arg ReleaseOutboxParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, releaseOutbox, arg.DueAt, arg.ID, arg.ClaimedBy)
+	result, err := q.db.ExecContext(ctx, releaseOutbox,
+		arg.DueAt,
+		arg.ID,
+		arg.ClaimedBy,
+		arg.ClaimVersion,
+	)
 	if err != nil {
 		return 0, err
 	}

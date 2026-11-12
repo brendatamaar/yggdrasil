@@ -102,11 +102,11 @@ RETURNING *;
 
 -- name: CompleteOutbox :execrows
 UPDATE outbox SET done_at = ?, claimed_by = '', claimed_until = NULL, version = version + 1
-WHERE id = ? AND claimed_by = ? AND done_at IS NULL;
+WHERE id = ? AND claimed_by = ? AND version = sqlc.arg(claim_version) AND done_at IS NULL;
 
 -- name: ReleaseOutbox :execrows
 UPDATE outbox SET due_at = ?, claimed_by = '', claimed_until = NULL, version = version + 1
-WHERE id = ? AND claimed_by = ? AND done_at IS NULL;
+WHERE id = ? AND claimed_by = ? AND version = sqlc.arg(claim_version) AND done_at IS NULL;
 
 -- name: GetOutbox :one
 SELECT * FROM outbox WHERE id = ?;

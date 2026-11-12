@@ -150,6 +150,9 @@ func reservationFrom(r gen.RepoReservation) (ReservationRecord, error) {
 	if err := spec.Validate(); err != nil {
 		return ReservationRecord{}, fmt.Errorf("bad reservation spec in database: %w", err)
 	}
+	if spec.Project != core.ProjectID(r.ProjectID) || spec.Repo != core.RepoID(r.RepoID) || spec.Leaf != r.Leaf {
+		return ReservationRecord{}, errors.New("bad reservation in database: immutable scope differs from row")
+	}
 	if spec.Hash() != r.SpecHash {
 		return ReservationRecord{}, errors.New("bad reservation in database: the spec does not match its hash")
 	}
@@ -239,6 +242,20 @@ func (tx *Tx) SaveReservation(ctx context.Context, op core.OperationID, st newre
 	if err := needTime("reservation update", now); err != nil {
 		return 0, err
 	}
+	row, err := tx.q.GetReservation(ctx, string(op))
+	if err != nil {
+		return 0, fmt.Errorf("save reservation: %w", err)
+	}
+	var immutable newrepos.InitSpec
+	if err := strictJSON(row.Spec, &immutable); err != nil {
+		return 0, err
+	}
+	if immutable.Hash() != row.SpecHash || immutable.Project != core.ProjectID(row.ProjectID) || immutable.Repo != core.RepoID(row.RepoID) || immutable.Leaf != row.Leaf {
+		return 0, errors.New("save reservation: immutable scope mismatch")
+	}
+	if err := newrepos.ValidateState(immutable, st); err != nil {
+		return 0, err
+	}
 	code, stage, attempt, detail, err := encodeNewRepoState(st)
 	if err != nil {
 		return 0, err
@@ -279,6 +296,9 @@ type receiptJSON struct {
 // EncodeReceipt returns the kind code and strict JSON of a receipt. A URL in a
 // receipt must be credential-free; the encoder refuses one with userinfo.
 func EncodeReceipt(r newrepos.Receipt) (kind string, data string, err error) {
+	if err := newrepos.ValidateReceipt(r); err != nil {
+		return "", "", err
+	}
 	var j receiptJSON
 	switch v := r.(type) {
 	case newrepos.DirReceipt:
@@ -320,23 +340,42 @@ func DecodeReceipt(data string) (newrepos.Receipt, error) {
 	if strings.Contains(j.URL, "@") {
 		return nil, errors.New("bad receipt in database: the URL carries credentials")
 	}
+	check := func(r newrepos.Receipt) (newrepos.Receipt, error) {
+		_, canonical, err := EncodeReceipt(r)
+		if err != nil {
+			return nil, err
+		}
+		var actual, expected map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(data), &actual); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(canonical), &expected); err != nil {
+			return nil, err
+		}
+		for key := range actual {
+			if _, ok := expected[key]; !ok {
+				return nil, fmt.Errorf("receipt %s has incompatible field %s", j.Kind, key)
+			}
+		}
+		return r, nil
+	}
 	switch j.Kind {
 	case "dir":
-		return newrepos.DirReceipt{Identity: j.Identity}, nil
+		return check(newrepos.DirReceipt{Identity: j.Identity})
 	case "git":
-		return newrepos.GitReceipt{GitDirIdentity: j.GitDirIdentity}, nil
+		return check(newrepos.GitReceipt{GitDirIdentity: j.GitDirIdentity})
 	case "file":
-		return newrepos.FileReceipt{Name: j.Name, ContentHash: j.ContentHash}, nil
+		return check(newrepos.FileReceipt{Name: j.Name, ContentHash: j.ContentHash})
 	case "commit":
-		return newrepos.CommitReceipt{Commit: j.Commit, Tree: j.Tree, MessageHash: j.MessageHash, Author: j.Author}, nil
+		return check(newrepos.CommitReceipt{Commit: j.Commit, Tree: j.Tree, MessageHash: j.MessageHash, Author: j.Author})
 	case "tracked":
-		return newrepos.TrackedReceipt{}, nil
+		return check(newrepos.TrackedReceipt{})
 	case "remote":
-		return newrepos.RemoteReceipt{RemoteID: j.RemoteID, URL: j.URL}, nil
+		return check(newrepos.RemoteReceipt{RemoteID: j.RemoteID, URL: j.URL})
 	case "origin":
-		return newrepos.OriginReceipt{URL: j.URL}, nil
+		return check(newrepos.OriginReceipt{URL: j.URL})
 	case "push":
-		return newrepos.PushReceipt{Head: j.Head}, nil
+		return check(newrepos.PushReceipt{Head: j.Head})
 	}
 	return nil, fmt.Errorf("bad receipt in database: unknown kind %q", j.Kind)
 }
@@ -433,6 +472,9 @@ func decodeResume(spec newrepos.InitSpec, r *resumeJSON) (newrepos.Resumable, er
 
 // encodeNewRepoState maps a state onto the row columns.
 func encodeNewRepoState(st newrepos.State) (code, stage string, attempt int, detail string, err error) {
+	if err := newrepos.ValidateStateShape(st); err != nil {
+		return "", "", 0, "", err
+	}
 	var d detailJSON
 	switch v := st.(type) {
 	case newrepos.Reserved:
@@ -484,7 +526,15 @@ func encodeNewRepoState(st newrepos.State) (code, stage string, attempt int, det
 // decodeNewRepoState parses a row back into a state and rejects impossible
 // combinations: a stage on a state that has none, a missing stage on one that
 // needs it, a missing resume record, a non-positive attempt.
-func decodeNewRepoState(spec newrepos.InitSpec, code, stage string, attempt int, detail string) (newrepos.State, error) {
+func decodeNewRepoState(spec newrepos.InitSpec, code, stage string, attempt int, detail string) (state newrepos.State, stateErr error) {
+	defer func() {
+		if stateErr == nil {
+			stateErr = newrepos.ValidateState(spec, state)
+			if stateErr != nil {
+				state = nil
+			}
+		}
+	}()
 	var d detailJSON
 	if err := strictJSON(detail, &d); err != nil {
 		return nil, fmt.Errorf("bad reservation detail in database: %w", err)

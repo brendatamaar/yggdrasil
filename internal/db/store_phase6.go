@@ -329,6 +329,9 @@ func actionFrom(r gen.WorkspaceActionRequest, proposals []string) (ActionRecord,
 // double-clicked submission finds the first and never dispatches twice. If it
 // exists with another digest, ErrDigestMismatch.
 func (tx *Tx) BeginActionRequest(ctx context.Context, rec ActionRecord) (ActionRecord, bool, error) {
+	if err := rec.Request.Validate(); err != nil {
+		return ActionRecord{}, false, err
+	}
 	if err := needTime("action request", rec.CreatedAt); err != nil {
 		return ActionRecord{}, false, err
 	}
@@ -554,23 +557,24 @@ func (tx *Tx) ClaimOutbox(ctx context.Context, worker string, now time.Time, lea
 }
 
 // CompleteOutbox marks a claimed row done. A row not claimed by worker is
-// ErrNotFound.
-func (tx *Tx) CompleteOutbox(ctx context.Context, id, worker string, now time.Time) error {
+// ErrNotFound. The returned claim version fences expired claims even when a
+// worker identifier is reused.
+func (tx *Tx) CompleteOutbox(ctx context.Context, id, worker string, claimVersion int64, now time.Time) error {
 	if err := needTime("outbox completion", now); err != nil {
 		return err
 	}
 	n, err := tx.q.CompleteOutbox(ctx, gen.CompleteOutboxParams{
-		DoneAt: sql.NullString{String: fmtTime(now), Valid: true}, ID: id, ClaimedBy: worker,
+		DoneAt: sql.NullString{String: fmtTime(now), Valid: true}, ID: id, ClaimedBy: worker, ClaimVersion: claimVersion,
 	})
 	return updated("complete outbox "+id, n, err)
 }
 
 // ReleaseOutbox gives a claimed row back, due again at retryAt.
-func (tx *Tx) ReleaseOutbox(ctx context.Context, id, worker string, retryAt time.Time) error {
+func (tx *Tx) ReleaseOutbox(ctx context.Context, id, worker string, claimVersion int64, retryAt time.Time) error {
 	if err := needTime("outbox release", retryAt); err != nil {
 		return err
 	}
-	n, err := tx.q.ReleaseOutbox(ctx, gen.ReleaseOutboxParams{DueAt: fmtTime(retryAt), ID: id, ClaimedBy: worker})
+	n, err := tx.q.ReleaseOutbox(ctx, gen.ReleaseOutboxParams{DueAt: fmtTime(retryAt), ID: id, ClaimedBy: worker, ClaimVersion: claimVersion})
 	return updated("release outbox "+id, n, err)
 }
 

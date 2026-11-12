@@ -20,7 +20,7 @@ var (
 	ErrComposeOp     = errors.New("not a compose operation")
 	// ErrComposeIndirect means the compose file pulls in other files (include,
 	// extends, env_file), which the confirmation could not cover.
-	ErrComposeIndirect = errors.New("the compose file uses include:, extends: or env_file:")
+	ErrComposeIndirect = errors.New("the compose file uses include, extends or env_file")
 )
 
 // MaxProjectName is the longest <name> in ygg-<name>.

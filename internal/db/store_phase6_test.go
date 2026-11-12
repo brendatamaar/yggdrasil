@@ -206,7 +206,7 @@ func TestNewRepoStateRoundTripAndRejects(t *testing.T) {
 		newrepos.Publishing{Spec: pub, Attempt: 1, Stage: newrepos.StageAddOrigin, Done: []newrepos.Receipt{newrepos.RemoteReceipt{RemoteID: "R", URL: "https://github.com/acme/x.git"}}},
 		newrepos.Published{RemoteID: "R", URL: "https://github.com/acme/x.git", Head: strings.Repeat("c", 40)},
 		newrepos.Uncertain{Attempt: 1, Stage: newrepos.StageCreateRemote, Reason: "timed out", Resume: newrepos.ResumePublish{Spec: pub}},
-		newrepos.Stopped{Stage: newrepos.StageFirstCommit, Reason: newrepos.StopMissingAuthor, Resume: newrepos.ResumeInit{Spec: spec, Done: []newrepos.Receipt{newrepos.DirReceipt{Identity: "i"}}}},
+		newrepos.Stopped{Stage: newrepos.StageInitGit, Reason: newrepos.StopMissingAuthor, Resume: newrepos.ResumeInit{Spec: spec, Done: []newrepos.Receipt{newrepos.DirReceipt{Identity: "i"}}}},
 		newrepos.Stopped{Reason: newrepos.StopRejected, Resume: newrepos.ResumeNone{}},
 	}
 	for _, st := range states {
@@ -386,10 +386,12 @@ func TestOutboxClaimLeaseAndReconcileMarker(t *testing.T) {
 		t.Fatalf("reclaim = %+v", again)
 	}
 	// Only the current claimant can complete it.
-	if err := s.Commit(ctx, func(tx *Tx) error { return tx.CompleteOutbox(ctx, again[0].ID, "w1", at0) }); !errors.Is(err, ErrNotFound) {
+	if err := s.Commit(ctx, func(tx *Tx) error { return tx.CompleteOutbox(ctx, again[0].ID, "w1", again[0].Version, at0) }); !errors.Is(err, ErrNotFound) {
 		t.Errorf("complete by the old claimant: %v, want ErrNotFound", err)
 	}
-	if err := s.Commit(ctx, func(tx *Tx) error { return tx.CompleteOutbox(ctx, again[0].ID, "w2", at0.Add(3*time.Minute)) }); err != nil {
+	if err := s.Commit(ctx, func(tx *Tx) error {
+		return tx.CompleteOutbox(ctx, again[0].ID, "w2", again[0].Version, at0.Add(3*time.Minute))
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if rest := claim("w3", at0.Add(10*time.Minute)); len(rest) != 0 {
