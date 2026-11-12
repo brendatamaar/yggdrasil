@@ -226,3 +226,14 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   not evidence of a clean foundation gate. Retry the same Sonnet test-engineer
   assignment for the remaining mapped regressions; do not change provider/model
   without human direction if its quota remains unavailable.
+
+- Same-provider Sonnet retry also failed before any edits with the 5-hour API
+  quota limit. The human explicitly instructed: "Use Codex agents to continue."
+  This replaces Sonnet as the session preference for remaining implementation
+  and test assignments; retain each named role's ownership and report contract.
+  Do not retry Sonnet or ask again about this provider choice.
+- Recovered main checks: task generate, task lint and task typecheck now pass.
+  task test and task test:web are running sequentially with GOMAXPROCS=2,
+  GOFLAGS=-p=1 and Go scratch in an executable task directory under /dev/shm.
+  The pinned linter's Go1.27 formatter differs from Go1.26 gofmt for multiline
+  returns; format changed files with golangci-lint fmt to match the required gate.
