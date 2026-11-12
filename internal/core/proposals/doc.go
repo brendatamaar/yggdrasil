@@ -6,8 +6,11 @@
 // carry no JSON tags: wire DTOs live in internal/api.
 //
 // There is no action that can express force, reset, clean, branch deletion or
-// file deletion (invariant 1). Publish and subtasks stay in
-// core.ProposalKind but ParseAction refuses them until their executors exist.
+// file deletion (invariant 1). Subtasks stay in core.ProposalKind but
+// ParseAction refuses them until their executor exists. The Phase 6 kinds
+// (publish, ignore entries, review comment, init repo, pull) have frozen
+// parsers, hashes and Describe text, but Enabled is false for them, so they
+// cannot be created yet.
 package proposals
 
 import "errors"
