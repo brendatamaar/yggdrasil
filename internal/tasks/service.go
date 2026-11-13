@@ -158,35 +158,21 @@ func (s *Service) Message(ctx context.Context, req MessageRequest) (MessageResul
 			return MessageResult{}, err
 		}
 		existing = &st
-		req.ProjectID, req.Agent, req.Model = st.Row.ProjectID, st.Row.Agent, st.Row.Model
-		req.Scope = string(st.Row.Scope)
-		// A whole-project task covers every repo; the parser rejects a list.
-		req.Repos = nil
-		if st.Row.Scope != core.ScopeProject {
-			req.Repos = repoStrings(st.Row.RepoIDs)
-		}
 	}
 	raw := coretasks.RawMessage{Prompt: req.Prompt, Mode: req.Mode, Scope: req.Scope, Agent: req.Agent, Model: req.Model, Repos: req.Repos, Title: req.Title}
-	check := raw
-	if existing != nil && existing.Row.Scope == core.ScopeProject && req.Mode == string(core.ModeAsk) {
-		// An Ask turn in a whole-project task reads the task's scope; the
-		// scope/mode pairing rule is for the first message.
-		check.Scope, check.Repos = string(core.ScopeRepo), repoStrings(existing.Row.RepoIDs[:min(1, len(existing.Row.RepoIDs))])
+	var stored *core.Task
+	if existing != nil {
+		stored = &existing.Row
 	}
-	pm, err := coretasks.ParseMessage(check)
+	projectID, pm, err := coretasks.ParseSubmission(req.ProjectID, raw, stored)
 	if err != nil {
 		return MessageResult{}, err
 	}
-	pm.Scope, pm.Repos = core.TaskScope(raw.Scope), idsOf(raw.Repos)
-	if existing != nil {
-		pm.Repos = existing.Row.RepoIDs
+	if refusal := coretasks.WritingModeRefusal(pm.Mode, s.c.WriteModes); refusal != nil {
+		return MessageResult{}, &RejectedError{Reason: refusal.Reason, Message: refusal.Message}
 	}
 
-	if pm.Mode != core.ModeAsk && !s.c.WriteModes {
-		return MessageResult{}, &RejectedError{Reason: "write_modes_off", Message: "Modes that edit files are switched off in this Yggdrasil setup. Ask a question instead, or turn on write modes in the setup and restart."}
-	}
-
-	project, err := s.c.Store.GetProject(ctx, req.ProjectID)
+	project, err := s.c.Store.GetProject(ctx, projectID)
 	if err != nil {
 		return MessageResult{}, err
 	}
@@ -218,25 +204,8 @@ func (s *Service) Message(ctx context.Context, req MessageRequest) (MessageResul
 	opts := applyOpts{actor: "user"}
 	if existing == nil {
 		id = core.TaskID(s.c.NewID("tsk"))
-		title := pm.Title
-		if title == "" {
-			short := string(id)
-			if len(short) > 6 {
-				short = short[len(short)-6:]
-			}
-			title = "Task " + short
-		}
-		ids := make([]core.RepoID, len(repos))
-		for i, r := range repos {
-			ids[i] = r.ID
-		}
-		if pm.Scope == core.ScopeRepo {
-			ids = ids[:1]
-		}
-		opts.create = &core.Task{
-			ID: id, ProjectID: project.ID, Title: title, Prompt: pm.Prompt, Scope: pm.Scope, RepoIDs: ids,
-			Mode: pm.Mode, Agent: pm.Agent, Model: pm.Model, Status: core.TaskDraft, CreatedAt: now, UpdatedAt: now,
-		}
+		task := coretasks.NewSubmissionTask(id, project.ID, pm, repos, now)
+		opts.create = &task
 	}
 	var edits []core.RepoID
 	if pm.Mode == core.ModeCurrentBranch {
@@ -267,22 +236,6 @@ func refusalText(a guard.Admission) string {
 		return ""
 	}
 	return a.Refusal.Message()
-}
-
-func repoStrings(ids []core.RepoID) []string {
-	out := make([]string, len(ids))
-	for i, id := range ids {
-		out[i] = string(id)
-	}
-	return out
-}
-
-func idsOf(ss []string) []core.RepoID {
-	out := make([]core.RepoID, len(ss))
-	for i, s := range ss {
-		out[i] = core.RepoID(s)
-	}
-	return out
 }
 
 // userMessage returns the plain-language text an error carries, or def.
@@ -316,8 +269,8 @@ func (s *Service) scopeRepos(ctx context.Context, project core.ProjectID, pm cor
 		if err != nil {
 			return nil, err
 		}
-		if len(all) == 0 {
-			return nil, &RejectedError{Reason: "no_repos", Message: "This project has no tracked repos."}
+		if refusal := coretasks.ScopeRefusal(project, pm.Scope, all); refusal != nil {
+			return nil, &RejectedError{Reason: refusal.Reason, Message: refusal.Message}
 		}
 		return all, nil
 	}
@@ -325,8 +278,8 @@ func (s *Service) scopeRepos(ctx context.Context, project core.ProjectID, pm cor
 	if err != nil {
 		return nil, err
 	}
-	if r.ProjectID != project {
-		return nil, &RejectedError{Reason: "repo_not_in_project", Message: "That repo isn't part of the project. Choose a repo that the project tracks."}
+	if refusal := coretasks.ScopeRefusal(project, pm.Scope, []core.Repo{r}); refusal != nil {
+		return nil, &RejectedError{Reason: refusal.Reason, Message: refusal.Message}
 	}
 	return []core.Repo{r}, nil
 }
