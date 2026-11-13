@@ -1,6 +1,6 @@
 # Phase 6 — Workspace actions, notifications and new repos
 
-Status: **F0–F3 foundations complete and verified; Batch 1 extraction in progress**.
+Status: **F0–F3 verified; Batch 1 merged, integration and review gates pending**.
 Target: `v0.7.0`. Baseline inspected: `main` at `2f96629`, Phase 5 tagged `v0.6.0`.
 This document does not authorize a tag, push, branch/file deletion, live host mutation or real agent CLI run.
 
@@ -393,3 +393,10 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   Known resumed-scope membership and creation/reload ordering behavior is
   preserved, not silently repaired in extraction. XT is reviewed but NOT merged
   until B1-main-XR completes all five integration checks.
+
+- Post-XR integration B1-main-XR passed all five actual Task commands, each
+  exit 0, generated output unchanged. Lead then merged reviewed XT (5050201)
+  with --no-ff; its merge SHA is recorded by the preceding merge commit.
+  B1-main-XT is the final sequential integration check set now running. All
+  three extraction assignments have landed; Batch 1 is NOT closed until these
+  five checks and fresh safety/functional reviews of 1d33a88..main pass.
