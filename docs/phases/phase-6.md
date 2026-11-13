@@ -415,3 +415,11 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   checked, no effects found.' Tests and restored negative controls inspected,
   not rerun by reviewer. Both review gates now pass. B1-main-XT final Go and
   frontend results remain pending; no Batch 2 dispatch before all five pass.
+
+- Final B1-main-XT task test FAILED (exit 201): inherited DB fixture
+  TestListActiveTaskStates again received identical creation timestamps and
+  asserted insertion order although SQL uses created_at,id. Preserve this
+  failed log; do not rerun until green or weaken ordering assertions. Both
+  extraction reviews pass, but the batch remains open. Assign one Codex
+  test-engineer to make this fixture deterministic, demonstrate ordering/
+  filtering faults are caught, and commit tests only before integration.
