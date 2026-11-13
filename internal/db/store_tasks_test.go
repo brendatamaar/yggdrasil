@@ -225,31 +225,61 @@ func withTurn(st tasks.State, id tasks.TurnID) tasks.State {
 }
 
 func TestListActiveTaskStates(t *testing.T) {
-	n := 0
-	ctx := context.Background()
-	s := NewStore(openTest(t), nil)
-	p, r := seed(t, s)
-	mk := func(st tasks.State) core.TaskID {
-		n++
-		st = withTurn(st, tasks.TurnID("trn_"+string(rune('a'+n))))
-		task, err := s.CreateTask(ctx, newTask(p, r, nil))
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, draft := st.(tasks.Draft)
-		saveState(t, s, task.ID, st, task.Version, !draft)
-		return task.ID
-	}
-	mk(tasks.Draft{})
-	w := mk(tasks.Waiting{Turn: "trn_1", BlockedBy: tasks.BlockedNone{}})
-	ru := mk(tasks.Running{Turn: "trn_1", Attempt: 1, Since: at0})
-	mk(tasks.Idle{Turn: "trn_1", Outcome: tasks.Answered{}, At: at0})
-	got, err := s.ListActiveTaskStates(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 2 || got[0].Row.ID != w || got[1].Row.ID != ru {
-		t.Fatalf("active = %v", got)
+	for _, tc := range []struct {
+		name      string
+		runningAt time.Time
+		want      []core.TaskID
+	}{
+		// Timestamp order takes precedence over ID and insertion order.
+		{"created_at", at0.Add(time.Millisecond), []core.TaskID{"tsk_z_waiting", "tsk_a_running"}},
+		// Equal timestamps use ID order, reversing the preceding expectation.
+		{"equal_timestamp", at0, []core.TaskID{"tsk_a_running", "tsk_z_waiting"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			n := 0
+			ctx := context.Background()
+			s := NewStore(openTest(t), nil)
+			p, r := seed(t, s)
+			mk := func(id core.TaskID, at time.Time, st tasks.State) {
+				t.Helper()
+				n++
+				st = withTurn(st, tasks.TurnID("trn_"+string(rune('a'+n))))
+				nt := newTask(p, r, nil)
+				// Supply both fields so the test helper uses neither random IDs
+				// nor wall-clock time. Times are at persisted millisecond precision.
+				nt.ID, nt.CreatedAt, nt.UpdatedAt = id, at, at
+				task, err := s.CreateTask(ctx, nt)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, draft := st.(tasks.Draft)
+				saveState(t, s, task.ID, st, task.Version, !draft)
+			}
+			// Inactive rows bracket the active IDs and creation times.
+			// Insert the active rows in the reverse of the expected order.
+			mk("tsk_0_draft", at0.Add(-time.Millisecond), tasks.Draft{})
+			running := func() { mk("tsk_a_running", tc.runningAt, tasks.Running{Attempt: 1, Since: at0}) }
+			waiting := func() { mk("tsk_z_waiting", at0, tasks.Waiting{BlockedBy: tasks.BlockedNone{}}) }
+			if tc.runningAt.Equal(at0) {
+				waiting()
+				running()
+			} else {
+				running()
+				waiting()
+			}
+			mk("tsk_zz_idle", at0.Add(2*time.Millisecond), tasks.Idle{Outcome: tasks.Answered{}, At: at0})
+			got, err := s.ListActiveTaskStates(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ids := make([]core.TaskID, len(got))
+			for i, state := range got {
+				ids[i] = state.Row.ID
+			}
+			if !reflect.DeepEqual(ids, tc.want) {
+				t.Fatalf("active IDs = %v, want %v", ids, tc.want)
+			}
+		})
 	}
 }
 
