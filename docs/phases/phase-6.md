@@ -1,6 +1,6 @@
 # Phase 6 — Workspace actions, notifications and new repos
 
-Status: **F0–F3 verified; Batch 1 merged, integration and review gates pending**.
+Status: **F0–F3 and Batch 1 complete; Batch 2 ready to dispatch**.
 Target: `v0.7.0`. Baseline inspected: `main` at `2f96629`, Phase 5 tagged `v0.6.0`.
 This document does not authorize a tag, push, branch/file deletion, live host mutation or real agent CLI run.
 
@@ -458,3 +458,16 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   exact ordering/filtering assertions verified against SQL, store precision
   and test helper behavior. Both final reviews pass; B1-final generation,
   lint and typecheck pass, while Go/frontend results remain pending.
+
+- Batch 1 CLOSED: final B1-final integration runs all five actual Task commands
+  with exit 0, including full Go/root/demo suites and 528 frontend tests.
+  Generated output unchanged. Final source merge dfa56b8; both safety and
+  functional rechecks PASS at 7bf567f with no Blocking/Must-fix findings.
+  No failed, interrupted or ENOSPC run is counted as a pass. XH/XT/XR and
+  deterministic fixture repair are complete; Phase 6 feature boxes stay open.
+- Batch 2 briefs prepared in phase-6-batch-2-briefs.md. H/T/R own disjoint
+  host/task/repo package trees and use the committed main dispatch SHA supplied
+  by the lead. All shared contracts remain frozen. Missing persistence/port
+  needs must be reported for a serial lead correction, never approximated by
+  in-memory deduplication or edits outside ownership. Agent/Model replay fix
+  remains required before Batch A. Batch 2 starts at the commit of this entry.
