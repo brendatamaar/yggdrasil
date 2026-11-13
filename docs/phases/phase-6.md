@@ -383,3 +383,13 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   with --no-ff as 91d0048 (source ae638e8). Post-XR integration validation
   B1-main-XR is queued/running through the shared lock; no XT merge until its
   five results pass. Batch-start remains 1d33a88 for the eventual dual review.
+
+- XT completed at 5050201 on t3/extract-task-routing-choices; lead reviewed
+  all four changed files. Stateless submission normalization, deployment/scope
+  refusals and new-task defaults move into core; ordinary guard admission,
+  trust, modes, queue and locks stay unchanged. Characterization before/after,
+  three restored mutation controls, scoped/race checks and all five mandatory
+  tasks pass (528 frontend tests). Task/core-task ownership is released.
+  Known resumed-scope membership and creation/reload ordering behavior is
+  preserved, not silently repaired in extraction. XT is reviewed but NOT merged
+  until B1-main-XR completes all five integration checks.
