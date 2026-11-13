@@ -352,3 +352,17 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   scoped Go compilations as well as final five-command validation to avoid
   competing SQLite builds. Main remains at the verified foundation baseline
   plus documentation only. No provider/model switch or scope change.
+
+- XH completed at a23bbbc on t3/extract-host-context; lead reviewed all four
+  changed files and merged with --no-ff as 4c5de80. Authority fallback, target
+  eligibility and poll result identity mapping are now pure helpers; existing
+  host reads/ContextStep activation remain deferred. Characterization passed
+  before/after, scoped/race suites and three restored controlled mutations
+  passed. Agent's final five checks pass (528 frontend tests). First full test
+  attempt reproduced the known timestamp-tie DB ordering fixture flake; the
+  unchanged retry passed, with the failed log preserved.
+- Post-XH integration checks are queued/running under label B1-main-XH. With
+  approximately 150 MiB free, approved disposable Go build/lint cache cleanup
+  runs under the same validation lock before those checks. No second branch
+  may merge until all five integration checks pass. XT/XR retain ownership;
+  batch review starts only after all three sequential merges and checks.
