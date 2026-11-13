@@ -423,3 +423,12 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   extraction reviews pass, but the batch remains open. Assign one Codex
   test-engineer to make this fixture deterministic, demonstrate ordering/
   filtering faults are caught, and commit tests only before integration.
+
+- Active-task fixture test-engineer reported repeated deterministic cases and
+  six restored negative controls passing, plus DB/race suite passes. Its final
+  validation hit ENOSPC at lint (only 8 MiB free), not a product failure. Lead
+  acquired the shared validation lock and performed the already-authorized
+  disposable Go build/lint cache cleanup; disk headroom restored to 2 GiB.
+  Source/worktrees/branches untouched. Agent told to preserve failed logs and
+  retry the five tasks with a distinct label, without repeating passing scoped
+  race checks unnecessarily. No new cleanup permission was requested.
