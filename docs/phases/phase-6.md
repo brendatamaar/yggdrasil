@@ -444,3 +444,10 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
 - B1-final now runs all five post-merge integration tasks; fresh safety and
   functional rechecks will cover the complete batch plus deterministic fixture
   change before Batch 1 closure. No Batch 2 implementation has started.
+
+- Final Batch 1 safety recheck of 1d33a88..7bf567f: PASS, no introduced
+  Blocking/Must-fix/Should-fix. The repaired fixture faithfully asserts SQL
+  created_at,id ordering at persisted millisecond precision, cardinality and
+  active-state membership against reverse insertion; it masks no production
+  failure. All 11 invariants rechecked. Final functional recheck remains
+  pending; B1-final generation and lint pass, other results still pending.
