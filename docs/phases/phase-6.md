@@ -408,3 +408,10 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   Independent functional review remains pending. Final B1-main-XT generation,
   lint and typecheck pass; Go/frontend suites remain pending, so Batch 2 stays
   gated. No new implementation agent has been dispatched.
+
+- Batch 1 independent functional review of 1d33a88..9112850: PASS, no
+  Must-fix, Should-fix or required Consider findings. All 12 Go files read;
+  explicit-diff purity scan reports: 'Model Functional Effect: 3 core file(s)
+  checked, no effects found.' Tests and restored negative controls inspected,
+  not rerun by reviewer. Both review gates now pass. B1-main-XT final Go and
+  frontend results remain pending; no Batch 2 dispatch before all five pass.
