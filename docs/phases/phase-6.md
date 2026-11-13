@@ -1,6 +1,6 @@
 # Phase 6 — Workspace actions, notifications and new repos
 
-Status: **F0–F3 and Batch 1 complete; Batch 2 ready to dispatch**.
+Status: **F0–F3 and Batch 1 complete; Batch 2 stopped for serial DB contract completion**.
 Target: `v0.7.0`. Baseline inspected: `main` at `2f96629`, Phase 5 tagged `v0.6.0`.
 This document does not authorize a tag, push, branch/file deletion, live host mutation or real agent CLI run.
 
@@ -471,3 +471,25 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   needs must be reported for a serial lead correction, never approximated by
   in-memory deduplication or edits outside ownership. Agent/Model replay fix
   remains required before Batch A. Batch 2 starts at the commit of this entry.
+
+- All three Batch 2 Codex runs hit the provider usage limit shortly after
+  dispatch. H t3/host-context-adapters, T t3/task-draft-admission and
+  R t3/repo-noise-history remain clean at f217877; no feature commit or merge.
+  Human instructed continuation; provider/model preference remains Codex.
+- T's initial capability audit identified missing shared persistence ports:
+  transaction-scoped tracked/READY project-repo lookup and a durable immutable
+  RequestID/digest/task ledger, atomically committed with task/turn/audit.
+  Existing workspace_action_requests cannot substitute for task submission.
+  Dependent implementation remains stopped as required by ownership rules.
+- Serial contract completion F4: one go-backend agent owns internal/db/** only
+  (schema/query/store/tests/generated Go) before any Batch 2 resume. Add a new
+  migration (never edit applied 00007), narrow Tx/Store submission lookup/link
+  and tracked-ready repo methods; enforce duplicate equality, digest mismatch,
+  foreign keys and rollback. Also repair the accepted full immutable action
+  request replay representation including Agent/Model before dispatch is ever
+  enabled. Existing incomplete legacy payloads must fail closed, never invent
+  identity or silently bypass digest validation. PRD AC-01/05, NR-02, SF-05.
+  DoD: restart/upgrade/fresh/rollback/concurrency boundary regressions, all five
+  Task commands and relevant race checks, committed/merged on main, fresh
+  safety/functional review gate clear before resuming H/T/R. No feature workers
+  enabled by this contract work. Source/public API/core types remain frozen.
