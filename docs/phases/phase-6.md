@@ -432,3 +432,15 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   Source/worktrees/branches untouched. Agent told to preserve failed logs and
   retry the five tasks with a distinct label, without repeating passing scoped
   race checks unnecessarily. No new cleanup permission was requested.
+
+- Test-engineer fixture repair 0c744cc on test/phase6-active-task-fixture
+  reviewed and merged with --no-ff (preceding merge commit). Only
+  internal/db/store_tasks_test.go changed: fixed IDs/times exercise timestamp
+  order and equal-timestamp ID order against reverse insertion, preserving
+  exact active filtering/order assertions. Both cases pass 100 repetitions;
+  DB/race suites pass; six negative controls fail as intended and are restored.
+  Agent's five-task retry passes, including 528 frontend tests; failed ENOSPC
+  and initial integration logs remain preserved. Ownership released.
+- B1-final now runs all five post-merge integration tasks; fresh safety and
+  functional rechecks will cover the complete batch plus deterministic fixture
+  change before Batch 1 closure. No Batch 2 implementation has started.
