@@ -277,12 +277,11 @@ func (s *Service) resolve() {
 		l := c.link
 		branches[r.ID] = r.Branch
 		if l.linked {
-			if _, ok := s.state.Instances[l.instance]; !ok {
-				l.linked, l.reason = false, fmt.Sprintf("The host %s isn't configured. Add it to the .env file to see its merge requests.", l.instance)
-			} else if r.Branch == "" {
-				l.linked, l.reason = false, "This repo's HEAD is detached, so there is no branch to look up."
+			target := corehosts.RepoTarget{Repo: r.ID, Instance: l.instance, Project: l.project, Branch: r.Branch}
+			if reason := corehosts.ResolveTarget(target, s.state.Instances); reason != "" {
+				l.linked, l.reason = false, reason
 			} else {
-				targets = append(targets, corehosts.RepoTarget{Repo: r.ID, Instance: l.instance, Project: l.project, Branch: r.Branch})
+				targets = append(targets, target)
 			}
 		}
 		links[r.ID] = l
@@ -313,14 +312,7 @@ func (s *Service) readLink(r RepoRef) link {
 		return link{reason: "This repo's remote isn't a web or ssh address Yggdrasil understands."}
 	}
 	s.mu.Lock()
-	id := ref.InstanceID()
-	if _, ok := s.state.Instances[id]; !ok {
-		if alt := corehosts.InstanceID(ref.Host); alt != id {
-			if _, ok := s.state.Instances[alt]; ok {
-				id = alt
-			}
-		}
-	}
+	id := corehosts.ResolveInstance(ref.InstanceID(), corehosts.InstanceID(ref.Host), s.state.Instances)
 	s.mu.Unlock()
 	return link{linked: true, instance: id, project: ref.Project, credentials: ref.HadCredentials}
 }
@@ -421,22 +413,22 @@ func (s *Service) fetch(f corehosts.Fetch, inst corehosts.Instance, token string
 		return
 	}
 	now := s.d.Clock()
-	var in corehosts.Input
+	var response corehosts.PollResponse
 	var fe *FetchError
 	switch {
 	case err == nil:
-		in = corehosts.Fetched{Key: f.Key, Attempt: f.Attempt, Payload: pl, ETag: etag, Now: now}
+		response = corehosts.PollData{Payload: pl, ETag: etag}
 	case errors.Is(err, ErrNotModified):
-		in = corehosts.NotModified{Key: f.Key, Attempt: f.Attempt, Now: now}
+		response = corehosts.PollUnchanged{}
 	case errors.As(err, &fe):
 		s.log.Debug("host fetch failed", "instance", string(f.Instance), "kind", string(fe.Kind), "err", s.redact(err))
-		in = corehosts.FetchFailed{Key: f.Key, Attempt: f.Attempt, Kind: fe.Kind, RetryAt: fe.RetryAt, Now: now}
+		response = corehosts.PollFailure{Kind: fe.Kind, RetryAt: fe.RetryAt}
 	default:
 		// Unparseable or unexpected: transient. The host API probably changed.
 		s.log.Warn("could not read a host response", "instance", string(f.Instance), "err", truncate(s.redact(err), 300))
-		in = corehosts.FetchFailed{Key: f.Key, Attempt: f.Attempt, Kind: corehosts.FailTransient, Now: now}
+		response = corehosts.PollUnexpected{}
 	}
-	s.step(in)
+	s.step(corehosts.PollResult(f, response, now))
 }
 
 func (s *Service) redact(err error) string { return s.redactText(err.Error()) }
