@@ -400,3 +400,11 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   B1-main-XT is the final sequential integration check set now running. All
   three extraction assignments have landed; Batch 1 is NOT closed until these
   five checks and fresh safety/functional reviews of 1d33a88..main pass.
+
+- Batch 1 safety review of 1d33a88..9112850: PASS, no introduced Blocking,
+  Must-fix or Should-fix findings. All 11 safety invariants and architecture/
+  privacy checked read-only; all 12 changed source/test files read. Existing
+  task membership/order findings remain inherited; no feature completion claimed.
+  Independent functional review remains pending. Final B1-main-XT generation,
+  lint and typecheck pass; Go/frontend suites remain pending, so Batch 2 stays
+  gated. No new implementation agent has been dispatched.
