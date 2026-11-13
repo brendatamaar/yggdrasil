@@ -57,8 +57,8 @@ WHERE id = ? AND version = ?;
 
 -- name: InsertActionRequest :exec
 INSERT INTO workspace_action_requests (request_id, digest, repo_id, kind, source_id, state, attempt,
-                                       idempotency_key, refusal, task_id, batch_id, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                                       idempotency_key, refusal, task_id, batch_id, created_at, updated_at, agent, model)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetActionRequest :one
 SELECT * FROM workspace_action_requests WHERE request_id = ?;
@@ -150,3 +150,14 @@ WHERE excluded.revision > notice_high_water.revision;
 
 -- name: ListNoticeHighWater :many
 SELECT * FROM notice_high_water ORDER BY task_id, source_kind, source_run;
+
+-- name: GetTaskSubmission :one
+SELECT * FROM task_submissions WHERE request_id = ?;
+
+-- name: LinkTaskSubmission :exec
+INSERT INTO task_submissions (request_id, digest, task_id) VALUES (?, ?, ?);
+
+-- name: GetTrackedReadyRepo :one
+SELECT r.* FROM repos r JOIN projects p ON p.id = r.project_id
+WHERE r.id = ? AND r.project_id = ? AND r.untracked_at IS NULL
+  AND r.readiness = 'ready' AND p.untracked_at IS NULL;

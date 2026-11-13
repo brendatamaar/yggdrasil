@@ -299,6 +299,12 @@ type TaskRepo struct {
 	RepoID string
 }
 
+type TaskSubmission struct {
+	RequestID string
+	Digest    string
+	TaskID    string
+}
+
 type TaskTurn struct {
 	ID               string
 	TaskID           string
@@ -365,6 +371,8 @@ type WorkspaceActionRequest struct {
 	Version        int64
 	CreatedAt      string
 	UpdatedAt      string
+	Agent          sql.NullString
+	Model          sql.NullString
 }
 
 type Worktree struct {

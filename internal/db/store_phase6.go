@@ -258,6 +258,10 @@ func (s *Store) ListOpenEffects(ctx context.Context) ([]EffectRecord, error) {
 
 // Workspace action requests.
 
+// ErrLegacyActionRequest marks inert pre-00008 rows. Their missing immutable
+// fields cannot be reconstructed safely; callers must never redispatch them.
+var ErrLegacyActionRequest = errors.New("legacy action request has no complete immutable input; replay refused")
+
 // ErrDigestMismatch is returned when a RequestID is reused with a different
 // request: a key names one request for its whole life.
 var ErrDigestMismatch = errors.New("the request id was used for a different request")
@@ -310,10 +314,15 @@ func actionFrom(r gen.WorkspaceActionRequest, proposals []string) (ActionRecord,
 	req := actions.Request{
 		RequestID: core.RequestID(r.RequestID), RepoID: core.RepoID(r.RepoID), Kind: actions.Kind(r.Kind), SourceID: r.SourceID,
 	}
-	// The agent and model are not stored: they matter at dispatch time only and
-	// the digest covers them. Validate only what is stored.
-	if req.RequestID.Validate() != nil || req.RepoID.Validate() != nil || req.Kind.Validate() != nil {
-		return ActionRecord{}, errors.New("bad action request in database: invalid ids or kind")
+	if !r.Agent.Valid || !r.Model.Valid {
+		return ActionRecord{}, ErrLegacyActionRequest
+	}
+	req.Agent, req.Model = r.Agent.String, r.Model.String
+	if err := req.Validate(); err != nil {
+		return ActionRecord{}, fmt.Errorf("bad action request in database: %w", err)
+	}
+	if r.Digest != req.Digest() {
+		return ActionRecord{}, fmt.Errorf("bad action request in database: %w", ErrDigestMismatch)
 	}
 	st := ActionState(r.State)
 	if err := st.Validate(); err != nil {
@@ -375,7 +384,7 @@ func (tx *Tx) BeginActionRequest(ctx context.Context, rec ActionRecord) (ActionR
 		RequestID: string(rec.Request.RequestID), Digest: rec.Digest, RepoID: string(rec.Request.RepoID),
 		Kind: string(rec.Request.Kind), SourceID: rec.Request.SourceID, State: string(rec.State), Attempt: int64(rec.Attempt),
 		IdempotencyKey: rec.Key, Refusal: string(rec.Refusal), TaskID: sqlNullTask(rec.Task), BatchID: rec.Batch,
-		CreatedAt: at, UpdatedAt: at,
+		CreatedAt: at, UpdatedAt: at, Agent: sql.NullString{String: rec.Request.Agent, Valid: true}, Model: sql.NullString{String: rec.Request.Model, Valid: true},
 	})
 	if err == nil {
 		rec.Version = 0
@@ -417,7 +426,26 @@ func (tx *Tx) SaveActionRequest(ctx context.Context, rec ActionRecord, expected 
 	if err := rec.State.Validate(); err != nil {
 		return 0, err
 	}
+	if err := rec.Request.Validate(); err != nil {
+		return 0, err
+	}
 	id := string(rec.Request.RequestID)
+	row, err := tx.q.GetActionRequest(ctx, id)
+	if err := found("save action request "+id, err); err != nil {
+		return 0, err
+	}
+	stored, err := actionFrom(row, nil)
+	if err != nil {
+		return 0, err
+	}
+	if rec.Request != stored.Request || rec.Digest != stored.Digest {
+		return 0, ErrDigestMismatch
+	}
+	// Reuse the decoder's state/refusal/key checks before updating the row.
+	row.State, row.Refusal, row.IdempotencyKey = string(rec.State), string(rec.Refusal), rec.Key
+	if _, err := actionFrom(row, nil); err != nil {
+		return 0, err
+	}
 	n, err := tx.q.UpdateActionRequest(ctx, gen.UpdateActionRequestParams{
 		State: string(rec.State), Attempt: int64(rec.Attempt), IdempotencyKey: rec.Key, Refusal: string(rec.Refusal),
 		TaskID: sqlNullTask(rec.Task), BatchID: rec.Batch, UpdatedAt: fmtTime(now), RequestID: id, Version: expected,
