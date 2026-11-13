@@ -451,3 +451,10 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   active-state membership against reverse insertion; it masks no production
   failure. All 11 invariants rechecked. Final functional recheck remains
   pending; B1-final generation and lint pass, other results still pending.
+
+- Final Batch 1 functional recheck at 7bf567f: PASS; no Must-fix, Should-fix
+  or required Consider findings. Explicit-path purity scan again checks all
+  three new core implementation files with no effects. Fixture oracle and
+  exact ordering/filtering assertions verified against SQL, store precision
+  and test helper behavior. Both final reviews pass; B1-final generation,
+  lint and typecheck pass, while Go/frontend results remain pending.
