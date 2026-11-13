@@ -598,13 +598,7 @@ func RunGitOp(ctx context.Context, g GitRunner, op corerepos.GitOp, dir, branch 
 			return failureOf(cctx, err)
 		}
 		after, err := g.Status(cctx, dir)
-		if err != nil || after.OID == before.OID {
-			if err == nil {
-				return corerepos.UpToDate{}
-			}
-			return corerepos.Pulled{From: shortOID(before.OID)}
-		}
-		return corerepos.Pulled{From: shortOID(before.OID), To: shortOID(after.OID)}
+		return corerepos.PullCompletion(before.OID, after.OID, err == nil)
 	case corerepos.OpCheckout:
 		cctx, cancel := context.WithTimeout(ctx, checkoutTimeout)
 		defer cancel()
@@ -618,13 +612,6 @@ func RunGitOp(ctx context.Context, g GitRunner, op corerepos.GitOp, dir, branch 
 		return corerepos.CheckedOut{Branch: branch, Created: !local && remote}
 	}
 	return corerepos.Failed{Kind: corerepos.FailGit, Message: "Yggdrasil doesn't know that git action."}
-}
-
-func shortOID(s string) string {
-	if len(s) > 12 {
-		return s[:12]
-	}
-	return s
 }
 
 func pullReason(r git.FFReason) corerepos.PullReason {
