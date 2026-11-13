@@ -377,3 +377,9 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   XR is ready but NOT merged: post-XH integration validation B1-main-XH still
   waits for the shared validation slot. Approved cache cleanup completed and
   restored approximately 2 GiB headroom. No second merge before XH checks pass.
+
+- Post-XH integration B1-main-XH passed all five actual Task commands,
+  each exit 0, with generated output unchanged. Lead then merged reviewed XR
+  with --no-ff as 91d0048 (source ae638e8). Post-XR integration validation
+  B1-main-XR is queued/running through the shared lock; no XT merge until its
+  five results pass. Batch-start remains 1d33a88 for the eventual dual review.
