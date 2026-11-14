@@ -1,6 +1,6 @@
 # Phase 6 — Workspace actions, notifications and new repos
 
-Status: **F0–F3 and Batch 1 complete; Batch 2 stopped for serial DB contract completion**.
+Status: **F0–F4 and Batch 1 complete; Batch 2 resuming**.
 Target: `v0.7.0`. Baseline inspected: `main` at `2f96629`, Phase 5 tagged `v0.6.0`.
 This document does not authorize a tag, push, branch/file deletion, live host mutation or real agent CLI run.
 
@@ -565,3 +565,17 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   ledger, legacy replay and scoped lookup contracts remain intact. Both final
   review gates now clear. F4-final generate/lint/typecheck pass; Go/frontend
   results remain pending. Do not resume Batch 2 before both finish successfully.
+
+- F4 CLOSED: repaired-source final safety and functional reviews both PASS at
+  4341a6b with no remaining findings. Lead F4-final runs all five actual Task
+  commands with exit 0, including full Go/demo suites and 528 frontend tests,
+  generated output unchanged. The accepted Agent/Model replay follow-up is
+  RESOLVED, not deferred before Batch A any longer. Migration 00008 and all
+  added DB consumer contracts are frozen on main.
+- Resume existing H/T/R worktrees only after fast-forwarding to the committed
+  main resume SHA supplied by the lead. They were verified clean. Original
+  Batch 2 dispatch f217877 contained no feature implementation; effective
+  Batch 2 review base is this closure/resume commit, excluding serial F4 from
+  the feature diff. Ownership and approved feature scope remain unchanged.
+  All future missing shared ports still require serial lead changes. No
+  Phase 6 feature checkbox is marked complete by these persistence contracts.
