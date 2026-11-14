@@ -120,6 +120,12 @@ func (w *capWriter) Write(p []byte) (int, error) {
 // is reached git is stopped and the first limit bytes are returned without an
 // error, so a huge diff never grows an unbounded buffer.
 func (g *Git) runLimited(ctx context.Context, dir, op string, readOnly bool, limit int, args ...string) (string, error) {
+	out, _, err := g.runCaptured(ctx, dir, op, readOnly, limit, 0, args...)
+	return out, err
+}
+
+// runCaptured also reports an actual stdout cutoff and optionally bounds stderr.
+func (g *Git) runCaptured(ctx context.Context, dir, op string, readOnly bool, limit, errLimit int, args ...string) (string, bool, error) {
 	argv := append([]string{g.exe}, baseConfig...)
 	if readOnly {
 		argv = append(argv, "--no-optional-locks")
@@ -128,6 +134,10 @@ func (g *Git) runLimited(ctx context.Context, dir, op string, readOnly bool, lim
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
+	var errOut io.Writer = &stderr
+	if errLimit > 0 {
+		errOut = &capWriter{max: errLimit, full: func() {}}
+	}
 	var out io.Writer = &stdout
 	var capped *capWriter
 	runCtx := ctx
@@ -140,29 +150,34 @@ func (g *Git) runLimited(ctx context.Context, dir, op string, readOnly bool, lim
 	}
 	p, err := platform.Start(runCtx, platform.Spec{
 		Argv: argv, Dir: dir, Env: g.env, TaskID: g.taskID,
-		Stdout: out, Stderr: &stderr,
+		Stdout: out, Stderr: errOut,
 	})
 	if err != nil {
-		return "", &Error{Op: op, Err: err, UserMsg: startMessage(err)}
+		return "", false, &Error{Op: op, Err: err, UserMsg: startMessage(err)}
 	}
 	code, err := p.Wait()
-	if capped != nil && capped.hit && ctx.Err() == nil {
-		return capped.buf.String(), nil
+	if ctx.Err() != nil {
+		return "", false, &Error{Op: op, Err: ctx.Err(), UserMsg: fmt.Sprintf("git %s was cancelled.", op)}
 	}
 	if err != nil {
-		return "", &Error{Op: op, Err: err, UserMsg: fmt.Sprintf("git %s did not finish. Try again.", op)}
+		return "", false, &Error{Op: op, Err: err, UserMsg: fmt.Sprintf("git %s did not finish. Try again.", op)}
 	}
-	if ctx.Err() != nil {
-		return "", &Error{Op: op, Err: ctx.Err(), UserMsg: fmt.Sprintf("git %s was cancelled.", op)}
+	// A byte cutoff owns cancellation, but never hides a Wait failure above.
+	if capped != nil && capped.hit {
+		return capped.buf.String(), true, nil
 	}
 	if code != 0 {
-		se := strings.TrimSpace(g.redact.Redact(stderr.String()))
-		return "", &Error{Op: op, Code: code, Stderr: se, Err: errors.New("exit status " + fmt.Sprint(code)), UserMsg: classify(op, se)}
+		se := stderr.String()
+		if w, ok := errOut.(*capWriter); ok {
+			se = w.buf.String()
+		}
+		se = strings.TrimSpace(g.redact.Redact(se))
+		return "", false, &Error{Op: op, Code: code, Stderr: se, Err: errors.New("exit status " + fmt.Sprint(code)), UserMsg: classify(op, se)}
 	}
 	if capped != nil {
-		return capped.buf.String(), nil
+		return capped.buf.String(), capped.hit || p.Truncated(), nil
 	}
-	return stdout.String(), nil
+	return stdout.String(), false, nil
 }
 
 func startMessage(err error) string {

@@ -105,7 +105,7 @@ type Commit struct {
 	Short   string    `json:"short"`
 	Author  string    `json:"author"`
 	Email   string    `json:"email"`
-	Date    time.Time `json:"date"`
+	Date    time.Time `json:"date"` // Author timestamp (%aI).
 	Parents []string  `json:"parents"`
 	Subject string    `json:"subject"`
 }
