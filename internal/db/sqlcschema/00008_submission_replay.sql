@@ -13,4 +13,3 @@ CREATE TABLE task_submissions (
     task_id TEXT NOT NULL REFERENCES tasks(id)
 );
 CREATE INDEX task_submissions_task ON task_submissions(task_id);
-
