@@ -270,14 +270,14 @@ func TestParseStatusMalformed(t *testing.T) {
 	}
 }
 
-// Every git process goes through platform.Start, the package defines it once.
+// Every git process defaults to platform.Start; the private starter is a test seam.
 func TestEveryProcessStartsThroughPlatform(t *testing.T) {
 	src, err := os.ReadFile("git.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := strings.Count(string(src), "platform.Start("); n != 1 {
-		t.Errorf("git.go calls platform.Start %d times, want exactly 1 (in run)", n)
+	if n := strings.Count(string(src), "start = platform.Start"); n != 1 {
+		t.Errorf("git.go defaults to platform.Start %d times, want exactly 1 (in runCaptured)", n)
 	}
 	// commit.go runs the commit and push processes with its own call; it must
 	// really be there (a positive check, not an exemption).

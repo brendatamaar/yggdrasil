@@ -160,8 +160,17 @@ func TestLogRangeByteBound(t *testing.T) {
 	// Large subjects exercise real output cancellation, including a partial record.
 	subject := strings.Repeat("fictional ", 10000)
 	f.env = append(f.env, "GIT_AUTHOR_DATE=2025-03-02T00:00:00Z", "GIT_COMMITTER_DATE=2025-06-01T00:00:00Z")
+	messages := t.TempDir()
 	for i := 0; i < 16; i++ {
-		f.git(dir, "commit", "--allow-empty", "-q", "-m", subject+fmt.Sprint(i))
+		message := filepath.Join(messages, fmt.Sprintf("message %d.txt", i))
+		if err := os.WriteFile(message, []byte(subject+fmt.Sprint(i)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		argv := []string{"commit", "--allow-empty", "-q", "-F", message}
+		if len(strings.Join(argv, " ")) > 4096 {
+			t.Fatal("large-output fixture must keep argv portable")
+		}
+		f.git(dir, argv...)
 	}
 	got, cut, err := f.g.LogRange(bg(), dir, from.Add(-24*time.Hour), from, 200)
 	if err != nil || !cut || len(got) != 0 {
@@ -184,6 +193,7 @@ func FuzzParseLogRange(f *testing.F) {
 	to := from.Add(time.Hour)
 	f.Add(rangeRecord(strings.Repeat("a", 40), from.Format(time.RFC3339Nano)), false)
 	f.Add("partial", true)
+	f.Add(rangeRecord(strings.Repeat("b", 64), from.Format(time.RFC3339Nano)), false)
 	f.Fuzz(func(t *testing.T, s string, cut bool) {
 		if len(s) > logRangeBytes {
 			t.Skip()
@@ -192,11 +202,14 @@ func FuzzParseLogRange(f *testing.F) {
 		if err != nil {
 			return
 		}
+		if !rangeFramingValid(s, cut) {
+			t.Fatal("accepted invalid framing, identity, parents or date")
+		}
 		if len(got) > 3 || cut && !truncated {
 			t.Fatal("bounds")
 		}
 		for i, c := range got {
-			if c.Date.Before(from) || !c.Date.Before(to) || !validOID(c.Hash) || c.Date.Location() != time.UTC {
+			if c.Date.Before(from) || !c.Date.Before(to) || !rangeCommitValid(c) || c.Date.Location() != time.UTC {
 				t.Fatal("invalid accepted record")
 			}
 			if i > 0 && (got[i-1].Date.Before(c.Date) || got[i-1].Date.Equal(c.Date) && got[i-1].Hash > c.Hash) {
