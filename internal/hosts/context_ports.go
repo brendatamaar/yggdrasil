@@ -17,6 +17,7 @@ package hosts
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
@@ -154,7 +155,11 @@ type RepoHost interface {
 // PushAuthorizer lets the in-process publish transport add the host token as an
 // HTTP header to its own requests, so the token is never given to a child
 // process, URL, config or environment (invariant 3). Authorize may only set the
-// Authorization header of requests to the instance's own origin.
+// Authorization header of requests to the instance's own configured HTTPS
+// clone origin. The destination is supplied on every call so implementations
+// can reject foreign origins, userinfo and unsafe URLs before adding credentials.
+// It must not change the destination, method, body or other headers. The
+// transport must also refuse redirects to another origin.
 type PushAuthorizer interface {
-	Authorize(ctx context.Context, inst corehosts.InstanceID, setHeader func(name, value string)) error
+	Authorize(ctx context.Context, inst corehosts.InstanceID, req *http.Request) error
 }

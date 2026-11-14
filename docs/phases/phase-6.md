@@ -1,6 +1,6 @@
 # Phase 6 — Workspace actions, notifications and new repos
 
-Status: **F0–F4 and Batch 1 complete; Batch 2 resuming**.
+Status: **F0–F4 and Batch 1 complete; Batch 2 preserved, shared capability handoff in progress**.
 Target: `v0.7.0`. Baseline inspected: `main` at `2f96629`, Phase 5 tagged `v0.6.0`.
 This document does not authorize a tag, push, branch/file deletion, live host mutation or real agent CLI run.
 
@@ -579,3 +579,31 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   the feature diff. Ownership and approved feature scope remain unchanged.
   All future missing shared ports still require serial lead changes. No
   Phase 6 feature checkbox is marked complete by these persistence contracts.
+
+- Batch 2's resumed H/T/R runs hit quota again. Uncommitted feature work is
+  preserved only in their owned package trees; no feature branch merged. T
+  scoped/race/mutation/fuzz work passes, final UTF-8 boundary repair/checks
+  remain; H final scoped/HTTP/race/fuzz checks remain; R noise scoped/race/fuzz
+  work passes but final five-task retry and history collection remain. Prior
+  failed compile/lint attempts remain distinct from passes.
+- H identified a real frozen authorization-port gap: the callback-only method
+  could not inspect destination. Lead changes PushAuthorizer.Authorize to take
+  the instance and *http.Request, aligning the existing git.Authorizer adapter;
+  implementations may set only Authorization after validating the configured
+  HTTPS clone origin, never a foreign destination/credential URL/redirect. H's
+  port file was unchanged and H is stopped; no concurrent ownership edit.
+- R needs a read-only Git.LogRange(ctx,dir,from,to,max)([]Commit,bool,error)
+  capability. Serial shared task F5 owns internal/git/** only before resuming
+  features. Keep existing Commit.Date (author timestamp) semantics, half-open
+  UTC range, deterministic newest-first output, bounded bytes/count/runtime,
+  cancellation and honest truncation; never sample the latest max commits and
+  claim that an older date range is complete. No new git mutation. New port and
+  tests must be committed/checked/reviewed on main before dependent R resumes.
+- Routine integration choices resolve T's remaining presentation questions:
+  import-selected Agent/Model stay immutable; matching/omitted StartDraft choices
+  use ordinary admission, differing choices refuse clearly. No new DB replacement
+  port is needed. W/U will show imported drafts in a separate draft list/section
+  on the board using the existing project task-list status=draft endpoint, with
+  explicit Start; preserve AG-12's four running-task columns. Internal repo-setup
+  drafts remain hidden by SQL. No fifth column, false completed task, automatic
+  start or changed safety policy is authorized. API/UI completion stays in W/U.
