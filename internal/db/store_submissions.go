@@ -21,7 +21,7 @@ func validSubmissionID(id core.RequestID) error {
 }
 
 func validSubmissionDigest(digest string) error {
-	if len(digest) != 64 || strings.ContainsFunc(digest, func(c rune) bool { return !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') }) {
+	if len(digest) != 64 || strings.ContainsFunc(digest, func(c rune) bool { return (c < '0' || c > '9') && (c < 'a' || c > 'f') }) {
 		return errors.New("submission digest must be 64 lowercase hex digits")
 	}
 	return nil
