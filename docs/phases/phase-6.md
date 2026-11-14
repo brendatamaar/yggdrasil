@@ -528,3 +528,11 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   agreement and migration/FK/index semantics checked. All 11 safety invariants
   reviewed. All five main integration checks already pass; independent
   functional review remains the only outstanding F4 gate. H/T/R still stopped.
+
+- F4 functional review FAIL: BeginActionRequest could save a non-refused row
+  with a refusal or a refused row with an unknown reason, poisoning subsequent
+  loads/recovery. Must-fix is shared status/refusal/key validation before begin,
+  load and save. Should-fix: decoder fuzz reused Request.Validate as its oracle.
+  Lead applies the small production repair, then hands DB tests to test-engineer
+  for regression and independent accepted-implies-valid coverage. Safety PASS
+  does not override this functional gate. Batch 2 remains stopped.

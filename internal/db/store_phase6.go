@@ -310,6 +310,23 @@ type ActionRecord struct {
 	UpdatedAt time.Time
 }
 
+// validateActionStatus keeps insert, load and update on the same persisted
+// state/refusal/key contract, so a successful write cannot poison recovery.
+func validateActionStatus(st ActionState, refusal actions.RefuseReason, key string) error {
+	if err := st.Validate(); err != nil {
+		return err
+	}
+	switch {
+	case st == ActionRefused && refusal.Validate() != nil:
+		return errors.New("a refused request has no valid reason")
+	case st != ActionRefused && refusal != "":
+		return errors.New("only a refused request has a reason")
+	case st == ActionSubmitting && key == "":
+		return errors.New("a submitting request has no key")
+	}
+	return nil
+}
+
 func actionFrom(r gen.WorkspaceActionRequest, proposals []string) (ActionRecord, error) {
 	req := actions.Request{
 		RequestID: core.RequestID(r.RequestID), RepoID: core.RepoID(r.RepoID), Kind: actions.Kind(r.Kind), SourceID: r.SourceID,
@@ -325,17 +342,9 @@ func actionFrom(r gen.WorkspaceActionRequest, proposals []string) (ActionRecord,
 		return ActionRecord{}, fmt.Errorf("bad action request in database: %w", ErrDigestMismatch)
 	}
 	st := ActionState(r.State)
-	if err := st.Validate(); err != nil {
-		return ActionRecord{}, fmt.Errorf("bad action request in database: %w", err)
-	}
 	refusal := actions.RefuseReason(r.Refusal)
-	switch {
-	case st == ActionRefused && refusal.Validate() != nil:
-		return ActionRecord{}, errors.New("bad action request in database: a refused request has no valid reason")
-	case st != ActionRefused && r.Refusal != "":
-		return ActionRecord{}, errors.New("bad action request in database: only a refused request has a reason")
-	case st == ActionSubmitting && r.IdempotencyKey == "":
-		return ActionRecord{}, errors.New("bad action request in database: a submitting request has no key")
+	if err := validateActionStatus(st, refusal, r.IdempotencyKey); err != nil {
+		return ActionRecord{}, fmt.Errorf("bad action request in database: %w", err)
 	}
 	cr, err := parseTime(r.CreatedAt)
 	if err != nil {
@@ -376,7 +385,7 @@ func (tx *Tx) BeginActionRequest(ctx context.Context, rec ActionRecord) (ActionR
 	if rec.Digest != rec.Request.Digest() {
 		return ActionRecord{}, false, errors.New("begin action request: the digest does not match the request")
 	}
-	if err := rec.State.Validate(); err != nil {
+	if err := validateActionStatus(rec.State, rec.Refusal, rec.Key); err != nil {
 		return ActionRecord{}, false, err
 	}
 	at := fmtTime(rec.CreatedAt)
@@ -423,7 +432,7 @@ func (tx *Tx) SaveActionRequest(ctx context.Context, rec ActionRecord, expected 
 	if err := needTime("action request update", now); err != nil {
 		return 0, err
 	}
-	if err := rec.State.Validate(); err != nil {
+	if err := validateActionStatus(rec.State, rec.Refusal, rec.Key); err != nil {
 		return 0, err
 	}
 	if err := rec.Request.Validate(); err != nil {
@@ -440,11 +449,6 @@ func (tx *Tx) SaveActionRequest(ctx context.Context, rec ActionRecord, expected 
 	}
 	if rec.Request != stored.Request || rec.Digest != stored.Digest {
 		return 0, ErrDigestMismatch
-	}
-	// Reuse the decoder's state/refusal/key checks before updating the row.
-	row.State, row.Refusal, row.IdempotencyKey = string(rec.State), string(rec.Refusal), rec.Key
-	if _, err := actionFrom(row, nil); err != nil {
-		return 0, err
 	}
 	n, err := tx.q.UpdateActionRequest(ctx, gen.UpdateActionRequestParams{
 		State: string(rec.State), Attempt: int64(rec.Attempt), IdempotencyKey: rec.Key, Refusal: string(rec.Refusal),
