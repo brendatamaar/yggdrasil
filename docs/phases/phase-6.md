@@ -493,3 +493,23 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   Task commands and relevant race checks, committed/merged on main, fresh
   safety/functional review gate clear before resuming H/T/R. No feature workers
   enabled by this contract work. Source/public API/core types remain frozen.
+
+- F4 branch t3/task-submission-action-replay (cb82250, fe7f8c7) reviewed and
+  merged with --no-ff; source merge and whitespace-only schema cleanup are the
+  preceding two commits. Migration 00008 adds permanent task submission links
+  and nullable Agent/Model columns; legacy incomplete action rows explicitly
+  refuse replay with ErrLegacyActionRequest. Applied 00007 is unchanged.
+  Full immutable requests/digests validate on load/update. No worker enabled.
+- Frozen F4 methods on Tx: GetTaskSubmission(ctx,RequestID)(TaskID,string,error),
+  LinkTaskSubmission(ctx,RequestID,string,TaskID)error and
+  GetTrackedReadyRepo(ctx,ProjectID,RepoID)(core.Repo,error); Store also exposes
+  GetTaskSubmission for reconciliation. Task/turn/link/audit must share Commit;
+  any losing transaction rolls back and reloads the winning link afterward.
+- Agent reports all five actual tasks, full DB/race, migration/restart/rollback
+  and contender tests passing, three restored mutation controls, 6,788 final
+  decoder fuzz executions. Earlier ENOSPC/lint failures are retained, not passes.
+  Environment restart expanded disk to 69 GiB (31 GiB free), and old temporary
+  Node tooling disappeared. Agent restored Node 22/pnpm 11.4 under task-owned
+  temporary tooling; lead uses it on PATH for post-merge F4-main checks.
+- Fresh safety/functional F4 reviews and all five main integration checks remain
+  gates before H/T/R resume. Batch 2 feature work is still stopped.
