@@ -513,3 +513,11 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   temporary tooling; lead uses it on PATH for post-merge F4-main checks.
 - Fresh safety/functional F4 reviews and all five main integration checks remain
   gates before H/T/R resume. Batch 2 feature work is still stopped.
+
+- F4-main post-merge integration PASSED all five actual Task commands, each
+  exit 0, with no generated drift. Source through 459a059, main snapshot
+  2738660. Both initial F4 reviewers hit the Codex usage limit before verdict;
+  partial inspection is NOT a review pass. Human instructed continuation.
+  Launch fresh safety/functional review invocations over the same source diff;
+  do not resume prior review turns or switch provider/model. Batch 2 remains
+  stopped until both independent review gates are clear.
