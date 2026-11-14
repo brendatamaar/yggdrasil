@@ -623,3 +623,11 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   cover the full serial shared delta since 22e6100, including 68f9d66's
   destination-aware host authorization declaration, before H/T/R resume. Their
   uncommitted feature work remains preserved and stopped; no feature merge yet.
+
+- F5 safety review at 35cb7dd: PASS, no Blocking/Must-fix. Author-date
+  boundaries/truncation, clean-env/read-only runner, cancellation/error
+  precedence and destination visibility checked. Consider-only follow-up for
+  TM1: direct bounded/redacted stderr, platform pipe-cutoff and genuine Wait
+  error tests; no demonstrated defect or blocker. Windows remains manual.
+  F5-main generate/lint/typecheck pass; Go/frontend and independent functional
+  review remain pending. H/T/R feature work remains stopped and preserved.
