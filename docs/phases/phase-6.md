@@ -660,3 +660,28 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
 - Lead F5-final now runs the five post-merge checks. Fresh safety/functional
   reviews must verify 9c4147c source repair and 10e87b3 regressions before
   H/T/R resume. Pre-repair F5-main passes remain historical only.
+
+- Repaired F5 safety review FAIL: inherited Unix negative-PID signaling can race
+  reaping/PID reuse. The new killMu guarded bookkeeping only; Kill can pass its
+  exited check, pause while cmd.Wait reaps, then signal an unrelated reused
+  group. Existing late-Kill tests exclude this interleaving. Prior argv/capture/
+  oracle findings are verified fixed. F5-final remains unclaimed while running.
+- Serial platform-owner correction is required in internal/platform/** only:
+  observe exit without releasing identity, exclude in-flight/new group signals,
+  then finalize reaping under a proven lifecycle protocol. Do not hold a mutex
+  across a blocking wait on a live process (cancellation deadlock), merely move
+  the exited store after Wait, or replace it with a racy liveness probe. Preserve
+  actual termination evidence, clean env, group/job ownership and bounded drains.
+  Linux/Darwin remain supported; Windows semantics stay intact.
+- Protocol reference: Go's wait-before-reap pattern
+  https://go.dev/src/os/wait_waitid.go and POSIX/Linux waitid WNOWAIT
+  https://man7.org/linux/man-pages/man2/waitpid.2.html . Darwin needs an actual
+  supported non-reaping observer (Go documents its historical waitid stop-event
+  issue); a Linux-only assumption is insufficient. The owner must document
+  the exact supported-OS protocol and failure behavior, not weaken scope safety.
+- Add deterministic regression for Kill paused AFTER liveness check but BEFORE
+  group signal while exit observation advances. Prove reaping cannot release
+  identity until that signal completes, and no signal occurs after release.
+  Demonstrate the old ordering fails, restore, then run package/race/repetition,
+  Linux/Darwin/Windows compile+vet and all five tasks before review. H/T/R remain
+  stopped with their uncommitted features preserved.
