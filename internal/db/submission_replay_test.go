@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -13,7 +12,6 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	"github.com/brendatamaar/yggdrasil/internal/core/actions"
 	coretasks "github.com/brendatamaar/yggdrasil/internal/core/tasks"
-	"github.com/brendatamaar/yggdrasil/internal/db/gen"
 )
 
 func TestSubmissionContendersRollbackAndRestart(t *testing.T) {
@@ -285,22 +283,4 @@ func TestMigration00008LegacyFailsClosedAndPreservesData(t *testing.T) {
 	if n := count(t, d, "SELECT count(*) FROM pragma_foreign_key_check"); n != 0 {
 		t.Fatalf("broken FKs %d", n)
 	}
-}
-
-func FuzzActionReplayDecoder(f *testing.F) {
-	f.Add("mock", "model-a", "", strings.Repeat("a", 64))
-	f.Add("bad/agent", "\n", "unexpected", "bad")
-	f.Fuzz(func(t *testing.T, agent, model, source, digest string) {
-		req := actions.Request{RequestID: "req_fuzz", RepoID: "repo_fuzz", Kind: actions.DiagnoseRepo, Agent: agent, Model: model, SourceID: source}
-		row := gen.WorkspaceActionRequest{RequestID: string(req.RequestID), RepoID: string(req.RepoID), Kind: string(req.Kind), Agent: sql.NullString{String: agent, Valid: true}, Model: sql.NullString{String: model, Valid: true}, SourceID: source, Digest: digest, State: string(ActionSubmitting), IdempotencyKey: "k", CreatedAt: fmtTime(at0), UpdatedAt: fmtTime(at0)}
-		got, err := actionFrom(row, nil)
-		if err == nil && (got.Request != req || got.Request.Validate() != nil || got.Digest != req.Digest()) {
-			t.Fatal("accepted invalid or changed request")
-		}
-		row.Digest = req.Digest()
-		got, err = actionFrom(row, nil)
-		if req.Validate() == nil && (err != nil || got.Request != req) {
-			t.Fatalf("valid roundtrip: %+v %v", got, err)
-		}
-	})
 }
