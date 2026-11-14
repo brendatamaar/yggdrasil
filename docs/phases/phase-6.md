@@ -1,6 +1,6 @@
 # Phase 6 — Workspace actions, notifications and new repos
 
-Status: **F0–F4 and Batch 1 complete; Batch 2 preserved, shared capability handoff in progress**.
+Status: **F0–F5 and Batch 1 complete; Batch 2 resuming preserved feature work**.
 Target: `v0.7.0`. Baseline inspected: `main` at `2f96629`, Phase 5 tagged `v0.6.0`.
 This document does not authorize a tag, push, branch/file deletion, live host mutation or real agent CLI run.
 
@@ -732,3 +732,18 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   and existing capture/parser/authorization contracts verified. Both final
   reviews clear current shared changes; inherited PTY follow-up remains tracked
   outside the delta. F5-lifecycle-main Go/frontend checks still pending.
+
+- F5 CLOSED: full shared delta safety and functional reviews both PASS at
+  824d4f5; no Blocking/Must-fix remains in reviewed changes. Lead
+  F5-lifecycle-main actual generate/lint/typecheck/test/test:web each exit 0;
+  full Go/demo suite and 528 frontend tests pass, generated output unchanged.
+  Native Windows/Darwin runtime checks remain manual. The inherited PTY
+  Should-fix remains explicitly scheduled before close, not silently discarded.
+- Resume original H/T/R dirty worktrees without discarding feature edits;
+  fast-forward to the resolved main SHA of this closure commit. Both missing
+  shared capabilities are now committed/verified/reviewed: destination-aware
+  PushAuthorizer and bounded author-date LogRange. Current effective Batch 2
+  review base is this closure commit so serial F5 changes are excluded from
+  the future feature diff. T's immutable Agent/Model and separate draft-list
+  presentation choices are documented in the handoff. Final feature checks
+  must follow source adaptation and preserve all earlier failed logs.
