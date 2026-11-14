@@ -646,3 +646,17 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   production still starts through platform.Start with the same clean policy.
   No OS-specific logic moved outside platform. Tests are handed to one
   test-engineer after this source commit; no concurrent lead package edits.
+
+- F5 test branch t3/git-range-test-repairs (10e87b3) reviewed and merged
+  with --no-ff. Seven test files only: portable message-file fixture, injected
+  capture error/metadata/privacy contracts, independent parser oracle/full-field
+  round trips, and real platform termination vs late-Kill proofs with Windows
+  handshake/cross-compile coverage. Existing source invariant test follows the
+  default platform starter seam without weakening process/env assertions.
+  All 25 controlled faults fail assertions and are restored; 65,302 fuzz
+  executions, full owned tests, scoped race, Windows/amd64 cross-compilation
+  and all five actual Task commands pass (528 frontend tests). Windows runtime
+  remains manual; no remaining production defect exposed. Ownership released.
+- Lead F5-final now runs the five post-merge checks. Fresh safety/functional
+  reviews must verify 9c4147c source repair and 10e87b3 regressions before
+  H/T/R resume. Pre-repair F5-main passes remain historical only.
