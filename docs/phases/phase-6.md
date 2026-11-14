@@ -536,3 +536,17 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   Lead applies the small production repair, then hands DB tests to test-engineer
   for regression and independent accepted-implies-valid coverage. Safety PASS
   does not override this functional gate. Batch 2 remains stopped.
+
+- F4 regression branch t3/phase6-f4-db-tests (47b7634) reviewed and merged
+  with --no-ff. Only two test files changed; no schema/production edits. The
+  status/refusal/key matrix covers 192 begin/save combinations with rollback,
+  reload/duplicate/unsettled consistency. New decoder oracle independently
+  checks request, status and digest rules including nullable identity. Existing
+  migration/restart/contender tests retained. All 19 compilable mutation controls
+  fail assertions and are restored; 29,010 fuzz executions, scoped race, full DB
+  and five mandatory tasks pass. Earlier test-lint failure preserved separately.
+- Lead's earlier scoped shell session is no longer accessible after environment
+  changes; no result is claimed for it. Agent's recorded tests verify the repair.
+  F4-final now runs all five post-merge integration checks. Both fresh reviews
+  must verify ee41fd4 production repair plus 47b7634 regression coverage before
+  Batch 2 resumes.
