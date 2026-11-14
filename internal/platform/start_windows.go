@@ -18,6 +18,10 @@ import (
 // after the process itself has exited.
 const waitDelay = 2 * time.Second
 
+// A private termination marker distinguishes our successful Kill from an
+// ordinary nonzero exit racing with a late output/cancellation callback.
+const callerTerminationExitCode uint32 = 0xe0470001
+
 // Start starts spec in the main job, nested in its task job when spec.TaskID
 // is set (spike B2). The process is created suspended, assigned to its jobs
 // and only then resumed, so it cannot start a child that escapes. Cancelling
@@ -97,11 +101,13 @@ type process struct {
 	code int
 	err  error
 
-	truncated bool // set before done is closed
+	truncated  bool // set before done is closed
+	terminated bool // set before done is closed
 
-	mu   sync.Mutex
-	job  windows.Handle // own job; 0 once released
-	task *taskJob
+	mu       sync.Mutex
+	job      windows.Handle // own job; 0 once released
+	task     *taskJob
+	killSent bool // protected by mu
 }
 
 // begin puts the suspended process into its jobs and resumes it.
@@ -137,6 +143,9 @@ func (p *process) run() {
 	p.err = err
 	p.stop()
 	p.release()
+	// release synchronizes with Kill and prevents any subsequent kill request
+	// from changing killSent. The marker proves the main process was terminated.
+	p.terminated = p.killSent && uint32(p.code) == callerTerminationExitCode
 	close(p.done)
 }
 
@@ -167,11 +176,20 @@ func (p *process) Truncated() bool {
 	return p.truncated
 }
 
+func (p *process) terminatedByCaller() bool {
+	<-p.done
+	return p.terminated
+}
+
 func (p *process) Kill() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.job == 0 {
 		return nil
 	}
-	return terminateJob(p.job)
+	if err := windows.TerminateJobObject(p.job, callerTerminationExitCode); err != nil {
+		return fmt.Errorf("terminate process job: %w", err)
+	}
+	p.killSent = true
+	return nil
 }

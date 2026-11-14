@@ -101,6 +101,18 @@ type Process interface {
 	Truncated() bool
 }
 
+// WasTerminated waits for the process outcome and reports whether this
+// platform's Kill actually terminated the main process. A kill request alone
+// is not proof: the process may already have exited while its pipes drain.
+// Unknown Process implementations fail closed. This optional capability keeps
+// existing Process adapters compatible without guessing from OS exit codes.
+func WasTerminated(p Process) bool {
+	if outcome, ok := p.(interface{ terminatedByCaller() bool }); ok {
+		return outcome.terminatedByCaller()
+	}
+	return false
+}
+
 // Size is a terminal size in character cells.
 type Size struct {
 	Cols int `json:"cols"`

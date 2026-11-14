@@ -33,6 +33,9 @@ type Git struct {
 	env    []string
 	taskID string
 	redact safety.Redactor
+	// start is an optional injected process capability for runner contracts.
+	// Production uses platform.Start; no executable or environment policy changes.
+	start func(context.Context, platform.Spec) (platform.Process, error)
 
 	// hooksDir is the empty folder core.hooksPath points at for proposal
 	// commits and pushes (commit.go).
@@ -148,7 +151,11 @@ func (g *Git) runCaptured(ctx context.Context, dir, op string, readOnly bool, li
 		capped = &capWriter{max: limit, full: cancel}
 		out = capped
 	}
-	p, err := platform.Start(runCtx, platform.Spec{
+	start := g.start
+	if start == nil {
+		start = platform.Start
+	}
+	p, err := start(runCtx, platform.Spec{
 		Argv: argv, Dir: dir, Env: g.env, TaskID: g.taskID,
 		Stdout: out, Stderr: errOut,
 	})
@@ -162,8 +169,10 @@ func (g *Git) runCaptured(ctx context.Context, dir, op string, readOnly bool, li
 	if err != nil {
 		return "", false, &Error{Op: op, Err: err, UserMsg: fmt.Sprintf("git %s did not finish. Try again.", op)}
 	}
-	// A byte cutoff owns cancellation, but never hides a Wait failure above.
-	if capped != nil && capped.hit {
+	// A cutoff may cancel after the process has already failed and while its
+	// buffered output is draining. Only platform-owned termination evidence
+	// allows a nonzero exit to count as cutoff success.
+	if capped != nil && capped.hit && (code == 0 || platform.WasTerminated(p)) {
 		return capped.buf.String(), true, nil
 	}
 	if code != 0 {

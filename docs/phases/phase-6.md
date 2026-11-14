@@ -631,3 +631,18 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   error tests; no demonstrated defect or blocker. Windows remains manual.
   F5-main generate/lint/typecheck pass; Go/frontend and independent functional
   review remain pending. H/T/R feature work remains stopped and preserved.
+
+- F5 functional review FAIL despite green integration: byte-bound fixture uses
+  a 100 KiB argv message exceeding Windows' limit, and capped stdout could
+  conceal an ordinary nonzero exit while pipes drain. Should-fix: independent
+  parser identity oracle/round-trip/rejection coverage. No feature resume.
+- Lead source repair adds optional platform-owned actual-termination evidence
+  (no Process interface break): WasTerminated distinguishes natural exits from
+  successful Kill. Unix requires a sent kill plus SIGKILL outcome, synchronized
+  with reaping; Windows uses a private process-job termination exit marker and
+  existing lock ownership, leaving task-wide termination unchanged. Git accepts
+  capped nonzero output only with that evidence; ordinary failures remain errors.
+  A private injected starter supports deterministic runner contract tests;
+  production still starts through platform.Start with the same clean policy.
+  No OS-specific logic moved outside platform. Tests are handed to one
+  test-engineer after this source commit; no concurrent lead package edits.

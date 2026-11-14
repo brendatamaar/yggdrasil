@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -72,7 +73,10 @@ type process struct {
 	truncated bool // set before done is closed
 	// exited is set as soon as the process is reaped. Its pid (and so its
 	// process group id) may be reused after that, so Kill must not signal it.
-	exited atomic.Bool
+	exited     atomic.Bool
+	killMu     sync.Mutex
+	killSent   bool
+	terminated bool
 }
 
 func (p *process) run() {
@@ -85,6 +89,13 @@ func (p *process) run() {
 			err = nil
 		}
 	}
+	p.killMu.Lock()
+	if st := p.cmd.ProcessState; st != nil && p.killSent {
+		if status, ok := st.Sys().(syscall.WaitStatus); ok {
+			p.terminated = status.Signaled() && status.Signal() == syscall.SIGKILL
+		}
+	}
+	p.killMu.Unlock()
 	// A grandchild that holds the pipe makes the output end late or never.
 	p.truncated = !p.outs.drain(waitDelay)
 	p.err = err
@@ -105,12 +116,23 @@ func (p *process) Truncated() bool {
 	return p.truncated
 }
 
+func (p *process) terminatedByCaller() bool {
+	<-p.done
+	return p.terminated
+}
+
 func (p *process) Kill() error {
+	p.killMu.Lock()
+	defer p.killMu.Unlock()
 	if p.exited.Load() {
 		return nil
 	}
-	if err := syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-		return fmt.Errorf("kill process group: %w", err)
+	if err := syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL); err != nil {
+		if !errors.Is(err, syscall.ESRCH) {
+			return fmt.Errorf("kill process group: %w", err)
+		}
+	} else {
+		p.killSent = true
 	}
 	return nil
 }
