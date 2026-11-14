@@ -139,3 +139,34 @@ are broken. Prefix commands with PATH=/tmp/ygg-f4-tools/node_modules/.bin:$PATH
 for task-owned Node 22 and pnpm 11.4 tooling. The shared validation helper and
 lock have been restored at the same paths. Read the resolved main resume SHA
 from the lead's invocation; original package ownership remains unchanged.
+
+## F5 handoff for preserved feature work
+
+Wait for the lead's final F5 gate confirmation and resolved main resume SHA.
+Fast-forward the existing dirty feature worktree without discarding owned edits;
+main changed shared git/platform capabilities and the previously untouched host
+port declaration. Report conflicts instead of overwriting work.
+
+H now uses PushAuthorizer.Authorize(ctx, InstanceID, *http.Request) error.
+Validate destination scheme/authority/port and credential-free URL against the
+configured HTTPS clone origin BEFORE setting only Authorization. Do not rewrite
+request destination/method/body or other headers; transport also rejects foreign
+redirects. This resolves the reported destination argument gap.
+
+R now uses Git.LogRange(ctx, dir, from, to, max) ([]git.Commit, bool, error).
+Dates are author timestamps, UTC [from,to), Date descending/hash ascending;
+range <=31 days and max 1..200. Byte/pipe cutoff returns only observed complete
+matches with truncated=true, even with zero matches, so label partial honestly.
+Count excess also sets truncated. Errors remain unavailable, never complete
+empty data. Capture is limited to 1 MiB stdout/16 KiB stderr/five seconds.
+
+T retains immutable import-selected Agent/Model. Matching/omitted start choices
+use ordinary admission; differing choices get an explicit refusal. W/U will
+show imported drafts separately on the board using the existing status=draft
+task-list API and explicit Start, preserving the four AG-12 columns and hiding
+repo-setup drafts. No new draft column or metadata replacement DB port needed.
+
+All owners must repeat final validation after adapting to the shared source.
+Preserve failed/interrupted run logs separately; earlier passes only establish
+the earlier source revision. Platform's inherited PTY lifecycle follow-up is a
+later sequential platform assignment, outside H/T/R ownership.

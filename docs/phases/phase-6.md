@@ -725,3 +725,10 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   close (may use N's allowed sequential specialist handoff; no overlapping
   platform ownership). This is not a current Batch 2 review blocker, and must
   not be lost during later bookkeeping or baseline review.
+
+- F5 lifecycle functional recheck at 824d4f5: PASS, no Blocking/Must-fix,
+  Should-fix or Consider in reviewed delta. Native retained-identity protocol,
+  Darwin attachment proof, error cleanup, actual missed-interleaving regression
+  and existing capture/parser/authorization contracts verified. Both final
+  reviews clear current shared changes; inherited PTY follow-up remains tracked
+  outside the delta. F5-lifecycle-main Go/frontend checks still pending.
