@@ -53,6 +53,16 @@ func TestInvariant_3_git_children_get_the_clean_env(t *testing.T) {
 			t.Errorf("%s reached a git child", k)
 		}
 	}
+	// History uses this same bounded read path, including optional-lock and env policy.
+	bounded, cut, err := g.runCaptured(context.Background(), dir, "printenv", true, logRangeBytes, logRangeStderrBytes, "-c", "alias.printenv=!env", "printenv")
+	if err != nil || cut || !strings.Contains(bounded, "GIT_OPTIONAL_LOCKS=0") {
+		t.Fatalf("bounded read policy: cutoff=%v err=%v output=%s", cut, err, bounded)
+	}
+	for k, v := range secrets {
+		if strings.Contains(bounded, v) || strings.Contains(strings.ToUpper(bounded), k+"=") {
+			t.Errorf("%s reached bounded git child", k)
+		}
+	}
 	// And the wrapper itself keeps the guarantee for any env it is given.
 	for _, kv := range New0(t, env).env {
 		for _, v := range secrets {
