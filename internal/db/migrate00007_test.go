@@ -14,7 +14,7 @@ import (
 
 // latestMigration is the highest migration version. Tests that assert the
 // final version use it, so adding a migration changes one line.
-const latestMigration = 7
+const latestMigration = 8
 
 func TestMigration00007FreshDatabase(t *testing.T) {
 	d := openTest(t)
@@ -136,18 +136,18 @@ func TestMigration00007RerunAndDown(t *testing.T) {
 	if _, err := m.DownTo(ctx, 6); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Up(ctx); err != nil {
+	if _, err := m.UpTo(ctx, 7); err != nil {
 		t.Fatal(err)
 	}
 	// Forget the version row, as after a crash, and run again.
 	if _, err := d.write.ExecContext(ctx, `DELETE FROM goose_db_version WHERE version_id = 7`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Up(ctx); err != nil {
+	if _, err := m.UpTo(ctx, 7); err != nil {
 		t.Fatalf("rerun of 00007: %v", err)
 	}
-	if v, err := m.GetDBVersion(ctx); err != nil || v != latestMigration {
-		t.Fatalf("version = %d, %v; want %d", v, err, latestMigration)
+	if v, err := m.GetDBVersion(ctx); err != nil || v != 7 {
+		t.Fatalf("version = %d, %v; want %d", v, err, 7)
 	}
 	if _, err := m.DownTo(ctx, 6); err != nil {
 		t.Fatalf("down: %v", err)
@@ -163,6 +163,14 @@ func TestMigration00007RerunAndDown(t *testing.T) {
 func TestSqlcSchema00007MatchesMigration(t *testing.T) {
 	ctx := context.Background()
 	d := openTest(t)
+	// This test compares exactly version 7, independent of later migrations.
+	m, err := NewMigrator(d.write)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.DownTo(ctx, 7); err != nil {
+		t.Fatal(err)
+	}
 	// A file database: migration 00003 pins a second connection, which an
 	// in-memory database would give its own empty copy.
 	ref, err := openPool(ctx, filepath.Join(t.TempDir(), "ref.db"), false, 1)

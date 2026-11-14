@@ -114,7 +114,7 @@ func (q *Queries) CompleteOutbox(ctx context.Context, arg CompleteOutboxParams) 
 }
 
 const getActionRequest = `-- name: GetActionRequest :one
-SELECT request_id, digest, repo_id, kind, source_id, state, attempt, idempotency_key, refusal, task_id, batch_id, version, created_at, updated_at FROM workspace_action_requests WHERE request_id = ?
+SELECT request_id, digest, repo_id, kind, source_id, state, attempt, idempotency_key, refusal, task_id, batch_id, version, created_at, updated_at, agent, model FROM workspace_action_requests WHERE request_id = ?
 `
 
 func (q *Queries) GetActionRequest(ctx context.Context, requestID string) (WorkspaceActionRequest, error) {
@@ -135,6 +135,8 @@ func (q *Queries) GetActionRequest(ctx context.Context, requestID string) (Works
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Agent,
+		&i.Model,
 	)
 	return i, err
 }
@@ -295,11 +297,52 @@ func (q *Queries) GetReservationByRepo(ctx context.Context, repoID string) (Repo
 	return i, err
 }
 
+const getTaskSubmission = `-- name: GetTaskSubmission :one
+SELECT request_id, digest, task_id FROM task_submissions WHERE request_id = ?
+`
+
+func (q *Queries) GetTaskSubmission(ctx context.Context, requestID string) (TaskSubmission, error) {
+	row := q.db.QueryRowContext(ctx, getTaskSubmission, requestID)
+	var i TaskSubmission
+	err := row.Scan(&i.RequestID, &i.Digest, &i.TaskID)
+	return i, err
+}
+
+const getTrackedReadyRepo = `-- name: GetTrackedReadyRepo :one
+SELECT r.id, r.project_id, r.name, r.path, r.default_branch, r.trusted, r.created_at, r.trust_hash, r.untracked_at, r.rel_path, r.readiness FROM repos r JOIN projects p ON p.id = r.project_id
+WHERE r.id = ? AND r.project_id = ? AND r.untracked_at IS NULL
+  AND r.readiness = 'ready' AND p.untracked_at IS NULL
+`
+
+type GetTrackedReadyRepoParams struct {
+	ID        string
+	ProjectID string
+}
+
+func (q *Queries) GetTrackedReadyRepo(ctx context.Context, arg GetTrackedReadyRepoParams) (Repo, error) {
+	row := q.db.QueryRowContext(ctx, getTrackedReadyRepo, arg.ID, arg.ProjectID)
+	var i Repo
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Path,
+		&i.DefaultBranch,
+		&i.Trusted,
+		&i.CreatedAt,
+		&i.TrustHash,
+		&i.UntrackedAt,
+		&i.RelPath,
+		&i.Readiness,
+	)
+	return i, err
+}
+
 const insertActionRequest = `-- name: InsertActionRequest :exec
 
 INSERT INTO workspace_action_requests (request_id, digest, repo_id, kind, source_id, state, attempt,
-                                       idempotency_key, refusal, task_id, batch_id, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                       idempotency_key, refusal, task_id, batch_id, created_at, updated_at, agent, model)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertActionRequestParams struct {
@@ -316,6 +359,8 @@ type InsertActionRequestParams struct {
 	BatchID        string
 	CreatedAt      string
 	UpdatedAt      string
+	Agent          sql.NullString
+	Model          sql.NullString
 }
 
 // Workspace action requests (AC-01 to AC-06).
@@ -334,6 +379,8 @@ func (q *Queries) InsertActionRequest(ctx context.Context, arg InsertActionReque
 		arg.BatchID,
 		arg.CreatedAt,
 		arg.UpdatedAt,
+		arg.Agent,
+		arg.Model,
 	)
 	return err
 }
@@ -494,6 +541,21 @@ func (q *Queries) InsertReservation(ctx context.Context, arg InsertReservationPa
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
+	return err
+}
+
+const linkTaskSubmission = `-- name: LinkTaskSubmission :exec
+INSERT INTO task_submissions (request_id, digest, task_id) VALUES (?, ?, ?)
+`
+
+type LinkTaskSubmissionParams struct {
+	RequestID string
+	Digest    string
+	TaskID    string
+}
+
+func (q *Queries) LinkTaskSubmission(ctx context.Context, arg LinkTaskSubmissionParams) error {
+	_, err := q.db.ExecContext(ctx, linkTaskSubmission, arg.RequestID, arg.Digest, arg.TaskID)
 	return err
 }
 
@@ -806,7 +868,7 @@ func (q *Queries) ListReservationsByProject(ctx context.Context, projectID strin
 }
 
 const listUnsettledActionRequests = `-- name: ListUnsettledActionRequests :many
-SELECT request_id, digest, repo_id, kind, source_id, state, attempt, idempotency_key, refusal, task_id, batch_id, version, created_at, updated_at FROM workspace_action_requests WHERE state = 'submitting' ORDER BY created_at, request_id
+SELECT request_id, digest, repo_id, kind, source_id, state, attempt, idempotency_key, refusal, task_id, batch_id, version, created_at, updated_at, agent, model FROM workspace_action_requests WHERE state = 'submitting' ORDER BY created_at, request_id
 `
 
 // Requests a restart must reconcile (an intent was persisted, no result).
@@ -834,6 +896,8 @@ func (q *Queries) ListUnsettledActionRequests(ctx context.Context) ([]WorkspaceA
 			&i.Version,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Agent,
+			&i.Model,
 		); err != nil {
 			return nil, err
 		}
