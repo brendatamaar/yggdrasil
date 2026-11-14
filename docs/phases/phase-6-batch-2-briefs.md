@@ -117,3 +117,25 @@ properties and boundaries, history scope/range/contracts and unchanged ff-only
 behavior, mandatory checks and scoped race pass. E6 noise/pull facts and standup
 support. Actual ignore writes belong to P; Windows filesystem/manual checks
 remain in the phase-close checklist.
+
+## F4 contract and environment handoff
+
+Resume only after the lead confirms F4's full integration and review gates.
+The missing T persistence contracts now exist in internal/db/store_submissions.go:
+
+- Tx.GetTaskSubmission(ctx, RequestID) (TaskID, string, error).
+- Store.GetTaskSubmission(ctx, RequestID) (TaskID, string, error).
+- Tx.LinkTaskSubmission(ctx, RequestID, digest, TaskID) error.
+- Tx.GetTrackedReadyRepo(ctx, ProjectID, RepoID) (core.Repo, error).
+
+Task/turn/link/audit must share one Commit. Propagate errors so losing writes
+roll back, then reload the winning link outside the failed transaction. Same
+link is idempotent, changed digest is ErrDigestMismatch, rebinding is ErrConflict.
+Scope lookup also requires a tracked project. Full action Agent/Model replay
+persistence is repaired; old incomplete rows fail closed, never redispatch.
+
+The host environment restarted and disk expanded; old temporary Node wrappers
+are broken. Prefix commands with PATH=/tmp/ygg-f4-tools/node_modules/.bin:$PATH
+for task-owned Node 22 and pnpm 11.4 tooling. The shared validation helper and
+lock have been restored at the same paths. Read the resolved main resume SHA
+from the lead's invocation; original package ownership remains unchanged.

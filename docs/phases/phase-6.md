@@ -558,3 +558,10 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   migration/legacy contracts and all safety invariants rechecked. Final
   functional review and F4-final integration remain pending (generate/lint
   pass so far). Batch 2 remains stopped.
+
+- Repaired F4 functional recheck at 4341a6b: PASS, no Blocking/Must-fix,
+  Should-fix or Consider findings. Insert/load/save parity, independent oracle
+  and all 19 assertion-failing/restored mutation controls verified; durable
+  ledger, legacy replay and scoped lookup contracts remain intact. Both final
+  review gates now clear. F4-final generate/lint/typecheck pass; Go/frontend
+  results remain pending. Do not resume Batch 2 before both finish successfully.
