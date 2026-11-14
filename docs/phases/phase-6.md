@@ -685,3 +685,10 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   Demonstrate the old ordering fails, restore, then run package/race/repetition,
   Linux/Darwin/Windows compile+vet and all five tasks before review. H/T/R remain
   stopped with their uncommitted features preserved.
+
+- F5 repaired-capture functional review also FAILS on the same Unix lifetime
+  race already assigned to the platform owner. No additional Should-fix or
+  Consider findings; portable argv, error precedence, Windows evidence and
+  independent parser tests are verified fixed. No duplicate repair assignment
+  or production edits while platform ownership is active. Both reviews require
+  new invocations after the lifecycle correction and final integration pass.
