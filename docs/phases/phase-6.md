@@ -692,3 +692,23 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   independent parser tests are verified fixed. No duplicate repair assignment
   or production edits while platform ownership is active. Both reviews require
   new invocations after the lifecycle correction and final integration pass.
+
+- Platform lifecycle branch t3/fix-unix-process-lifecycle (a7b1558) reviewed
+  and merged with --no-ff. Six platform files only. Linux non-reaping waitid
+  and Darwin kqueue NOTE_EXIT retain the child identity; run observes exit,
+  joins pending signals under killMu, closes the signal gate, then reaps
+  outside that mutex. Setup/observation failures fail closed; no live-process
+  blocking wait holds the cancellation mutex. Other unsupported Unix targets
+  return a clear unsupported-observer error. Windows API/behavior unchanged.
+- Deterministic native regression pauses Kill after liveness check, observes
+  exit without reaping, and proves identity cannot release before signal
+  completion. Old-order mutation fails assertions without issuing a post-reap
+  syscall. Repaired 100-repeat/race checks, full platform/race, Linux/Darwin
+  amd64+arm64/Windows amd64 compile+vet and all five tasks pass (528 frontend
+  tests). Initial lint failure and a 527/528 board-timeout attempt are retained
+  separately; final corrected-source pass is the evidence. Native Windows and
+  Darwin runtime checks remain manual, including stopped-child/rapid-exit and
+  job sibling/detached-editor behavior. Platform ownership released.
+- F5-lifecycle-main runs all five post-merge tasks; fresh safety/functional
+  review of the full shared delta and lifecycle repair is required before
+  H/T/R resume. Their feature work remains preserved/stopped.
