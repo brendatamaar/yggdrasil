@@ -521,3 +521,10 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   Launch fresh safety/functional review invocations over the same source diff;
   do not resume prior review turns or switch provider/model. Batch 2 remains
   stopped until both independent review gates are clear.
+
+- Fresh F4 safety review of 4070f3e..f2a5180: PASS, no Blocking/Must-fix/
+  Should-fix findings. Transactional contender rollback, complete immutable
+  action replay, legacy refusal, SQL project/readiness scope, generated SQL
+  agreement and migration/FK/index semantics checked. All 11 safety invariants
+  reviewed. All five main integration checks already pass; independent
+  functional review remains the only outstanding F4 gate. H/T/R still stopped.
