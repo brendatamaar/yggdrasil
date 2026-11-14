@@ -22,6 +22,10 @@ const waitDelay = 2 * time.Second
 
 // Start starts spec in a new process group; cancelling ctx kills the group.
 func Start(ctx context.Context, spec Spec) (Process, error) {
+	return startObserved(ctx, spec, nil, newExitObserver)
+}
+
+func startObserved(ctx context.Context, spec Spec, hooks *lifecycleHooks, makeObserver func() (exitObserver, error)) (Process, error) {
 	if spec.Env == nil {
 		return nil, ErrNoEnv
 	}
@@ -39,6 +43,16 @@ func Start(ctx context.Context, spec Spec) (Process, error) {
 	if err != nil {
 		return nil, err
 	}
+	observer, err := makeObserver()
+	if err != nil {
+		return nil, fmt.Errorf("prepare exit observer: %w", err)
+	}
+	// Ownership transfers to run only after Start and arm both succeed.
+	defer func() {
+		if observer != nil {
+			observer.close()
+		}
+	}()
 	cmd := &exec.Cmd{
 		Path: exe, Args: spec.Argv, Dir: dir, Env: spec.Env,
 		Stdin:       spec.Stdin,
@@ -54,7 +68,16 @@ func Start(ctx context.Context, spec Spec) (Process, error) {
 		return nil, fmt.Errorf("start %s: %w", exe, err)
 	}
 	outs.started()
-	p := &process{cmd: cmd, outs: outs, done: make(chan struct{})}
+	if err := observer.arm(cmd.Process.Pid); err != nil {
+		// No Process or cancellation callback has escaped. The unreaped child
+		// still owns the group identity; signal before calling Wait.
+		killErr := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		waitErr := cmd.Wait()
+		outs.abort()
+		return nil, fmt.Errorf("observe process exit: %w", errors.Join(err, killErr, waitErr))
+	}
+	p := &process{cmd: cmd, outs: outs, done: make(chan struct{}), observer: observer, hooks: hooks}
+	observer = nil
 	p.unreg = registerTask(spec.TaskID, func() { _ = p.Kill() })
 	p.stop = context.AfterFunc(ctx, func() { _ = p.Kill() })
 	go p.run()
@@ -71,8 +94,10 @@ type process struct {
 	err   error
 
 	truncated bool // set before done is closed
-	// exited is set as soon as the process is reaped. Its pid (and so its
-	// process group id) may be reused after that, so Kill must not signal it.
+	// exited rejects signals BEFORE identity is released; killMu joins every
+	// signal already in flight. See lifecycle_unix.go for the ordering proof.
+	observer   exitObserver
+	hooks      *lifecycleHooks
 	exited     atomic.Bool
 	killMu     sync.Mutex
 	killSent   bool
@@ -80,8 +105,26 @@ type process struct {
 }
 
 func (p *process) run() {
-	err := p.cmd.Wait()
+	observeErr := p.observer.wait()
+	p.observer.close()
+	if p.hooks != nil && p.hooks.observed != nil {
+		p.hooks.observed()
+	}
+	p.killMu.Lock()
+	if observeErr != nil {
+		// Fail closed: terminate while identity is retained, exclude further
+		// signals, then reap without holding the cancellation mutex.
+		observeErr = errors.Join(observeErr, p.signalGroup())
+	}
 	p.exited.Store(true)
+	p.killMu.Unlock()
+	if p.hooks != nil && p.hooks.beforeReap != nil {
+		p.hooks.beforeReap()
+	}
+	err := p.cmd.Wait()
+	if p.hooks != nil && p.hooks.reaped != nil {
+		p.hooks.reaped()
+	}
 	if st := p.cmd.ProcessState; st != nil {
 		p.code = st.ExitCode()
 		var ee *exec.ExitError
@@ -98,7 +141,7 @@ func (p *process) run() {
 	p.killMu.Unlock()
 	// A grandchild that holds the pipe makes the output end late or never.
 	p.truncated = !p.outs.drain(waitDelay)
-	p.err = err
+	p.err = errors.Join(err, observeErr)
 	p.stop()
 	p.unreg()
 	close(p.done)
@@ -127,6 +170,16 @@ func (p *process) Kill() error {
 	if p.exited.Load() {
 		return nil
 	}
+	if p.hooks != nil && p.hooks.beforeSignal != nil {
+		if err := p.hooks.beforeSignal(); err != nil {
+			return err
+		}
+	}
+	return p.signalGroup()
+}
+
+// signalGroup requires killMu (or exclusive ownership before publication).
+func (p *process) signalGroup() error {
 	if err := syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL); err != nil {
 		if !errors.Is(err, syscall.ESRCH) {
 			return fmt.Errorf("kill process group: %w", err)
