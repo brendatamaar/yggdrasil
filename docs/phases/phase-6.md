@@ -712,3 +712,16 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
 - F5-lifecycle-main runs all five post-merge tasks; fresh safety/functional
   review of the full shared delta and lifecycle repair is required before
   H/T/R resume. Their feature work remains preserved/stopped.
+
+- F5 lifecycle safety recheck at 824d4f5: PASS, no Blocking/Must-fix in
+  reviewed delta. Prior Start signal/reap race closed; Linux WNOWAIT and Darwin
+  attachment/reference/NOTE_EXIT ordering verified against native contracts.
+  Deterministic native regression covers the previously missed interleaving.
+  No competing child reaper found. Final integration/functional gate pending.
+- Explicit inherited Should-fix carry-forward (outside current diff):
+  internal/platform/pty_unix.go has analogous signal/reap race and unconditional
+  post-reap group SIGHUP. Do not claim platform-wide lifecycle closure. Schedule
+  a sequential platform-owner handoff with deterministic regression before phase
+  close (may use N's allowed sequential specialist handoff; no overlapping
+  platform ownership). This is not a current Batch 2 review blocker, and must
+  not be lost during later bookkeeping or baseline review.
