@@ -550,3 +550,11 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   F4-final now runs all five post-merge integration checks. Both fresh reviews
   must verify ee41fd4 production repair plus 47b7634 regression coverage before
   Batch 2 resumes.
+
+- Repaired F4 safety recheck at 4341a6b: PASS, no Blocking/Must-fix/
+  Should-fix. Shared insert/load/save validation and independent test predicates
+  resolve both findings. Reviewer inspected all 19 mutation logs and found
+  assertion failures, not compilation-only failures; transaction/readiness/
+  migration/legacy contracts and all safety invariants rechecked. Final
+  functional review and F4-final integration remain pending (generate/lint
+  pass so far). Batch 2 remains stopped.
