@@ -607,3 +607,19 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   explicit Start; preserve AG-12's four running-task columns. Internal repo-setup
   drafts remain hidden by SQL. No fifth column, false completed task, automatic
   start or changed safety policy is authorized. API/UI completion stays in W/U.
+
+- F5 t3/git-log-range (a506456) reviewed and merged with --no-ff. Only five
+  internal/git files changed. LogRange preserves author-date [from,to), UTC
+  precision, Date-desc/hash-asc ordering, <=31 days and <=200 records. Its
+  read captures <=1 MiB stdout/16 KiB stderr within five seconds; cutoff yields
+  complete observed records with explicit partial/truncated status, never a
+  false-complete latest-only sample. Existing Log/LogRef remain unchanged.
+  Shared bounded capture reports pipe cutoff and keeps context/wait errors.
+- Agent reports all five tasks PASS (528 frontend tests), full package race,
+  64,914 fuzz executions and four restored assertion-failing mutations for
+  upper bound/completeness/old-range/date-source rules. Earlier fixture/lint
+  failures retained. Linux validation only; Windows checks remain manual.
+- F5-main runs the five post-merge tasks. Fresh safety/functional review must
+  cover the full serial shared delta since 22e6100, including 68f9d66's
+  destination-aware host authorization declaration, before H/T/R resume. Their
+  uncommitted feature work remains preserved and stopped; no feature merge yet.
