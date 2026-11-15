@@ -897,3 +897,15 @@ exact steps and expected outcomes. No real host or agent execution.
   [phase-6-batch-2-test-map.md](phase-6-batch-2-test-map.md), prepared for the
   approved Batch 4 TM1 test-engineer handoff; actual ignore writes/standup
   aggregation remain with their assigned owners.
+
+- B2-R-main CLOSED: actual generate/lint/typecheck/test/test:web all exit 0,
+  frontend 528/528. H source 63c14d9 plus lead per-job repair bda193d merged
+  --no-ff at cc626a7 after lead production/test review; B2-H-main gate running.
+  All three Batch 2 feature branches are now merged; feature completion still
+  depends on application wiring/UI and independent batch review gates.
+- H post-land invariant/parser/fake-recorded capability map appended to
+  [phase-6-batch-2-test-map.md](phase-6-batch-2-test-map.md), including exact
+  consumed-byte regression for the lead's per-job cap repair, queued for TM1.
+  F6 remains separate and unmerged. Fresh safety and functional reviewers inspect
+  55d2c4e..current main; B2-H-main result remains pending, never inferred green
+  from earlier H branch runs. No new implementation batch dispatched.

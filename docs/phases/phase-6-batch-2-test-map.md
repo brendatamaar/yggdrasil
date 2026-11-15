@@ -197,3 +197,116 @@ CRLF; unchanged ordinary status responsiveness; exact anchored ignore preview
 without any write on observation; date bounds/order and partial/unavailable labels.
 Actual ignore confirmation and standup presentation need their integrated checks
 later. Linux temporary repos do not establish native Windows behavior.
+
+## H — host context and confirmed host capabilities
+
+Landed source: `63c14d9` plus lead repair `bda193d`, merge `cc626a7`.
+Designs: [host context](../design/phase-6-host-context.md),
+[actions](../design/phase-6-actions.md),
+[new repos](../design/phase-6-newrepos.md).
+GH-05/06, AC-01/02/05, NR-04 backend capabilities only. Application wiring must
+inject a fresh tracked-ready and object-ownership resolver; confirmed writers
+must be available only to proposal execution. Capability existence is not evidence
+of a live UI/API feature or confirmation enforcement at later call sites.
+
+TM1 owns tests/helpers/recordings only in `internal/hosts/**` and
+`internal/core/hosts/**` for this map. Common briefing, independent oracles,
+assertion-failing controls/restoration and final five-task/race/fuzz rules apply.
+No production, API, cmd, DB, git, platform or later-owner package changes.
+
+### Invariants to generated properties
+
+- Context requires current tracked-ready/object scope before cache, network,
+  after waits and before publication. Foreign object, relink/path/head/revision,
+  credential/config rotation and untracking invalidate results. Cache validity
+  is pinned to key/head/target/credential/config and 60-second expiry.
+- Context attempts fence fetched/failure/wake/cancel events. Unhandled or stale
+  variants cannot publish; cancellation invalidates current attempt. Transient
+  and rate-limit reads retry at most twice with supplied-time 1s/3s backoff and
+  the later instance deadline; no detached timer or worker outlives its context.
+  Joined readers do not start extra fetches; cancellation and completion release
+  waiters, and one caller cannot mutate cached slices seen by another.
+- Logs, issue bodies, diffs, metadata and unavailable labels are redacted before
+  persistence/attachment. Tokens and signed URLs never reach returned payload,
+  errors/logs, core, child environment or audit. UTF-8 truncation preserves valid
+  text and serialized structural overhead fits the 64 KiB context budget.
+- All reads remain bounded: 20-second request, four concurrent per configured
+  instance including poller, ten pages/500 entries, 256 KiB per job log and 1 MiB
+  raw aggregate before redaction. Failed reads consume observed bytes; per-job
+  overflow is explicit partial/truncated, never silently complete. Source counts
+  and partial/unavailable distinctions stay honest for empty and nonempty data.
+- Authenticated requests retain configured origin. Signed log redirects use only
+  injected approved origins and carry no Authorization/PRIVATE-TOKEN/Cookie,
+  including return hops. Disallowed redirects make no foreign authenticated call;
+  provider URLs never become caller-controlled arbitrary network targets.
+- Confirmed adapters never retry a POST. Lost/invalid/non-2xx replies remain
+  Unknown until read-only reconciliation. Comments require exact full head and
+  immutable marker/body hash; duplicate/conflicting/incomplete searches never
+  authorize resend. New repo adoption requires exact owner/name/marker/privacy,
+  immutable remote ID/clone origin and proven empty refs; 404 is not absence.
+- Publication authorization changes only Authorization on configured credential-
+  free HTTPS clone origin, with deployment prefix and safe query/path restrictions.
+  Transport reauthorizes every request so a foreign redirect cannot see credentials.
+
+### Boundary maps
+
+1. `ContextKey.Validate`: generated representable round-trips, independent valid
+   RepoID/kind/object/full-head oracle, invalid UTF-8/delimiters/URL/object bounds
+   and one rejection per rule; fuzz every component and retain existing corpus.
+2. Provider JSON/log parsers: recorded GitLab/GitHub issues, issue detail, runs/
+   jobs and immutable MR/base/head/version diff. Round-trip the representable
+   domain projection, independent accepted-valid assertions, each malformed or
+   mismatched identity/status/timestamp/unsafe URL/page/size rule and fuzzing.
+   Ignore unrelated provider fields deliberately; do not require an impossible
+   byte-for-byte provider-wire round-trip. External checks/Gitea stay unsupported.
+3. Redaction/truncation: inject sentinel credentials in every string field and
+   errors/redirects; compare independent serialized byte bounds and UTF-8 checks.
+   Include very many small labels/IDs and multibyte boundary cuts. Missing data
+   must remain labelled rather than materialized as a successful complete payload.
+4. Comment/create/lookup parsers: full 40/64 heads, positive IDs, exact marker/body
+   suffix/hash, duplicate results, pagination, owner/visibility/description and
+   credential/query-bearing clone URLs. Require safe outcomes, not just nil errors.
+5. Push destination: independently parse scheme/authority/port/prefix/path/query,
+   check complete request equality except Authorization, and fuzz unsafe raw URL
+   forms/Host/RequestURI/credentials. Rejected request body closes without mutation.
+
+### Fake/live capability contracts and specific regression work
+
+- Shared ContextReader scenarios through scripted ContextClient and recorded
+  GitLab/GitHub HTTP fixtures: success/empty/partial/tokenless/expired/rate-limit/
+  5xx/unsupported, retry bounds, scope/head changes during reads, cancellation,
+  joined waiters, cache TTL/config/credential invalidation and mutation isolation.
+- Getter/provider contracts use real httptest connections, paginated short pages
+  with continuation, immutable IDs and versions, bounded total bytes including
+  failed bodies, and shared poller/context concurrency. Do not substitute a fake
+  that reproduces the implementation bug as its own expectation.
+- **Lead repair regression:** the original per-job read used the remaining 1 MiB
+  aggregate limit. Assert actual consumed bytes <= min(remaining, 256 KiB)+one
+  overflow sentinel before redaction, and explicit labelled partial on overflow.
+  Cover exact limit, limit+1, far larger body and remaining aggregate below limit.
+  The aggregate-budget failed-read test must remain meaningful after this cap;
+  do not simply assert one request while ignoring actual bytes or missing labels.
+  Mutation removing the per-job cap must fail this independent regression.
+- Shared comment writer/lookup contracts through fake and recorded HTTP: exactly
+  one POST, pre-POST head/scope check, valid comment ID, lost reply -> exact found,
+  changed head/body/marker/duplicate/missing/incomplete list -> conflict/unknown
+  as specified. Never auto-POST after read failure or uncertain result.
+- Shared RepoHost contracts: private user/org create permission, one POST,
+  malformed/lost reply, strict operation-marked lookup, unrelated existing repo,
+  hidden private 404, empty/nonempty/incomplete refs. No cleanup or adoption guess.
+- PushAuthorizer/transport contracts: correct configured clone origin, API-origin
+  rejection, only-Authorization mutation, wrong origin/port/prefix/path/query,
+  nil/malformed requests and real redirect handshake proving foreign transport
+  sees no credential-bearing request. No actual external host or Git publish.
+
+Inspect landed tests before adding coverage. Existing head-guard/budget controls
+and fuzz corpus are useful evidence, but add independent rules where current
+oracles reuse production validators. TM1 is test-only: report production findings
+for lead repair and preserve their failing regression evidence.
+
+Manual Windows/live-host checks: separately authorized test accounts/repos only,
+permissions/token expiration/missing token, failed logs/signed redirects, issue
+import inertness, stale MR head, exact comment preview/reject/confirm and user/org
+private GitHub destination. Real agent CLI use needs separate session agreement.
+No automated result here establishes native Windows networking/process behavior
+or external host availability/permissions.
