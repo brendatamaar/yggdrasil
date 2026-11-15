@@ -1,17 +1,23 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/brendatamaar/yggdrasil/internal/api"
+	"github.com/brendatamaar/yggdrasil/internal/audit"
 	"github.com/brendatamaar/yggdrasil/internal/core"
+	"github.com/brendatamaar/yggdrasil/internal/db"
+	"github.com/brendatamaar/yggdrasil/internal/db/dbtest"
+	"github.com/brendatamaar/yggdrasil/internal/safety"
 	"github.com/brendatamaar/yggdrasil/internal/search/searchtest"
 )
 
@@ -50,6 +56,34 @@ func (s *sideDB) count(table string) int {
 		s.t.Fatal(err)
 	}
 	return n
+}
+
+// auditRows snapshots complete entries for one subject, independently of the
+// API projection and of unrelated background audit activity.
+func (s *sideDB) auditRows(subject string) []core.AuditEntry {
+	s.t.Helper()
+	rows, err := s.db.Query(`SELECT id, at, actor, action, subject, detail FROM audit_log WHERE subject = ? ORDER BY at, id`, subject)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := []core.AuditEntry{}
+	for rows.Next() {
+		var e core.AuditEntry
+		var at, detail string
+		if err := rows.Scan(&e.ID, &at, &e.Actor, &e.Action, &e.Subject, &detail); err != nil {
+			s.t.Fatal(err)
+		}
+		if e.At, err = time.Parse(time.RFC3339Nano, at); err != nil {
+			s.t.Fatal(err)
+		}
+		e.Detail = []byte(detail)
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		s.t.Fatal(err)
+	}
+	return out
 }
 
 // Invariant 8, Phase 4 surface: every state change that Phase 4 adds is
@@ -121,7 +155,7 @@ func TestInvariant_8_phase4_state_changes_commit_with_their_audit(t *testing.T) 
 		t.Fatalf("note creation without the fault = %d %s (the fault test above proved nothing)", code, data)
 	}
 
-	// 3. Confirming and closing: nothing moves under the fault.
+	// 3. Confirming: nothing moves under the fault.
 	side.faultAudit(true)
 	if code, _ := post("/api/proposals/"+string(p.ID)+"/confirm", api.ConfirmProposalRequest{Hash: p.ActionHash}); code < 300 {
 		t.Errorf("confirm succeeded (%d) under the audit fault", code)
@@ -134,24 +168,115 @@ func TestInvariant_8_phase4_state_changes_commit_with_their_audit(t *testing.T) 
 	if got := searchtest.GitOutput(t, r.env, r.repoDir, "", "rev-parse", "HEAD"); got != r.mainTip {
 		t.Error("the main checkout moved although the confirmation could not be audited")
 	}
-	// Close needs the proposals decided: reject the pending one without the fault.
 	side.faultAudit(false)
-	if code, data := post("/api/proposals/"+string(p.ID)+"/reject", map[string]string{}); code >= 300 {
-		t.Fatalf("reject = %d %s", code, data)
+
+	// 4. Close an independent empty Open set. Rejecting the sole proposal
+	// above would let MembersChanged legitimately auto-close its set before
+	// fault injection (all rejected => Closed). Empty membership stays Open
+	// under reconciliation and satisfies Open.Close's no-active-member guard.
+	ctx := context.Background()
+	closeTask := dbtest.Task(t, r.a.store, core.Task{ProjectID: r.task.ProjectID, Scope: core.ScopeRepo,
+		RepoIDs: []core.RepoID{r.repo}, Mode: core.ModeCode, Status: core.TaskReview})
+	setID := core.ChangeSetID(db.NewID("cs"))
+	now := time.Now().UTC()
+	if err := r.a.store.Commit(ctx, func(tx *db.Tx) error {
+		if _, err := tx.CreateChangeSet(ctx, core.ChangeSet{ID: setID, TaskID: closeTask.ID,
+			Status: core.ChangeSetOpen, MergeOrder: []core.RepoID{r.repo}, CreatedAt: now}); err != nil {
+			return err
+		}
+		entry, err := audit.Prepare(core.AuditEntry{Actor: "test", Action: "changeset.create",
+			Subject: "changeset:" + string(setID), Detail: []byte(`{}`)}, safety.NewRedactor(), core.AuditID(db.NewID("aud")), now)
+		if err != nil {
+			return err
+		}
+		return tx.AppendAudit(ctx, entry)
+	}); err != nil {
+		t.Fatal(err)
 	}
+	readSet := func() api.ChangeSetDTO {
+		t.Helper()
+		var got api.ChangeSetDTO
+		if code := getJSON(t, base+"/api/tasks/"+string(closeTask.ID)+"/changeset", &got); code != http.StatusOK {
+			t.Fatalf("close fixture GET = %d", code)
+		}
+		if got.ID != setID || got.TaskID != closeTask.ID || got.ID == cs.ID ||
+			len(got.Members) != 0 || !reflect.DeepEqual(got.Order, []core.RepoID{r.repo}) ||
+			len(got.Repos) != 1 || got.Repos[0].RepoID != r.repo || got.Run.State != api.RunStateIdle || got.Confirming != nil {
+			t.Fatalf("close fixture identity/membership: %+v", got)
+		}
+		return got
+	}
+	before := readSet()
+	if before.State != api.ChangeSetStateOpen || before.Status != core.ChangeSetOpen {
+		t.Fatalf("close precondition: %+v", before)
+	}
+	rowBefore, err := r.a.store.GetChangeSetRow(ctx, setID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject := "changeset:" + string(setID)
+	entriesBefore := side.auditRows(subject)
+	if len(entriesBefore) != 1 || entriesBefore[0].Action != "changeset.create" {
+		t.Fatalf("close fixture audit: %+v", entriesBefore)
+	}
+	closePath := "/api/changesets/" + string(setID) + "/close"
 	side.faultAudit(true)
-	if code, _ := post("/api/changesets/"+string(cs.ID)+"/close", nil); code < 300 {
-		t.Errorf("close succeeded (%d) under the audit fault", code)
+	if code, data := post(closePath, nil); code != http.StatusInternalServerError {
+		t.Fatalf("close under audit fault = %d %s, want 500", code, data)
 	}
-	var csAfter api.ChangeSetDTO
-	getJSON(t, base+"/api/tasks/"+task+"/changeset", &csAfter)
-	if csAfter.State != api.ChangeSetStateOpen {
-		t.Errorf("change set is %q after a close whose audit entry failed, want open", csAfter.State)
+	rowAfter, err := r.a.store.GetChangeSetRow(ctx, setID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(rowAfter, rowBefore) {
+		t.Errorf("close changed stored state under audit fault: before %+v, after %+v", rowBefore, rowAfter)
+	}
+	if got := readSet(); !reflect.DeepEqual(got, before) {
+		t.Errorf("close changed HTTP state under audit fault: before %+v, after %+v", before, got)
+	}
+	if got := side.auditRows(subject); !reflect.DeepEqual(got, entriesBefore) {
+		t.Errorf("close changed audit under fault: before %+v, after %+v", entriesBefore, got)
 	}
 	side.faultAudit(false)
-	// Control: without the fault the same close works, so the refusal above
-	// came from the audit failure and not from a bad request.
-	if code, data := post("/api/changesets/"+string(cs.ID)+"/close", nil); code >= 300 {
-		t.Errorf("close without the fault = %d %s", code, data)
+	// The identical request must now commit the transition AND its audit.
+	if code, data := post(closePath, nil); code != http.StatusOK {
+		t.Fatalf("close without audit fault = %d %s, want 200", code, data)
+	}
+	closed := readSet()
+	want := before
+	want.State, want.Status = api.ChangeSetStateClosed, core.ChangeSetClosed
+	if !reflect.DeepEqual(closed, want) {
+		t.Errorf("close control: got %+v, want %+v", closed, want)
+	}
+	rowClosed, err := r.a.store.GetChangeSetRow(ctx, setID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRow := rowBefore
+	wantRow.Status, wantRow.Version = core.ChangeSetClosed, rowBefore.Version+1
+	if !reflect.DeepEqual(rowClosed, wantRow) {
+		t.Errorf("close control stored state: got %+v, want %+v", rowClosed, wantRow)
+	}
+	entriesClosed := side.auditRows(subject)
+	if len(entriesClosed) != len(entriesBefore)+1 {
+		t.Fatalf("close control audit rows = %d, want %d", len(entriesClosed), len(entriesBefore)+1)
+	}
+	var closeEntry core.AuditEntry
+	var unchanged []core.AuditEntry
+	for _, e := range entriesClosed {
+		if e.Action == "changeset.close" {
+			closeEntry = e
+		} else {
+			unchanged = append(unchanged, e)
+		}
+	}
+	var detail map[string]string
+	if err := json.Unmarshal(closeEntry.Detail, &detail); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(unchanged, entriesBefore) || closeEntry.ID == "" || closeEntry.At.IsZero() ||
+		closeEntry.Actor != "user" || closeEntry.Subject != subject ||
+		!reflect.DeepEqual(detail, map[string]string{"task": string(closeTask.ID), "outcome": "ok"}) {
+		t.Errorf("close control audit: %+v, detail %+v", entriesClosed, detail)
 	}
 }
