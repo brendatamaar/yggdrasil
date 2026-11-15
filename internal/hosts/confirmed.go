@@ -64,7 +64,14 @@ func hostAPIRoot(in corehosts.Instance) string {
 }
 func (h *ConfirmedHosts) commentTarget(ctx context.Context, repo core.RepoID, mr int, head string) (ContextTarget, corehosts.Instance, string, error) {
 	key := corehosts.ContextKey{Repo: repo, Kind: corehosts.ContextMRDiff, ObjectID: strconv.Itoa(mr), Head: head}
-	if key.Validate() != nil || h.resolver == nil {
+	// MRHead resolves scope before the head is known: the head is what it learns
+	// from the host. That lookup is scope-only and cached nowhere, so only the
+	// repo and object are shape-checked; every call with a head validates it all.
+	shape := key
+	if head == "" {
+		shape.Head = strings.Repeat("0", 40)
+	}
+	if shape.Validate() != nil || h.resolver == nil {
 		return ContextTarget{}, corehosts.Instance{}, "", ErrContextScope
 	}
 	target, err := h.resolver.ResolveContext(ctx, key)

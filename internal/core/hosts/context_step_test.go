@@ -162,9 +162,46 @@ func TestContextHeadFenceAndCancellation(t *testing.T) {
 		t.Fatal("cancelled attempt published")
 	}
 }
+
+// A cached MR diff must never answer for another head: the key carries the head,
+// so a moved MR is a different key, and a payload for another head is refused.
+func TestContextCacheIsHeadBound(t *testing.T) {
+	headA, headB := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	keyA := ContextKey{Repo: "rep_1", Kind: ContextMRDiff, ObjectID: "1", Head: headA}
+	keyB := keyA
+	keyB.Head = headB
+	now := time.Unix(1000, 0)
+	e, _ := ContextStep(ContextEntry{Key: keyA, State: CtxEmpty{}}, ContextRequested{Key: keyA, Scope: ScopeTracked, Now: now})
+	e, _ = ContextStep(e, ContextFetched{Key: keyA, Attempt: e.Seq, Now: now, Value: MRContext{MR: MergeRequest{Number: 1}, Head: headA}})
+	if _, ok := e.State.(CtxReady); !ok {
+		t.Fatalf("setup: want Ready, got %T", e.State)
+	}
+	if _, cmds := ContextStep(e, ContextRequested{Key: keyA, Scope: ScopeTracked, Now: now.Add(time.Second)}); len(cmds) != 1 {
+		t.Fatal("same head within the TTL must be served from the cache")
+	} else if _, ok := cmds[0].(CtxReturnCached); !ok {
+		t.Fatalf("same head: want ReturnCached, got %T", cmds[0])
+	}
+	after, cmds := ContextStep(e, ContextRequested{Key: keyB, Scope: ScopeTracked, Now: now.Add(time.Second)})
+	if !reflect.DeepEqual(after, e) || len(cmds) != 0 {
+		t.Fatal("a request for another head must not be answered from, or change, the entry")
+	}
+	if ContextPayloadMatches(keyA, MRContext{MR: MergeRequest{Number: 1}, Head: headB}) {
+		t.Fatal("a diff for another head matched the key")
+	}
+	headless := keyA
+	headless.Head = ""
+	if ContextPayloadMatches(headless, MRContext{MR: MergeRequest{Number: 1}, Head: headA}) {
+		t.Fatal("a headless MR diff key matched a payload: the cache would not be head-bound")
+	}
+	if !ContextPayloadMatches(keyA, MRContext{MR: MergeRequest{Number: 1}, Head: headA}) {
+		t.Fatal("the diff for the key's own head was refused")
+	}
+}
+
 func FuzzContextKey(f *testing.F) {
 	f.Add("rep_1", "issue", "1", "")
 	f.Add("rep_1", "mr_diff", "1", strings.Repeat("a", 40))
+	f.Add("rep_1", "mr_diff", "1", "")
 	f.Fuzz(func(t *testing.T, repo, kind, id, head string) {
 		k := ContextKey{Repo: core.RepoID(repo), Kind: ContextKind(kind), ObjectID: id, Head: head}
 		if k.Validate() != nil {
@@ -178,7 +215,7 @@ func FuzzContextKey(f *testing.F) {
 		if json.Unmarshal(raw, &decoded) != nil || decoded != k {
 			t.Fatal("key round trip")
 		}
-		if k.Repo == "" || k.Kind == ContextIssues && k.ObjectID != "" {
+		if k.Repo == "" || k.Kind == ContextIssues && k.ObjectID != "" || k.Kind == ContextMRDiff && k.Head == "" {
 			t.Fatal("invalid accepted")
 		}
 	})

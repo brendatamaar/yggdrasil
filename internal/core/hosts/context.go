@@ -110,9 +110,15 @@ func (k ContextKey) Validate() error {
 		if k.Head != "" {
 			return fmt.Errorf("host context %s is not pinned to a head", k.Kind)
 		}
-	case ContextFailedJobs, ContextMRDiff:
+	case ContextFailedJobs:
+		// A run id pins its head, so the head is optional here.
 		if n := len(k.Head); k.Head != "" && ((n != 40 && n != 64) || !isLowerHex(k.Head)) {
 			return fmt.Errorf("the head must be a full lowercase commit id")
+		}
+	case ContextMRDiff:
+		// An MR's head moves, so a cached diff is only valid for one head.
+		if !contextHead(k.Head) {
+			return fmt.Errorf("a merge request diff needs a full lowercase head commit id")
 		}
 	}
 	return nil
@@ -574,7 +580,7 @@ func ContextPayloadMatches(k ContextKey, p ContextPayload) bool {
 	case IssueDetail:
 		return len(v.Body) <= ContextMaxPromptBytes && k.Kind == ContextIssue && strconv.Itoa(v.Summary.Number) == k.ObjectID
 	case MRContext:
-		return len(v.Diff) <= ContextMaxPromptBytes && k.Kind == ContextMRDiff && strconv.Itoa(v.MR.Number) == k.ObjectID && (len(v.Head) == 40 || len(v.Head) == 64) && isLowerHex(v.Head) && (k.Head == "" || v.Head == k.Head)
+		return len(v.Diff) <= ContextMaxPromptBytes && k.Kind == ContextMRDiff && strconv.Itoa(v.MR.Number) == k.ObjectID && (len(v.Head) == 40 || len(v.Head) == 64) && isLowerHex(v.Head) && v.Head == k.Head
 	}
 	return false
 }

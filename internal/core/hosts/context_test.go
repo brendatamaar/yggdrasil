@@ -27,6 +27,7 @@ func TestContextKeyValidate(t *testing.T) {
 		"leading zero":       {Repo: "rep_1", Kind: ContextIssue, ObjectID: "007"},
 		"list with id":       {Repo: "rep_1", Kind: ContextIssues, ObjectID: "1"},
 		"issue with head":    {Repo: "rep_1", Kind: ContextIssue, ObjectID: "1", Head: head},
+		"mr diff no head":    {Repo: "rep_1", Kind: ContextMRDiff, ObjectID: "1"},
 		"short head":         {Repo: "rep_1", Kind: ContextMRDiff, ObjectID: "1", Head: "abc"},
 		"upper head":         {Repo: "rep_1", Kind: ContextMRDiff, ObjectID: "1", Head: strings.ToUpper(head)},
 		"no repo":            {Kind: ContextIssues},
