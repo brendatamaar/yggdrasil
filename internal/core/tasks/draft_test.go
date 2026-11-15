@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"errors"
+	"math/rand"
 	"strings"
 	"testing"
 
@@ -28,15 +29,24 @@ func TestParseDraftSpec(t *testing.T) {
 		t.Errorf("dedup key %q", src.DedupKey)
 	}
 	for name, f := range map[string]func(*DraftSpec){
-		"no request":    func(d *DraftSpec) { d.RequestID = "" },
-		"no title":      func(d *DraftSpec) { d.Title = "  " },
-		"long title":    func(d *DraftSpec) { d.Title = strings.Repeat("a", MaxDraftTitle+1) },
-		"control title": func(d *DraftSpec) { d.Title = "a\nb" },
-		"huge brief":    func(d *DraftSpec) { d.Brief = strings.Repeat("a", MaxDraftPrompt+1) },
-		"no agent":      func(d *DraftSpec) { d.Agent = "" },
-		"issue zero":    func(d *DraftSpec) { d.Issue.Number = 0 },
-		"issue blank":   func(d *DraftSpec) { d.Issue.Project = "a b" },
-		"no repo":       func(d *DraftSpec) { d.Repo = "" },
+		"no request":          func(d *DraftSpec) { d.RequestID = "" },
+		"no title":            func(d *DraftSpec) { d.Title = "  " },
+		"long title":          func(d *DraftSpec) { d.Title = strings.Repeat("a", MaxDraftTitle+1) },
+		"control title":       func(d *DraftSpec) { d.Title = "a\nb" },
+		"huge brief":          func(d *DraftSpec) { d.Brief = strings.Repeat("a", MaxDraftPrompt+1) },
+		"no agent":            func(d *DraftSpec) { d.Agent = "" },
+		"issue zero":          func(d *DraftSpec) { d.Issue.Number = 0 },
+		"issue blank":         func(d *DraftSpec) { d.Issue.Project = "a b" },
+		"null brief":          func(d *DraftSpec) { d.Brief = "a\x00b" },
+		"bad agent":           func(d *DraftSpec) { d.Agent = "--agent" },
+		"bad model":           func(d *DraftSpec) { d.Model = "--model" },
+		"long request":        func(d *DraftSpec) { d.RequestID = core.RequestID(strings.Repeat("x", 101)) },
+		"url instance":        func(d *DraftSpec) { d.Issue.Instance = "https://git.acme.dev" },
+		"credential instance": func(d *DraftSpec) { d.Issue.Instance = "token@git.acme.dev" },
+		"ambiguous project":   func(d *DraftSpec) { d.Issue.Project = "a#12" },
+		"bad project":         func(d *DraftSpec) { d.Project = "" },
+		"split invalid UTF8":  func(d *DraftSpec) { d.Issue.Instance = "\xc3"; d.Issue.Project = "\xa9" },
+		"no repo":             func(d *DraftSpec) { d.Repo = "" },
 	} {
 		d := validDraft()
 		f(&d)
@@ -46,12 +56,87 @@ func TestParseDraftSpec(t *testing.T) {
 	}
 }
 
-// PlanDraft is a documented stub: it refuses and creates nothing, so an import
-// can never start an agent or claim success before the task lands.
-func TestPlanDraftIsAnInertRefusal(t *testing.T) {
-	out := PlanDraft(validDraft(), DraftFacts{RepoTracked: true, RepoReady: true})
-	r, ok := out.(DraftRefuse)
-	if !ok || r.Reason != DraftPending {
-		t.Fatalf("PlanDraft = %#v", out)
+func TestPlanDraftScopeAndDedup(t *testing.T) {
+	for _, tracked := range []bool{false, true} {
+		for _, ready := range []bool{false, true} {
+			for _, existing := range []core.TaskID{"", "tsk_old"} {
+				facts := DraftFacts{RepoTracked: tracked, RepoReady: ready, Existing: existing, TaskID: "tsk_new", Now: epoch}
+				out := PlanDraft(validDraft(), facts)
+				if !tracked || !ready {
+					refuse, ok := out.(DraftRefuse)
+					want := DraftRepoUntracked
+					if tracked {
+						want = DraftRepoNotReady
+					}
+					if !ok || refuse.Reason != want {
+						t.Fatalf("scope bypass: %#v", out)
+					}
+				} else if existing != "" {
+					if out != (DraftExists{Task: existing}) {
+						t.Fatalf("dedup: %#v", out)
+					}
+				} else {
+					task := out.(DraftCreate).Task
+					if err := task.Validate(); err != nil {
+						t.Fatal(err)
+					}
+					if task.Mode != core.ModeAsk || task.Status != core.TaskDraft || task.SessionID != "" || task.Source == nil || task.Source.Kind != core.SourceIssue || task.Source.DedupKey != validDraft().Issue.DedupKey() {
+						t.Fatalf("import starts or loses provenance: %+v", task)
+					}
+				}
+			}
+		}
 	}
+}
+
+func FuzzDraftSpec(f *testing.F) {
+	f.Add("Fix login", "Users cannot log in.", "mock", "", "req_1")
+	f.Add("", "\x00", "--bad", "--bad", "")
+	f.Fuzz(func(t *testing.T, title, brief, agent, model, request string) {
+		raw := validDraft()
+		raw.Title, raw.Brief, raw.Agent, raw.Model, raw.RequestID = title, brief, agent, model, core.RequestID(request)
+		got, err := ParseDraftSpec(raw)
+		if err != nil {
+			return
+		}
+		again, err := ParseDraftSpec(got)
+		if err != nil || got != again {
+			t.Fatal("parse round trip failed")
+		}
+		if got.Title == "" || len(got.Brief) > MaxDraftPrompt || strings.ContainsRune(got.Brief, 0) || !ValidModelName(got.Agent) || (got.Model != "" && !ValidModelName(got.Model)) {
+			t.Fatal("accepted invalid draft")
+		}
+	})
+}
+
+func TestPropImportNeverStarts(t *testing.T) {
+	forSeeds(t, func(t *testing.T, r *rand.Rand) {
+		original := validDraft()
+		facts := DraftFacts{RepoTracked: true, RepoReady: true, TaskID: "tsk_one", Now: epoch}
+		for i := 0; i < 50; i++ {
+			spec := original
+			spec.Title = strings.Repeat("x", 1+r.Intn(100))
+			if r.Intn(4) == 0 {
+				facts.RepoTracked = false
+			} else {
+				facts.RepoTracked = true
+			}
+			out := PlanDraft(spec, facts)
+			switch v := out.(type) {
+			case DraftCreate:
+				if v.Task.Mode != core.ModeAsk || v.Task.Status != core.TaskDraft || v.Task.SessionID != "" || v.Task.Source == nil || v.Task.Source.DedupKey != original.Issue.DedupKey() {
+					t.Fatal("execution or provenance invariant broken")
+				}
+				facts.Existing = v.Task.ID
+			case DraftExists:
+				if v.Task != "tsk_one" {
+					t.Fatal("dedup identity changed")
+				}
+			case DraftRefuse:
+				if facts.RepoTracked {
+					t.Fatal("unexpected refusal")
+				}
+			}
+		}
+	})
 }

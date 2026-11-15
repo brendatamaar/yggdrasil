@@ -43,10 +43,10 @@ type IssueRef struct {
 
 // Validate checks the shape.
 func (r IssueRef) Validate() error {
-	if r.Instance == "" || r.Project == "" || r.Number <= 0 {
+	if r.Instance == "" || r.Project == "" || r.Number <= 0 || len(r.Instance) > 255 || len(r.Project) > 1024 || (!utf8.ValidString(r.Instance) || !utf8.ValidString(r.Project)) {
 		return badDraft("the issue needs its host, project and a positive number")
 	}
-	if strings.ContainsFunc(r.Instance+r.Project, func(c rune) bool { return c <= ' ' || c == 0x7f }) {
+	if strings.ContainsAny(r.Instance, "/@?#\\") || strings.ContainsAny(r.Project, "@?#\\:") || strings.ContainsFunc(r.Instance+r.Project, func(c rune) bool { return c <= ' ' || c == 0x7f }) {
 		return badDraft("the issue identity has blank or control characters")
 	}
 	return nil
@@ -77,7 +77,7 @@ type DraftSpec struct {
 // ParseDraftSpec validates the fields. The mode of a draft is always Ask until
 // the user starts it with an explicit mode.
 func ParseDraftSpec(s DraftSpec) (DraftSpec, error) {
-	if err := s.RequestID.Validate(); err != nil {
+	if err := s.RequestID.Validate(); err != nil || len(s.RequestID) > 100 {
 		return DraftSpec{}, badDraft("the request id is not valid")
 	}
 	if s.Project.Validate() != nil || s.Repo.Validate() != nil {
@@ -91,9 +91,9 @@ func ParseDraftSpec(s DraftSpec) (DraftSpec, error) {
 	case s.Title == "" || utf8.RuneCountInString(s.Title) > MaxDraftTitle || !utf8.ValidString(s.Title) ||
 		strings.ContainsFunc(s.Title, func(c rune) bool { return c < 0x20 || c == 0x7f }):
 		return DraftSpec{}, badDraft("the title is empty, too long or has control characters")
-	case len(s.Brief) > MaxDraftPrompt || !utf8.ValidString(s.Brief):
+	case len(s.Brief) > MaxDraftPrompt || !utf8.ValidString(s.Brief) || strings.ContainsRune(s.Brief, 0):
 		return DraftSpec{}, badDraft("the issue text is too large")
-	case s.Agent == "" || len(s.Agent) > 64:
+	case !ValidModelName(s.Agent) || len(s.Agent) > 64 || (s.Model != "" && !ValidModelName(s.Model)):
 		return DraftSpec{}, badDraft("choose an agent")
 	}
 	return s, nil
@@ -139,14 +139,24 @@ type DraftFacts struct {
 	Now    time.Time
 }
 
-// PlanDraft decides what an import does.
-//
-// PENDING (task T): the foundation freezes the signature and result types.
-// Until it is implemented the function refuses with DraftPending and creates
-// nothing, so a premature caller can never start an agent or claim success.
+// PlanDraft decides what an import does. Scope is checked before deduplication.
 func PlanDraft(s DraftSpec, f DraftFacts) DraftOutcome {
-	_, _ = s, f
-	return DraftRefuse{Reason: DraftPending}
+	if !f.RepoTracked {
+		return DraftRefuse{Reason: DraftRepoUntracked}
+	}
+	if !f.RepoReady {
+		return DraftRefuse{Reason: DraftRepoNotReady}
+	}
+	if f.Existing != "" {
+		return DraftExists{Task: f.Existing}
+	}
+	source := s.Issue.Source()
+	return DraftCreate{Task: core.Task{
+		ID: f.TaskID, ProjectID: s.Project, RepoIDs: []core.RepoID{s.Repo},
+		Title: s.Title, Prompt: s.Brief, Scope: core.ScopeRepo, Mode: core.ModeAsk,
+		Agent: s.Agent, Model: s.Model, Status: core.TaskDraft, Source: &source,
+		CreatedAt: f.Now, UpdatedAt: f.Now,
+	}}
 }
 
 // DraftStart is the explicit submission of an existing draft: it carries the

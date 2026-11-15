@@ -2,8 +2,8 @@ package tasks
 
 // Phase 6 declarations of the tasks package (docs/design/phase-6-actions.md and
 // phase-6-newrepos.md): draft creation from an issue, the explicit start of a
-// draft, a RequestID-aware submission, and the repo-setup draft. Declarations
-// only; the draft and admission task (T) implements them on *Service. Existing
+// draft, a RequestID-aware submission, and the repo-setup draft. Implemented by
+// *Service using the ordinary admission path. Existing
 // MessageRequest and Message are unchanged.
 
 import (
