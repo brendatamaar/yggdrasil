@@ -1,5 +1,5 @@
 import { createMemoryHistory } from "@tanstack/react-router";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { App } from "../../App";
 import { WSClient } from "../../api/ws";
@@ -10,7 +10,7 @@ import { FakeSocket } from "../../test/fakeSocket";
 import { widgetRegistry } from "../../widgets/registry";
 import { LAYOUT_KEY, defaultLayout } from "./layout";
 
-function renderHome() {
+async function renderHome() {
   const usage = { inputTokens: 0, outputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0, costMicroUsd: 0, costKnown: false, durationMs: 0 };
   stubApi((c) => {
     if (c.path === "/api/board") {
@@ -22,7 +22,14 @@ function renderHome() {
       : undefined;
   });
   const router = createAppRouter(createMemoryHistory({ initialEntries: ["/"] }));
-  render(<App router={router} socket={new WSClient({ url: "ws://x/ws", socketCtor: FakeSocket })} />);
+  // Finish the initial router/query lifecycle before querying the dashboard.
+  await act(() => {
+    render(<App router={router} socket={new WSClient({ url: "ws://x/ws", socketCtor: FakeSocket })} />);
+    return Promise.resolve();
+  });
+  // Keep accessible control queries inside their owning landmark. Global
+  // absence checks and portaled menu queries still cover the whole page.
+  return within(screen.getByRole("region", { name: "Widgets" }));
 }
 
 function saved(): { version: number; items: { id: string }[] } {
@@ -36,7 +43,7 @@ describe("widget grid", () => {
   });
 
   it("shows the registered widgets with live data", async () => {
-    renderHome();
+    await renderHome();
     expect(await screen.findByRole("heading", { name: "Working now" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "This machine" })).toBeTruthy();
     const link = (await screen.findAllByRole("link", { name: "Find the order routes" }))[0] as HTMLElement;
@@ -48,44 +55,44 @@ describe("widget grid", () => {
   });
 
   it("shows Remove, Add and Reset only in Customize mode", async () => {
-    renderHome();
-    const toggle = await screen.findByRole("button", { name: "Customize" });
+    const widgets = await renderHome();
+    const toggle = await widgets.findByRole("button", { name: "Customize" });
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
     expect(screen.queryByRole("button", { name: /^Remove / })).toBeNull();
     expect(screen.queryByRole("button", { name: "Reset layout" })).toBeNull();
 
     fireEvent.click(toggle);
-    expect(screen.getByRole("button", { name: "Done" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: "Remove Working now" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Reset layout" })).toBeTruthy();
-    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Add widget" }).disabled).toBe(true); // all are placed
+    expect(widgets.getByRole("button", { name: "Done" }).getAttribute("aria-pressed")).toBe("true");
+    expect(widgets.getByRole("button", { name: "Remove Working now" })).toBeTruthy();
+    expect(widgets.getByRole("button", { name: "Reset layout" })).toBeTruthy();
+    expect(widgets.getByRole<HTMLButtonElement>("button", { name: "Add widget" }).disabled).toBe(true); // all are placed
 
-    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    fireEvent.click(widgets.getByRole("button", { name: "Done" }));
     expect(screen.queryByRole("button", { name: /^Remove / })).toBeNull();
   });
 
   it("removes a widget, remembers that, and brings it back with Reset layout", async () => {
-    renderHome();
-    fireEvent.click(await screen.findByRole("button", { name: "Customize" }));
-    fireEvent.click(screen.getByRole("button", { name: "Remove Working now" }));
+    const widgets = await renderHome();
+    fireEvent.click(await widgets.findByRole("button", { name: "Customize" }));
+    fireEvent.click(widgets.getByRole("button", { name: "Remove Working now" }));
 
     expect(screen.queryByRole("heading", { name: "Working now" })).toBeNull();
     expect(saved().version).toBe(1);
     expect(saved().items.map((i) => i.id)).toEqual(widgetRegistry.map((w) => w.id).filter((id) => id !== "working-now"));
-    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Add widget" }).disabled).toBe(false);
+    expect(widgets.getByRole<HTMLButtonElement>("button", { name: "Add widget" }).disabled).toBe(false);
 
-    fireEvent.click(screen.getByRole("button", { name: "Reset layout" }));
+    fireEvent.click(widgets.getByRole("button", { name: "Reset layout" }));
     expect(await screen.findByRole("heading", { name: "Working now" })).toBeTruthy();
     expect(saved().items.map((i) => i.id)).toEqual(widgetRegistry.map((w) => w.id));
   });
 
   it("adds a removed widget back from the menu", async () => {
-    renderHome();
-    fireEvent.click(await screen.findByRole("button", { name: "Customize" }));
-    fireEvent.click(screen.getByRole("button", { name: "Remove This machine" }));
+    const widgets = await renderHome();
+    fireEvent.click(await widgets.findByRole("button", { name: "Customize" }));
+    fireEvent.click(widgets.getByRole("button", { name: "Remove This machine" }));
     expect(screen.queryByRole("heading", { name: "This machine" })).toBeNull();
 
-    fireEvent.keyDown(screen.getByRole("button", { name: "Add widget" }), { key: "Enter" });
+    fireEvent.keyDown(widgets.getByRole("button", { name: "Add widget" }), { key: "Enter" });
     fireEvent.click(await screen.findByRole("menuitem", { name: "This machine" }));
     expect(await screen.findByRole("heading", { name: "This machine" })).toBeTruthy();
     expect(saved().items.map((i) => i.id).sort()).toEqual(widgetRegistry.map((w) => w.id).sort());
@@ -93,7 +100,7 @@ describe("widget grid", () => {
 
   it("explains an empty grid", async () => {
     useLayoutStore.setState({ items: [] });
-    renderHome();
+    await renderHome();
     expect(await screen.findByText(/No widgets here/)).toBeTruthy();
   });
 });
