@@ -175,6 +175,7 @@ func contextInputNow(in ContextInput) (time.Time, bool) {
 		return v.Now, true
 	case ContextWake:
 		return v.Now, true
+	case ContextCancelled, ContextScopeChanged, ContextConfigChanged:
 	}
 	return time.Time{}, false
 }
@@ -191,6 +192,7 @@ func contextResultFor(in ContextInput) (ContextKey, int, bool) {
 		return v.Key, v.Attempt, true
 	case ContextRateLimited:
 		return v.Key, v.Attempt, true
+	case ContextRequested, ContextWake, ContextCancelled, ContextScopeChanged, ContextConfigChanged:
 	}
 	return ContextKey{}, 0, false
 }
@@ -260,13 +262,14 @@ func checkContextSequence(key ContextKey, ins []ContextInput) error {
 			case CtxPublishContext:
 				switch next.State.(type) {
 				case CtxReady, CtxPartial:
-				default:
+				case CtxEmpty, CtxLoading, CtxWaiting, CtxBlocked:
 					return fail("publish without a value")
 				}
 			case CtxExplain:
 				if b, ok := next.State.(CtxBlocked); !ok || b.Reason != v.Reason {
 					return fail("explain does not match the Blocked state")
 				}
+			case CtxCancelRead, CtxJoinRequest, CtxReturnCached:
 			}
 		}
 		if v, ok := in.(ContextRequested); ok && v.Key == e.Key {
@@ -289,13 +292,14 @@ func checkContextSequence(key ContextKey, ins []ContextInput) error {
 						if !v.Now.Before(st.Until) {
 							return fail("expired Blocked served")
 						}
-					default:
+					case CtxEmpty, CtxLoading, CtxWaiting:
 						return fail("cache served from %T", e.State)
 					}
 				case CtxReadContext:
 					if v.Scope != ScopeTracked {
 						return fail("read for an untracked or unsupported scope")
 					}
+				case CtxScheduleWake, CtxCancelRead, CtxJoinRequest, CtxPublishContext, CtxExplain:
 				}
 			}
 		}
@@ -304,6 +308,7 @@ func checkContextSequence(key ContextKey, ins []ContextInput) error {
 			if _, ok := next.State.(CtxEmpty); !ok {
 				return fail("a scope or config change kept %T", next.State)
 			}
+		case ContextRequested, ContextFetched, ContextFetchFailed, ContextRejected, ContextRateLimited, ContextWake, ContextCancelled:
 		}
 		e = next
 	}
