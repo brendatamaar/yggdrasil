@@ -10,6 +10,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	corehosts "github.com/brendatamaar/yggdrasil/internal/core/hosts"
 )
 
 type pushRoundTripFunc func(*http.Request) (*http.Response, error)
@@ -118,7 +120,7 @@ func TestPushTransportRejectsForeignRedirect(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 302, Header: http.Header{"Location": []string{"https://other.acme.test/root/shop.git"}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
 	})
-	client := &http.Client{Transport: NewPushTransport(h, "git.acme.test:8443", base)}
+	client := &http.Client{Transport: NewPushTransport(h, "git.acme.test:8443", "/root/shop.git", base)}
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://git.acme.test:8443/root/shop.git", nil)
 	res, err := client.Do(req)
 	if res != nil {
@@ -164,11 +166,145 @@ func TestPushTransportClosesRejectedRequestBody(t *testing.T) {
 	body := &pushObservedBody{Reader: strings.NewReader("payload")}
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "https://foreign.acme.test/shop.git", body)
 	base := pushRoundTripFunc(func(*http.Request) (*http.Response, error) { t.Fatal("unauthorized request sent"); return nil, nil })
-	resp, err := NewPushTransport(authorizerFixture(), "git.acme.test:8443", base).RoundTrip(req)
+	resp, err := NewPushTransport(authorizerFixture(), "git.acme.test:8443", "/root/shop.git", base).RoundTrip(req)
 	if resp != nil {
 		_ = resp.Body.Close()
 	}
 	if err == nil || !body.closed {
 		t.Fatal("rejected request leaked its body", err)
 	}
+}
+
+type pushAuthorizerSpy struct{ calls int }
+
+func (s *pushAuthorizerSpy) Authorize(_ context.Context, _ corehosts.InstanceID, req *http.Request) error {
+	s.calls++
+	req.Header.Set("Authorization", "Basic spy")
+	return nil
+}
+
+// A credential must reach only the one repository the transport was built for:
+// every other path on the same clone origin is refused before the authorizer
+// runs, so there is no moment at which a header could be set.
+func TestPushTransportBindsCredentialToRepositoryPath(t *testing.T) {
+	const repo = "/root/acme/shop.git"
+	inside := []string{repo, repo + "/info/refs?service=git-receive-pack", repo + "/git-receive-pack", repo + "/git-upload-pack"}
+	outside := map[string]string{
+		"sibling repo":           "/root/acme/other.git/info/refs?service=git-receive-pack",
+		"owner root":             "/root/acme/",
+		"deployment root":        "/root/",
+		"origin root":            "/",
+		"name prefix collision":  repo + ".evil/git-receive-pack",
+		"suffix collision":       "/root/acme/shop.gitx/info/refs",
+		"traversal out":          repo + "/../other.git/git-receive-pack",
+		"traversal in":           "/root/acme/other.git/../shop.git/git-receive-pack",
+		"dot segment":            repo + "/./git-receive-pack",
+		"encoded dot dot":        repo + "/%2e%2e/other.git/git-receive-pack",
+		"encoded slash":          repo + "%2fx",
+		"encoded name":           "/root/acme/shop%2egit/info/refs",
+		"double slash":           repo + "//git-receive-pack",
+		"backslash":              repo + "/..\\other.git",
+		"missing deployment":     "/acme/shop.git/info/refs",
+		"case change":            "/root/acme/SHOP.git/info/refs",
+		"different owner prefix": "/root/other/shop.git/info/refs",
+	}
+	for _, path := range inside {
+		spy := &pushAuthorizerSpy{}
+		var sent *http.Request
+		base := pushRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+			sent = r
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+		})
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://git.acme.test:8443"+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := NewPushTransport(spy, "git.acme.test:8443", repo, base).RoundTrip(req)
+		if err != nil || spy.calls != 1 || sent == nil || sent.Header.Get("Authorization") == "" {
+			t.Fatalf("%s: repository request was not authorized: %v", path, err)
+		}
+		_ = res.Body.Close()
+	}
+	for name, path := range outside {
+		t.Run(name, func(t *testing.T) {
+			spy := &pushAuthorizerSpy{}
+			base := pushRoundTripFunc(func(*http.Request) (*http.Response, error) { t.Fatal("request sent"); return nil, nil })
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://git.acme.test:8443/", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Build the URL by hand: NewRequest would clean nothing, but a table
+			// entry with an escape needs RawPath to stay exactly as written.
+			u, err := url.Parse("https://git.acme.test:8443" + path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.URL = u
+			res, err := NewPushTransport(spy, "git.acme.test:8443", repo, base).RoundTrip(req)
+			if res != nil {
+				_ = res.Body.Close()
+			}
+			if !errors.Is(err, ErrContextScope) || spy.calls != 0 || req.Header.Get("Authorization") != "" {
+				t.Fatalf("path outside the repository reached the authorizer: err=%v calls=%d", err, spy.calls)
+			}
+		})
+	}
+}
+
+// A same-origin redirect to another repository gets no credential either.
+func TestPushTransportSameOriginRedirectToOtherRepoSeesNoCredential(t *testing.T) {
+	h := authorizerFixture()
+	var seen []string
+	base := pushRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		seen = append(seen, r.URL.Path+" auth="+r.Header.Get("Authorization"))
+		return &http.Response{StatusCode: 302, Header: http.Header{"Location": []string{"https://git.acme.test:8443/root/other.git/info/refs"}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+	})
+	client := &http.Client{Transport: NewPushTransport(h, "git.acme.test:8443", "/root/shop.git", base)}
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://git.acme.test:8443/root/shop.git/info/refs", nil)
+	res, err := client.Do(req)
+	if res != nil {
+		res.Body.Close()
+	}
+	if err == nil || len(seen) != 1 || !strings.HasPrefix(seen[0], "/root/shop.git/info/refs auth=Basic ") {
+		t.Fatal("redirect to another repository was sent", err, seen)
+	}
+}
+
+func TestPushTransportRefusesEverythingWithInvalidRepoPath(t *testing.T) {
+	for _, bad := range []string{"", "/", "root/shop.git", "/root/shop", "/root/shop.git/", "/root//shop.git", "/root/../shop.git", "/root/%2e/shop.git", "/root/a b.git"} {
+		spy := &pushAuthorizerSpy{}
+		base := pushRoundTripFunc(func(*http.Request) (*http.Response, error) { t.Fatal("request sent"); return nil, nil })
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://git.acme.test:8443/root/shop.git/info/refs", nil)
+		res, err := NewPushTransport(spy, "git.acme.test:8443", bad, base).RoundTrip(req)
+		if res != nil {
+			_ = res.Body.Close()
+		}
+		if err == nil || spy.calls != 0 {
+			t.Fatalf("invalid repo path %q accepted", bad)
+		}
+	}
+}
+
+func FuzzWithinRepo(f *testing.F) {
+	for _, raw := range []string{"https://h/root/o/n.git/info/refs", "https://h/root/o/n.git", "https://h/root/o/n.git/../x.git", "https://h/root/o/n.git/%2e%2e/x"} {
+		f.Add(raw)
+	}
+	const repo = "/root/o/n.git"
+	f.Fuzz(func(t *testing.T, raw string) {
+		u, err := url.Parse(raw)
+		if err != nil || !withinRepo(repo, u) {
+			return
+		}
+		if u.Path != repo && !strings.HasPrefix(u.Path, repo+"/") {
+			t.Fatal("accepted a path outside the repository", raw)
+		}
+		for _, segment := range strings.Split(u.Path, "/")[1:] {
+			if segment == ".." || segment == "." {
+				t.Fatal("accepted a dot segment", raw)
+			}
+		}
+		if strings.ContainsAny(u.EscapedPath(), "%\\") {
+			t.Fatal("accepted an escape", raw)
+		}
+	})
 }

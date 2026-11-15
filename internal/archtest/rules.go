@@ -225,6 +225,29 @@ var phase4NoDelete = rule{name: "phase 4 code never deletes", check: func(f file
 	return out
 }}
 
+// confirmedHostNames are the exported names of internal/hosts that can write to
+// a host (post a comment, create a repository). Only the confirmed proposal
+// executor may hold them (invariant 2).
+var confirmedHostNames = []string{"ConfirmedHosts", "NewConfirmedHosts", "CommentHost", "RepoHost"}
+
+// noConfirmedHostWriters keeps host writers away from the surfaces that take
+// input from agents or the network: HTTP handlers, the MCP server and the agent
+// runner and adapters. A write to a host is a proposal that a person confirmed,
+// and only proposal execution may reach the writer. Tests are held to the same
+// rule: a test that wires a writer into these packages is how the wiring slips in.
+var noConfirmedHostWriters = rule{name: "host writers are not reachable from api, mcp or agents", check: func(f file) []string {
+	if !inDir(f, "internal/api", "internal/mcp", "internal/agents") {
+		return nil
+	}
+	var out []string
+	for _, n := range confirmedHostNames {
+		if f.uses1(internalPrefix + "hosts." + n) {
+			out = append(out, violation(f, "references hosts.%s; host writes belong to proposal execution only (invariant 2)", n))
+		}
+	}
+	return out
+}}
+
 // rules are the architecture rules of docs/AGENTS.md sections 5 and 6.
 var rules = []rule{
 	// 5.3 Processes: every child process starts through platform.Start.
@@ -296,6 +319,8 @@ var rules = []rule{
 	// 5.5: no core, API or UI code depends on an adapter's output format. The
 	// runner and the adapter contract know the data model only.
 	onlyInternalImports("agents contract depends on core only", "internal/agents", "core"),
+	// Invariant 2: nothing that an agent or a request can drive holds a host writer.
+	noConfirmedHostWriters,
 	banImports("api does not import an adapter", "internal/api", true, "agents/claudecode", "agents/mock"),
 	banImports("audit does not import api or agents", "internal/audit", false, "api", "agents"),
 	banImports("git does not import the layers above it", "internal/git", false, "api", "agents", "db"),
