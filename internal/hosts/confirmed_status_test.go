@@ -153,7 +153,7 @@ func TestConfirmedCreateRepoDefiniteAndUnknownReplies(t *testing.T) {
 				t.Fatalf("%d POSTs", posts.Load())
 			case c.rejects && !errors.Is(err, ErrWriteRejected):
 				t.Fatal(err)
-			case c.denies && !(errors.As(err, &fe) && fe.Kind == corehosts.FailUnauthorized):
+			case c.denies && (!errors.As(err, &fe) || fe.Kind != corehosts.FailUnauthorized):
 				t.Fatal(err)
 			case c.unknown && !errors.Is(err, ErrOutcomeUnknown):
 				t.Fatal(err)

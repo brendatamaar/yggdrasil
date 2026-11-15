@@ -487,10 +487,9 @@ func (h *ConfirmedHosts) listCount(ctx context.Context, url, token string, remai
 	}
 	*remaining -= len(resp.Body)
 	var list []json.RawMessage
-	if json.Unmarshal(resp.Body, &list) != nil || list == nil || hasNextContextPage(resp.Header) {
-		return 0, false, nil
-	}
-	return len(list), true, nil
+	decodeErr := json.Unmarshal(resp.Body, &list)
+	proven := decodeErr == nil && list != nil && !hasNextContextPage(resp.Header)
+	return len(list), proven, nil
 }
 
 // provenEmpty decides whether the repository has no refs. Only positive answers
