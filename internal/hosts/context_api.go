@@ -444,7 +444,8 @@ func (a ContextAPI) FailedJobs(ctx context.Context, inst corehosts.Instance, tok
 			if a.GitLab {
 				auth = AuthPrivateToken
 			}
-			resp, e := a.Getter.GetLogBounded(r.ctx, a.Root+logPath, token, auth, r.remaining)
+			limit := min(r.remaining, corehosts.ContextMaxJobLogBytes)
+			resp, e := a.Getter.GetLogBounded(r.ctx, a.Root+logPath, token, auth, limit)
 			body := resp.Body
 			r.remaining -= resp.readBytes
 			if e != nil {
@@ -470,7 +471,7 @@ func (a ContextAPI) FailedJobs(ctx context.Context, inst corehosts.Instance, tok
 				log.Log = strings.ToValidUTF8(string(body), "")
 			}
 			out.Jobs = append(out.Jobs, log)
-			if r.remaining <= 0 {
+			if r.remaining <= 0 || errors.Is(e, ErrContextTooLarge) {
 				out.Truncated = true
 				return redactContext(ContextResult{Value: out, Unavailable: gaps, Expires: a.Getter.now().Add(corehosts.ContextCacheTTL)}, token), nil
 			}
