@@ -757,3 +757,17 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   worktrees with original ownership, no provider switch or checkout replacement.
   Final validation must cover current adapted source and preserve old failed/
   interrupted logs. Effective Batch 2 review base remains 55d2c4e.
+
+- T branch t3/task-draft-admission committed dc0d9f8 and released ownership.
+  Backend draft/request/admission scope and scoped race/architecture/fuzz/
+  restored mutations pass; generate/lint/typecheck/test:web pass. Final task
+  test FAILS in inherited cmd/ygg invariant8_phase4 test, repeated 2/10 in
+  isolation. DoD remains open; no T merge or feature completion claimed.
+- Lead traced the failing close scenario: rejecting its sole proposal permits
+  the existing changeset reconciler to auto-close it (approved changesets design
+  table: all rejected => Closed) before the test enables the audit fault. The
+  test then incorrectly assumes Open. Prepare a deterministic closable Open
+  fixture/precondition instead of disabling reconciliation, weakening audit
+  assertions or relying on timing. One test-engineer owns only the cmd/ygg
+  fixture file, parallel with H/R's disjoint package ownership (three total).
+  Fix/verify the fixture on main before integrating T; preserve T's failure logs.
