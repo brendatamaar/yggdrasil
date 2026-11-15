@@ -909,3 +909,17 @@ exact steps and expected outcomes. No real host or agent execution.
   F6 remains separate and unmerged. Fresh safety and functional reviewers inspect
   55d2c4e..current main; B2-H-main result remains pending, never inferred green
   from earlier H branch runs. No new implementation batch dispatched.
+
+- B2-H-main CLOSED at 6eb753e: actual generate/lint/typecheck/test/test:web all
+  exit 0, frontend 528/528, worktree clean. Batch 2 backend integration gate
+  passes for T, R and H; wiring/UI and full PRD completion still not claimed.
+  Environment note: the first attempt failed only because the user-level
+  ~/.local/bin node and pnpm wrappers pointed into wiped /tmp scratchpads. This
+  run used Node 22.23.5 + pnpm 11.4.0 installed in the session scratchpad via
+  PATH; nothing under ~/.local/bin was changed. Logs: /tmp/ygg-B2-H-main-gate.log
+  (failed env attempt), /tmp/ygg-B2-H-main-gotest.log, /tmp/ygg-B2-H-main-web.log.
+- Batch 2 review gate NOT RUN: safety-reviewer and functional-effect:fe-reviewer
+  (diff 55d2c4e..6eb753e) both died with a 429 usage/spend limit before reading
+  anything; limit resets 21:00 Asia/Jakarta. Rerun both, fix every Blocking and
+  Must-fix, then re-run until clean. F6 platform branch and TM1 stay unmerged/
+  undispatched until the gate closes.
