@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
 )
@@ -86,6 +87,64 @@ func TestPlanDraftScopeAndDedup(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// A zero Now or an empty or malformed TaskID is invalid input: nothing is
+// created and nothing is reported as existing, but scope still comes first.
+func TestPlanDraftRefusesZeroNowAndBadTaskID(t *testing.T) {
+	for name, f := range map[string]DraftFacts{
+		"zero now":      {RepoTracked: true, RepoReady: true, TaskID: "tsk_new"},
+		"empty task id": {RepoTracked: true, RepoReady: true, Now: epoch},
+		"bad task id":   {RepoTracked: true, RepoReady: true, TaskID: "a b", Now: epoch},
+		"both":          {RepoTracked: true, RepoReady: true},
+		"existing too":  {RepoTracked: true, RepoReady: true, Existing: "tsk_old"},
+	} {
+		out := PlanDraft(validDraft(), f)
+		if out != (DraftRefuse{Reason: DraftBadFacts}) {
+			t.Errorf("%s: %#v, want refusal %s", name, out, DraftBadFacts)
+		}
+	}
+	// Scope refusals are not masked by bad facts.
+	out := PlanDraft(validDraft(), DraftFacts{RepoTracked: false})
+	if out != (DraftRefuse{Reason: DraftRepoUntracked}) {
+		t.Errorf("scope first: %#v", out)
+	}
+}
+
+func TestPropDraftNeverCreatesFromBadFacts(t *testing.T) {
+	forSeeds(t, func(t *testing.T, r *rand.Rand) {
+		for i := 0; i < 100; i++ {
+			f := DraftFacts{RepoTracked: true, RepoReady: true, TaskID: "tsk_one", Now: epoch}
+			if r.Intn(2) == 0 {
+				f.Now = time.Time{}
+			}
+			if r.Intn(2) == 0 {
+				f.TaskID = ""
+			}
+			if r.Intn(2) == 0 {
+				f.Existing = "tsk_old"
+			}
+			bad := f.Now.IsZero() || f.TaskID == ""
+			switch PlanDraft(validDraft(), f).(type) {
+			case DraftCreate, DraftExists:
+				if bad {
+					t.Fatalf("accepted bad facts %+v", f)
+				}
+			case DraftRefuse:
+			}
+		}
+	})
+}
+
+func TestDraftRefusalMessagesArePlain(t *testing.T) {
+	seen := map[string]bool{}
+	for _, r := range []DraftRefusal{DraftRepoNotReady, DraftRepoUntracked, DraftBadFacts} {
+		m := r.Message()
+		if m == "" || strings.Contains(m, string(r)) || seen[m] {
+			t.Errorf("%s: bad message %q", r, m)
+		}
+		seen[m] = true
 	}
 }
 

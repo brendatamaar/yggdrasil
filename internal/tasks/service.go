@@ -203,10 +203,7 @@ func (s *Service) message(ctx context.Context, req MessageRequest, submission *s
 		if err != nil {
 			return MessageResult{}, err
 		}
-		if len(turns) == 0 {
-			return MessageResult{}, errors.New("a started task has no first turn")
-		}
-		m := turns[0].Mode
+		m := coretasks.PreviousMode(existing.Row.Mode, turns)
 		prev = &m
 	}
 	adm, err := s.admit(ctx, adapter, pm.Mode, prev, req.OptIn, repos)
