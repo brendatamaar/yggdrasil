@@ -856,3 +856,13 @@ exact steps and expected outcomes. No real host or agent execution.
   grid test file to diagnose lifecycle/query costs with controlled evidence;
   no blanket timeout/retry or assertion relaxation. F6 platform remains disjoint.
   All feature branches remain held until this integration failure is resolved.
+
+- Widget-grid fixture c5c3432 merged --no-ff after full lead diff review.
+  Awaited real App render and Widgets-scoped positive control queries retain
+  all 23 original assertions, global absence checks and portaled keyboard menu
+  queries. Probes select identical controls with 11 fewer computed-style calls
+  per query; no claim to reconstruct historical timeout scheduling. Agent
+  20/20 scheduled runs (100 tests), 22 restored assertion-failing controls,
+  full frontend 528/528 and all five Task checks pass with no skip/timeout
+  changes. Exact report /tmp/ygg-B2-grid-handoff.json. B2-grid-main integration
+  is queued/running; no pass claimed until completion. Feature merges still held.
