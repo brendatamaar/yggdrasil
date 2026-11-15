@@ -3,10 +3,7 @@ package hosts
 // Host context reads (GH-05, GH-06; docs/design/phase-6-host-context.md):
 // failed CI job logs, issues and merge-request diffs, fetched on demand for one
 // tracked repo. This file holds the closed state, input, command and payload
-// types and the pure Step signature. The bodies of the transitions are pending
-// work for the host-context task (H): ContextStep is a documented stub that
-// leaves the entry unchanged and asks for no effect, so nothing can run by
-// accident and no input is ever reported as handled.
+// types and the pure context reducer.
 //
 // Names carry a Context or Ctx prefix because this package already has the
 // poller's Idle/Waiting/Blocked phases, Fetched and FetchFailed inputs.
@@ -16,6 +13,7 @@ import (
 	"fmt"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
 )
@@ -90,6 +88,9 @@ type ContextKey struct {
 // Validate checks the shape. It does not check that the repo is tracked or the
 // object exists: that is the Scope input's and the host's business.
 func (k ContextKey) Validate() error {
+	if !utf8.ValidString(string(k.Repo)) {
+		return fmt.Errorf("repo id must be valid UTF-8: %w", core.ErrInvalidID)
+	}
 	if err := k.Repo.Validate(); err != nil {
 		return err
 	}
@@ -413,19 +414,181 @@ func (CtxJoinRequest) isContextCommand()    {}
 func (CtxPublishContext) isContextCommand() {}
 func (CtxExplain) isContextCommand()        {}
 
-// ContextStep is (entry2, commands) = ContextStep(entry1, input) following the
-// transition table of docs/design/phase-6-host-context.md.
-//
-// PENDING (task H): the transitions are not implemented in the foundation.
-// Until then every input returns the entry unchanged and no commands: the
-// context service must not be wired, because it would never leave Empty. An
-// input that does not apply (stale attempt, other key) is meant to behave the
-// same way once implemented.
+// ContextStep decides one context transition. Scope is checked before cache use;
+// the shell revalidates scope before executing and accepting a read.
 func ContextStep(e ContextEntry, in ContextInput) (ContextEntry, []ContextCommand) {
-	switch in.(type) {
-	case ContextRequested, ContextFetched, ContextFetchFailed, ContextWake,
-		ContextCancelled, ContextScopeChanged, ContextConfigChanged:
-		return e, nil
+	switch v := in.(type) {
+	case ContextRequested:
+		if v.Key.Validate() != nil || v.Scope.Validate() != nil {
+			return e, nil
+		}
+		if e.Key != v.Key {
+			return e, nil
+		}
+		if v.Scope != ScopeTracked {
+			reason := ContextUntracked
+			if v.Scope == ScopeUnsupported {
+				reason = ContextUnsupported
+			}
+			old := e.Seq
+			e.Seq++
+			e.State = CtxBlocked{Reason: reason}
+			return e, []ContextCommand{CtxCancelRead{Attempt: old}, CtxExplain{Key: e.Key, Reason: reason}}
+		}
+		switch st := e.State.(type) {
+		case CtxReady:
+			if v.Now.Before(st.Expires) {
+				return e, []ContextCommand{CtxReturnCached{Key: e.Key}}
+			}
+		case CtxPartial:
+			if v.Now.Before(st.Expires) {
+				return e, []ContextCommand{CtxReturnCached{Key: e.Key}}
+			}
+		case CtxLoading:
+			return e, []ContextCommand{CtxJoinRequest{Key: e.Key}}
+		case CtxWaiting:
+			return e, []ContextCommand{CtxJoinRequest{Key: e.Key}}
+		case CtxEmpty, CtxBlocked:
+		}
+		e.Retries = 0
+		return contextStart(e)
+	case ContextFetched:
+		st, ok := e.State.(CtxLoading)
+		if !ok || v.Key != e.Key || st.Attempt != v.Attempt || v.Attempt != e.Seq || !ContextPayloadMatches(e.Key, v.Value) {
+			return e, nil
+		}
+		if len(v.Unavailable) > ContextMaxEntries {
+			return e, nil
+		}
+		for _, gap := range v.Unavailable {
+			if gap.Reason.Validate() != nil {
+				return e, nil
+			}
+		}
+		expires := v.Now.Add(ContextCacheTTL)
+		if len(v.Unavailable) > 0 {
+			e.State = CtxPartial{Value: v.Value, Unavailable: v.Unavailable, Expires: expires}
+		} else {
+			e.State = CtxReady{Value: v.Value, Expires: expires}
+		}
+		return e, []ContextCommand{CtxPublishContext{Key: e.Key, Attempt: v.Attempt}}
+	case ContextFetchFailed:
+		st, ok := e.State.(CtxLoading)
+		if !ok || v.Key != e.Key || st.Attempt != v.Attempt || v.Attempt != e.Seq {
+			return e, nil
+		}
+		reason := ContextRetryExhausted
+		switch v.Class {
+		case FailTransient, FailRateLimited:
+			if e.Retries < ContextMaxRetries {
+				e.Retries++
+				at := v.Now.Add(ContextBackoff(e.Retries))
+				if v.RetryAt.After(at) {
+					at = v.RetryAt
+				}
+				why := WaitTransient
+				if v.Class == FailRateLimited {
+					why = WaitRateLimited
+				}
+				e.State = CtxWaiting{Attempt: e.Seq, At: at, Reason: why, Retries: e.Retries}
+				return e, []ContextCommand{CtxScheduleWake{Attempt: e.Seq, At: at}}
+			}
+		case FailUnauthorized:
+			reason = ContextForbidden
+		case FailNotFound:
+			reason = ContextNotFound
+		}
+		e.State = CtxBlocked{Reason: reason}
+		return e, []ContextCommand{CtxExplain{Key: e.Key, Reason: reason}}
+	case ContextWake:
+		st, ok := e.State.(CtxWaiting)
+		if !ok || st.Attempt != v.Attempt || e.Seq != v.Attempt || v.Now.Before(st.At) {
+			return e, nil
+		}
+		return contextStart(e)
+	case ContextCancelled:
+		if v.Attempt != e.Seq {
+			return e, nil
+		}
+		switch e.State.(type) {
+		case CtxLoading, CtxWaiting:
+			e.Seq++
+			e.State = CtxEmpty{}
+			return e, []ContextCommand{CtxCancelRead(v)}
+		case CtxEmpty, CtxReady, CtxPartial, CtxBlocked:
+		}
+	case ContextScopeChanged:
+		if v.Scope != ScopeTracked || e.Key.Head != v.Head {
+			old := e.Seq
+			e.Seq++
+			e.State = CtxEmpty{}
+			return e, []ContextCommand{CtxCancelRead{Attempt: old}}
+		}
+	case ContextConfigChanged:
+		// Configuration alone supplies no current scope proof. Require Requested.
+		if _, ok := e.State.(CtxBlocked); ok {
+			e.State = CtxEmpty{}
+		}
 	}
 	return e, nil
 }
+
+func contextStart(e ContextEntry) (ContextEntry, []ContextCommand) {
+	e.Seq++
+	e.State = CtxLoading{Attempt: e.Seq}
+	return e, []ContextCommand{CtxReadContext{Key: e.Key, Attempt: e.Seq}}
+}
+
+// ContextRun folds inputs without performing effects.
+func ContextRun(e ContextEntry, inputs []ContextInput) ContextEntry {
+	for _, in := range inputs {
+		e, _ = ContextStep(e, in)
+	}
+	return e
+}
+
+// ContextPayloadMatches fences provider results to their immutable identity.
+func ContextPayloadMatches(k ContextKey, p ContextPayload) bool {
+	switch v := p.(type) {
+	case JobLogs:
+		if len(v.Jobs) > ContextMaxEntries || !contextHead(v.Head) {
+			return false
+		}
+		for _, j := range v.Jobs {
+			n, err := strconv.Atoi(j.JobID)
+			if err != nil || n <= 0 || strconv.Itoa(n) != j.JobID || len(j.Log) > ContextMaxJobLogBytes {
+				return false
+			}
+		}
+		return k.Kind == ContextFailedJobs && v.RunID == k.ObjectID && (k.Head == "" || v.Head == k.Head)
+	case IssueList:
+		if len(v.Items) > ContextMaxEntries {
+			return false
+		}
+		for _, issue := range v.Items {
+			if issue.Number <= 0 {
+				return false
+			}
+		}
+		return k.Kind == ContextIssues
+	case IssueDetail:
+		return len(v.Body) <= ContextMaxPromptBytes && k.Kind == ContextIssue && strconv.Itoa(v.Summary.Number) == k.ObjectID
+	case MRContext:
+		return len(v.Diff) <= ContextMaxPromptBytes && k.Kind == ContextMRDiff && strconv.Itoa(v.MR.Number) == k.ObjectID && (len(v.Head) == 40 || len(v.Head) == 64) && isLowerHex(v.Head) && (k.Head == "" || v.Head == k.Head)
+	}
+	return false
+}
+
+// ContextReject classifies terminal capability refusals that the polling
+// FailKind cannot represent (unsupported source or an oversized context).
+// Like a fetch result it is fenced to the current loading attempt.
+func ContextReject(e ContextEntry, attempt int, reason ContextBlockReason) (ContextEntry, []ContextCommand) {
+	loading, ok := e.State.(CtxLoading)
+	if !ok || loading.Attempt != attempt || e.Seq != attempt || reason.Validate() != nil {
+		return e, nil
+	}
+	e.State = CtxBlocked{Reason: reason}
+	return e, []ContextCommand{CtxExplain{Key: e.Key, Reason: reason}}
+}
+
+func contextHead(s string) bool { return (len(s) == 40 || len(s) == 64) && isLowerHex(s) }

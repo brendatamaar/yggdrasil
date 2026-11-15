@@ -20,16 +20,17 @@ func TestContextKeyValidate(t *testing.T) {
 		}
 	}
 	bad := map[string]ContextKey{
-		"url as object":   {Repo: "rep_1", Kind: ContextIssue, ObjectID: "https://x/issues/1"},
-		"zero":            {Repo: "rep_1", Kind: ContextIssue, ObjectID: "0"},
-		"negative":        {Repo: "rep_1", Kind: ContextIssue, ObjectID: "-3"},
-		"leading zero":    {Repo: "rep_1", Kind: ContextIssue, ObjectID: "007"},
-		"list with id":    {Repo: "rep_1", Kind: ContextIssues, ObjectID: "1"},
-		"issue with head": {Repo: "rep_1", Kind: ContextIssue, ObjectID: "1", Head: head},
-		"short head":      {Repo: "rep_1", Kind: ContextMRDiff, ObjectID: "1", Head: "abc"},
-		"upper head":      {Repo: "rep_1", Kind: ContextMRDiff, ObjectID: "1", Head: strings.ToUpper(head)},
-		"no repo":         {Kind: ContextIssues},
-		"unknown kind":    {Repo: "rep_1", Kind: "files", ObjectID: "1"},
+		"invalid UTF-8 repo": {Repo: "\x80", Kind: ContextIssues},
+		"url as object":      {Repo: "rep_1", Kind: ContextIssue, ObjectID: "https://x/issues/1"},
+		"zero":               {Repo: "rep_1", Kind: ContextIssue, ObjectID: "0"},
+		"negative":           {Repo: "rep_1", Kind: ContextIssue, ObjectID: "-3"},
+		"leading zero":       {Repo: "rep_1", Kind: ContextIssue, ObjectID: "007"},
+		"list with id":       {Repo: "rep_1", Kind: ContextIssues, ObjectID: "1"},
+		"issue with head":    {Repo: "rep_1", Kind: ContextIssue, ObjectID: "1", Head: head},
+		"short head":         {Repo: "rep_1", Kind: ContextMRDiff, ObjectID: "1", Head: "abc"},
+		"upper head":         {Repo: "rep_1", Kind: ContextMRDiff, ObjectID: "1", Head: strings.ToUpper(head)},
+		"no repo":            {Kind: ContextIssues},
+		"unknown kind":       {Repo: "rep_1", Kind: "files", ObjectID: "1"},
 	}
 	for name, k := range bad {
 		if k.Validate() == nil {
@@ -48,20 +49,6 @@ func TestContextBackoffAndBounds(t *testing.T) {
 	for _, r := range []ContextBlockReason{ContextNoToken, ContextForbidden, ContextNotFound, ContextUnsupported, ContextRetryExhausted, ContextUntracked, ContextTooLarge} {
 		if r.Validate() != nil {
 			t.Errorf("%s does not validate", r)
-		}
-	}
-}
-
-// ContextStep is a documented stub: it changes nothing and asks for nothing.
-func TestContextStepIsInert(t *testing.T) {
-	e := ContextEntry{Key: ContextKey{Repo: "rep_1", Kind: ContextIssues}, State: CtxEmpty{}}
-	for _, in := range []ContextInput{
-		ContextRequested{Key: e.Key, Scope: ScopeTracked}, ContextFetched{Attempt: 1}, ContextFetchFailed{Attempt: 1},
-		ContextWake{Attempt: 1}, ContextCancelled{Attempt: 1}, ContextScopeChanged{Scope: ScopeUntracked}, ContextConfigChanged{},
-	} {
-		got, cmds := ContextStep(e, in)
-		if _, ok := got.State.(CtxEmpty); !ok || got.Seq != 0 || len(cmds) != 0 {
-			t.Errorf("ContextStep(%T) = %+v, %v", in, got, cmds)
 		}
 	}
 }
