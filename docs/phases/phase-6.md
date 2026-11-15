@@ -923,3 +923,40 @@ exact steps and expected outcomes. No real host or agent execution.
   anything; limit resets 21:00 Asia/Jakarta. Rerun both, fix every Blocking and
   Must-fix, then re-run until clean. F6 platform branch and TM1 stay unmerged/
   undispatched until the gate closes.
+
+- Batch 2 review gate (55d2c4e..6eb753e), run after the usage limit reset:
+  safety-reviewer PASS (no Blocking/Must-fix). fe-reviewer: no Blocking, one
+  Must-fix M1 (MR-diff context cache not head-bound: empty key head was a
+  wildcard). M1 fixed in this commit: Validate requires a full head for MR
+  diffs, ContextPayloadMatches requires v.Head == k.Head, ConfirmedHosts
+  commentTarget shape-checks the scope-only headless lookup MRHead needs.
+  Regression tests: TestContextCacheIsHeadBound (headless key matches no
+  payload; fails without the fix), "mr diff no head" in TestContextKeyValidate
+  (fails without the fix), fuzz invariant + empty-head seed. fe-reviewer
+  re-check: M1 resolved, no new Blocking/Must-fix. Five-task gate on the fix:
+  generate/lint/typecheck/test/test:web all exit 0 (log /tmp/ygg-B2-M1-gate.log).
+- Deferred Should-fix/Consider items (none Blocking/Must-fix), to be handled by
+  the owner of the wiring step or queued, not forgotten:
+  - wiring/H: archtest rule keeping hosts.ConfirmedHosts/CommentHost/RepoHost out
+    of api/mcp/agents (safety S1); push Authorize bound to the repo path prefix
+    (S2); map 401/403/422 POST replies to a definite error instead of Unknown
+    (S3, FE N2); resolver errors reported as "not tracked" (note); context
+    issue provenance must come from a ContextResolver-validated read (S4);
+    NewGetterWithLogOrigins must be wired with an explicit allowlist.
+  - core/hosts shell (FE S1-S3): shell ignores most ContextCommand values and
+    pre-checks no-client/no-token itself; ContextReject is outside the sealed
+    input set and a bad payload leaves Loading; deterministic provider errors
+    are retried as transient. ConfigChanged goes to Empty, not Loading: update
+    the design table (N1).
+  - tasks (FE S4, N4): ImportIssueDraft hardcodes repo-tracked/ready facts, so
+    DraftRepoUntracked/NotReady are unreachable; message() fails for a started
+    task with turns counted but no turn rows (fall back to Row.Mode).
+  - hosts (FE S5): LookupRepo empty-refs probe against GitHub is unverified on a
+    real empty repo; added to the manual checklist, needs a test account.
+  - Consider: retained cache dropped on error, real timers in the retry loop,
+    three rate-limit authorities, noise snapshot size/sample bias/overlapping
+    candidates, unused names, zero Now/ID validation.
+- Batch 2 CLOSED for its backend scope. F6 platform branch
+  t3/f5-pty-exit-signal-race is next to merge (fresh main checks and both
+  reviews required before N receives platform ownership), then TM1 tests. Not
+  dispatched: awaiting the human's go-ahead.
