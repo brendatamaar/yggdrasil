@@ -61,7 +61,7 @@ func ParseNoiseSnapshot(id core.RepoID, snap corerepos.Snapshot) (corerepos.Nois
 	if snap.UntrackedPaths != "" {
 		f.Sample = strings.Split(snap.UntrackedPaths, "\x00")
 	}
-	f.Truncated = f.Truncated || len(f.Sample) < f.UntrackedCount
+	f.Truncated = f.IsPartial()
 	if err := f.Validate(); err != nil {
 		return corerepos.NoiseFacts{}, fmt.Errorf("%w: %w", ErrNoiseUnavailable, err)
 	}

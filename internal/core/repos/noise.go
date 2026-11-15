@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -40,11 +39,26 @@ func NoiseDirs() []string {
 // repo-relative forward-slash paths of untracked files, bounded by the status
 // reader; Truncated says the reader stopped early, so the counts below
 // the sample are lower bounds and no scan is claimed complete.
+//
+// The sample is not a random draw: git lists untracked files in path order and
+// the reader keeps the first ones, so a truncated sample is the alphabetical
+// prefix of the untracked files. Truncated is the explicit marker for that. It
+// is also set whenever the sample holds fewer paths than UntrackedCount (see
+// IsPartial), and every candidate derived from such facts carries
+// Incomplete, so a UI can say "based on a partial sample".
 type NoiseFacts struct {
 	Repo           core.RepoID
 	UntrackedCount int
 	Sample         []string
 	Truncated      bool
+}
+
+// IsPartial reports whether the sample is only a part of the untracked files:
+// the reader truncated, or fewer paths are present than are counted. A partial
+// sample is always an alphabetical prefix, so the "at least half of the sample"
+// rule measures that prefix and not the whole repo.
+func (f NoiseFacts) IsPartial() bool {
+	return f.Truncated || len(f.Sample) < f.UntrackedCount
 }
 
 // NoiseEvidence says what a candidate was derived from, for the UI to label.
@@ -58,8 +72,10 @@ type NoiseEvidence struct {
 
 // NoiseCandidate is one suggested ignore entry. Directory is repo-relative;
 // Pattern is the exact anchored gitignore line (metacharacters escaped), for
-// example "/web/node_modules/". Incomplete is true when the sample was
-// truncated: the suggestion is still shown, labelled as based on a sample.
+// example "/web/node_modules/". Incomplete is true whenever the sample is only
+// a prefix of the untracked files (NoiseFacts.IsPartial): the suggestion is
+// still shown, labelled as based on a partial sample. A candidate is never
+// nested under another candidate.
 type NoiseCandidate struct {
 	Directory   string
 	SampleCount int
@@ -101,14 +117,15 @@ type NoiseObserved struct{ Facts NoiseFacts }
 // NoiseSelected: the user chose Entries among the current candidates. The shell
 // read the current .gitignore: CurrentHash is its hash and Absent says it does
 // not exist (an absent file is not an empty file). RequestID keys the
-// proposal creation; Proposal is the ID the shell generated.
+// proposal creation; Proposal is the ID the shell generated. No time field:
+// nothing in the step reads one, the proposal's own creation time is the
+// shell's.
 type NoiseSelected struct {
 	Entries     []string
 	CurrentHash string
 	Absent      bool
 	RequestID   core.RequestID
 	Proposal    core.ProposalID
-	Now         time.Time
 }
 
 // NoiseProposalDecided: the proposal reached a final status.
@@ -263,8 +280,9 @@ func classifyNoise(f NoiseFacts) NoiseState {
 		pattern := "/" + strings.NewReplacer(`\`, `\\`, "*", `\*`, "?", `\?`, "[", `\[`, "]", `\]`, "!", `\!`, "#", `\#`, " ", `\ `).Replace(dir) + "/"
 		e := evidence
 		e.UnderDirectory = count
-		candidates = append(candidates, NoiseCandidate{Directory: dir, SampleCount: count, Pattern: pattern, Evidence: e, Incomplete: f.Truncated || len(f.Sample) < f.UntrackedCount})
+		candidates = append(candidates, NoiseCandidate{Directory: dir, SampleCount: count, Pattern: pattern, Evidence: e, Incomplete: f.IsPartial()})
 	}
+	candidates = dropNested(candidates)
 	slices.SortFunc(candidates, func(a, b NoiseCandidate) int { return strings.Compare(a.Directory, b.Directory) })
 	if len(candidates) == 0 {
 		return NoSuggestion{}
@@ -272,8 +290,29 @@ func classifyNoise(f NoiseFacts) NoiseState {
 	return Suggested{Candidates: candidates, Evidence: evidence}
 }
 
+// dropNested removes every candidate that lies under another candidate, so
+// "/web/node_modules/" is offered without "/web/node_modules/x/build/". The
+// outer directory always qualifies when an inner one does (it holds at least
+// as many sampled files), so no covered path is lost. Nesting is by whole path
+// segment: "bin" does not contain "binX/obj". Directories come from validated
+// paths, which cannot hold a backslash or a line break.
+func dropNested(cs []NoiseCandidate) []NoiseCandidate {
+	kept := cs[:0:0]
+	for _, c := range cs {
+		if !slices.ContainsFunc(cs, func(o NoiseCandidate) bool { return nestedUnder(c.Directory, o.Directory) }) {
+			kept = append(kept, c)
+		}
+	}
+	return kept
+}
+
+// nestedUnder reports whether dir is strictly inside outer, by path segment.
+func nestedUnder(dir, outer string) bool {
+	return len(dir) > len(outer) && dir[len(outer)] == '/' && strings.HasPrefix(dir, outer)
+}
+
 func validNoiseSelection(s Suggested, x NoiseSelected) bool {
-	if x.Proposal.Validate() != nil || x.RequestID.Validate() != nil || x.Now.IsZero() || len(x.Entries) == 0 || len(x.Entries) > NoiseMaxEntries {
+	if x.Proposal.Validate() != nil || x.RequestID.Validate() != nil || len(x.Entries) == 0 || len(x.Entries) > NoiseMaxEntries {
 		return false
 	}
 	if x.Absent {
