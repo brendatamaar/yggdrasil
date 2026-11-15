@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 	"unicode/utf8"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
@@ -78,7 +77,7 @@ func TestNoiseTransitionsAndEvidence(t *testing.T) {
 	if c.Pattern != `/web/\[app\]\ \#\!/node_modules/` || c.SampleCount != 50 || !c.Incomplete || c.Evidence.Total != 100 || c.Evidence.Sampled != 50 {
 		t.Fatalf("%+v", c)
 	}
-	in := NoiseSelected{Entries: []string{c.Pattern}, Absent: true, RequestID: "req_1", Proposal: "prp_1", Now: time.Unix(1, 0)}
+	in := NoiseSelected{Entries: []string{c.Pattern}, Absent: true, RequestID: "req_1", Proposal: "prp_1"}
 	waiting, cs := NoiseStep(n, in)
 	if len(cs) != 1 {
 		t.Fatalf("selection: %+v %v", waiting, cs)
@@ -107,12 +106,12 @@ func TestNoiseTransitionsAndEvidence(t *testing.T) {
 
 func TestNoiseSelectionRejectsEachRule(t *testing.T) {
 	n, _ := NoiseStep(Noise{Repo: "rep_1", State: NoSuggestion{}}, NoiseObserved{Facts: noiseFacts(50, "dist")})
-	valid := NoiseSelected{Entries: []string{"/dist/"}, Absent: true, RequestID: "req_1", Proposal: "prp_1", Now: time.Unix(1, 0)}
+	valid := NoiseSelected{Entries: []string{"/dist/"}, Absent: true, RequestID: "req_1", Proposal: "prp_1"}
 	for name, change := range map[string]func(*NoiseSelected){
 		"empty": func(x *NoiseSelected) { x.Entries = nil }, "unknown": func(x *NoiseSelected) { x.Entries = []string{"/*"} },
 		"duplicate": func(x *NoiseSelected) { x.Entries = []string{"/dist/", "/dist/"} }, "absent hash": func(x *NoiseSelected) { x.CurrentHash = strings.Repeat("a", 64) },
 		"missing hash": func(x *NoiseSelected) { x.Absent = false }, "bad hash": func(x *NoiseSelected) { x.Absent = false; x.CurrentHash = strings.Repeat("z", 64) },
-		"request": func(x *NoiseSelected) { x.RequestID = "bad space" }, "proposal": func(x *NoiseSelected) { x.Proposal = "" }, "time": func(x *NoiseSelected) { x.Now = time.Time{} },
+		"request": func(x *NoiseSelected) { x.RequestID = "bad space" }, "proposal": func(x *NoiseSelected) { x.Proposal = "" },
 		"too many": func(x *NoiseSelected) { x.Entries = make([]string, 33) },
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -215,7 +214,7 @@ func checkNoiseProperty(t *testing.T, invariant string) {
 			case 2:
 				inputs = append(inputs, NoiseScopeRemoved{})
 			case 3:
-				inputs = append(inputs, NoiseSelected{Entries: []string{"/dist/"}, Absent: true, RequestID: "req_1", Proposal: "prp_1", Now: time.Unix(1, 0)})
+				inputs = append(inputs, NoiseSelected{Entries: []string{"/dist/"}, Absent: true, RequestID: "req_1", Proposal: "prp_1"})
 			case 4:
 				inputs = append(inputs, NoiseProposalDecided{Proposal: "prp_1", Status: core.ProposalExecuted})
 			}
@@ -279,7 +278,7 @@ func TestNoiseThresholdsAndDeterminism(t *testing.T) {
 	f = noiseFacts(50, strings.Repeat("*", 3000)+"/dist")
 	n, _ = NoiseStep(Noise{Repo: f.Repo, State: NoSuggestion{}}, NoiseObserved{Facts: f})
 	s := n.State.(Suggested)
-	_, cs := NoiseStep(n, NoiseSelected{Entries: []string{s.Candidates[0].Pattern}, Absent: true, RequestID: "req_1", Proposal: "prp_1", Now: time.Unix(1, 0)})
+	_, cs := NoiseStep(n, NoiseSelected{Entries: []string{s.Candidates[0].Pattern}, Absent: true, RequestID: "req_1", Proposal: "prp_1"})
 	if len(cs) != 0 {
 		t.Fatal("oversized escaped selection accepted")
 	}

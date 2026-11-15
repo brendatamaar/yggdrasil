@@ -34,10 +34,17 @@ func SnapshotFrom(st git.Status, commit *git.Commit) (corerepos.Snapshot, error)
 		Ahead: st.Ahead, Behind: st.Behind, Staged: st.Staged, Unstaged: st.Unstaged,
 		Untracked: st.Untracked, Conflicted: st.Conflicted,
 	}
+	// The untracked sample (up to 5000 paths of up to 4 KiB, tens of MB) is
+	// only useful for noise suggestions, which need NoiseMinUntracked untracked
+	// files. Below that every repo would still carry and copy it, so keep only
+	// the count. ParseNoiseSnapshot marks the facts partial whenever fewer paths than
+	// the count are present, so a dropped sample is never read as complete.
 	var sample []string
-	for _, file := range st.Files {
-		if file.Worktree == "?" || file.Index == "?" {
-			sample = append(sample, file.Path)
+	if st.Untracked >= corerepos.NoiseMinUntracked {
+		for _, file := range st.Files {
+			if file.Worktree == "?" || file.Index == "?" {
+				sample = append(sample, file.Path)
+			}
 		}
 	}
 	s.UntrackedPaths = strings.Join(sample, "\x00")

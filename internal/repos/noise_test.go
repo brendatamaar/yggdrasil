@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -151,10 +153,126 @@ func TestNoiseCollectorRejectsProblemLastSnapshot(t *testing.T) {
 	}
 }
 
+// untrackedStatus builds a git status with n untracked files under dist plus one
+// tracked change; the tracked path must never reach the noise sample.
+func untrackedStatus(n int, pad int, truncated bool) git.Status {
+	st := git.Status{Untracked: n, Truncated: truncated, Files: []git.FileChange{{Path: "tracked", Worktree: "M"}}}
+	for i := 0; i < n; i++ {
+		st.Files = append(st.Files, git.FileChange{Path: fmt.Sprintf("dist/%0*d", pad, i), Worktree: "?"})
+	}
+	return st
+}
+
 func TestSnapshotNoiseKeepsOnlyUntracked(t *testing.T) {
-	snap, err := repos.SnapshotFrom(git.Status{Untracked: 1, Files: []git.FileChange{{Path: "tracked", Worktree: "M"}, {Path: "dist/a", Worktree: "?"}}, Truncated: true}, nil)
-	if err != nil || snap.UntrackedPaths != "dist/a" || !snap.UntrackedTruncated {
-		t.Fatal(snap, err)
+	st := untrackedStatus(corerepos.NoiseMinUntracked, 1, true)
+	snap, err := repos.SnapshotFrom(st, nil)
+	paths := strings.Split(snap.UntrackedPaths, "\x00")
+	if err != nil || len(paths) != corerepos.NoiseMinUntracked || paths[0] != "dist/0" || slices.Contains(paths, "tracked") || !snap.UntrackedTruncated {
+		t.Fatal(len(paths), snap.UntrackedTruncated, err)
+	}
+}
+
+// Below NoiseMinUntracked the sample is dropped and only the count stays, so
+// 5000 long paths never sit in (or get copied with) every repo's snapshot. At
+// and above the threshold the sample is kept in full.
+func TestSnapshotDropsUntrackedSampleBelowNoiseThreshold(t *testing.T) {
+	const pathLen = 4000
+	below := untrackedStatus(corerepos.NoiseMinUntracked-1, pathLen, false)
+	// A status that lists far more untracked paths than it counts still keeps
+	// nothing: the count decides, so memory stays bounded.
+	for i := 0; i < 5000; i++ {
+		below.Files = append(below.Files, git.FileChange{Path: fmt.Sprintf("dist/%0*d", pathLen, 10000+i), Worktree: "?"})
+	}
+	snap, err := repos.SnapshotFrom(below, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.UntrackedPaths != "" || snap.Untracked != corerepos.NoiseMinUntracked-1 {
+		t.Fatalf("below the threshold: %d sample bytes, count %d", len(snap.UntrackedPaths), snap.Untracked)
+	}
+	snap, err = repos.SnapshotFrom(untrackedStatus(5000, 100, false), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(snap.UntrackedPaths, "\x00") + 1; got != 5000 || len(snap.UntrackedPaths) > 5000*(4096+1) {
+		t.Fatalf("above the threshold: %d paths, %d bytes", got, len(snap.UntrackedPaths))
+	}
+	if snap.UntrackedTruncated {
+		t.Fatal("a complete sample was marked partial")
+	}
+}
+
+// The facts carry an explicit partial-sample marker (Truncated, IsPartial): it
+// is set whenever the kept sample is shorter than the untracked count, whether
+// the reader truncated or the sample was dropped, so a UI can say "based on a
+// partial sample". The snapshot itself only records what the reader reported.
+func TestSnapshotMarksPartialSample(t *testing.T) {
+	short := untrackedStatus(corerepos.NoiseMinUntracked, 1, false)
+	short.Untracked += 7
+	for _, tc := range []struct {
+		name string
+		st   git.Status
+		want bool
+	}{
+		{"complete", untrackedStatus(corerepos.NoiseMinUntracked, 1, false), false},
+		{"reader truncated", untrackedStatus(corerepos.NoiseMinUntracked, 1, true), true},
+		{"fewer paths than counted", short, true},
+		{"dropped below the threshold", untrackedStatus(3, 1, false), true},
+		{"nothing untracked", untrackedStatus(0, 1, false), false},
+	} {
+		snap, err := repos.SnapshotFrom(tc.st, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		facts, err := repos.ParseNoiseSnapshot("rep_1", snap)
+		if err != nil || facts.IsPartial() != tc.want {
+			t.Errorf("%s: facts partial = %v, want %v (%v)", tc.name, facts.IsPartial(), tc.want, err)
+		}
+	}
+}
+
+// Dropping the sample below the threshold changes no noise decision: for random
+// statuses, the step over the stored snapshot equals the step over facts built
+// from the full, undropped sample.
+func TestSnapshotSampleDropKeepsNoiseDecisions(t *testing.T) {
+	dirsPool := []string{"node_modules", "dist", "src", "build/x", "web/node_modules"}
+	suggested := 0
+	for seed := int64(0); seed < 200; seed++ {
+		r := rand.New(rand.NewSource(seed))
+		n := r.Intn(220)
+		st := git.Status{Untracked: n, Truncated: r.Intn(4) == 0}
+		var full []string
+		pick := dirsPool[r.Intn(len(dirsPool))]
+		for i := 0; i < n; i++ {
+			dir := pick
+			if r.Intn(4) == 0 {
+				dir = dirsPool[r.Intn(len(dirsPool))]
+			}
+			p := fmt.Sprintf("%s/f%d", dir, i)
+			full = append(full, p)
+			st.Files = append(st.Files, git.FileChange{Path: p, Worktree: "?"})
+		}
+		snap, err := repos.SnapshotFrom(st, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := repos.ParseNoiseSnapshot("rep_1", snap)
+		if err != nil {
+			t.Fatal(err)
+		}
+		undropped := corerepos.NoiseFacts{Repo: "rep_1", UntrackedCount: n, Sample: full, Truncated: st.Truncated || len(full) < n}
+		start := corerepos.Noise{Repo: "rep_1", State: corerepos.NoSuggestion{}}
+		a, ca := corerepos.NoiseStep(start, corerepos.NoiseObserved{Facts: got})
+		b, cb := corerepos.NoiseStep(start, corerepos.NoiseObserved{Facts: undropped})
+		if !reflect.DeepEqual(a, b) || !reflect.DeepEqual(ca, cb) {
+			t.Fatalf("seed %d (n=%d): dropped %+v, undropped %+v", seed, n, a, b)
+		}
+		if _, ok := a.State.(corerepos.Suggested); ok {
+			suggested++
+		}
+	}
+	if suggested == 0 {
+		t.Fatal("no generated status ever suggested noise: the comparison is vacuous")
 	}
 }
 
