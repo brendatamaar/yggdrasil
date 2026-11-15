@@ -110,3 +110,90 @@ origin; Code remains in a worktree. Verify paths with spaces/Unicode/long paths,
 Ask integrity, cancellation and child cleanup. Real host or agent use requires
 separate session authorization; Linux fixtures do not establish native Windows
 behavior.
+
+## R — bounded noise analysis and scoped history facts
+
+Landed source: `2d0cdc1`. Designs:
+[noise](../design/phase-6-noise.md),
+[standup](../design/phase-6-standup.md),
+[actions](../design/phase-6-actions.md).
+Requirements: WS-09, AU-02 and preservation of AC-04's existing ff-only behavior.
+This backend supplies facts and proposal-selection commands, not ignore-file
+execution, action wiring or standup aggregation/UI. E6 needs those later owners.
+
+TM1 owns tests/helpers only in `internal/repos/**` and
+`internal/core/repos/**` for this map, after ownership handoff. Common T briefing,
+independent oracles, controlled assertion failures, restoration, resource lock,
+five-task/race/fuzz checks and honest manual limitations apply. No Git/platform,
+DB, proposals, actions, standup, API, cmd, frontend or production edits.
+
+### Invariants to properties
+
+| Invariant | Independent oracle and generated sequences |
+|---|---|
+| Observations never mutate | Any observations, scope removals and stale proposal outcomes produce no write/agent/process/proposal execution. Only valid explicit selection can emit a create-proposal command; that command is not approval or execution. |
+| Conservative thresholds | At least 100 total untracked, 50 sampled files beneath one approved generated directory and at least half the sample there. Exact 99/100, 49/50 and odd/even half boundaries; files under nested generated dirs count once per exact directory. No source/unknown directory or unescaped wildcard suggestion. |
+| Exact deterministic patterns | Order-independent samples produce the same sorted candidates, evidence and anchored escaped repo-relative patterns. Metacharacters and Unicode remain literal. Check resulting Git ignore semantics against temporary repos, including outside-prefix paths that must remain visible. |
+| Sampling stays honest | Candidate counts derive only from the provided sample; truncated/missing samples remain incomplete. Total count, sample count and per-directory evidence are never silently interchanged. Problem/unknown status must not become fresh noise data. |
+| Selection is bounded and immutable | Nonempty duplicate-free subset of current candidates, <=32 entries/4 KiB, valid IDs/time and explicit absent-or-hash precondition. Mutation of caller slices cannot change emitted commands. New observations or wrong/nonterminal proposal outcomes cannot edit a pending proposal. Matching terminal result refreshes once; scope removal clears without effects. |
+| Tracked-ready scope wins | Noise cache and history require tracked ready repos in tracked projects; retained cache cannot expose an untracked/reserved repo or a snapshot for a different path. History rechecks scope/path/project after reading before returning contents. |
+| Partial history never fabricates completeness | Preserve true truncation even for zero matches. Unborn/empty readable repo succeeds empty; unreadable, malformed, cancellation and lost scope return unavailable, not successful empty history. |
+| Bounded deterministic history | Precise UTC half-open author-time range <=31 days, count 1..200, bounded total bytes, full 40/64 lowercase IDs, unique identities, timestamp descending/hash ascending. No rounding/local-time drift, committer-date substitution or latest-only sampling. |
+
+Exercise NoiseStep with reproducible random input sequences and inspect every
+transition. Independently calculate thresholds, evidence, escaping and selection
+membership; avoid production helpers as the oracle. Include malformed events
+that should remain inert and verify commands, not merely the final variant.
+Do not treat forged invalid internal states as valid public boundary input.
+
+### Boundary parsers
+
+- `ValidNoisePath` / `NoiseFacts.Validate` / `ParseNoiseSnapshot`: representable
+  snapshot/facts round-trip, accepted implies independent relative path/count/
+  uniqueness bounds, and one case per rule. Include invalid UTF-8, NUL framing,
+  controls/CR/LF, absolute/drive/ADS/backslash/traversal/empty/dot components,
+  `.git` components, trailing Windows-ambiguous components, duplicates, negative
+  counts, >5000 paths, path length limits and too-large encoded sample. Preserve
+  exact safe path bytes; never normalize a hostile name into a different file.
+  Truncated counts can be lower bounds; canonical incomplete labelling is not
+  raw equality with an intentionally inconsistent input flag.
+- `SnapshotFrom`: retain only existing bounded untracked sample, exact counts
+  and truncation. No additional filesystem scan, status invocation or file write
+  to answer NoiseFacts. Ordinary repo status remains usable if noise parsing fails.
+- `ParseHistoryRange`: canonical UTC round-trip, accepted implies increasing
+  nonzero exact instants, <=31 days and 1..200 count, each invalid boundary plus
+  overflow/extreme dates. Exact end remains excluded; nanosecond bounds retained.
+- `parseHistoryCommits`: generated full-field representable round-trips and
+  independent accepted-valid checks; SHA-1/SHA-256, malformed ID, invalid UTF-8/
+  controls, zero/out-of-range dates, duplicates, wrong tie/time order, count and
+  byte overflow. Extend fuzz to multi-record sequences, not just a valid first
+  element. No production `historyOID`, `historyText` or parser as validity oracle.
+- Selection boundary: separate absent file from existing empty-file hash, malformed
+  hash, unexpected entry, duplicate/oversized selection and invalid IDs/time.
+
+### Capability contracts and fault scenarios
+
+1. Shared NoiseSource consumer clauses against scripted status reader and real
+   safe Git/status on temporary repo with >5000 generated files. Exact total,
+   capped sample, incomplete flag, CRLF content, aliases, cancellation, problem
+   snapshot and removed/reserved scope. Repeated reads consume cached facts only.
+2. Shared HistoryReader clauses against scripted HistoryGit and actual LogRange:
+   author dates disagreeing with commit order, half-open bounds, UTC conversion,
+   equal-time hash tie, count truncation, unborn, readable empty, error and cancel.
+   Real byte cutoff with zero in-range matches must remain explicitly partial.
+3. Scripted history facts at the boundary reject malformed/unordered/oversized
+   results. Scope/path/project removal during the read drops all returned data;
+   invalid arguments and unavailable scope make zero Git calls. Independent
+   concurrent readers cannot corrupt results or alias returned slices.
+4. Existing ff-only pull/actions/mainlock characterization remains unchanged;
+   new noise/history helpers cannot introduce automatic pulls or a merge fallback.
+   Ignore precondition/confirmation/write recovery belongs to P's later map.
+
+Inspect existing R implementation tests first. Retain their useful threshold and
+partial-zero assertion-failing controls. Add missing properties/independent
+parser/contracts with meaningful failure evidence; do not mirror helper internals.
+Native Windows checklist: large generated samples and names with spaces/Unicode/
+CRLF; unchanged ordinary status responsiveness; exact anchored ignore preview
+without any write on observation; date bounds/order and partial/unavailable labels.
+Actual ignore confirmation and standup presentation need their integrated checks
+later. Linux temporary repos do not establish native Windows behavior.

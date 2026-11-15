@@ -887,3 +887,13 @@ exact steps and expected outcomes. No real host or agent execution.
   runtime remains manual; exact report /tmp/ygg-f6-pty-report.txt. Unmerged: T
   main integration must finish first. Fresh F6 main checks and both independent
   reviews remain required before N receives platform ownership.
+
+- B2-T-main CLOSED: actual generate/lint/typecheck/test/test:web each exit 0,
+  frontend 528/528. T backend integration gate passes; feature wiring/UI and
+  independent Batch 2 reviews remain downstream. No full PRD completion claimed.
+- R source 2d0cdc1 merged --no-ff after prior full lead diff review. Lead
+  B2-R-main five-task integration queued/running. H/F6 remain unmerged. Derived
+  R post-merge invariants, parser and fake/live capability map in
+  [phase-6-batch-2-test-map.md](phase-6-batch-2-test-map.md), prepared for the
+  approved Batch 4 TM1 test-engineer handoff; actual ignore writes/standup
+  aggregation remain with their assigned owners.
