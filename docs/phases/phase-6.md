@@ -836,3 +836,14 @@ merges sequentially with five main checks and fresh safety/functional reviews
 before platform ownership passes to N. Windows ConPTY/tree cancellation and
 Darwin native kqueue/stopped-child/rapid-exit behavior remain manual; report
 exact steps and expected outcomes. No real host or agent execution.
+
+- Board fixture branch b59b30d merged --no-ff after lead diff review. Only
+  BoardPage.test.tsx changes: promise-returning React act around initial real
+  App render, awaited by every caller; existing 25 query/assertion lines retained.
+  Probe established old helper returned before API requests began; awaited
+  boundary completes initial router/query lifecycle. Exact historical timeout
+  scheduling remains uncertain; no production defect claimed. Agent 20/20
+  scheduled runs (260 tests), nine restored assertion-failing controls, 528/528
+  frontend and all five final commands pass; initial lint failure retained.
+  Lead B2-board-main five-task integration is running/unclaimed. T/R/H remain
+  unmerged until it passes; F6 alone owns platform in its separate worktree.
