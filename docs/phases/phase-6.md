@@ -866,3 +866,13 @@ exact steps and expected outcomes. No real host or agent execution.
   full frontend 528/528 and all five Task checks pass with no skip/timeout
   changes. Exact report /tmp/ygg-B2-grid-handoff.json. B2-grid-main integration
   is queued/running; no pass claimed until completion. Feature merges still held.
+
+- B2-grid-main CLOSED: actual generate/lint/typecheck/test/test:web all exit 0,
+  frontend 528/528. Both inherited integration fixture failures are repaired
+  without production changes, skipped assertions, timeout changes or lucky retries.
+- T source dc0d9f8 merged --no-ff at 97a7b63 after lead source/test diff review.
+  Lead B2-T-main five-task gate is queued/running, not yet a pass. R/H remain
+  unmerged. Derived the T post-merge invariant/parser/capability map and prepared
+  TM1 brief in [phase-6-batch-2-test-map.md](phase-6-batch-2-test-map.md).
+  TM1 implements it at the approved Batch 4 handoff, with controlled failure
+  evidence; no premature parallel ownership of platform or later feature owners.
