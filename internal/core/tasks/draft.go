@@ -125,11 +125,29 @@ type DraftRefusal string
 const (
 	DraftRepoNotReady  DraftRefusal = "repo_not_ready"
 	DraftRepoUntracked DraftRefusal = "repo_untracked"
-	DraftPending       DraftRefusal = "not_implemented"
+	// DraftBadFacts: the shell did not supply a creation time or a valid new
+	// task ID. Nothing is created and nothing is reported as existing.
+	DraftBadFacts DraftRefusal = "draft_facts_invalid"
 )
 
-// DraftFacts are what the shell checked before the decision. Existing is the
+// Message is the plain-language text for people (docs/AGENTS.md 7). An
+// untracked, foreign-project or unknown repo gets the same text, so a refusal
+// never reveals what exists outside the caller's project.
+func (r DraftRefusal) Message() string {
+	switch r {
+	case DraftRepoNotReady:
+		return "This repo isn't set up yet. Finish its setup, then import the issue."
+	case DraftRepoUntracked:
+		return "This repo isn't tracked in the project. Track it, then import the issue."
+	default:
+		return "Yggdrasil couldn't prepare this draft. Try importing the issue again."
+	}
+}
+
+// DraftFacts are what the shell read before the decision. Existing is the
 // ID of a task of the same project with the issue's dedup key, or empty.
+// RepoTracked is false for a repo that is unknown, untracked or in another
+// project; RepoReady is only meaningful when RepoTracked is true.
 type DraftFacts struct {
 	RepoTracked bool
 	RepoReady   bool
@@ -139,13 +157,18 @@ type DraftFacts struct {
 	Now    time.Time
 }
 
-// PlanDraft decides what an import does. Scope is checked before deduplication.
+// PlanDraft decides what an import does. Scope is checked before
+// deduplication, so a repo outside the project never reveals an existing
+// draft. A zero Now or an invalid TaskID is invalid input: nothing is created.
 func PlanDraft(s DraftSpec, f DraftFacts) DraftOutcome {
 	if !f.RepoTracked {
 		return DraftRefuse{Reason: DraftRepoUntracked}
 	}
 	if !f.RepoReady {
 		return DraftRefuse{Reason: DraftRepoNotReady}
+	}
+	if f.Now.IsZero() || f.TaskID.Validate() != nil {
+		return DraftRefuse{Reason: DraftBadFacts}
 	}
 	if f.Existing != "" {
 		return DraftExists{Task: f.Existing}

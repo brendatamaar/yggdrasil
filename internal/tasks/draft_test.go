@@ -3,10 +3,12 @@ package tasks
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"sync"
 	"testing"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
+	"github.com/brendatamaar/yggdrasil/internal/core/newrepos"
 	coretasks "github.com/brendatamaar/yggdrasil/internal/core/tasks"
 	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/db/dbtest"
@@ -112,7 +114,7 @@ func TestIssueScopeAndSetupRefusals(t *testing.T) {
 	spec := issueSpec(h)
 	other := dbtest.Project(t, h.store, core.Project{Name: "other", Path: t.TempDir()})
 	spec.Project = other.ID
-	if _, err := h.svc.ImportIssueDraft(ctx, spec); !errors.Is(err, db.ErrNotFound) {
+	if _, err := h.svc.ImportIssueDraft(ctx, spec); !rejectedWith(err, string(coretasks.DraftRepoUntracked)) {
 		t.Fatalf("foreign scope: %v", err)
 	}
 	task := core.Task{ID: "tsk_setup", ProjectID: h.project.ID, RepoIDs: []core.RepoID{h.repos[0].ID}, Title: "Setup", Prompt: "setup", Scope: core.ScopeRepo, Mode: core.ModeAsk, Agent: "mock", Status: core.TaskDraft, CreatedAt: h.cfg.Now(), UpdatedAt: h.cfg.Now(), Source: &core.TaskSource{Kind: core.SourceRepoSetup}}
@@ -128,6 +130,72 @@ func TestIssueScopeAndSetupRefusals(t *testing.T) {
 	req.TaskID = task.ID
 	if _, err = h.svc.Message(ctx, req); !errors.As(err, &user) {
 		t.Fatalf("setup bypass: %v", err)
+	}
+}
+
+func rejectedWith(err error, reason string) bool {
+	var r *RejectedError
+	return errors.As(err, &r) && r.Reason == reason && r.Message != "" && r.Message != reason
+}
+
+// The shell derives the repo facts from the repo row it reads inside the
+// transaction, so every refusal of the core is reachable and plain-language.
+func TestIssueImportScopeFactsComeFromTheRepoRow(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name    string
+		arrange func(h *harness, spec *coretasks.DraftSpec)
+		reason  string
+	}{
+		{"untracked repo", func(h *harness, _ *coretasks.DraftSpec) { dbtest.UntrackRepo(t, h.store, h.repos[0]) }, "repo_untracked"},
+		{"unknown repo", func(_ *harness, s *coretasks.DraftSpec) { s.Repo = "rep_nothere" }, "repo_untracked"},
+		{"reserved repo", func(h *harness, s *coretasks.DraftSpec) {
+			spec := newrepos.InitSpec{Project: h.project.ID, Repo: "rep_shopnew", Leaf: "shop-new", Branch: newrepos.DefaultBranch,
+				README: "# shop-new\n", Ignore: "/node_modules/\n", CommitMessage: "Initial commit"}
+			if err := h.store.Commit(ctx, func(tx *db.Tx) error {
+				return tx.ReserveRepo(ctx, db.ReserveRepo{Operation: "op_shop", Project: h.project.ID, Repo: spec.Repo,
+					SetupTask: "tsk_setup", Path: filepath.Join(h.project.Path, "shop-new"), Spec: spec, Agent: "mock", Title: "Set up", Now: h.cfg.Now()})
+			}); err != nil {
+				t.Fatal(err)
+			}
+			s.Repo = spec.Repo
+		}, "repo_not_ready"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, []string{"shop-api"})
+			h.start()
+			spec := issueSpec(h)
+			tc.arrange(h, &spec)
+			_, err := h.svc.ImportIssueDraft(ctx, spec)
+			if !rejectedWith(err, tc.reason) {
+				t.Fatalf("want %s, got %v", tc.reason, err)
+			}
+			if errors.Is(err, db.ErrNotFound) {
+				t.Fatal("raw database error leaked")
+			}
+			if list, err := h.store.ListTasks(ctx, h.project.ID); err != nil || len(list) != 0 {
+				t.Fatalf("refused import wrote a task: %v %v", list, err)
+			}
+		})
+	}
+}
+
+// Scope comes before dedup: a repo that is no longer tracked never reveals the
+// draft an earlier import created for the same issue.
+func TestIssueImportUntrackedRepoDoesNotRevealExistingDraft(t *testing.T) {
+	h := newHarness(t, []string{"shop-api"})
+	h.start()
+	ctx := context.Background()
+	first, err := h.svc.ImportIssueDraft(ctx, issueSpec(h))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.UntrackRepo(t, h.store, h.repos[0])
+	spec := issueSpec(h)
+	spec.RequestID = "req_again"
+	res, err := h.svc.ImportIssueDraft(ctx, spec)
+	if !rejectedWith(err, "repo_untracked") || res.Task.ID != "" {
+		t.Fatalf("revealed %s: %+v %v", first.Task.ID, res, err)
 	}
 }
 
