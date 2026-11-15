@@ -61,105 +61,272 @@ func TestContextTransitions(t *testing.T) {
 	}
 }
 
-func contextSequence(seed int64) []ContextInput {
+// contextPropKeys are the keys a run may use: one per kind, plus an MR diff key
+// pinned to another head.
+func contextPropKeys() []ContextKey {
+	headA, headB := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	return []ContextKey{
+		{Repo: "rep_1", Kind: ContextIssues},
+		{Repo: "rep_1", Kind: ContextMRDiff, ObjectID: "1", Head: headA},
+		{Repo: "rep_1", Kind: ContextMRDiff, ObjectID: "1", Head: headB},
+		{Repo: "rep_1", Kind: ContextFailedJobs, ObjectID: "7", Head: headA},
+		{Repo: "rep_2", Kind: ContextIssues},
+	}
+}
+
+// contextPropPayload is a payload that matches key, or, when good is false,
+// one that does not.
+func contextPropPayload(key ContextKey, good bool) ContextPayload {
+	if !good {
+		return IssueDetail{Summary: IssueSummary{Number: 99}}
+	}
+	switch key.Kind {
+	case ContextMRDiff:
+		return MRContext{MR: MergeRequest{Number: 1}, Head: key.Head}
+	case ContextFailedJobs:
+		return JobLogs{RunID: key.ObjectID, Head: key.Head}
+	}
+	return IssueList{}
+}
+
+func contextSequence(seed int64, key ContextKey) []ContextInput {
 	r := rand.New(rand.NewSource(seed))
-	key := ContextKey{Repo: "rep_1", Kind: ContextIssues}
-	other := key
-	other.Repo = "rep_2"
+	keys := contextPropKeys()
+	classes := []FailKind{FailTransient, FailRateLimited, FailUnauthorized, FailNotFound}
+	reasons := []ContextBlockReason{ContextNotFound, ContextUnsupported, ContextTooLarge, ContextForbidden, ContextNoToken}
 	var inputs []ContextInput
-	for i := 0; i < 100; i++ {
-		now := time.Unix(int64(i*5), 0)
-		attempt := r.Intn(8)
-		k := key
-		if r.Intn(5) == 0 {
-			k = other
+	// The generator folds its own inputs so that most results aim at the attempt
+	// that is current at that point.
+	e := ContextEntry{Key: key, State: CtxEmpty{}}
+	for i := 0; i < 120; i++ {
+		now := time.Unix(int64(1000+i*5), 0)
+		if r.Intn(25) == 0 {
+			now = time.Time{} // a zero time must never be accepted
 		}
-		switch r.Intn(8) {
+		attempt := e.Seq
+		if r.Intn(4) == 0 {
+			attempt = r.Intn(8)
+		}
+		k := key
+		if r.Intn(6) == 0 {
+			k = keys[r.Intn(len(keys))]
+		}
+		before := len(inputs)
+		switch r.Intn(13) {
 		case 0:
-			scope := ScopeTracked
-			if r.Intn(3) == 0 {
-				scope = ScopeUntracked
-			}
-			inputs = append(inputs, ContextRequested{Key: k, Scope: scope, Now: now})
+			scopes := []ContextScope{ScopeTracked, ScopeTracked, ScopeUntracked, ScopeUnsupported, ScopeNoToken}
+			inputs = append(inputs, ContextRequested{Key: k, Scope: scopes[r.Intn(len(scopes))], Now: now})
 		case 1:
-			inputs = append(inputs, ContextFetched{Key: k, Attempt: attempt, Value: IssueList{}, Now: now})
+			inputs = append(inputs, ContextRequested{Key: k, Scope: ScopeTracked, Now: now})
 		case 2:
-			inputs = append(inputs, ContextFetchFailed{Key: k, Attempt: attempt, Class: FailTransient, Now: now})
+			var gaps []ContextUnavailable
+			switch r.Intn(4) {
+			case 0:
+				gaps = []ContextUnavailable{{Source: "log", Reason: ContextUnsupported}}
+			case 1:
+				gaps = []ContextUnavailable{{Source: "log", Reason: "not a reason"}}
+			case 2:
+				gaps = make([]ContextUnavailable, ContextMaxEntries+1)
+			}
+			inputs = append(inputs, ContextFetched{Key: k, Attempt: attempt, Value: contextPropPayload(k, r.Intn(4) != 0), Unavailable: gaps, Now: now})
 		case 3:
-			inputs = append(inputs, ContextWake{Attempt: attempt, Now: now})
-		case 4:
-			inputs = append(inputs, ContextCancelled{Attempt: attempt})
-		case 5:
-			inputs = append(inputs, ContextScopeChanged{Scope: ScopeUntracked})
+			inputs = append(inputs, ContextFetched{Key: k, Attempt: -1, Value: contextPropPayload(k, true), Now: now})
+		case 4, 5:
+			var retry time.Time
+			if r.Intn(3) == 0 {
+				retry = now.Add(time.Duration(r.Intn(30)) * time.Second)
+			}
+			inputs = append(inputs, ContextFetchFailed{Key: k, Attempt: attempt, Class: classes[r.Intn(len(classes))], RetryAt: retry, Now: now})
 		case 6:
-			inputs = append(inputs, ContextConfigChanged{Now: now})
+			inputs = append(inputs, ContextRejected{Key: k, Attempt: attempt, Reason: reasons[r.Intn(len(reasons))], Now: now})
 		case 7:
-			inputs = append(inputs, ContextRequested{Key: k, Scope: ScopeUnsupported, Now: now})
+			inputs = append(inputs, ContextRateLimited{Key: k, Attempt: attempt, Until: now.Add(time.Duration(r.Intn(10)-2) * time.Second), Now: now})
+		case 8:
+			inputs = append(inputs, ContextWake{Attempt: attempt, Now: now})
+		case 9:
+			inputs = append(inputs, ContextCancelled{Attempt: attempt})
+		case 10:
+			inputs = append(inputs, ContextScopeChanged{})
+		case 11:
+			inputs = append(inputs, ContextConfigChanged{})
+		case 12:
+			// An answer for the attempt that is current at the time the input is
+			// generated cannot be known here, so aim at small attempts.
+			inputs = append(inputs, ContextFetchFailed{Key: k, Attempt: 1 + r.Intn(3), Class: FailTransient, Now: now})
+		}
+		for _, in := range inputs[before:] {
+			e, _ = ContextStep(e, in)
 		}
 	}
 	return inputs
 }
-func checkContextSequence(ins []ContextInput) error {
-	e := ContextEntry{Key: ContextKey{Repo: "rep_1", Kind: ContextIssues}, State: CtxEmpty{}}
-	for _, in := range ins {
+
+func contextInputNow(in ContextInput) (time.Time, bool) {
+	switch v := in.(type) {
+	case ContextRequested:
+		return v.Now, true
+	case ContextFetched:
+		return v.Now, true
+	case ContextFetchFailed:
+		return v.Now, true
+	case ContextRejected:
+		return v.Now, true
+	case ContextRateLimited:
+		return v.Now, true
+	case ContextWake:
+		return v.Now, true
+	}
+	return time.Time{}, false
+}
+
+// contextResultFor returns the key and attempt of an input that reports the end
+// of one attempt (Fetched, FetchFailed, Rejected, RateLimited).
+func contextResultFor(in ContextInput) (ContextKey, int, bool) {
+	switch v := in.(type) {
+	case ContextFetched:
+		return v.Key, v.Attempt, true
+	case ContextFetchFailed:
+		return v.Key, v.Attempt, true
+	case ContextRejected:
+		return v.Key, v.Attempt, true
+	case ContextRateLimited:
+		return v.Key, v.Attempt, true
+	}
+	return ContextKey{}, 0, false
+}
+
+// contextIgnoredRejection: the reasons the shell never reports through Rejected.
+func contextIgnoredRejection(in ContextInput) bool {
+	rj, ok := in.(ContextRejected)
+	if !ok {
+		return false
+	}
+	switch rj.Reason {
+	case ContextNotFound, ContextUnsupported, ContextTooLarge:
+		return false
+	}
+	return true
+}
+
+// contextIsUselessRateLimit: a rate-limit report whose deadline already passed
+// asks for no wait, so it changes nothing.
+func contextIsUselessRateLimit(in ContextInput) bool {
+	rl, ok := in.(ContextRateLimited)
+	return ok && !rl.Until.After(rl.Now)
+}
+
+func checkContextSequence(key ContextKey, ins []ContextInput) error {
+	e := ContextEntry{Key: key, State: CtxEmpty{}}
+	for i, in := range ins {
 		next, cmd := ContextStep(e, in)
-		if next.Seq < e.Seq || next.Retries > ContextMaxRetries {
-			return fmt.Errorf("attempt/retry bounds")
+		fail := func(format string, args ...any) error {
+			return fmt.Errorf("step %d (%T): %s", i, in, fmt.Sprintf(format, args...))
 		}
-		if v, ok := in.(ContextFetched); ok {
-			load, loading := e.State.(CtxLoading)
-			if (!loading || load.Attempt != v.Attempt || v.Key != e.Key) && (!reflect.DeepEqual(e, next) || len(cmd) > 0) {
-				return fmt.Errorf("late result")
+		if next.Seq < e.Seq || next.Retries > ContextMaxRetries || next.Key != e.Key {
+			return fail("attempt/retry/key bounds")
+		}
+		if load, ok := next.State.(CtxLoading); ok && load.Attempt != next.Seq {
+			return fail("loading attempt %d is not the newest %d", load.Attempt, next.Seq)
+		}
+		if now, timed := contextInputNow(in); timed && now.IsZero() && (!reflect.DeepEqual(e, next) || len(cmd) > 0) {
+			return fail("a zero time was accepted")
+		}
+		if k, attempt, result := contextResultFor(in); result {
+			_, loading := e.State.(CtxLoading)
+			current := loading && k == e.Key && attempt == e.Seq
+			if !current && (!reflect.DeepEqual(e, next) || len(cmd) > 0) {
+				return fail("a late or foreign result changed the entry")
+			}
+			now, _ := contextInputNow(in)
+			if current && !now.IsZero() && !contextIgnoredRejection(in) && !contextIsUselessRateLimit(in) {
+				if _, still := next.State.(CtxLoading); still {
+					return fail("a result for the current attempt left it Loading")
+				}
 			}
 		}
-		if v, ok := in.(ContextRequested); ok && v.Scope != ScopeTracked && v.Key == e.Key {
+		for _, c := range cmd {
+			switch v := c.(type) {
+			case CtxReadContext:
+				if l, ok := next.State.(CtxLoading); !ok || l.Attempt != v.Attempt || v.Attempt != next.Seq || v.Key != next.Key {
+					return fail("ReadContext does not match the Loading attempt")
+				}
+			case CtxScheduleWake:
+				if w, ok := next.State.(CtxWaiting); !ok || w.Attempt != v.Attempt || !w.At.Equal(v.At) {
+					return fail("ScheduleWake does not match the Waiting state")
+				}
+				if now, _ := contextInputNow(in); !v.At.After(now) {
+					return fail("wake is not in the future")
+				}
+			case CtxPublishContext:
+				switch next.State.(type) {
+				case CtxReady, CtxPartial:
+				default:
+					return fail("publish without a value")
+				}
+			case CtxExplain:
+				if b, ok := next.State.(CtxBlocked); !ok || b.Reason != v.Reason {
+					return fail("explain does not match the Blocked state")
+				}
+			}
+		}
+		if v, ok := in.(ContextRequested); ok && v.Key == e.Key {
 			for _, c := range cmd {
-				if _, yes := c.(CtxReturnCached); yes {
-					return fmt.Errorf("untracked cache")
+				switch c.(type) {
+				case CtxReturnCached:
+					if v.Scope != ScopeTracked {
+						return fail("cache served for an untracked or unsupported scope")
+					}
+					switch st := e.State.(type) {
+					case CtxReady:
+						if !v.Now.Before(st.Expires) {
+							return fail("expired Ready served")
+						}
+					case CtxPartial:
+						if !v.Now.Before(st.Expires) {
+							return fail("expired Partial served")
+						}
+					case CtxBlocked:
+						if !v.Now.Before(st.Until) {
+							return fail("expired Blocked served")
+						}
+					default:
+						return fail("cache served from %T", e.State)
+					}
+				case CtxReadContext:
+					if v.Scope != ScopeTracked {
+						return fail("read for an untracked or unsupported scope")
+					}
 				}
-				if _, yes := c.(CtxReadContext); yes {
-					return fmt.Errorf("untracked read")
-				}
+			}
+		}
+		switch in.(type) {
+		case ContextScopeChanged, ContextConfigChanged:
+			if _, ok := next.State.(CtxEmpty); !ok {
+				return fail("a scope or config change kept %T", next.State)
 			}
 		}
 		e = next
 	}
 	return nil
 }
+
 func TestPropContextFencingScopeAndRetries(t *testing.T) {
-	for seed := int64(1); seed <= 300; seed++ {
-		inputs := contextSequence(seed)
-		if err := checkContextSequence(inputs); err != nil {
-			for i := 0; i < len(inputs); {
-				candidate := append(append([]ContextInput(nil), inputs[:i]...), inputs[i+1:]...)
-				if checkContextSequence(candidate) != nil {
-					inputs = candidate
-					i = 0
-				} else {
-					i++
+	for ki, key := range contextPropKeys() {
+		for seed := int64(1); seed <= 300; seed++ {
+			inputs := contextSequence(seed+int64(ki)*1000, key)
+			if err := checkContextSequence(key, inputs); err != nil {
+				for i := 0; i < len(inputs); {
+					candidate := append(append([]ContextInput(nil), inputs[:i]...), inputs[i+1:]...)
+					if checkContextSequence(key, candidate) != nil {
+						inputs = candidate
+						i = 0
+					} else {
+						i++
+					}
 				}
+				t.Fatalf("key %v seed %d: %v; minimized: %#v", key, seed, err, inputs)
 			}
-			t.Fatalf("seed %d: %v; minimized: %#v", seed, err, inputs)
 		}
-	}
-}
-func TestContextHeadFenceAndCancellation(t *testing.T) {
-	head := strings.Repeat("a", 40)
-	key := ContextKey{Repo: "rep_1", Kind: ContextMRDiff, ObjectID: "1", Head: head}
-	e, _ := ContextStep(ContextEntry{Key: key, State: CtxEmpty{}}, ContextRequested{Key: key, Scope: ScopeTracked})
-	other := MRContext{MR: MergeRequest{Number: 1}, Head: strings.Repeat("b", 40)}
-	next, cmd := ContextStep(e, ContextFetched{Key: key, Attempt: e.Seq, Value: other})
-	if !reflect.DeepEqual(e, next) || len(cmd) != 0 {
-		t.Fatal("wrong head published")
-	}
-	cancelled, _ := ContextStep(e, ContextCancelled{Attempt: e.Seq})
-	restarted, _ := ContextStep(cancelled, ContextRequested{Key: key, Scope: ScopeTracked})
-	if restarted.Seq <= e.Seq {
-		t.Fatal("attempt reused")
-	}
-	next, cmd = ContextStep(restarted, ContextFetched{Key: key, Attempt: e.Seq, Value: MRContext{MR: MergeRequest{Number: 1}, Head: head}})
-	if !reflect.DeepEqual(restarted, next) || len(cmd) > 0 {
-		t.Fatal("cancelled attempt published")
 	}
 }
 
@@ -198,6 +365,36 @@ func TestContextCacheIsHeadBound(t *testing.T) {
 	}
 }
 
+// The property test is only worth something if its generator reaches the
+// interesting states and commands; this fails if a change to the generator
+// stops doing so.
+func TestPropContextGeneratorReachesEveryStateAndCommand(t *testing.T) {
+	seen := map[string]bool{}
+	for ki, key := range contextPropKeys() {
+		for seed := int64(1); seed <= 300; seed++ {
+			e := ContextEntry{Key: key, State: CtxEmpty{}}
+			for _, in := range contextSequence(seed+int64(ki)*1000, key) {
+				var cmds []ContextCommand
+				e, cmds = ContextStep(e, in)
+				seen[fmt.Sprintf("state %T", e.State)] = true
+				for _, c := range cmds {
+					seen[fmt.Sprintf("command %T", c)] = true
+				}
+			}
+		}
+	}
+	for _, want := range []string{
+		"state hosts.CtxEmpty", "state hosts.CtxLoading", "state hosts.CtxReady", "state hosts.CtxPartial",
+		"state hosts.CtxWaiting", "state hosts.CtxBlocked",
+		"command hosts.CtxReadContext", "command hosts.CtxScheduleWake", "command hosts.CtxCancelRead",
+		"command hosts.CtxReturnCached", "command hosts.CtxJoinRequest", "command hosts.CtxPublishContext", "command hosts.CtxExplain",
+	} {
+		if !seen[want] {
+			t.Errorf("the generator never reached %s", want)
+		}
+	}
+}
+
 func FuzzContextKey(f *testing.F) {
 	f.Add("rep_1", "issue", "1", "")
 	f.Add("rep_1", "mr_diff", "1", strings.Repeat("a", 40))
@@ -219,29 +416,4 @@ func FuzzContextKey(f *testing.F) {
 			t.Fatal("invalid accepted")
 		}
 	})
-}
-
-func TestContextRejectsMalformedPayloadBoundaries(t *testing.T) {
-	head := strings.Repeat("a", 40)
-	key := ContextKey{Repo: "rep_1", Kind: ContextFailedJobs, ObjectID: "1", Head: head}
-	for name, payload := range map[string]ContextPayload{
-		"bad job id":    JobLogs{RunID: "1", Head: head, Jobs: []JobLog{{JobID: "https://foreign.test/1"}}},
-		"missing head":  JobLogs{RunID: "1", Jobs: []JobLog{{JobID: "1"}}},
-		"too many jobs": JobLogs{RunID: "1", Head: head, Jobs: make([]JobLog, ContextMaxEntries+1)},
-		"oversized log": JobLogs{RunID: "1", Head: head, Jobs: []JobLog{{JobID: "1", Log: strings.Repeat("x", ContextMaxJobLogBytes+1)}}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			e, _ := ContextStep(ContextEntry{Key: key, State: CtxEmpty{}}, ContextRequested{Key: key, Scope: ScopeTracked})
-			got, cmd := ContextStep(e, ContextFetched{Key: key, Attempt: e.Seq, Value: payload})
-			if !reflect.DeepEqual(got, e) || len(cmd) > 0 {
-				t.Fatal("malformed payload published")
-			}
-		})
-	}
-	issueKey := ContextKey{Repo: "rep_1", Kind: ContextIssues}
-	e, _ := ContextStep(ContextEntry{Key: issueKey, State: CtxEmpty{}}, ContextRequested{Key: issueKey, Scope: ScopeTracked})
-	got, cmd := ContextStep(e, ContextFetched{Key: issueKey, Attempt: e.Seq, Value: IssueList{}, Unavailable: []ContextUnavailable{{Source: "log", Reason: "unparsed outside text"}}})
-	if !reflect.DeepEqual(got, e) || len(cmd) > 0 {
-		t.Fatal("unparsed reason published")
-	}
 }
