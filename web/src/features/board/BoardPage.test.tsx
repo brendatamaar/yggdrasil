@@ -26,11 +26,16 @@ export const card = (id: string, title: string, over: Partial<BoardCardDTO> = {}
 
 const board = (cards: BoardCardDTO[]): BoardResponse => ({ maxAgents: 2, active: 1, hint: { raiseTo: 0 }, cards });
 
-function renderBoard(handler: (c: Call) => Reply | undefined) {
+async function renderBoard(handler: (c: Call) => Reply | undefined) {
   const api = stubApi(handler);
   FakeSocket.instances = [];
   const router = createAppRouter(createMemoryHistory({ initialEntries: ["/board"] }));
-  render(<App router={router} socket={new WSClient({ url: "ws://x/ws", socketCtor: FakeSocket })} />);
+  // The initial router transition mounts the query after render returns. Flush
+  // that lifecycle and the immediate fake response before starting DOM queries.
+  await act(() => {
+    render(<App router={router} socket={new WSClient({ url: "ws://x/ws", socketCtor: FakeSocket })} />);
+    return Promise.resolve();
+  });
   return api;
 }
 
@@ -38,7 +43,7 @@ const serve = (b: () => BoardResponse) => (c: Call): Reply | undefined => (c.pat
 
 describe("Agent board", () => {
   it("places cards by the server column and never shows drafts", async () => {
-    renderBoard(
+    await renderBoard(
       serve(() =>
         board([
           card("1", "Fix cart total"),
@@ -58,13 +63,13 @@ describe("Agent board", () => {
   });
 
   it("shows empty states per column", async () => {
-    renderBoard(serve(() => board([])));
+    await renderBoard(serve(() => board([])));
     expect(await screen.findByText("Nothing is waiting for you.")).toBeTruthy();
     expect(screen.getByText("No finished work to review.")).toBeTruthy();
   });
 
   it("shows why a queued task waits, mode warnings, proposals and usage", async () => {
-    renderBoard(
+    await renderBoard(
       serve(() =>
         board([
           card("1", "Waiting task", { status: "queued", column: "working", blockedBy: "Waiting for Fix cart total to finish", mode: "project", pendingProposals: 2 }),
@@ -80,13 +85,13 @@ describe("Agent board", () => {
   });
 
   it("shows an error with a retry", async () => {
-    renderBoard((c) => (c.path === "/api/board" ? { status: 500, body: { code: "internal", message: "The board is unavailable.", hint: "Try again." } } : undefined));
+    await renderBoard((c) => (c.path === "/api/board" ? { status: 500, body: { code: "internal", message: "The board is unavailable.", hint: "Try again." } } : undefined));
     expect((await screen.findByRole("alert")).textContent).toContain("The board is unavailable.");
     expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
   });
 
   it("calls the cancel endpoint", async () => {
-    const { calls } = renderBoard((c) => {
+    const { calls } = await renderBoard((c) => {
       if (c.path === "/api/board") return { body: board([card("t1", "Fix cart total")]) };
       if (c.path === "/api/tasks/t1/cancel") return { body: { task: { id: "t1" } } };
       return undefined;
@@ -99,7 +104,7 @@ describe("Agent board", () => {
 
   it("refetches when the board topic reports a change", async () => {
     let data = board([card("1", "First")]);
-    renderBoard(serve(() => data));
+    await renderBoard(serve(() => data));
     await screen.findByText("First");
     data = board([card("1", "First"), card("2", "Second")]);
     act(() => {
@@ -110,7 +115,7 @@ describe("Agent board", () => {
   });
 
   it("moves focus between cards with the arrow keys", async () => {
-    renderBoard(
+    await renderBoard(
       serve(() =>
         board([
           card("1", "One"),
@@ -130,7 +135,7 @@ describe("Agent board", () => {
   });
 
   it("renders titles as plain text", async () => {
-    renderBoard(serve(() => board([card("1", '<img src=x onerror="alert(1)"><b>bold</b>')])));
+    await renderBoard(serve(() => board([card("1", '<img src=x onerror="alert(1)"><b>bold</b>')])));
     expect(await screen.findByText(/onerror/)).toBeTruthy();
     expect(document.querySelector("img")).toBeNull();
     expect(document.querySelector("b")).toBeNull();
@@ -145,7 +150,7 @@ describe("verification badge on the card", () => {
     ["cancelled", "Cancelled"],
   ];
   it.each(cases)("shows %s", async (state, label) => {
-    renderBoard(
+    await renderBoard(
       serve(() => board([card("1", "Fix cart total", { verification: { state, total: 2, passed: 1, failed: 1, running: 0 } })])),
     );
     const badge = await screen.findByLabelText(`Verification: ${state}`);
@@ -153,7 +158,7 @@ describe("verification badge on the card", () => {
   });
 
   it("shows nothing when verification is absent or none", async () => {
-    renderBoard(serve(() => board([card("1", "A"), card("2", "B", { verification: { state: "none", total: 0, passed: 0, failed: 0, running: 0 } })])));
+    await renderBoard(serve(() => board([card("1", "A"), card("2", "B", { verification: { state: "none", total: 0, passed: 0, failed: 0, running: 0 } })])));
     await screen.findByText("A");
     expect(screen.queryByLabelText(/^Verification:/)).toBeNull();
   });
