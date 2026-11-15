@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -25,6 +26,37 @@ const (
 	// AuthPrivateToken sends "PRIVATE-TOKEN: <token>" (GitLab).
 	AuthPrivateToken
 )
+
+// errStatusConflict is the cause of a *FetchError for HTTP 409, which GitHub
+// uses for "Git Repository is empty". The error kind stays transient; callers
+// that care use errors.Is to tell a 409 from other failures.
+var errStatusConflict = errors.New("status 409")
+
+// loopbackHost reports whether host (without a port) is localhost or a loopback
+// address. Plain http is accepted for these only: a token must not cross a
+// network unencrypted.
+func loopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// validRequestURL accepts https to any host and http only to a loopback host,
+// with no userinfo.
+func validRequestURL(u *url.URL) bool {
+	if u.User != nil || u.Host == "" {
+		return false
+	}
+	switch u.Scheme {
+	case "https":
+		return true
+	case "http":
+		return loopbackHost(u.Hostname())
+	}
+	return false
+}
 
 // maxBody bounds a response body.
 const maxBody = 4 << 20
@@ -103,8 +135,8 @@ func (g *Getter) GetBounded(ctx context.Context, rawURL, token string, auth Auth
 
 func (g *Getter) get(ctx context.Context, rawURL, token string, auth AuthStyle, etag string, limit int, logRedirects bool) (result Resp, resultErr error) {
 	u, err := url.Parse(rawURL)
-	if err != nil || u.User != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
-		return Resp{}, errors.New("invalid host request URL")
+	if err != nil || !validRequestURL(u) {
+		return Resp{}, errors.New("invalid host request URL: use https (http only for a local address)")
 	}
 	g.mu.Lock()
 	origin := u.Scheme + "://" + u.Host
@@ -214,6 +246,8 @@ func (g *Getter) get(ctx context.Context, rawURL, token string, auth AuthStyle, 
 		return Resp{}, &FetchError{Kind: corehosts.FailRateLimited, RetryAt: ParseRetryAt(res.Header, g.now()), Err: errors.New("status 429")}
 	case res.StatusCode == http.StatusNotFound:
 		return Resp{}, fetchErr(corehosts.FailNotFound, "status 404")
+	case res.StatusCode == http.StatusConflict:
+		return Resp{}, &FetchError{Kind: corehosts.FailTransient, Err: errStatusConflict}
 	}
 	return Resp{}, fetchErr(corehosts.FailTransient, "status %d", res.StatusCode)
 }
@@ -291,7 +325,7 @@ func NewGetterWithLogOrigins(base *http.Client, now func() time.Time, origins []
 	g.logOrigins = map[string]bool{}
 	for _, origin := range origins {
 		u, err := url.Parse(origin)
-		if err != nil || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "https" && (u.Scheme != "http" || (u.Hostname() != "localhost" && u.Hostname() != "127.0.0.1"))) {
+		if err != nil || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || !validRequestURL(u) {
 			return nil, errors.New("invalid signed log origin")
 		}
 		g.logOrigins[origin] = true

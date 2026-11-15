@@ -242,8 +242,28 @@ func (h *ConfirmedHosts) FindReviewComment(ctx context.Context, repo core.RepoID
 	return unknown, nil
 }
 
+// ErrWriteRejected means the host answered a write with 400 or 422: it looked
+// at the request and refused it, so nothing was created or changed. Unlike
+// ErrOutcomeUnknown there is nothing to reconcile.
+var ErrWriteRejected = errContext("host write: the host rejected the request and nothing was created; check the name and settings, then try again")
+
+// writeDenied is the definite answer to a 401 or 403: the host refused the
+// token or its permissions before acting, so nothing was created or changed.
+func writeDenied(status int) error {
+	return fetchErr(corehosts.FailUnauthorized, "the host refused the token or its permissions (status %d) and nothing was created; check the token's access and try again", status)
+}
+
 // post performs exactly one RoundTrip. It follows no redirect and never gives
 // a transport an idempotency header that could enable automatic replay.
+//
+// The reply decides what the caller may assume:
+//   - 2xx with a readable body: the body is returned;
+//   - 401 or 403: the host refused the token or permissions (a *FetchError of
+//     kind unauthorized): nothing was created;
+//   - 400 or 422: ErrWriteRejected, nothing was created;
+//   - everything else (3xx, 5xx, 429, other statuses, a transport error, a lost
+//     or oversized body): ErrOutcomeUnknown, which the caller must reconcile
+//     read-only and never resend.
 func (h *ConfirmedHosts) post(ctx context.Context, in corehosts.Instance, token, path string, value interface{}) ([]byte, error) {
 	root := hostAPIRoot(in)
 	if !strings.HasPrefix(path, root+"/") {
@@ -271,11 +291,17 @@ func (h *ConfirmedHosts) post(ctx context.Context, in corehosts.Instance, token,
 		return nil, ErrOutcomeUnknown
 	}
 	defer res.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(res.Body, corehosts.ContextMaxResponseBytes+1))
-	if err != nil || len(body) > corehosts.ContextMaxResponseBytes {
-		return nil, ErrOutcomeUnknown
+	switch res.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return nil, writeDenied(res.StatusCode)
+	case http.StatusBadRequest, http.StatusUnprocessableEntity:
+		return nil, ErrWriteRejected
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return nil, ErrOutcomeUnknown
+	}
+	body, err := io.ReadAll(io.LimitReader(res.Body, corehosts.ContextMaxResponseBytes+1))
+	if err != nil || len(body) > corehosts.ContextMaxResponseBytes {
 		return nil, ErrOutcomeUnknown
 	}
 	return body, nil
@@ -435,22 +461,64 @@ func (h *ConfirmedHosts) LookupRepo(ctx context.Context, spec CreateRepoSpec) (R
 		return RepoLookup{Outcome: RepoConflict}, nil
 	}
 	remaining := corehosts.ContextMaxResponseBytes - len(resp.Body)
-	for _, suffix := range []string{"/git/matching-refs/"} {
-		refs, e := h.getter.GetBounded(ctx, path+suffix, token, AuthBearer, remaining)
-		if e != nil {
-			return unknown, e
-		}
-		remaining -= len(refs.Body)
-		var list []json.RawMessage
-		if json.Unmarshal(refs.Body, &list) != nil || list == nil {
-			return unknown, nil
-		}
-		if hasNextContextPage(refs.Header) {
-			return unknown, nil
-		}
-		if len(list) > 0 {
-			return RepoLookup{Outcome: RepoConflict}, nil
-		}
+	empty, err := h.provenEmpty(ctx, path, token, remaining)
+	switch {
+	case err != nil:
+		return unknown, err
+	case !empty.known:
+		return unknown, nil
+	case !empty.empty:
+		return RepoLookup{Outcome: RepoConflict}, nil
 	}
 	return RepoLookup{Outcome: RepoExactMatch, RemoteID: created.RemoteID, URL: created.URL}, nil
+}
+
+// refState is what the ref probes proved. known is false when they proved
+// nothing; empty is meaningful only when known.
+type refState struct{ known, empty bool }
+
+// listCount GETs one JSON array and returns its length. ok is false when the
+// body is not an array or the list continues on another page (so its length
+// proves nothing about the rest).
+func (h *ConfirmedHosts) listCount(ctx context.Context, url, token string, remaining *int) (n int, ok bool, err error) {
+	resp, err := h.getter.GetBounded(ctx, url, token, AuthBearer, *remaining)
+	if err != nil {
+		return 0, false, err
+	}
+	*remaining -= len(resp.Body)
+	var list []json.RawMessage
+	if json.Unmarshal(resp.Body, &list) != nil || list == nil || hasNextContextPage(resp.Header) {
+		return 0, false, nil
+	}
+	return len(list), true, nil
+}
+
+// provenEmpty decides whether the repository has no refs. Only positive answers
+// count: a 404 or any failure is never taken as proof of absence.
+//   - matching-refs answers 200: [] is empty, a non-empty list is not;
+//   - matching-refs answers 409 (GitHub's "Git Repository is empty"): the
+//     repository is empty only if branches and tags both answer 200 with [].
+//     A non-empty branches or tags list proves it is not empty;
+//   - anything else is an error or unknown.
+func (h *ConfirmedHosts) provenEmpty(ctx context.Context, repoPath, token string, remaining int) (refState, error) {
+	n, ok, err := h.listCount(ctx, repoPath+"/git/matching-refs/", token, &remaining)
+	if err == nil {
+		return refState{known: ok, empty: ok && n == 0}, nil
+	}
+	if !errors.Is(err, errStatusConflict) {
+		return refState{}, err
+	}
+	for _, kind := range []string{"/branches?per_page=1", "/tags?per_page=1"} {
+		n, ok, err := h.listCount(ctx, repoPath+kind, token, &remaining)
+		if err != nil {
+			return refState{}, err
+		}
+		if !ok {
+			return refState{}, nil
+		}
+		if n > 0 {
+			return refState{known: true}, nil
+		}
+	}
+	return refState{known: true, empty: true}, nil
 }
