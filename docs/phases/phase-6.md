@@ -747,3 +747,13 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   the future feature diff. T's immutable Agent/Model and separate draft-list
   presentation choices are documented in the handoff. Final feature checks
   must follow source adaptation and preserve all earlier failed logs.
+
+- Latest H/T/R continuation again stopped at the Codex usage limit, now before
+  final feature validation/commit. All owned edits are preserved: H includes
+  the new request-aware authorizer; R includes history collection; T still
+  needs its final UTF-8/audit-boundary repair and current-source validation.
+  No feature branch has merged and main remains verified shared source plus
+  bookkeeping. Human instructed Continue; resume the same three threads and
+  worktrees with original ownership, no provider switch or checkout replacement.
+  Final validation must cover current adapted source and preserve old failed/
+  interrupted logs. Effective Batch 2 review base remains 55d2c4e.
