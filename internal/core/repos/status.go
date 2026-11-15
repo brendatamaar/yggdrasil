@@ -35,17 +35,21 @@ func (Problem) isView() {}
 
 // Snapshot is the git state of one repo (WS-02).
 type Snapshot struct {
-	Branch      string // "" when detached
-	Detached    bool
-	Upstream    string
-	HasUpstream bool
-	Ahead       int
-	Behind      int
-	Staged      int
-	Unstaged    int
-	Untracked   int
-	Conflicted  int
-	LastCommit  *CommitRef // nil before the first commit
+	// UntrackedPaths is the bounded untracked status sample, NUL-separated.
+	// A string keeps snapshots immutable and cheaply comparable/copyable.
+	UntrackedPaths     string
+	UntrackedTruncated bool
+	Branch             string // "" when detached
+	Detached           bool
+	Upstream           string
+	HasUpstream        bool
+	Ahead              int
+	Behind             int
+	Staged             int
+	Unstaged           int
+	Untracked          int
+	Conflicted         int
+	LastCommit         *CommitRef // nil before the first commit
 }
 
 // CommitRef is the last commit of a repo.

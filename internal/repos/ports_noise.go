@@ -2,8 +2,8 @@ package repos
 
 // Phase 6 declarations of the repos package (docs/design/phase-6-noise.md and
 // phase-6-standup.md): bounded noise facts and history facts, read from the
-// existing status reader and git wrapper. Declarations only; the noise task (R)
-// implements them. Nothing here writes a file or starts a refresh on its own.
+// existing status reader and git wrapper. StatusService and GitHistoryReader
+// implement these ports without writes or automatic refreshes.
 
 import (
 	"context"
@@ -39,7 +39,8 @@ type HistoryCommit struct {
 
 // HistoryReader returns the commits of a tracked, ready repo on its current
 // branch within [from, to), newest first, at most max, through the safe git
-// wrapper. Truncated says more existed. A missing or unreadable repo is an
+// wrapper. Truncated means excess matches or incomplete capture, even with zero
+// observed matches; results may not be globally newest after cutoff. A missing or unreadable repo is an
 // error the standup labels as unavailable.
 type HistoryReader interface {
 	Commits(ctx context.Context, repo core.RepoID, from, to time.Time, max int) (commits []HistoryCommit, truncated bool, err error)
