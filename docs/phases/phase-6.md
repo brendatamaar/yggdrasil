@@ -876,3 +876,14 @@ exact steps and expected outcomes. No real host or agent execution.
   TM1 brief in [phase-6-batch-2-test-map.md](phase-6-batch-2-test-map.md).
   TM1 implements it at the approved Batch 4 handoff, with controlled failure
   evidence; no premature parallel ownership of platform or later feature owners.
+
+- F6 platform branch t3/f5-pty-exit-signal-race committed 6e5d525 and released
+  ownership. Lead read all three changed files: native non-reaping observation,
+  joined cancellation signals and final hangup precede gate closure/reap; setup/
+  observer errors preserve failure and cleanup, Close timeout closes the master.
+  No lead finding identified. Agent all five tasks pass (528 frontend), full
+  platform/race, 100 critical/race repetitions and Linux/Darwin/Windows compile/
+  vet pass; both safe restored bad-order controls fail assertions. Native foreign
+  runtime remains manual; exact report /tmp/ygg-f6-pty-report.txt. Unmerged: T
+  main integration must finish first. Fresh F6 main checks and both independent
+  reviews remain required before N receives platform ownership.
