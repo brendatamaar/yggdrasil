@@ -960,3 +960,33 @@ exact steps and expected outcomes. No real host or agent execution.
   t3/f5-pty-exit-signal-race is next to merge (fresh main checks and both
   reviews required before N receives platform ownership), then TM1 tests. Not
   dispatched: awaiting the human's go-ahead.
+
+## Batch 2 follow-up: deferred review findings (human approved fixing them)
+
+F6 platform branch merged --no-ff at 1db2d46 after lead read of the three changed
+files (Unix-only; Windows path untouched). Main gate for it: /tmp/ygg-F6-main-gate.log.
+Independent reviews of F6 still run after the gate; Windows PTY remains manual.
+
+Parallel batch F1 (disjoint packages; all `go-backend`, worktree, `sonnet`):
+
+| Task | Owns (only) | Items |
+|---|---|---|
+| H-A hosts writes | internal/hosts/{confirmed.go,push_authorizer.go,getter.go} and their tests, internal/archtest | safety S1 archtest rule keeping ConfirmedHosts/CommentHost/RepoHost/NewConfirmedHosts out of api/mcp/agents; S2 push Authorize/transport bound to the repo path prefix; S3 + FE N2 definite failure for 400/401/403/422 POST replies, Unknown stays for 3xx/5xx/transport/other; FE S5 LookupRepo empty-ref proof (matching-refs 200 [], or on 409 fall back to branches+tags both empty) and drop the single-element loop; NewGetter http only for loopback |
+| T tasks | internal/tasks, internal/core/tasks | FE S4 ImportIssueDraft reads repo inside the tx and feeds real facts to PlanDraft, DraftRefuse -> RejectedError, GetDraftByDedupKey inside the same tx; N4 message() falls back to Row.Mode when turns are counted but no rows; zero Now/TaskID validated; DraftPending dead name |
+| R repos | internal/repos, internal/core/repos | noise: keep the sample only when Untracked >= NoiseMinUntracked, drop candidates nested under another candidate, unused Now in validNoiseSelection, document sample bias in the fact |
+
+Batch F2 (after F1 merges, because it shares internal/hosts with H-A):
+
+| Task | Owns | Items |
+|---|---|---|
+| H-B context | internal/hosts/context_*.go (not confirmed.go/push_authorizer.go/getter.go), internal/core/hosts, docs/design/phase-6-host-context.md | FE S1 shell interprets ContextCommand values and the no-client/no-token pre-checks go through the core; S2 ContextRejected in the sealed input set and a bad current-attempt payload leaves Loading no more; S3 deterministic provider errors (scope, decode, invalid identity) are not retried, MR with no version yet is retryable not unsupported; retained cache kept on refresh error; injected sleeper instead of real timers; one rate-limit authority documented/reconciled; ErrContextScope only for real scope errors, other resolver errors keep their kind; shadowed `e` renamed; negative cache for Blocked keys; zero Now validation; unused ScopeChanged/ConfigChanged decided; N1 design table updated |
+
+Cannot be closed by code now, kept as explicit contracts for the wiring work:
+safety S4 (issue provenance must come from a ContextResolver-validated read, test
+at wiring), NewGetterWithLogOrigins explicit allowlist at wiring, noise shell
+(NoiseStep has no consumer until the proposals executor), live GitHub proof of
+the empty-repo probe (manual, needs a test account), and the TM1 named test
+TestInvariant_4_HostContextRedacted (test-engineer batch).
+Each task: follow functional-effect:model; add a regression test per fix that
+fails without it; all five task commands pass; commit on its branch with the
+agent report format. No safety invariant is weakened by any item.
