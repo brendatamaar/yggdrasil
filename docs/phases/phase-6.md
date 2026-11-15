@@ -771,3 +771,17 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   assertions or relying on timing. One test-engineer owns only the cmd/ygg
   fixture file, parallel with H/R's disjoint package ownership (three total).
   Fix/verify the fixture on main before integrating T; preserve T's failure logs.
+
+- R branch t3/repo-noise-history committed 2d0cdc1 and released both repo
+  package trees. Lead inspected all changed production/test files and handoff:
+  bounded cached noise facts, pure conservative classifier/selection, tracked
+  history range/count/parser contracts and partial-zero handling match R scope.
+  No lead integration finding identified. All five agent Task commands pass,
+  with 528 frontend tests; owned race/fuzz and restored assertion-failing
+  threshold/partial controls recorded in /tmp/ygg-B2-R-handoff.json. This is
+  branch evidence only: no merge, independent review or feature completion yet.
+- H and the audit-fixture test-engineer both quota-stopped with owned edits
+  preserved and no commits. Human instructed Continue; resume those same
+  Codex threads/worktrees with original disjoint ownership. The fixture repair
+  remains first in the integration sequence, followed by feature branches one
+  at a time with all five main checks. Effective Batch 2 base stays 55d2c4e.
