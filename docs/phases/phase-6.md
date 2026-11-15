@@ -794,3 +794,19 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   Earlier green runs are historical, not substitutes for this failed gate.
   DoD remains open and H is unmerged. Diagnose frontend fixture before integration;
   no retry-until-pass or assertion weakening. Audit-fixture repair remains first.
+
+- Audit-fixture branch 075c4a1 merged --no-ff as d7176ab. Lead reviewed
+  the complete diff: separate empty Open set removes the legitimate auto-close
+  race; unchanged stored/API/audit state under HTTP 500, identical successful
+  control and exact version/audit assertions strengthen invariant 8. Original
+  propose/note/confirm checks retained. Agent all five tasks pass, 30 repeats,
+  five race runs, architecture and two restored assertion-failing controls pass.
+  Lead B2-audit-main five-task integration is queued/running, not yet claimed.
+- Lead reviewed T production/admission/dedup tests and H production reducers,
+  readers, HTTP boundaries, redaction and confirmed capabilities before merge.
+  Found H job log reads used remaining aggregate budget instead of 256 KiB
+  per-job cap. Small lead repair bda193d on released host branch takes the
+  smaller limit; an oversized log stops with explicit partial/truncated output.
+  Earlier branch passes do not verify this repair. Fresh combined-main checks
+  and post-land test map must cover the exact per-job cutoff and aggregate
+  failed-read accounting; no host feature merge or final review claimed yet.
