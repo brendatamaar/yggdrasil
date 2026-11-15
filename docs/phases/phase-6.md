@@ -810,3 +810,29 @@ Stop after presenting this plan. No agents have been spawned and no foundations 
   Earlier branch passes do not verify this repair. Fresh combined-main checks
   and post-land test map must cover the exact per-job cutoff and aggregate
   failed-read accounting; no host feature merge or final review claimed yet.
+
+- B2-audit-main CLOSED: actual generate/lint/typecheck/test/test:web each
+  exit 0 after audit-fixture merge, frontend 528/528. No feature branch merged.
+  Board fixture investigation remains in its isolated test-only worktree.
+
+### F6 — serial Unix PTY identity repair (inherited review follow-up)
+
+One platform-windows agent (Codex), before N takes platform ownership. Only
+`internal/platform/**`, including tests; no concurrent platform owner. Supports
+PL-02, SF-04 and safety invariants 5/11; contributes reliable terminal/process
+capabilities to Phase 6, without claiming E6 feature completion. Reuse F5's
+`exitObserver` retained-identity protocol and existing PTY/Process interfaces;
+no shared interface, dependency, schema or generated changes. The remaining
+`pty_unix.go` paths signal after liveness checks or unconditionally after reap.
+Both cancellation SIGKILL and natural-exit SIGHUP must finish while identity is
+retained; exclude future signals before actual reaping without blocking live
+process cancellation. Preserve scoped children/hangup, Close/Wait/error/registry
+semantics and Windows behavior. Use the lifecycle proof in lifecycle_unix.go.
+
+DoD: deterministic native-observer regressions for both missed interleavings,
+restored safe assertion-failing controls, full platform/race/repetitions, all
+five actual Task commands, CGO-disabled Linux/Darwin/Windows compile/vet. Lead
+merges sequentially with five main checks and fresh safety/functional reviews
+before platform ownership passes to N. Windows ConPTY/tree cancellation and
+Darwin native kqueue/stopped-child/rapid-exit behavior remain manual; report
+exact steps and expected outcomes. No real host or agent execution.
