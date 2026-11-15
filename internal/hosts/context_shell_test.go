@@ -21,11 +21,19 @@ import (
 type fakeContextClock struct {
 	mu sync.Mutex
 	t  time.Time
+	// zeroFrom, when positive, makes the zeroFrom-th and every later reading
+	// return the zero time (a broken clock).
+	zeroFrom int
+	reads    int
 }
 
 func (f *fakeContextClock) Now() time.Time {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.reads++
+	if f.zeroFrom > 0 && f.reads >= f.zeroFrom {
+		return time.Time{}
+	}
 	return f.t
 }
 
@@ -408,10 +416,22 @@ func TestContextShellUnusablePayloadBlocksInsteadOfHanging(t *testing.T) {
 // Item 10: a clock that returns no time must not create an instantly expired
 // entry, and must not leave the entry Loading.
 func TestContextShellZeroClockIsRefused(t *testing.T) {
-	h := newContextHarness(t, func(int) (ContextResult, error) { return okIssues() })
-	h.clock.mu.Lock()
-	h.clock.t = time.Time{}
-	h.clock.mu.Unlock()
+	// The clock breaks at the first reading, at the request, or only when the
+	// result arrives (the third reading): either way no Ready entry appears and
+	// nothing stays Loading.
+	for _, zeroFrom := range []int{1, 3} {
+		t.Run(fmt.Sprintf("zero from reading %d", zeroFrom), func(t *testing.T) {
+			h := newContextHarness(t, func(int) (ContextResult, error) { return okIssues() })
+			h.clock.mu.Lock()
+			h.clock.zeroFrom = zeroFrom
+			h.clock.mu.Unlock()
+			assertZeroClockRefused(t, h)
+		})
+	}
+}
+
+func assertZeroClockRefused(t *testing.T, h *contextHarness) {
+	t.Helper()
 	out, err := h.read()
 	if err == nil || out.Result != nil {
 		t.Fatalf("a zero time was accepted: %+v", out)
