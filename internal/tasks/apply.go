@@ -39,7 +39,9 @@ func (s *Service) entryFor(id core.TaskID) *entry {
 // applyOpts are the extras of one apply.
 type applyOpts struct {
 	// actor of the audit entries: "user" or "system".
-	actor string
+	actor      string
+	submission *submissionLink
+	draftOnly  bool
 	// create makes the task (as a draft) in the same transaction as the first
 	// step. Used for a new task's first message.
 	create *core.Task
@@ -97,6 +99,9 @@ func (s *Service) apply(ctx context.Context, id core.TaskID, mk func(db.TaskStat
 			}
 			e.st, e.valid = st, true
 		}
+		if o.draftOnly && e.st.Row.Status != core.TaskDraft {
+			return applyResult{}, &coretasks.UserError{Message: "Only an unstarted draft can be started. Send a message to continue this task."}
+		}
 		in := mk(e.st)
 		if in == nil {
 			return applyResult{Before: e.st.Task, After: e.st.Task, Row: e.st.Row}, nil
@@ -130,8 +135,25 @@ func (s *Service) apply(ctx context.Context, id core.TaskID, mk func(db.TaskStat
 					return err
 				}
 			}
+			if o.submission != nil {
+				_, digest, err := tx.GetTaskSubmission(ctx, o.submission.ID)
+				if err == nil {
+					if digest != o.submission.Digest {
+						return db.ErrDigestMismatch
+					}
+					return db.ErrConflict
+				}
+				if !errors.Is(err, db.ErrNotFound) {
+					return err
+				}
+			}
 			expected := e.st.Row.Version
 			if creating {
+				for _, rid := range o.create.RepoIDs {
+					if _, err := tx.GetTrackedReadyRepo(ctx, o.create.ProjectID, rid); err != nil {
+						return err
+					}
+				}
 				created, err := tx.CreateTask(ctx, *o.create)
 				if err != nil {
 					return err
@@ -145,6 +167,11 @@ func (s *Service) apply(ctx context.Context, id core.TaskID, mk func(db.TaskStat
 			version = v
 			if w.turn != nil {
 				if err := tx.SaveTurn(ctx, id, *w.turn, w.insertTurn); err != nil {
+					return err
+				}
+			}
+			if o.submission != nil {
+				if err := tx.LinkTaskSubmission(ctx, o.submission.ID, o.submission.Digest, id); err != nil {
 					return err
 				}
 			}
@@ -383,4 +410,14 @@ func (s *Service) legacyInterrupt(ctx context.Context) (int, error) {
 		return nil
 	})
 	return n, err
+}
+
+// appendImportAudit keeps import audit preparation and persistence together.
+// The caller supplies the same transaction that creates the draft/request link.
+func (s *Service) appendImportAudit(ctx context.Context, tx *db.Tx, id core.TaskID, created bool) error {
+	entry, err := s.auditEntry("user", "task.import", id, map[string]any{"created": created})
+	if err != nil {
+		return err
+	}
+	return tx.AppendAudit(ctx, entry)
 }

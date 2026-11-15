@@ -145,6 +145,10 @@ type MessageResult struct {
 // one transaction, and then enqueues the turn. Errors that are the person's to
 // fix are *coretasks.UserError (bad input) or *RejectedError (refused).
 func (s *Service) Message(ctx context.Context, req MessageRequest) (MessageResult, error) {
+	return s.message(ctx, req, nil, false)
+}
+
+func (s *Service) message(ctx context.Context, req MessageRequest, submission *submissionLink, draftOnly bool) (MessageResult, error) {
 	if s.isClosed() {
 		return MessageResult{}, &RejectedError{Reason: "shutting_down", Message: "Yggdrasil is shutting down. Start it again, then retry."}
 	}
@@ -156,6 +160,9 @@ func (s *Service) Message(ctx context.Context, req MessageRequest) (MessageResul
 		st, err := s.c.Store.GetTaskState(ctx, req.TaskID)
 		if err != nil {
 			return MessageResult{}, err
+		}
+		if st.Row.Source != nil && st.Row.Source.Kind == core.SourceRepoSetup {
+			return MessageResult{}, &coretasks.UserError{Message: "Repo setup drafts cannot start an agent."}
 		}
 		existing = &st
 	}
@@ -190,7 +197,16 @@ func (s *Service) Message(ctx context.Context, req MessageRequest) (MessageResul
 
 	var prev *core.TaskMode
 	if existing != nil && existing.Task.Turns > 0 {
-		m := existing.Row.Mode
+		// The first turn fixes the task's writing mode. Imported tasks were
+		// persisted as Ask drafts before the user chose that first mode.
+		turns, err := s.c.Store.ListTaskTurns(ctx, existing.Row.ID)
+		if err != nil {
+			return MessageResult{}, err
+		}
+		if len(turns) == 0 {
+			return MessageResult{}, errors.New("a started task has no first turn")
+		}
+		m := turns[0].Mode
 		prev = &m
 	}
 	adm, err := s.admit(ctx, adapter, pm.Mode, prev, req.OptIn, repos)
@@ -201,7 +217,7 @@ func (s *Service) Message(ctx context.Context, req MessageRequest) (MessageResul
 	id := req.TaskID
 	turn := coretasks.TurnID(s.c.NewID("trn"))
 	now := s.c.Now().UTC()
-	opts := applyOpts{actor: "user"}
+	opts := applyOpts{actor: "user", submission: submission, draftOnly: draftOnly}
 	if existing == nil {
 		id = core.TaskID(s.c.NewID("tsk"))
 		task := coretasks.NewSubmissionTask(id, project.ID, pm, repos, now)
@@ -219,6 +235,9 @@ func (s *Service) Message(ctx context.Context, req MessageRequest) (MessageResul
 	}
 	res, err := s.apply(ctx, id, func(db.TaskState) coretasks.Input { return msg }, opts)
 	if err != nil {
+		if submission != nil && errors.Is(err, db.ErrConflict) {
+			return s.submissionResult(ctx, *submission)
+		}
 		return MessageResult{}, err
 	}
 	if res.Reject != nil {
