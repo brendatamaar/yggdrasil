@@ -847,3 +847,12 @@ exact steps and expected outcomes. No real host or agent execution.
   frontend and all five final commands pass; initial lint failure retained.
   Lead B2-board-main five-task integration is running/unclaimed. T/R/H remain
   unmerged until it passes; F6 alone owns platform in its separate worktree.
+
+- B2-board-main: generate/lint/typecheck/test PASS, test:web FAIL (527/528).
+  Board tests pass; untouched WidgetGrid.test remove/persist/reset case times
+  out at 5 seconds (5114 ms), no assertion failure shown. Preserve original
+  /tmp/ygg-phase6-B2-board-main-test-web.log. The green branch run does not
+  close main gate. Same test-engineer gets separate ownership ONLY of widget
+  grid test file to diagnose lifecycle/query costs with controlled evidence;
+  no blanket timeout/retry or assertion relaxation. F6 platform remains disjoint.
+  All feature branches remain held until this integration failure is resolved.
