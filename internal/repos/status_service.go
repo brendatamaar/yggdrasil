@@ -167,6 +167,9 @@ func (s *StatusService) loadActive(ctx context.Context) ([]corerepos.RepoRef, er
 			return nil, fmt.Errorf("list repos of project %s: %w", p.ID, err)
 		}
 		for _, r := range rs {
+			if r.Readiness != "" && r.Readiness != core.RepoReady {
+				continue
+			}
 			path, err := corerepos.NewCleanPath(r.Path)
 			if err != nil {
 				s.log.Warn("repo status skips a repo with an unusable path", "repo", r.ID, "err", err)

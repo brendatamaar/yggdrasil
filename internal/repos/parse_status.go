@@ -2,6 +2,7 @@ package repos
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/apperr"
@@ -33,6 +34,14 @@ func SnapshotFrom(st git.Status, commit *git.Commit) (corerepos.Snapshot, error)
 		Ahead: st.Ahead, Behind: st.Behind, Staged: st.Staged, Unstaged: st.Unstaged,
 		Untracked: st.Untracked, Conflicted: st.Conflicted,
 	}
+	var sample []string
+	for _, file := range st.Files {
+		if file.Worktree == "?" || file.Index == "?" {
+			sample = append(sample, file.Path)
+		}
+	}
+	s.UntrackedPaths = strings.Join(sample, "\x00")
+	s.UntrackedTruncated = st.Truncated
 	if commit != nil {
 		s.LastCommit = &corerepos.CommitRef{OID: commit.Hash, Subject: commit.Subject, Author: commit.Author, At: commit.Date}
 	}

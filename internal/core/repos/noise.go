@@ -2,7 +2,11 @@ package repos
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
 )
@@ -156,19 +160,147 @@ func (f NoiseFacts) Validate() error {
 	if f.UntrackedCount < 0 || len(f.Sample) > f.UntrackedCount && !f.Truncated {
 		return fmt.Errorf("noise facts: the sample is larger than the untracked count")
 	}
+	if len(f.Sample) > 5000 {
+		return fmt.Errorf("noise sample exceeds status limit")
+	}
+	seen := map[string]bool{}
+	for _, p := range f.Sample {
+		if !ValidNoisePath(p) || seen[p] {
+			return fmt.Errorf("invalid or duplicate noise path")
+		}
+		seen[p] = true
+	}
 	return nil
 }
 
-// NoiseStep is (noise2, commands) = NoiseStep(noise1, input) following
-// docs/design/phase-6-noise.md.
-//
-// PENDING (task R): the foundation freezes the types. Every input returns the
-// state unchanged and no commands, so nothing is suggested and no proposal is
-// created until the classifier lands; it must never report a complete scan.
+// NoiseStep implements the approved analysis and selection transitions. It never
+// writes files or executes proposals.
 func NoiseStep(n Noise, in NoiseInput) (Noise, []NoiseCommand) {
-	switch in.(type) {
-	case NoiseObserved, NoiseSelected, NoiseProposalDecided, NoiseScopeRemoved:
-		return n, nil
+	switch x := in.(type) {
+	case NoiseScopeRemoved:
+		n.State = NoSuggestion{}
+	case NoiseObserved:
+		switch n.State.(type) {
+		case NoSuggestion, Suggested:
+			if x.Facts.Repo != n.Repo || x.Facts.Validate() != nil {
+				return n, nil
+			}
+			n.State = classifyNoise(x.Facts)
+		case AwaitingConfirmation:
+		}
+	case NoiseSelected:
+		s, ok := n.State.(Suggested)
+		if !ok || !validNoiseSelection(s, x) {
+			return n, nil
+		}
+		n.State = AwaitingConfirmation{Proposal: x.Proposal}
+		entries := slices.Clone(x.Entries)
+		slices.Sort(entries)
+		return n, []NoiseCommand{NoiseCreateIgnoreProposal{Proposal: x.Proposal, RequestID: x.RequestID, Entries: entries, ExpectHash: x.CurrentHash, ExpectAbsent: x.Absent}}
+	case NoiseProposalDecided:
+		s, ok := n.State.(AwaitingConfirmation)
+		if ok && s.Proposal == x.Proposal && (x.Status == core.ProposalExecuted || x.Status == core.ProposalRejected || x.Status == core.ProposalFailed) {
+			n.State = NoSuggestion{}
+			return n, []NoiseCommand{NoiseRefreshStatus{Repo: n.Repo}}
+		}
 	}
 	return n, nil
+}
+
+// RunNoise folds inputs without performing effects.
+func RunNoise(n Noise, inputs []NoiseInput) (Noise, []NoiseCommand) {
+	var commands []NoiseCommand
+	for _, in := range inputs {
+		next, cs := NoiseStep(n, in)
+		n = next
+		commands = append(commands, cs...)
+	}
+	return n, commands
+}
+
+// ValidNoisePath accepts exact slash-separated file paths, never pathspecs,
+// traversal, Windows ADS, control characters or ambiguous Windows components.
+func ValidNoisePath(p string) bool {
+	if p == "" || len(p) > 4096 || !utf8.ValidString(p) || strings.ContainsAny(p, `\:`) {
+		return false
+	}
+	for _, r := range p {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	for part := range strings.SplitSeq(p, "/") {
+		if part == "" || part == "." || part == ".." || strings.HasSuffix(part, ".") || strings.HasSuffix(part, " ") || strings.EqualFold(part, ".git") {
+			return false
+		}
+	}
+	return true
+}
+
+func classifyNoise(f NoiseFacts) NoiseState {
+	if f.UntrackedCount < NoiseMinUntracked || len(f.Sample) < NoiseMinSample {
+		return NoSuggestion{}
+	}
+	counts := map[string]int{}
+	for _, file := range f.Sample {
+		parts := strings.Split(file, "/")
+		end := 0
+		for _, part := range parts[:len(parts)-1] {
+			end += len(part)
+			if slices.Contains(NoiseDirs(), part) {
+				// Slice the immutable path instead of allocating every prefix.
+				counts[file[:end]]++
+			}
+			end++
+		}
+	}
+	evidence := NoiseEvidence{Total: f.UntrackedCount, Sampled: len(f.Sample)}
+	var candidates []NoiseCandidate
+	for dir, count := range counts {
+		if count < NoiseMinSample || count < (len(f.Sample)+1)/2 {
+			continue
+		}
+		pattern := "/" + strings.NewReplacer(`\`, `\\`, "*", `\*`, "?", `\?`, "[", `\[`, "]", `\]`, "!", `\!`, "#", `\#`, " ", `\ `).Replace(dir) + "/"
+		e := evidence
+		e.UnderDirectory = count
+		candidates = append(candidates, NoiseCandidate{Directory: dir, SampleCount: count, Pattern: pattern, Evidence: e, Incomplete: f.Truncated || len(f.Sample) < f.UntrackedCount})
+	}
+	slices.SortFunc(candidates, func(a, b NoiseCandidate) int { return strings.Compare(a.Directory, b.Directory) })
+	if len(candidates) == 0 {
+		return NoSuggestion{}
+	}
+	return Suggested{Candidates: candidates, Evidence: evidence}
+}
+
+func validNoiseSelection(s Suggested, x NoiseSelected) bool {
+	if x.Proposal.Validate() != nil || x.RequestID.Validate() != nil || x.Now.IsZero() || len(x.Entries) == 0 || len(x.Entries) > NoiseMaxEntries {
+		return false
+	}
+	if x.Absent {
+		if x.CurrentHash != "" {
+			return false
+		}
+	} else {
+		if len(x.CurrentHash) != 64 {
+			return false
+		}
+		for _, c := range x.CurrentHash {
+			if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+				return false
+			}
+		}
+	}
+	seen := map[string]bool{}
+	size := 0
+	for _, entry := range x.Entries {
+		if seen[entry] {
+			return false
+		}
+		seen[entry] = true
+		size += len(entry) + 1
+		if size > NoiseMaxBytes || !slices.ContainsFunc(s.Candidates, func(c NoiseCandidate) bool { return c.Pattern == entry }) {
+			return false
+		}
+	}
+	return true
 }
