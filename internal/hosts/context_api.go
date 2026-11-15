@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -54,10 +55,10 @@ func (r *contextRead) get(path string, dst interface{}) ([]byte, error) {
 	r.more = hasNextContextPage(resp.Header)
 	if dst != nil {
 		if strings.TrimSpace(string(resp.Body)) == "null" {
-			return nil, errors.New("missing host context response")
+			return nil, invalidContext("missing host context response")
 		}
 		if err = json.Unmarshal(resp.Body, dst); err != nil {
-			return nil, errors.New("invalid host context response")
+			return nil, invalidContext("invalid host context response")
 		}
 	}
 	return resp.Body, nil
@@ -100,8 +101,12 @@ func (a ContextAPI) issue(w contextIssueWire) (corehosts.IssueDetail, error) {
 		body = w.Description
 		link = w.WebURL
 	}
-	if n <= 0 || w.Title == "" || len(w.Pull) > 0 {
-		return corehosts.IssueDetail{}, errors.New("invalid issue identity")
+	if len(w.Pull) > 0 {
+		// A pull request is another object than the issue that was asked for.
+		return corehosts.IssueDetail{}, ErrContextScope
+	}
+	if n <= 0 || w.Title == "" {
+		return corehosts.IssueDetail{}, invalidContext("invalid issue identity")
 	}
 	// Host links are display-only, but must not carry credentials or leave origin.
 	if link != "" {
@@ -119,14 +124,14 @@ func (a ContextAPI) issue(w contextIssueWire) (corehosts.IssueDetail, error) {
 		var label string
 		if a.GitLab {
 			if json.Unmarshal(raw, &label) != nil {
-				return corehosts.IssueDetail{}, errors.New("invalid issue label")
+				return corehosts.IssueDetail{}, invalidContext("invalid issue label")
 			}
 		} else {
 			var obj struct {
 				Name string `json:"name"`
 			}
 			if json.Unmarshal(raw, &obj) != nil {
-				return corehosts.IssueDetail{}, errors.New("invalid issue label")
+				return corehosts.IssueDetail{}, invalidContext("invalid issue label")
 			}
 			label = obj.Name
 		}
@@ -152,7 +157,7 @@ func (a ContextAPI) Issues(ctx context.Context, inst corehosts.Instance, token s
 			return ContextResult{}, err
 		}
 		if len(items) > 50 {
-			return ContextResult{}, errors.New("host issue page exceeds limit")
+			return ContextResult{}, invalidContext("host issue page exceeds limit")
 		}
 		for _, w := range items {
 			if len(w.Pull) > 0 {
@@ -266,12 +271,12 @@ func (a ContextAPI) MRDiff(ctx context.Context, inst corehosts.Instance, token s
 	case "merged":
 		state = corehosts.MRMerged
 	default:
-		return ContextResult{}, errors.New("invalid merge request status")
+		return ContextResult{}, invalidContext("invalid merge request status")
 	}
 	value := corehosts.MRContext{MR: corehosts.MergeRequest{Number: n, Title: w.Title, Source: source, Target: target, State: state}, Head: head}
 	key := corehosts.ContextKey{Repo: "rep_context", Kind: corehosts.ContextMRDiff, ObjectID: strconv.Itoa(number), Head: head}
 	if head == "" || key.Validate() != nil {
-		return ContextResult{}, errors.New("invalid immutable merge request head")
+		return ContextResult{}, invalidContext("invalid immutable merge request head")
 	}
 	// Diff by immutable commit range rather than the mutable pull request route.
 	if !a.GitLab {
@@ -279,7 +284,7 @@ func (a ContextAPI) MRDiff(ctx context.Context, inst corehosts.Instance, token s
 		baseKey := key
 		baseKey.Head = w.Base.SHA
 		if w.Base.SHA == "" || baseKey.Validate() != nil {
-			return ContextResult{}, errors.New("invalid immutable base")
+			return ContextResult{}, invalidContext("invalid immutable base")
 		}
 		var comparison struct {
 			Files []struct {
@@ -322,7 +327,9 @@ func (a ContextAPI) MRDiff(ctx context.Context, inst corehosts.Instance, token s
 			}
 		}
 		if version == 0 {
-			return ContextResult{}, ErrContextUnsupported
+			// A just-pushed head has no diff version for a short while: the
+			// host catches up, so this is a temporary failure, not a refusal.
+			return ContextResult{}, fetchErr(corehosts.FailTransient, "the host has no diff version for this head yet")
 		}
 		var diff struct {
 			Head     string `json:"head_commit_sha"`
@@ -418,14 +425,14 @@ func (a ContextAPI) FailedJobs(ctx context.Context, inst corehosts.Instance, tok
 			_, err = r.get(jobPath, &w)
 			jobs = w.Jobs
 			if err == nil && w.Jobs == nil {
-				err = errors.New("missing job list")
+				err = invalidContext("missing job list")
 			}
 		}
 		if err != nil {
 			return ContextResult{}, err
 		}
 		if len(jobs) > 50 {
-			return ContextResult{}, errors.New("host jobs page exceeds limit")
+			return ContextResult{}, invalidContext("host jobs page exceeds limit")
 		}
 		for _, j := range jobs {
 			failed := j.Status == "failed" || j.Conclusion == "failure" || j.Conclusion == "timed_out"
@@ -433,7 +440,7 @@ func (a ContextAPI) FailedJobs(ctx context.Context, inst corehosts.Instance, tok
 				continue
 			}
 			if j.ID <= 0 {
-				return ContextResult{}, errors.New("invalid job identity")
+				return ContextResult{}, invalidContext("invalid job identity")
 			}
 			log := corehosts.JobLog{JobID: strconv.FormatInt(j.ID, 10), Name: j.Name, Stage: j.Stage}
 			logPath := a.project(p) + "/actions/jobs/" + log.JobID + "/logs"
@@ -498,6 +505,15 @@ func validContextProject(p corehosts.ProjectPath) bool {
 
 // ErrContextTooLarge is a bounded read refusal, not a retryable network error.
 var ErrContextTooLarge = errContext("host context exceeds the response budget")
+
+// ErrContextInvalid marks a host answer that cannot be used (undecodable JSON,
+// a broken identity, a missing immutable head). The same request would get the
+// same answer, so it is a refusal and is never retried.
+var ErrContextInvalid = errContext("host context: the host sent an answer that cannot be used")
+
+// invalidContext wraps ErrContextInvalid with what was wrong. The text carries
+// no host data, so it is safe in logs.
+func invalidContext(what string) error { return fmt.Errorf("%w: %s", ErrContextInvalid, what) }
 
 func hasNextContextPage(header http.Header) bool {
 	return header.Get("X-Next-Page") != "" || strings.Contains(header.Get("Link"), `rel="next"`) || strings.Contains(header.Get("Link"), "rel=next")

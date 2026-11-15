@@ -34,8 +34,22 @@ type ContextResult struct {
 }
 
 // ContextClient is implemented by provider clients that can read context.
-// Errors are *FetchError (classified) like HostClient's. A provider that cannot
-// give a kind returns ErrContextUnsupported for it.
+// Errors are classified, and the class decides what the reader does:
+//
+//   - *FetchError of kind transient or rate_limited: retried (at most twice, 1 s
+//     then 3 s, or at the rate-limit deadline when that is later);
+//   - *FetchError of kind unauthorized or not_found: not retried; the read is
+//     blocked as forbidden or not found;
+//   - ErrContextUnsupported or ErrContextInvalid (the host sent an answer that
+//     cannot be used): not retried; blocked as unsupported;
+//   - ErrContextTooLarge: not retried; blocked as too large;
+//   - ErrContextScope (another object than the key names): not retried; blocked
+//     as not found;
+//   - anything else: treated as transient.
+//
+// A provider that cannot give a kind returns ErrContextUnsupported for it. A
+// state that will change by itself (a just-pushed merge request that has no
+// diff version yet) is a transient *FetchError, never ErrContextUnsupported.
 type ContextClient interface {
 	// FailedJobs lists the failed jobs of run runID and their logs. head is the
 	// commit the caller believes the run built ("" when unknown).
@@ -69,6 +83,11 @@ type ContextOutcome struct {
 
 // ErrContextScope is returned when the key's repo is not tracked and ready, is
 // not linked to a configured instance, or the object does not belong to it.
+// A ContextResolver reports exactly those cases by wrapping it; the reader
+// keeps every other resolver error (a database failure) as it is. A
+// ContextClient that finds the object is another one than the key names (a
+// foreign run id, a pull request where an issue was asked for) returns it too:
+// the reader then refuses the read as "not found" without retrying.
 var ErrContextScope = errContext("host context: the repo is not tracked or has no host")
 
 // ErrContextUnsupported is returned by a ContextClient for a kind the provider
@@ -91,9 +110,15 @@ type CommentHost interface {
 	FindReviewComment(ctx context.Context, repo core.RepoID, mr int, marker, bodyHash, expectedHead string) (coreproposals.CommentLookup, error)
 }
 
-// ErrOutcomeUnknown marks a mutating host call whose result is unknown
-// (timeout, cancellation, lost reply). The caller must reconcile read-only and
-// must not resend blindly.
+// ErrOutcomeUnknown marks a mutating host call whose result is unknown: a 3xx,
+// 5xx or 429 status, another unexpected status, a transport error, a timeout
+// or cancellation, or a lost or oversized reply. The caller must reconcile
+// read-only and must not resend blindly.
+//
+// It is NOT returned for a definite refusal. The confirmed writers answer 400
+// or 422 with ErrWriteRejected and 401 or 403 with a *FetchError of kind
+// unauthorized: the host looked at the request and refused it, nothing was
+// created or changed and there is nothing to reconcile.
 var ErrOutcomeUnknown = errContext("host write: the outcome is unknown")
 
 // RepoOwnerInfo is what the host says about an owner account.
@@ -160,6 +185,13 @@ type RepoHost interface {
 // can reject foreign origins, userinfo and unsafe URLs before adding credentials.
 // It must not change the destination, method, body or other headers. The
 // transport must also refuse redirects to another origin.
+//
+// Wiring contract: Authorize checks only the clone ORIGIN (scheme, host, port).
+// The binding to one repository path lives in NewPushTransport(authorizer,
+// instance, repoPath, base), which refuses a request outside repoPath before
+// the authorizer runs. Wiring must therefore always go through that transport
+// and never call Authorize directly, or a credential could be attached to
+// another repository on the same host.
 type PushAuthorizer interface {
 	Authorize(ctx context.Context, inst corehosts.InstanceID, req *http.Request) error
 }

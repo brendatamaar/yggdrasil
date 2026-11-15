@@ -39,6 +39,12 @@ const (
 	// ContextMaxRetries is the number of retries after the first attempt for a
 	// temporary failure; the waits are ContextBackoff.
 	ContextMaxRetries = 2
+	// ContextBlockedTTL is how long a Blocked result of a read (forbidden, not
+	// found, unsupported, too large, retries exhausted) answers repeated
+	// requests, so an unauthorized key costs one host call per window instead
+	// of one per click. Scope-derived blocks (untracked, no token, host kind
+	// unsupported) carry no window: the shell supplies a fresh scope each time.
+	ContextBlockedTTL = 5 * time.Second
 )
 
 // ContextBackoff is the wait before retry n (1-based): 1 s, then 3 s.
@@ -275,8 +281,13 @@ type CtxWaiting struct {
 	Retries int
 }
 
-// CtxBlocked: no read until the config changes or the user asks again.
-type CtxBlocked struct{ Reason ContextBlockReason }
+// CtxBlocked: no read until the config changes or the user asks again after
+// Until. A zero Until means the block came from the scope the shell supplied
+// and is never answered from cache.
+type CtxBlocked struct {
+	Reason ContextBlockReason
+	Until  time.Time
+}
 
 func (CtxEmpty) isContextState()   {}
 func (CtxLoading) isContextState() {}
@@ -303,14 +314,17 @@ const (
 	ScopeTracked ContextScope = "tracked"
 	// ScopeUntracked: not tracked, not ready or not linked.
 	ScopeUntracked ContextScope = "untracked"
-	// ScopeUnsupported: tracked but the host kind cannot give this context.
+	// ScopeUnsupported: tracked but the host kind cannot give this context
+	// (no client for the instance's kind).
 	ScopeUnsupported ContextScope = "unsupported"
+	// ScopeNoToken: tracked and supported but the instance has no token.
+	ScopeNoToken ContextScope = "no_token"
 )
 
 // Validate reports whether s is a known scope.
 func (s ContextScope) Validate() error {
 	switch s {
-	case ScopeTracked, ScopeUntracked, ScopeUnsupported:
+	case ScopeTracked, ScopeUntracked, ScopeUnsupported, ScopeNoToken:
 		return nil
 	}
 	return fmt.Errorf("unknown host context scope %q", string(s))
@@ -353,22 +367,41 @@ type ContextWake struct {
 	Now     time.Time
 }
 
+// ContextRejected: attempt Attempt ended with a terminal refusal that retrying
+// cannot fix: the host cannot give this (unsupported), the object is not there
+// or is another one (not found), or it is over the budget (too large).
+type ContextRejected struct {
+	Key     ContextKey
+	Attempt int
+	Reason  ContextBlockReason
+	Now     time.Time
+}
+
+// ContextRateLimited: before reading, the shell found the instance rate
+// limited until Until. This is a wait, not a failure: it does not use a retry.
+type ContextRateLimited struct {
+	Key     ContextKey
+	Attempt int
+	Until   time.Time
+	Now     time.Time
+}
+
 // ContextCancelled: the caller gave up on an attempt.
 type ContextCancelled struct{ Attempt int }
 
-// ContextScopeChanged: the repo was untracked or the head the key is pinned to
-// moved.
-type ContextScopeChanged struct {
-	Scope ContextScope
-	Head  string
-}
+// ContextScopeChanged: the target the key resolves to changed (relinked,
+// another project or revision). Everything held for the key is stale.
+type ContextScopeChanged struct{}
 
-// ContextConfigChanged: instances or tokens changed; a Blocked key may retry.
-type ContextConfigChanged struct{ Now time.Time }
+// ContextConfigChanged: the instance or its token changed. Everything held for
+// the key was read with the old configuration and is stale.
+type ContextConfigChanged struct{}
 
 func (ContextRequested) isContextInput()     {}
 func (ContextFetched) isContextInput()       {}
 func (ContextFetchFailed) isContextInput()   {}
+func (ContextRejected) isContextInput()      {}
+func (ContextRateLimited) isContextInput()   {}
 func (ContextWake) isContextInput()          {}
 func (ContextCancelled) isContextInput()     {}
 func (ContextScopeChanged) isContextInput()  {}
@@ -421,25 +454,28 @@ func (CtxPublishContext) isContextCommand() {}
 func (CtxExplain) isContextCommand()        {}
 
 // ContextStep decides one context transition. Scope is checked before cache use;
-// the shell revalidates scope before executing and accepting a read.
+// the shell revalidates scope before executing and accepting a read. A time
+// input that is zero is invalid (it could create an instantly expired entry or
+// an instantly due wake): the step ignores the input.
 func ContextStep(e ContextEntry, in ContextInput) (ContextEntry, []ContextCommand) {
 	switch v := in.(type) {
 	case ContextRequested:
-		if v.Key.Validate() != nil || v.Scope.Validate() != nil {
-			return e, nil
-		}
-		if e.Key != v.Key {
+		if v.Now.IsZero() || v.Key.Validate() != nil || v.Scope.Validate() != nil || e.Key != v.Key {
 			return e, nil
 		}
 		if v.Scope != ScopeTracked {
 			reason := ContextUntracked
-			if v.Scope == ScopeUnsupported {
+			switch v.Scope {
+			case ScopeUnsupported:
 				reason = ContextUnsupported
+			case ScopeNoToken:
+				reason = ContextNoToken
 			}
-			old := e.Seq
+			cancel := contextCancelCommands(e)
 			e.Seq++
+			e.Retries = 0
 			e.State = CtxBlocked{Reason: reason}
-			return e, []ContextCommand{CtxCancelRead{Attempt: old}, CtxExplain{Key: e.Key, Reason: reason}}
+			return e, append(cancel, CtxExplain{Key: e.Key, Reason: reason})
 		}
 		switch st := e.State.(type) {
 		case CtxReady:
@@ -450,25 +486,30 @@ func ContextStep(e ContextEntry, in ContextInput) (ContextEntry, []ContextComman
 			if v.Now.Before(st.Expires) {
 				return e, []ContextCommand{CtxReturnCached{Key: e.Key}}
 			}
+		case CtxBlocked:
+			if v.Now.Before(st.Until) {
+				return e, []ContextCommand{CtxReturnCached{Key: e.Key}}
+			}
 		case CtxLoading:
 			return e, []ContextCommand{CtxJoinRequest{Key: e.Key}}
 		case CtxWaiting:
 			return e, []ContextCommand{CtxJoinRequest{Key: e.Key}}
-		case CtxEmpty, CtxBlocked:
+		case CtxEmpty:
 		}
 		e.Retries = 0
 		return contextStart(e)
 	case ContextFetched:
-		st, ok := e.State.(CtxLoading)
-		if !ok || v.Key != e.Key || st.Attempt != v.Attempt || v.Attempt != e.Seq || !ContextPayloadMatches(e.Key, v.Value) {
+		if !contextCurrent(e, v.Key, v.Attempt) || v.Now.IsZero() {
 			return e, nil
 		}
-		if len(v.Unavailable) > ContextMaxEntries {
-			return e, nil
+		// A current attempt with an unusable payload must not stay Loading for
+		// ever: the host answered something this key cannot use.
+		if !ContextPayloadMatches(e.Key, v.Value) || len(v.Unavailable) > ContextMaxEntries {
+			return contextBlock(e, ContextUnsupported, v.Now)
 		}
 		for _, gap := range v.Unavailable {
 			if gap.Reason.Validate() != nil {
-				return e, nil
+				return contextBlock(e, ContextUnsupported, v.Now)
 			}
 		}
 		expires := v.Now.Add(ContextCacheTTL)
@@ -479,8 +520,7 @@ func ContextStep(e ContextEntry, in ContextInput) (ContextEntry, []ContextComman
 		}
 		return e, []ContextCommand{CtxPublishContext{Key: e.Key, Attempt: v.Attempt}}
 	case ContextFetchFailed:
-		st, ok := e.State.(CtxLoading)
-		if !ok || v.Key != e.Key || st.Attempt != v.Attempt || v.Attempt != e.Seq {
+		if !contextCurrent(e, v.Key, v.Attempt) || v.Now.IsZero() {
 			return e, nil
 		}
 		reason := ContextRetryExhausted
@@ -504,11 +544,25 @@ func ContextStep(e ContextEntry, in ContextInput) (ContextEntry, []ContextComman
 		case FailNotFound:
 			reason = ContextNotFound
 		}
-		e.State = CtxBlocked{Reason: reason}
-		return e, []ContextCommand{CtxExplain{Key: e.Key, Reason: reason}}
+		return contextBlock(e, reason, v.Now)
+	case ContextRejected:
+		if !contextCurrent(e, v.Key, v.Attempt) || v.Now.IsZero() {
+			return e, nil
+		}
+		switch v.Reason {
+		case ContextNotFound, ContextUnsupported, ContextTooLarge:
+			return contextBlock(e, v.Reason, v.Now)
+		}
+		return e, nil
+	case ContextRateLimited:
+		if !contextCurrent(e, v.Key, v.Attempt) || v.Now.IsZero() || !v.Until.After(v.Now) {
+			return e, nil
+		}
+		e.State = CtxWaiting{Attempt: e.Seq, At: v.Until, Reason: WaitRateLimited, Retries: e.Retries}
+		return e, []ContextCommand{CtxScheduleWake{Attempt: e.Seq, At: v.Until}}
 	case ContextWake:
 		st, ok := e.State.(CtxWaiting)
-		if !ok || st.Attempt != v.Attempt || e.Seq != v.Attempt || v.Now.Before(st.At) {
+		if !ok || v.Now.IsZero() || st.Attempt != v.Attempt || e.Seq != v.Attempt || v.Now.Before(st.At) {
 			return e, nil
 		}
 		return contextStart(e)
@@ -519,24 +573,43 @@ func ContextStep(e ContextEntry, in ContextInput) (ContextEntry, []ContextComman
 		switch e.State.(type) {
 		case CtxLoading, CtxWaiting:
 			e.Seq++
+			e.Retries = 0
 			e.State = CtxEmpty{}
 			return e, []ContextCommand{CtxCancelRead(v)}
 		case CtxEmpty, CtxReady, CtxPartial, CtxBlocked:
 		}
-	case ContextScopeChanged:
-		if v.Scope != ScopeTracked || e.Key.Head != v.Head {
-			old := e.Seq
-			e.Seq++
-			e.State = CtxEmpty{}
-			return e, []ContextCommand{CtxCancelRead{Attempt: old}}
-		}
-	case ContextConfigChanged:
-		// Configuration alone supplies no current scope proof. Require Requested.
-		if _, ok := e.State.(CtxBlocked); ok {
-			e.State = CtxEmpty{}
-		}
+	case ContextScopeChanged, ContextConfigChanged:
+		cancel := contextCancelCommands(e)
+		e.Seq++
+		e.Retries = 0
+		e.State = CtxEmpty{}
+		return e, cancel
 	}
 	return e, nil
+}
+
+// contextCurrent reports whether (key, attempt) is the attempt now in flight:
+// the entry is Loading it and nothing newer was issued.
+func contextCurrent(e ContextEntry, key ContextKey, attempt int) bool {
+	st, ok := e.State.(CtxLoading)
+	return ok && key == e.Key && st.Attempt == attempt && attempt == e.Seq
+}
+
+// contextCancelCommands stops the read or wait that is in flight, if any.
+func contextCancelCommands(e ContextEntry) []ContextCommand {
+	switch e.State.(type) {
+	case CtxLoading, CtxWaiting:
+		return []ContextCommand{CtxCancelRead{Attempt: e.Seq}}
+	case CtxEmpty, CtxReady, CtxPartial, CtxBlocked:
+	}
+	return nil
+}
+
+// contextBlock ends the current attempt without data. The block answers from
+// cache for ContextBlockedTTL.
+func contextBlock(e ContextEntry, reason ContextBlockReason, now time.Time) (ContextEntry, []ContextCommand) {
+	e.State = CtxBlocked{Reason: reason, Until: now.Add(ContextBlockedTTL)}
+	return e, []ContextCommand{CtxExplain{Key: e.Key, Reason: reason}}
 }
 
 func contextStart(e ContextEntry) (ContextEntry, []ContextCommand) {
@@ -583,18 +656,6 @@ func ContextPayloadMatches(k ContextKey, p ContextPayload) bool {
 		return len(v.Diff) <= ContextMaxPromptBytes && k.Kind == ContextMRDiff && strconv.Itoa(v.MR.Number) == k.ObjectID && (len(v.Head) == 40 || len(v.Head) == 64) && isLowerHex(v.Head) && v.Head == k.Head
 	}
 	return false
-}
-
-// ContextReject classifies terminal capability refusals that the polling
-// FailKind cannot represent (unsupported source or an oversized context).
-// Like a fetch result it is fenced to the current loading attempt.
-func ContextReject(e ContextEntry, attempt int, reason ContextBlockReason) (ContextEntry, []ContextCommand) {
-	loading, ok := e.State.(CtxLoading)
-	if !ok || loading.Attempt != attempt || e.Seq != attempt || reason.Validate() != nil {
-		return e, nil
-	}
-	e.State = CtxBlocked{Reason: reason}
-	return e, []ContextCommand{CtxExplain{Key: e.Key, Reason: reason}}
 }
 
 func contextHead(s string) bool { return (len(s) == 40 || len(s) == 64) && isLowerHex(s) }

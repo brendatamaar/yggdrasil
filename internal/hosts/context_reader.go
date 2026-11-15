@@ -23,33 +23,119 @@ type ContextTarget struct {
 
 // ContextResolver is injected by application wiring; it must never resolve a
 // reserved, untracked or foreign repo. It is called before cache and publication.
+//
+// A repo that is not tracked, not ready, not linked to a host or whose object
+// is foreign is reported with an error that wraps ErrContextScope. Every other
+// error (a database failure, say) is an infrastructure failure: the reader
+// passes it on with its kind intact and never turns it into ErrContextScope.
 type ContextResolver interface {
 	ResolveContext(context.Context, corehosts.ContextKey) (ContextTarget, error)
 }
 
+// ContextSleeper waits for d or until ctx is done, whichever comes first, and
+// returns ctx.Err() in the second case. The default uses a real timer; tests
+// inject a fake so the 1 s / 3 s retry backoff does not run in real time.
+// Nothing outlives the call: no detached timer or goroutine.
+type ContextSleeper interface {
+	Sleep(ctx context.Context, d time.Duration) error
+}
+
+type realContextSleeper struct{}
+
+func (realContextSleeper) Sleep(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// ContextOption configures a ContextService.
+type ContextOption func(*ContextService)
+
+// WithContextSleeper replaces the real timer used for retry and rate-limit
+// waits.
+func WithContextSleeper(s ContextSleeper) ContextOption {
+	return func(c *ContextService) {
+		if s != nil {
+			c.sleeper = s
+		}
+	}
+}
+
+// contextSlot is the shell's record of one key: the core entry plus what the
+// shell needs to notice changes (target, credential, instance) and to run one
+// read at a time.
 type contextSlot struct {
 	entry      corehosts.ContextEntry
 	target     ContextTarget
 	credential [32]byte
 	instance   corehosts.Instance
-	done       chan struct{}
+	// done is non-nil while one caller owns the read; it is closed when that
+	// caller returns, and the callers that joined it then ask again.
+	done chan struct{}
+	// attempt and cancel describe the read in flight (valid while done != nil).
+	attempt int
+	cancel  context.CancelFunc
 }
 
 // ContextService owns only an ephemeral read cache. Reads execute synchronously
 // in their caller's context: no background worker or detached timer is created.
+//
+// The shell follows the core (corehosts.ContextStep): it feeds one input at a
+// time and interprets every command that comes back; it decides nothing about
+// retries, caching or blocking itself.
+//
+// Rate limits (docs/design/phase-6-host-context.md, "Rate limits"): the
+// authority for context reads is the larger of the poller's per-instance
+// deadline (Service.state.Limited, read-only here) and limited, the deadline
+// learned from the context reads themselves. The Getter's per-origin deadline
+// is only the transport backstop that fails a request fast.
 type ContextService struct {
 	service  *Service
 	resolver ContextResolver
+	sleeper  ContextSleeper
 	mu       sync.Mutex
 	slots    map[corehosts.ContextKey]*contextSlot
 	limited  map[corehosts.InstanceID]time.Time
 }
 
-func NewContextService(s *Service, resolver ContextResolver) *ContextService {
-	return &ContextService{service: s, resolver: resolver, slots: map[corehosts.ContextKey]*contextSlot{}, limited: map[corehosts.InstanceID]time.Time{}}
+func NewContextService(s *Service, resolver ContextResolver, opts ...ContextOption) *ContextService {
+	c := &ContextService{
+		service:  s,
+		resolver: resolver,
+		sleeper:  realContextSleeper{},
+		slots:    map[corehosts.ContextKey]*contextSlot{},
+		limited:  map[corehosts.InstanceID]time.Time{},
+	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 var _ ContextReader = (*ContextService)(nil)
+
+// contextEnv is what one Read resolved from the configuration.
+type contextEnv struct {
+	inst   corehosts.Instance
+	token  string
+	client ContextClient
+	target ContextTarget
+}
+
+// contextCalls carries the two contexts of one read: the caller's (with the
+// request deadline) and the read's own, which a CancelRead command cancels.
+type contextCalls struct {
+	caller context.Context
+	read   context.Context
+}
 
 func (c *ContextService) Read(parent context.Context, key corehosts.ContextKey) (ContextOutcome, error) {
 	if err := key.Validate(); err != nil {
@@ -60,81 +146,206 @@ func (c *ContextService) Read(parent context.Context, key corehosts.ContextKey) 
 	if c.resolver == nil {
 		return ContextOutcome{}, ErrContextScope
 	}
-	var joined *contextSlot
 	for {
 		target, err := c.resolver.ResolveContext(ctx, key)
 		if err != nil {
-			if ctx.Err() != nil {
-				return ContextOutcome{}, ctx.Err()
-			}
-			return ContextOutcome{}, ErrContextScope
+			return ContextOutcome{}, c.resolveFailed(ctx, key, err)
 		}
-		s := c.service
-		s.mu.Lock()
-		var inst corehosts.Instance
-		for _, v := range s.cfg.CoreInstances() {
-			if v.ID == target.Instance {
-				inst = v
-			}
+		env, scope, ok := c.environment(target)
+		if !ok {
+			return ContextOutcome{}, c.scopeGone(key)
 		}
-		token := s.cfg.Token(target.Instance)
-		client, supported := s.d.Clients[inst.Kind].(ContextClient)
-		s.mu.Unlock()
-		if inst.ID == "" || !validContextProject(target.Project) || target.Revision == "" {
-			return ContextOutcome{}, ErrContextScope
-		}
-		if !supported {
-			return blockedContext(corehosts.ContextUnsupported), nil
-		}
-		if token == "" {
-			return blockedContext(corehosts.ContextNoToken), nil
-		}
+		env.target = target
+		credential := sha256.Sum256([]byte(env.token))
+
 		c.mu.Lock()
 		slot := c.slots[key]
-		if slot != nil && slot.done != nil {
-			done := slot.done
-			c.mu.Unlock()
-			select {
-			case <-ctx.Done():
-				return ContextOutcome{}, ctx.Err()
-			case <-done:
-				joined = slot
-				continue
-			}
-		}
-		if slot == nil || slot.target != target || slot.credential != sha256.Sum256([]byte(token)) || slot.instance != inst {
-			slot = &contextSlot{entry: corehosts.ContextEntry{Key: key, State: corehosts.CtxEmpty{}}, target: target, credential: sha256.Sum256([]byte(token)), instance: inst}
+		if slot == nil {
+			slot = &contextSlot{entry: corehosts.ContextEntry{Key: key, State: corehosts.CtxEmpty{}}, target: target, credential: credential, instance: env.inst}
 			c.slots[key] = slot
 		}
-		if joined == slot {
-			if _, ok := slot.entry.State.(corehosts.CtxBlocked); ok {
+		// What the shell can see change, the core is told about. Anything held
+		// for the key was read under the old target or configuration.
+		changed := false
+		if slot.target != target {
+			c.stepLocked(slot, corehosts.ContextScopeChanged{})
+			slot.target = target
+			changed = true
+		}
+		if slot.credential != credential || slot.instance != env.inst {
+			c.stepLocked(slot, corehosts.ContextConfigChanged{})
+			slot.credential, slot.instance = credential, env.inst
+			changed = true
+		}
+		if changed && slot.done != nil {
+			// The change just cancelled the read in flight. Wait for its owner
+			// to leave before this caller starts a read of its own.
+			done := slot.done
+			c.mu.Unlock()
+			if err := waitContextDone(ctx, done); err != nil {
+				return ContextOutcome{}, err
+			}
+			continue
+		}
+		cmds := c.stepLocked(slot, corehosts.ContextRequested{Key: key, Scope: scope, Now: c.service.d.Clock()})
+		var (
+			answer *ContextOutcome
+			join   chan struct{}
+			read   *corehosts.CtxReadContext
+		)
+		for _, cmd := range cmds {
+			switch v := cmd.(type) {
+			case corehosts.CtxReturnCached:
 				out := contextAnswer(slot.entry)
-				c.mu.Unlock()
-				return out, nil
+				answer = &out
+			case corehosts.CtxExplain:
+				out := blockedContext(v.Reason)
+				answer = &out
+			case corehosts.CtxJoinRequest:
+				join = slot.done
+				if join == nil {
+					// A Loading or Waiting entry nobody owns cannot finish on its
+					// own: drop it and decide again.
+					c.stepLocked(slot, corehosts.ContextCancelled{Attempt: slot.entry.Seq})
+					join = closedContextChan
+				}
+			case corehosts.CtxReadContext:
+				read = &v
+			case corehosts.CtxCancelRead, corehosts.CtxScheduleWake, corehosts.CtxPublishContext:
+				// CancelRead was run by stepLocked; the others only follow a
+				// result input, never a request.
 			}
 		}
-		var cmds []corehosts.ContextCommand
-		slot.entry, cmds = corehosts.ContextStep(slot.entry, corehosts.ContextRequested{Key: key, Scope: corehosts.ScopeTracked, Now: s.d.Clock()})
-		if len(cmds) > 0 {
-			if _, ok := cmds[0].(corehosts.CtxReturnCached); ok {
-				out := contextAnswer(slot.entry)
-				c.mu.Unlock()
-				return out, nil
+		switch {
+		case answer != nil:
+			c.mu.Unlock()
+			return *answer, nil
+		case join != nil:
+			c.mu.Unlock()
+			if err := waitContextDone(ctx, join); err != nil {
+				return ContextOutcome{}, err
 			}
+			continue
+		case read == nil:
+			c.mu.Unlock()
+			return ContextOutcome{}, errors.New("host context: the request was not accepted")
 		}
+		readCtx, cancelRead := context.WithCancel(ctx)
 		slot.done = make(chan struct{})
+		slot.attempt = read.Attempt
+		slot.cancel = cancelRead
 		c.mu.Unlock()
-		out, err := c.execute(ctx, slot, inst, token, client)
+
+		out, err := c.run(contextCalls{caller: ctx, read: readCtx}, slot, env, *read)
+
+		cancelRead()
 		c.mu.Lock()
 		close(slot.done)
-		slot.done = nil
-		// A caller owns the returned slices; never expose the cache's backing data.
-		if err != nil {
-			delete(c.slots, key)
-		}
+		slot.done, slot.cancel = nil, nil
+		// The slot stays on every error: its attempt counter must keep fencing
+		// late results. An attempt the call left unfinished goes back to Empty
+		// through the core; a still-valid value held for the key (which this
+		// call never touched) is kept.
+		c.stepLocked(slot, corehosts.ContextCancelled{Attempt: slot.entry.Seq})
 		c.mu.Unlock()
 		return out, err
 	}
+}
+
+var closedContextChan = func() chan struct{} {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
+}()
+
+func waitContextDone(ctx context.Context, done <-chan struct{}) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-done:
+		return nil
+	}
+}
+
+// stepLocked feeds one input to the core under c.mu and runs the commands that
+// only touch the shell's own bookkeeping (CancelRead). The rest is returned for
+// the caller to interpret.
+func (c *ContextService) stepLocked(slot *contextSlot, in corehosts.ContextInput) []corehosts.ContextCommand {
+	var cmds []corehosts.ContextCommand
+	slot.entry, cmds = corehosts.ContextStep(slot.entry, in)
+	rest := cmds[:0:0]
+	for _, cmd := range cmds {
+		switch v := cmd.(type) {
+		case corehosts.CtxCancelRead:
+			if slot.cancel != nil && slot.attempt == v.Attempt {
+				slot.cancel()
+			}
+		case corehosts.CtxReadContext:
+			slot.attempt = v.Attempt
+			rest = append(rest, cmd)
+		case corehosts.CtxScheduleWake, corehosts.CtxReturnCached, corehosts.CtxJoinRequest, corehosts.CtxPublishContext, corehosts.CtxExplain:
+			rest = append(rest, cmd)
+		}
+	}
+	return rest
+}
+
+func (c *ContextService) step(slot *contextSlot, in corehosts.ContextInput) []corehosts.ContextCommand {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.stepLocked(slot, in)
+}
+
+// environment reads the configuration for target. ok is false when the target
+// is unusable (unknown instance, bad project, no revision). scope is what the
+// core is told: tracked, or why the key cannot be read.
+func (c *ContextService) environment(target ContextTarget) (env contextEnv, scope corehosts.ContextScope, ok bool) {
+	s := c.service
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, v := range s.cfg.CoreInstances() {
+		if v.ID == target.Instance {
+			env.inst = v
+		}
+	}
+	env.token = s.cfg.Token(target.Instance)
+	var supported bool
+	env.client, supported = s.d.Clients[env.inst.Kind].(ContextClient)
+	if env.inst.ID == "" || !validContextProject(target.Project) || target.Revision == "" {
+		return env, "", false
+	}
+	switch {
+	case !supported:
+		return env, corehosts.ScopeUnsupported, true
+	case env.token == "":
+		return env, corehosts.ScopeNoToken, true
+	}
+	return env, corehosts.ScopeTracked, true
+}
+
+// resolveFailed maps an error of the resolver. Only a real scope error (the
+// repo is not tracked, linked or owned) is ErrContextScope; anything else keeps
+// its kind, with context.
+func (c *ContextService) resolveFailed(ctx context.Context, key corehosts.ContextKey, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if errors.Is(err, ErrContextScope) {
+		return c.scopeGone(key)
+	}
+	return fmt.Errorf("resolve host context for %s: %w", key.Repo, err)
+}
+
+// scopeGone tells the core that the key is out of scope, so whatever is held
+// for it (and any read in flight) is dropped, and reports ErrContextScope.
+func (c *ContextService) scopeGone(key corehosts.ContextKey) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if slot := c.slots[key]; slot != nil {
+		// The Explain command of an untracked key is this error.
+		c.stepLocked(slot, corehosts.ContextRequested{Key: key, Scope: corehosts.ScopeUntracked, Now: c.service.d.Clock()})
+	}
+	return ErrContextScope
 }
 
 func blockedContext(reason corehosts.ContextBlockReason) ContextOutcome {
@@ -148,7 +359,7 @@ func contextAnswer(e corehosts.ContextEntry) ContextOutcome {
 	case corehosts.CtxPartial:
 		return ContextOutcome{Result: &ContextResult{Value: cloneContext(v.Value), Unavailable: append([]corehosts.ContextUnavailable(nil), v.Unavailable...), Expires: v.Expires}}
 	case corehosts.CtxBlocked:
-		return blockedContext(v.Reason)
+		return ContextOutcome{Blocked: &corehosts.CtxBlocked{Reason: v.Reason, Until: v.Until}}
 	case corehosts.CtxWaiting:
 		return ContextOutcome{RetryAt: v.At}
 	case corehosts.CtxEmpty, corehosts.CtxLoading:
@@ -156,144 +367,234 @@ func contextAnswer(e corehosts.ContextEntry) ContextOutcome {
 	return ContextOutcome{}
 }
 
-func (c *ContextService) execute(ctx context.Context, slot *contextSlot, inst corehosts.Instance, token string, client ContextClient) (ContextOutcome, error) {
-	e := slot.entry
-	key := e.Key
+// run is the owner of one read. It executes ReadContext, feeds the result to
+// the core, and interprets what comes back: publish, explain, or schedule a
+// wake and read again.
+func (c *ContextService) run(calls contextCalls, slot *contextSlot, env contextEnv, start corehosts.CtxReadContext) (ContextOutcome, error) {
+	key := start.Key
+	attempt := start.Attempt
 	for {
-		target, err := c.resolver.ResolveContext(ctx, key)
-		if err != nil || target != slot.target {
-			return ContextOutcome{}, ErrContextScope
+		in, err := c.readOnce(calls, env, key, attempt)
+		if err != nil {
+			return ContextOutcome{}, err
 		}
-		c.service.mu.Lock()
-		until := c.service.state.Limited[inst.ID]
-		c.service.mu.Unlock()
+		cmds := c.step(slot, in)
+		var (
+			answer *ContextOutcome
+			again  *corehosts.CtxReadContext
+		)
+		for _, cmd := range cmds {
+			switch v := cmd.(type) {
+			case corehosts.CtxPublishContext:
+				c.mu.Lock()
+				out := contextAnswer(slot.entry)
+				c.mu.Unlock()
+				answer = &out
+			case corehosts.CtxExplain:
+				out := blockedContext(v.Reason)
+				c.mu.Lock()
+				if _, ok := slot.entry.State.(corehosts.CtxBlocked); ok {
+					out = contextAnswer(slot.entry) // carries the block's deadline
+				}
+				c.mu.Unlock()
+				answer = &out
+			case corehosts.CtxScheduleWake:
+				out, next, err := c.sleepUntil(calls, slot, v)
+				if err != nil {
+					return ContextOutcome{}, err
+				}
+				answer, again = out, next
+			case corehosts.CtxReadContext, corehosts.CtxReturnCached, corehosts.CtxJoinRequest, corehosts.CtxCancelRead:
+				// Not produced by a result input.
+			}
+		}
+		switch {
+		case answer != nil:
+			return *answer, nil
+		case again != nil:
+			attempt = again.Attempt
+			continue
+		}
+		// The core gave no command: it ignored the input. Either the attempt was
+		// superseded (a scope or config change dropped it) or the input itself
+		// was invalid (a clock that returned no time). Never leave it Loading.
 		c.mu.Lock()
-		if c.limited[inst.ID].After(until) {
-			until = c.limited[inst.ID]
-		}
+		current := slot.entry.Seq == attempt
 		c.mu.Unlock()
-		if wait := until.Sub(c.service.d.Clock()); wait > 0 {
-			if deadline, ok := ctx.Deadline(); ok && !until.Before(deadline) {
-				e, _ = corehosts.ContextStep(e, corehosts.ContextCancelled{Attempt: e.Seq})
-				c.mu.Lock()
-				slot.entry = e
-				c.mu.Unlock()
-				return ContextOutcome{RetryAt: until}, nil
-			}
-
-			timer := time.NewTimer(wait)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return ContextOutcome{}, ctx.Err()
-			case <-timer.C:
-			}
-			// Scope may have changed during the instance-wide rate-limit wait.
-			refreshed, e := c.resolver.ResolveContext(ctx, key)
-			if e != nil || refreshed != target {
-				return ContextOutcome{}, ErrContextScope
-			}
+		if current {
+			return ContextOutcome{}, errors.New("host context: the read result was not accepted")
 		}
-		var result ContextResult
-		number, _ := strconv.Atoi(key.ObjectID)
-		switch key.Kind {
-		case corehosts.ContextFailedJobs:
-			result, err = client.FailedJobs(ctx, inst, token, target.Project, key.ObjectID, key.Head)
-		case corehosts.ContextIssues:
-			result, err = client.Issues(ctx, inst, token, target.Project)
-		case corehosts.ContextIssue:
-			result, err = client.Issue(ctx, inst, token, target.Project, number)
-		case corehosts.ContextMRDiff:
-			result, err = client.MRDiff(ctx, inst, token, target.Project, number)
-		}
-		if ctx.Err() != nil {
-			return ContextOutcome{}, ctx.Err()
-		}
-		again, scopeErr := c.resolver.ResolveContext(ctx, key)
-		if scopeErr != nil || again != target {
-			return ContextOutcome{}, ErrContextScope
-		}
-		c.service.mu.Lock()
-		current := c.service.cfg.Token(inst.ID)
-		sameInstance := false
-		for _, v := range c.service.cfg.CoreInstances() {
-			if v == inst {
-				sameInstance = true
-			}
-		}
-		c.service.mu.Unlock()
-		if current != token || !sameInstance {
-			return ContextOutcome{}, ErrContextScope
-		}
-		if errors.Is(err, ErrContextTooLarge) || errors.Is(err, ErrContextUnsupported) {
-			reason := corehosts.ContextUnsupported
-			if errors.Is(err, ErrContextTooLarge) {
-				reason = corehosts.ContextTooLarge
-			}
-			e, _ = corehosts.ContextReject(e, e.Seq, reason)
-			c.mu.Lock()
-			slot.entry = e
-			c.mu.Unlock()
-			return contextAnswer(e), nil
-		}
-		now := c.service.d.Clock()
-		if err == nil {
-			c.service.mu.Lock()
-			secrets := c.service.cfg.Secrets()
-			c.service.mu.Unlock()
-			if len(result.Unavailable) > corehosts.ContextMaxEntries {
-				return ContextOutcome{}, ErrContextScope
-			}
-			for _, gap := range result.Unavailable {
-				if gap.Reason.Validate() != nil {
-					return ContextOutcome{}, ErrContextScope
-				}
-			}
-			result = redactContext(result, secrets...)
-			if !corehosts.ContextPayloadMatches(key, result.Value) {
-				return ContextOutcome{}, ErrContextScope
-			}
-			e, _ = corehosts.ContextStep(e, corehosts.ContextFetched{Key: key, Attempt: e.Seq, Value: result.Value, Unavailable: result.Unavailable, Now: now})
-			c.mu.Lock()
-			slot.entry = e
-			c.mu.Unlock()
-			return contextAnswer(e), nil
-		}
-		failure := corehosts.ContextFetchFailed{Key: key, Attempt: e.Seq, Class: corehosts.FailTransient, Now: now}
-		var fe *FetchError
-		if errors.As(err, &fe) {
-			failure.Class = fe.Kind
-			if fe.RetryAt != nil {
-				failure.RetryAt = *fe.RetryAt
-				c.mu.Lock()
-				if failure.RetryAt.After(c.limited[inst.ID]) {
-					c.limited[inst.ID] = failure.RetryAt
-				}
-				c.mu.Unlock()
-			}
-		}
-		e, _ = corehosts.ContextStep(e, failure)
-		wait, ok := e.State.(corehosts.CtxWaiting)
-		if !ok {
-			c.mu.Lock()
-			slot.entry = e
-			c.mu.Unlock()
-			return contextAnswer(e), nil
-		}
-		if deadline, ok := ctx.Deadline(); ok && !wait.At.Before(deadline) {
-			e, _ = corehosts.ContextStep(e, corehosts.ContextCancelled{Attempt: e.Seq})
-			c.mu.Lock()
-			slot.entry = e
-			c.mu.Unlock()
-			return ContextOutcome{RetryAt: wait.At}, nil
-		}
-		timer := time.NewTimer(wait.At.Sub(now))
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ContextOutcome{}, ctx.Err()
-		case <-timer.C:
-		}
-		e, _ = corehosts.ContextStep(e, corehosts.ContextWake{Attempt: e.Seq, Now: wait.At})
+		return ContextOutcome{}, ErrContextScope
 	}
+}
+
+// sleepUntil interprets ScheduleWake: wait until the wake time with the
+// sleeper, then tell the core the timer fired. A wake that would not fit in the
+// request's remaining time is not waited for: the attempt is cancelled and the
+// caller gets the retry time.
+func (c *ContextService) sleepUntil(calls contextCalls, slot *contextSlot, wake corehosts.CtxScheduleWake) (*ContextOutcome, *corehosts.CtxReadContext, error) {
+	d := wake.At.Sub(c.service.d.Clock())
+	if deadline, ok := calls.caller.Deadline(); ok && d >= time.Until(deadline) {
+		c.step(slot, corehosts.ContextCancelled{Attempt: wake.Attempt})
+		return &ContextOutcome{RetryAt: wake.At}, nil, nil
+	}
+	if err := c.sleeper.Sleep(calls.read, d); err != nil {
+		return nil, nil, endContextErr(calls, err)
+	}
+	for _, cmd := range c.step(slot, corehosts.ContextWake{Attempt: wake.Attempt, Now: wake.At}) {
+		if read, ok := cmd.(corehosts.CtxReadContext); ok {
+			return nil, &read, nil
+		}
+	}
+	// The core dropped the wait: a scope or config change cancelled it.
+	return nil, nil, ErrContextScope
+}
+
+// endContextErr names why a read stopped: the caller gave up (their error), or
+// the core cancelled the read because scope or configuration changed.
+func endContextErr(calls contextCalls, err error) error {
+	if calls.caller.Err() != nil {
+		return calls.caller.Err()
+	}
+	if calls.read.Err() != nil {
+		return ErrContextScope
+	}
+	return err
+}
+
+// limitedUntil is the instance-wide rate-limit deadline for context reads.
+func (c *ContextService) limitedUntil(inst corehosts.InstanceID, now time.Time) time.Time {
+	c.service.mu.Lock()
+	until := c.service.state.Limited[inst]
+	c.service.mu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if mine, ok := c.limited[inst]; ok {
+		if !mine.After(now) {
+			delete(c.limited, inst)
+		} else if mine.After(until) {
+			until = mine
+		}
+	}
+	return until
+}
+
+func (c *ContextService) noteLimited(inst corehosts.InstanceID, until time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if until.After(c.limited[inst]) {
+		c.limited[inst] = until
+	}
+}
+
+// stillInScope reports an error when the key's target or the configuration is
+// no longer what this read started with.
+func (c *ContextService) stillInScope(calls contextCalls, env contextEnv, key corehosts.ContextKey) error {
+	target, err := c.resolver.ResolveContext(calls.read, key)
+	if err != nil {
+		if calls.caller.Err() != nil {
+			return calls.caller.Err()
+		}
+		if calls.read.Err() != nil {
+			return ErrContextScope
+		}
+		if errors.Is(err, ErrContextScope) {
+			return ErrContextScope
+		}
+		return fmt.Errorf("resolve host context for %s: %w", key.Repo, err)
+	}
+	if target != env.target {
+		return ErrContextScope
+	}
+	return nil
+}
+
+// readOnce executes one ReadContext: it rechecks scope, honours the rate-limit
+// deadline, reads, rechecks scope and configuration, redacts, and returns the
+// core input that says what happened. Errors are only the ones that end the
+// call without an answer (the caller gave up, scope or configuration changed).
+func (c *ContextService) readOnce(calls contextCalls, env contextEnv, key corehosts.ContextKey, attempt int) (corehosts.ContextInput, error) {
+	if err := c.stillInScope(calls, env, key); err != nil {
+		return nil, err
+	}
+	now := c.service.d.Clock()
+	if until := c.limitedUntil(env.inst.ID, now); until.After(now) {
+		return corehosts.ContextRateLimited{Key: key, Attempt: attempt, Until: until, Now: now}, nil
+	}
+	var result ContextResult
+	var err error
+	number, _ := strconv.Atoi(key.ObjectID)
+	switch key.Kind {
+	case corehosts.ContextFailedJobs:
+		result, err = env.client.FailedJobs(calls.read, env.inst, env.token, env.target.Project, key.ObjectID, key.Head)
+	case corehosts.ContextIssues:
+		result, err = env.client.Issues(calls.read, env.inst, env.token, env.target.Project)
+	case corehosts.ContextIssue:
+		result, err = env.client.Issue(calls.read, env.inst, env.token, env.target.Project, number)
+	case corehosts.ContextMRDiff:
+		result, err = env.client.MRDiff(calls.read, env.inst, env.token, env.target.Project, number)
+	}
+	if calls.caller.Err() != nil {
+		return nil, calls.caller.Err()
+	}
+	if calls.read.Err() != nil {
+		return nil, ErrContextScope
+	}
+	if scopeErr := c.stillInScope(calls, env, key); scopeErr != nil {
+		return nil, scopeErr
+	}
+	c.service.mu.Lock()
+	current := c.service.cfg.Token(env.inst.ID)
+	sameInstance := false
+	for _, v := range c.service.cfg.CoreInstances() {
+		if v == env.inst {
+			sameInstance = true
+		}
+	}
+	secrets := c.service.cfg.Secrets()
+	c.service.mu.Unlock()
+	if current != env.token || !sameInstance {
+		return nil, ErrContextScope
+	}
+	now = c.service.d.Clock()
+	if err == nil {
+		// Redaction happens before anything is stored; the core then checks the
+		// payload against the key and the bounds.
+		result = redactContext(result, secrets...)
+		return corehosts.ContextFetched{Key: key, Attempt: attempt, Value: result.Value, Unavailable: result.Unavailable, Now: now}, nil
+	}
+	if reason, refused := contextRefusal(err); refused {
+		return corehosts.ContextRejected{Key: key, Attempt: attempt, Reason: reason, Now: now}, nil
+	}
+	failure := corehosts.ContextFetchFailed{Key: key, Attempt: attempt, Class: corehosts.FailTransient, Now: now}
+	var fe *FetchError
+	if errors.As(err, &fe) {
+		failure.Class = fe.Kind
+		if fe.RetryAt != nil {
+			failure.RetryAt = *fe.RetryAt
+			c.noteLimited(env.inst.ID, failure.RetryAt)
+		}
+	}
+	return failure, nil
+}
+
+// contextRefusal classifies the errors a retry cannot fix, with the reason the
+// user is told. Everything else is a temporary failure unless it is a
+// *FetchError with its own class.
+//
+//   - too large: over the response budget;
+//   - unsupported: the host cannot give this kind, or sent an answer that cannot
+//     be used (the same request gets the same answer);
+//   - not found: the object is not the one asked for (foreign run, a pull
+//     request where an issue was asked for).
+func contextRefusal(err error) (corehosts.ContextBlockReason, bool) {
+	switch {
+	case errors.Is(err, ErrContextTooLarge):
+		return corehosts.ContextTooLarge, true
+	case errors.Is(err, ErrContextUnsupported), errors.Is(err, ErrContextInvalid):
+		return corehosts.ContextUnsupported, true
+	case errors.Is(err, ErrContextScope):
+		return corehosts.ContextNotFound, true
+	}
+	return "", false
 }
