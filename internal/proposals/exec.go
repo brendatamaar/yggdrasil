@@ -48,6 +48,12 @@ func keyOf(a coreprop.Action) string {
 		return "repo:" + string(v.Repo)
 	case coreprop.MergeLocal:
 		return targetKey(v.Where)
+	case coreprop.IgnoreEntries:
+		return targetKey(v.Where)
+	case coreprop.ReviewComment:
+		return "repo:" + string(v.Repo)
+	case coreprop.PullFF:
+		return "repo:" + string(v.Repo)
 	}
 	return "other"
 }
@@ -209,6 +215,12 @@ func (s *Service) execute(ctx context.Context, p coreprop.Proposal, attempt int)
 		return s.execMerge(ctx, p, a, attempt)
 	case coreprop.RemoveWorktree:
 		return s.execRemove(ctx, p, a)
+	case coreprop.IgnoreEntries:
+		return s.execIgnore(ctx, p, a, attempt)
+	case coreprop.ReviewComment:
+		return s.execComment(ctx, p, a, attempt)
+	case coreprop.PullFF:
+		return s.execPull(ctx, p, a, attempt)
 	}
 	return failed(coreprop.FailPrecondition, false, "This kind of proposal cannot run yet.")
 }

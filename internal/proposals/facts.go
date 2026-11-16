@@ -39,6 +39,12 @@ func subjectOf(a coreprop.Action) (subject, error) {
 		return subject{where: v.Where}, nil
 	case coreprop.RemoveWorktree:
 		return subject{where: coreprop.InWorktree{ID: v.Worktree}}, nil
+	case coreprop.IgnoreEntries:
+		return subject{where: v.Where}, nil
+	case coreprop.ReviewComment:
+		return subject{repo: v.Repo}, nil
+	case coreprop.PullFF:
+		return subject{where: coreprop.MainCheckout{Repo: v.Repo}}, nil
 	}
 	return subject{}, fmt.Errorf("unsupported proposal kind %T", a)
 }
@@ -144,6 +150,13 @@ func (s *Service) gatherFacts(ctx context.Context, req CreateRequest) (coreprop.
 		if b, ok := pushBranch(req.Action); ok {
 			if err := s.checkBranchBinding(ctx, sub.where, dir, b); errors.Is(err, errWrongBranch) {
 				return bad(wrongBranchMsg)
+			} else if err != nil {
+				return coreprop.Facts{}, "", "", err
+			}
+		}
+		if pf, ok := req.Action.(coreprop.PullFF); ok {
+			if err := s.checkBranchBinding(ctx, sub.where, dir, pf.Branch); errors.Is(err, errWrongBranch) {
+				return bad("Another branch is checked out in the main checkout. A pull proposal names the branch that is checked out now.")
 			} else if err != nil {
 				return coreprop.Facts{}, "", "", err
 			}
