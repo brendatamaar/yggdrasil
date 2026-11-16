@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	corenewrepos "github.com/brendatamaar/yggdrasil/internal/core/newrepos"
@@ -81,6 +82,9 @@ func (s *Service) execInit(ctx context.Context, c corenewrepos.RunInitStage) (co
 	if err != nil {
 		return nil, err
 	}
+	if err := s.sameParent(ctx, spec, parent); err != nil {
+		return nil, err
+	}
 	dir := filepath.Join(parent, spec.Leaf)
 	switch c.Stage {
 	case corenewrepos.StageCreateDirectory:
@@ -152,6 +156,24 @@ func (s *Service) execInit(ctx context.Context, c corenewrepos.RunInitStage) (co
 		return corenewrepos.TrackedReceipt{}, nil
 	}
 	return nil, definiteErr(corenewrepos.StopNotImplemented, fmt.Errorf("unknown init stage %q", c.Stage))
+}
+
+// sameParent refuses a project folder that is not the one the reservation was
+// made under: a root swapped for a link or another folder between the preview
+// and the execution is a precondition failure, before anything is written.
+func (s *Service) sameParent(ctx context.Context, spec corenewrepos.InitSpec, parent string) error {
+	r, err := s.d.Store.GetReservedRepo(ctx, spec.Repo)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return definiteErr(corenewrepos.StopUntracked, err)
+		}
+		return definiteErr(corenewrepos.StopPreconditions, err)
+	}
+	was := filepath.Dir(r.Path)
+	if was != parent && !(s.d.Paths.FoldCase() && strings.EqualFold(was, parent)) {
+		return definiteErr(corenewrepos.StopPreconditions, errors.New("the project folder changed since the reservation"))
+	}
+	return nil
 }
 
 func (s *Service) needDir(done []corenewrepos.Receipt) (platform.DirIdentity, error) {

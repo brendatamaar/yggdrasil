@@ -364,6 +364,7 @@ type world struct {
 	initW   gittest.InitWorld
 	svc     *Service
 	nprop   int
+	dbPath  string
 }
 
 type safeBuf struct {
@@ -416,7 +417,8 @@ func newWorld(t *testing.T) *world {
 	ctx := context.Background()
 	w := &world{t: t, ctx: ctx, f: newFaults(), logs: &safeBuf{}, redact: safety.NewRedactor(sentinelToken),
 		clk: &clock{t: time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC)}}
-	d, err := db.Open(ctx, filepath.Join(t.TempDir(), "y.db"))
+	w.dbPath = filepath.Join(t.TempDir(), "y.db")
+	d, err := db.Open(ctx, w.dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -444,7 +446,8 @@ func newWorld(t *testing.T) *world {
 // called again after Close).
 func (w *world) start() *Service {
 	w.t.Helper()
-	logger := slog.New(safety.NewLogHandler(slog.NewTextHandler(w.logs, &slog.HandlerOptions{Level: slog.LevelDebug}), w.redact))
+	// A plain handler: only the service's own Redact protects the log here.
+	logger := slog.New(slog.NewTextHandler(w.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	svc, err := NewService(Deps{
 		Store: w.sw, FS: w.fs, Git: w.git, Origin: w.origin, Remote: w.host, Transport: w.tr, Lock: w.locks,
 		Hub: w.hub, Clock: w.clk.now, IDs: db.NewID, Projects: w.store, Paths: platform.RealPaths{},
@@ -626,3 +629,5 @@ func (w *world) publish(rec db.ReservationRecord, name string) (PublishPreview, 
 	}
 	return pv, w.svc.ConfirmPublish(w.ctx, rec.Operation.ID, pv.Hash, 1)
 }
+
+func timeAfter() <-chan time.Time { return time.After(5 * time.Millisecond) }
