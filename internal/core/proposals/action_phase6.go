@@ -11,12 +11,11 @@ import (
 
 // The Phase 6 actions (docs/design/phase-6-*.md). Their contracts are frozen
 // here: types, Validate, Hash, Describe and the parsers all exist and are
-// tested. A kind is turned on in Enabled together with its executor:
-// IgnoreEntries, ReviewComment and PullFF are on; InitRepo and PublishRepo stay
-// off until theirs lands, so ParseAction, ActionFromRow and Step refuse to
-// create them (ErrUnsupportedKind / RefuseUnsupported). ParseDefinedAction
-// parses every defined kind regardless, for tests and for the shell that builds
-// an action from trusted server data.
+// tested. A kind is turned on in Enabled together with its executor, so that
+// ParseAction, ActionFromRow and Step refuse a kind that cannot run yet
+// (ErrUnsupportedKind / RefuseUnsupported). All five are on now.
+// ParseDefinedAction parses every defined kind regardless of Enabled, for tests
+// and for the shell that builds an action from trusted server data.
 //
 // The Phase 6 publish action is named PublishRepo because Publish is already
 // the hub command of this package.
@@ -35,13 +34,14 @@ const (
 
 // Enabled reports whether proposals of the kind may be created and executed.
 // A kind is on only when its executor exists, so a proposal that cannot run is
-// never created (no false success). InitRepo and PublishRepo are still off.
+// never created (no false success). All Phase 6 kinds are on.
 func Enabled(k core.ProposalKind) bool {
 	switch k {
 	case core.ProposalCommit, core.ProposalPush, core.ProposalMergeRequest,
 		core.ProposalAgentFile, core.ProposalDeleteFiles, core.ProposalInstall,
 		core.ProposalMergeLocal, core.ProposalRemoveWorktree,
-		core.ProposalIgnoreEntries, core.ProposalReviewComment, core.ProposalPullFF:
+		core.ProposalIgnoreEntries, core.ProposalReviewComment, core.ProposalPullFF,
+		core.ProposalInitRepo, core.ProposalPublish:
 		return true
 	}
 	return false

@@ -45,6 +45,10 @@ func subjectOf(a coreprop.Action) (subject, error) {
 		return subject{repo: v.Repo}, nil
 	case coreprop.PullFF:
 		return subject{where: coreprop.MainCheckout{Repo: v.Repo}}, nil
+	case coreprop.InitRepo:
+		return subject{repo: v.Repo}, nil
+	case coreprop.PublishRepo:
+		return subject{repo: v.Repo}, nil
 	}
 	return subject{}, fmt.Errorf("unsupported proposal kind %T", a)
 }

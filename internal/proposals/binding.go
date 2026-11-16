@@ -75,6 +75,9 @@ func (s *Service) view(ctx context.Context, p coreprop.Proposal) View {
 	if info, err := s.cfg.Resolver.Repo(ctx, p.Repo); err == nil {
 		v.RepoName = info.Name
 	}
+	if a, ok := p.Action.(coreprop.InitRepo); ok && v.RepoName == "" {
+		v.RepoName = a.Leaf // a reserved repo is not visible to ordinary lookups
+	}
 	if v.Status != core.ProposalPending {
 		return v
 	}

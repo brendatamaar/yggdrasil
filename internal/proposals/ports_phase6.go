@@ -1,11 +1,10 @@
 package proposals
 
 // Capability declarations of the Phase 6 proposal executors
-// (docs/design/phase-6-*.md). Declarations only: core/proposals defines the
-// frozen actions (IgnoreEntries, ReviewComment, InitRepo, PublishRepo, PullFF)
-// and core/proposals.Enabled keeps them off; the proposal-extension task (P)
-// implements the executors against these ports and turns each kind on with its
-// tests. Executors write only after a confirmation matching the action hash,
+// (docs/design/phase-6-*.md). core/proposals defines the frozen actions
+// (IgnoreEntries, ReviewComment, InitRepo, PublishRepo, PullFF); the executors
+// in this package run them against these ports. Executors write only after a
+// confirmation matching the action hash,
 // revalidate scope, content hash and HEAD or MR head at execution, record a
 // durable effect (db.EffectRecord) BEFORE every external write, and never
 // retry an unknown outcome blindly.
@@ -37,12 +36,24 @@ type CommentHost interface {
 
 // NewRepoLifecycle is what the InitRepo and PublishRepo executors call into
 // internal/newrepos. Confirm* returns once the durable worker owns the
-// operation; progress and results come back through the operation's state and
-// the proposals hub, not through this call.
+// operation; progress and results come back through the operation's stored
+// state (the executor reads it from the reservation row) and through
+// Service.OperationChanged, which the wiring calls on every state change of an
+// operation, not through this call. The proposal stays Confirmed until then.
+//
+// The hash is the immutable spec hash of the lifecycle itself (newrepos
+// InitSpec.Hash for ConfirmInit, PublishSpec.Hash for ConfirmPublish), computed
+// by the executor from the proposal's action after it checked that the action
+// equals the reserved spec. attempt is strictly greater than every attempt the
+// operation has seen. A PublishRepo proposal is linked to its operation by the
+// hand-off effect record (db.EffectRecord with Operation set and no Stage), so
+// the lifecycle can find the confirmed action.
 type NewRepoLifecycle interface {
 	// ConfirmInit starts initialization of the reserved repo of op after the user
-	// confirmed hash (the InitRepo action hash). A hash that does not match the
-	// operation's immutable spec is refused.
+	// confirmed the spec with hash. A hash that does not match the operation's
+	// immutable spec is refused. A refusal that started nothing says so with an
+	// error that has NothingWritten() true (or wraps ErrWriteRefused); any other
+	// error is treated as an unknown outcome and only reconciled.
 	ConfirmInit(ctx context.Context, op core.OperationID, hash string, attempt int) error
 	// ConfirmPublish starts publishing a ready repo after the user confirmed the
 	// PublishRepo hash.
