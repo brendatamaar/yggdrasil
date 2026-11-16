@@ -9,8 +9,10 @@
 // file deletion (invariant 1). Subtasks stay in core.ProposalKind but
 // ParseAction refuses them until their executor exists. The Phase 6 kinds
 // (publish, ignore entries, review comment, init repo, pull) have frozen
-// parsers, hashes and Describe text. Ignore entries, review comment and pull
-// are Enabled; init repo and publish are not, so they cannot be created yet.
+// parsers, hashes and Describe text and are all Enabled. The new-repo kinds
+// (init repo, publish) hand their work to a durable lifecycle: newrepo.go
+// holds the pure plan and judgement of how such a proposal follows its
+// operation.
 package proposals
 
 import "errors"

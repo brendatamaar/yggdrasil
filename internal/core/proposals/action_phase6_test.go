@@ -89,11 +89,14 @@ func TestPhase6HashCoversEveryField(t *testing.T) {
 	}
 }
 
-// InitRepo and PublishRepo are defined but not Enabled yet: ParseAction,
-// ActionFromRow and Step refuse them, so no proposal that cannot run is ever
-// created. IgnoreEntries, ReviewComment and PullFF are Enabled.
+// Every Phase 6 kind has its executor and is Enabled: ParseAction,
+// ActionFromRow and Step accept them. A kind that is not Enabled is refused
+// everywhere (the table keeps the disabled branch for the next one).
 func TestPhase6KindsEnabledStatus(t *testing.T) {
-	enabled := map[core.ProposalKind]bool{core.ProposalIgnoreEntries: true, core.ProposalReviewComment: true, core.ProposalPullFF: true}
+	enabled := map[core.ProposalKind]bool{
+		core.ProposalIgnoreEntries: true, core.ProposalReviewComment: true, core.ProposalPullFF: true,
+		core.ProposalInitRepo: true, core.ProposalPublish: true,
+	}
 	facts := Facts{RepoTracked: true, PathsOK: true, RemoteSupported: true}
 	for _, a := range phase6Actions() {
 		k := a.Kind()
