@@ -24,6 +24,10 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/repos"
 )
 
+// histCommitterAt is the fixed committer time of every commit the real-git runs
+// create (the author times are in June 2026), instead of the real clock.
+var histCommitterAt = time.Date(2030, 3, 1, 12, 0, 0, 0, time.UTC)
+
 type histRec struct {
 	hash    string
 	subject string
@@ -105,11 +109,9 @@ func histQueries(r *rand.Rand, recs []histRec) []histQuery {
 		from := base.Add(time.Duration(r.Intn(24)-2) * time.Minute)
 		qs = append(qs, histQuery{from, from.Add(time.Duration(1+r.Intn(30)) * time.Minute), []int{1, 2, 3, 5, 200}[r.Intn(5)]})
 	}
-	// Around the real clock: no commit has an author time there, even though
-	// the committer time of every live commit is "now".
-	if now := time.Now().UTC(); now.After(base.Add(60 * 24 * time.Hour)) {
-		qs = append(qs, histQuery{now.Add(-time.Hour), now.Add(time.Hour), 200})
-	}
+	// Around the committer time of every live commit: no commit has an author
+	// time there, so a reader that looked at committer times would return some.
+	qs = append(qs, histQuery{histCommitterAt.Add(-time.Hour), histCommitterAt.Add(time.Hour), 200})
 	return qs
 }
 
