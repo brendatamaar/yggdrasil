@@ -36,8 +36,18 @@ type recordedProvider struct {
 	Answers  map[string][]recordedExchange `json:"answers"`
 }
 
+var (
+	recordedMu    sync.Mutex
+	recordedCache = map[string]recordedProvider{}
+)
+
 func loadRecordedProvider(t testing.TB, provider string) recordedProvider {
 	t.Helper()
+	recordedMu.Lock()
+	defer recordedMu.Unlock()
+	if p, ok := recordedCache[provider]; ok {
+		return p
+	}
 	raw, err := os.ReadFile(filepath.Join("testdata", "context", provider+".json"))
 	if err != nil {
 		t.Fatal(err)
@@ -46,6 +56,7 @@ func loadRecordedProvider(t testing.TB, provider string) recordedProvider {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		t.Fatalf("fixture %s: %v", provider, err)
 	}
+	recordedCache[provider] = p
 	return p
 }
 
