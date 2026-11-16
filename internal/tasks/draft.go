@@ -126,6 +126,11 @@ func (s *Service) ImportIssueDraft(ctx context.Context, spec coretasks.DraftSpec
 			if priorDigest != digest {
 				return db.ErrDigestMismatch
 			}
+			// Scope precedes a replay too: once the repo is untracked or
+			// reserved, the original draft is not shown again.
+			if refuse, ok := coretasks.PlanDraft(spec, facts).(coretasks.DraftRefuse); ok {
+				return &RejectedError{Reason: string(refuse.Reason), Message: refuse.Reason.Message()}
+			}
 			return db.ErrConflict // rollback, then reload the original outside Commit
 		}
 		if !errors.Is(err, db.ErrNotFound) {
