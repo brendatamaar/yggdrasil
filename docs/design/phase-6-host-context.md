@@ -35,9 +35,9 @@ an instantly expired entry or an instantly due wake.
 | Input | Meaning |
 |---|---|
 | `Requested{Key,Scope,Now}` | A caller wants the key. `Scope` is what the shell resolved: `tracked`, `untracked`, `unsupported` (no client for the host kind), `no_token`. The shell only reports the last three; the core decides what they mean. |
-| `Fetched{Key,Attempt,Value,Unavailable,Now}` | The attempt produced a payload. An unusable payload (does not match the key, bad gap reason, more than 500 gaps) for the current attempt ends it as Blocked{unsupported}. |
+| `Fetched{Key,Attempt,Value,Unavailable,Now}` | The attempt produced a payload. For the current attempt, a payload that is not the object the key names (another run or issue, an MR whose head moved) ends it as Blocked{not_found}; a bad gap reason or more than 500 gaps ends it as Blocked{unsupported}. Never left Loading. |
 | `FetchFailed{Key,Attempt,Class,RetryAt,Now}` | Temporary or classified failure (transient, rate_limited, unauthorized, not_found). |
-| `Rejected{Key,Attempt,Reason,Now}` | A terminal refusal a retry cannot fix: `not_found`, `unsupported` or `too_large`. Any other reason is ignored. |
+| `Rejected{Key,Attempt,Reason,Now}` | A terminal refusal a retry cannot fix. `Reason` is a `ContextRefusal`, a closed set (`not_found`, `unsupported`, `too_large`) that cannot name forbidden, no_token, untracked or retry_exhausted. A value outside the set still ends the attempt, as unsupported. |
 | `RateLimited{Key,Attempt,Until,Now}` | Before reading, the shell found the instance limited until `Until`. A wait, not a failure: it does not use a retry. |
 | `Wake{Attempt,Now}` | The wait of a waiting attempt is over. |
 | `Cancelled{Attempt}` | The caller gave up on an attempt. |
@@ -62,12 +62,13 @@ not an invented payload.
 | any | Requested, scope untracked / unsupported / no_token | Blocked{reason, no Until}, `Seq`+1 | CancelRead (if Loading/Waiting), Explain |
 | Loading/Waiting | Requested for same key | unchanged | JoinRequest |
 | Loading(a) | Fetched(a), payload valid | Ready or Partial | PublishContext |
-| Loading(a) | Fetched(a), payload invalid | Blocked{unsupported, Until} | Explain |
+| Loading(a) | Fetched(a), payload is not the keyed object (or head moved) | Blocked{not_found, Until} | Explain |
+| Loading(a) | Fetched(a), bad gap reason or more than 500 gaps | Blocked{unsupported, Until} | Explain |
 | Loading(a) | FetchFailed(a), transient / rate_limited, retries < 2 | Waiting | ScheduleWake |
 | Loading(a) | FetchFailed(a), unauthorized | Blocked{forbidden, Until} | Explain |
 | Loading(a) | FetchFailed(a), not_found | Blocked{not_found, Until} | Explain |
 | Loading(a) | FetchFailed(a), retries exhausted | Blocked{retry_exhausted, Until} | Explain |
-| Loading(a) | Rejected(a, not_found / unsupported / too_large) | Blocked{reason, Until} | Explain |
+| Loading(a) | Rejected(a, any refusal) | Blocked{matching reason, Until} | Explain |
 | Loading(a) | RateLimited(a), Until after Now | Waiting{At=Until}, no retry used | ScheduleWake |
 | Waiting(a) | Wake(a), due | Loading(a+1) | ReadContext |
 | Loading/Waiting | Cancelled current attempt | Empty | CancelRead |
@@ -143,7 +144,8 @@ GitLab/GitHub Reader → httptest recorded API and redirect fixtures
 | Host reader | host cannot give the kind (Gitea logs, GitHub external checks), or the answer cannot be used (undecodable JSON, invalid identity, missing immutable head) | domain outcome | Rejected{unsupported}, no retry |
 | Host reader | over the aggregate response budget | domain outcome | Rejected{too_large}, no retry |
 | GET | timeout, connection, 5xx, rate limit, GitLab MR with no diff version for the head yet | retry | bounded idempotent read policy above: at most 2 retries, 1 s then 3 s, the later deadline wins |
-| Payload | current attempt returns a payload that does not match the key | domain outcome | Blocked{unsupported}; never left Loading |
+| Payload | current attempt returns a payload that is not the keyed object, including an MR whose head moved since the key was built (N-c) | domain outcome | Blocked{not_found} for 5 s, never left Loading. A distinct `head_moved` reason was not added: it would widen the shared `ContextBlockReason` and the API's reason set for no new behaviour, since the caller's answer is the same (ask again with the current head, which is another key and reads at once) |
+| Overtaken | the target, instance or token changed (or another call dropped the attempt) while this call read | escape hatch | `ErrContextSuperseded`: not a scope error, ask again for a fresh read. `ErrContextScope` is only for a repo the resolver or the core says is not tracked |
 | Partial source | one log missing/oversized | escape hatch | labelled partial context, no hidden success |
 | Caller | cancelled or timed out | escape hatch | the owner's wait is released; joined callers are released and ask again; the slot stays |
 | Clock | returns the zero time | die | the core ignores the input; the shell reports an error and closes the attempt |
@@ -174,6 +176,31 @@ Three deadlines exist. Decision for context reads:
   `limited` could then go. The sleeper is a `ContextService` option
   (`WithContextSleeper`) for the same reason: `Deps` lives in `service.go`.
 
+## Concurrency and memory
+
+- The owner takes the core's step and its answer in one critical section
+  (`feed`), so a change another call makes right after cannot turn a published
+  value into an empty outcome. `ContextOutcome` is never empty with a nil error;
+  a call with nothing to say gets `ErrContextSuperseded`.
+- When a call finds the target or configuration changed while another call's
+  read is in flight, it steps `ScopeChanged` / `ConfigChanged` (cancelling that
+  read), waits for the owner to leave and reads again. The overtaken owner gets
+  `ErrContextSuperseded`, unless the core holds Blocked{untracked}, which is a
+  real scope error.
+- The slot map is capped (`contextMaxSlots`, 256). Idle slots that hold nothing
+  worth keeping (Empty, expired Ready/Partial, a Blocked past its window) are
+  dropped on every insert; when the map is still full the least recently used
+  idle slot goes, by the injected clock. A slot with a read in flight is never
+  evicted, so only running reads can push the map past the cap. A key is an open
+  space (an MR head, an issue number), so without this each key would hold up to
+  64 KiB (MR diff) or 1 MiB (job logs) for ever. An evicted slot restarts its
+  counter, which is safe because only an owner (never evicted) produces results.
+- When no slot exists for an untracked key the shell returns `ErrContextScope`
+  without a core step (there is nothing held to drop); when one exists it feeds
+  `Requested{untracked}` and the returned `Explain{untracked}` is that error.
+- `ContextService` has two unexported test hooks (`onJoin`, `afterStep`), nil in
+  production, so tests force interleavings without sleeping.
+
 ## Resolver errors
 
 A `ContextResolver` wraps `ErrContextScope` for not tracked / not ready / not
@@ -194,10 +221,15 @@ in flight. Every other resolver error is wrapped with context and keeps its kind
 
 | Source | Parser | Produces | Rejects |
 |---|---|---|---|
-| API | ParseContextKey | key | arbitrary URL, nonpositive ID, wrong tracked repo |
-| Host JSON/log bytes | ParseJobs/Issues/MR, bounded UTF-8/log normalizer | sealed payload | malformed fields (`ErrContextInvalid`), excessive pages/size, unsafe links |
-| Redirect | ValidateLogRedirect | internal fetch target | credentials, unapproved authority/scheme, authentication forwarding |
-| Cached entry | ParseContextEntry | state | invalid variant, impossible attempt/expiry |
+| API | `ContextKey.Validate` (core) at API wiring | key | arbitrary URL, nonpositive ID, wrong tracked repo (the resolver) |
+| Host JSON/log bytes | `ContextAPI` decoding and `redactContext`; `ContextPayloadMatches` (core) | sealed payload | malformed fields (`ErrContextInvalid`), excessive pages/size, unsafe links, a payload that is not the keyed object |
+| Redirect | the `Getter` log redirect rules (`GetLogBounded`) | internal fetch target | credentials, unapproved authority/scheme, authentication forwarding |
+| Cached entry | none: entries are never parsed from outside; the cache is in memory and only the core builds them | state | n/a |
+
+The names `ParseContextKey`, `ParseContextEntry` and `ValidateLogRedirect` of the
+first version of this table do not exist and are not planned: the first is
+`ContextKey.Validate` plus the resolver, the second is not needed (no persisted
+entries) and the third is covered by the Getter.
 
 ## Invariants and files
 
