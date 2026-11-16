@@ -81,7 +81,7 @@ func ValidateRemoteURL(raw string) (string, error) {
 	}
 	canon := "https://" + strings.ToLower(u.Host) + path
 	// Canonical form must be stable.
-	if u2, err := url.Parse(canon); err != nil || u2.EscapedPath() != path || strings.ToLower(u2.Host) != strings.ToLower(u.Host) {
+	if u2, err := url.Parse(canon); err != nil || u2.EscapedPath() != path || !strings.EqualFold(u2.Host, u.Host) {
 		return "", fmt.Errorf("%w: not canonical", ErrBadRemoteURL)
 	}
 	return canon, nil

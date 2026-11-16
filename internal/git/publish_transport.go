@@ -171,7 +171,7 @@ func (t *GoGitTransport) failure(op string, err error) error {
 	case errors.Is(err, transport.ErrAuthenticationRequired):
 		msg = "The git host did not accept the sign-in. Reconnect the host account and try again."
 	case errors.Is(err, transport.ErrAuthorizationFailed):
-		msg = "The git host account is not allowed to push to this repository."
+		msg = "The git host account is not allowed to publish to this repository."
 	case errors.Is(err, transport.ErrRepositoryNotFound):
 		msg = "The git host has no such repository, or the account cannot see it."
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
@@ -321,7 +321,7 @@ func (t *GoGitTransport) PublishBranch(ctx context.Context, req PublishRequest) 
 		if report != nil {
 			// The remote answered and refused the update: definite, nothing changed.
 			return PublishResult{}, &Error{Op: "publish", Err: errors.New(t.redact.Redact(err.Error())),
-				UserMsg: "The git host refused the push. Check the branch rules and permissions, then try again."}
+				UserMsg: "The git host refused the publish. Check the branch rules and permissions, then try again."}
 		}
 		if definiteHTTP(err) {
 			return PublishResult{}, t.failure("publish", err)
@@ -332,7 +332,7 @@ func (t *GoGitTransport) PublishBranch(ctx context.Context, req PublishRequest) 
 	}
 	if report == nil {
 		return PublishResult{}, &Error{Op: "publish", Err: fmt.Errorf("%w: no status from the host", ErrPublishUnknown),
-			UserMsg: "The git host did not say whether the push worked. Yggdrasil will check what the host has."}
+			UserMsg: "The git host did not say whether the publish worked. Yggdrasil will check what the host has."}
 	}
 	return PublishResult{Head: local.Hash().String()}, nil
 }

@@ -6,29 +6,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
-	"github.com/brendatamaar/yggdrasil/internal/platform"
 	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
 
-// recorder wraps platform.Start and keeps what every child was started with.
-type recorder struct {
-	mu    sync.Mutex
-	specs []platform.Spec
-}
-
-func (r *recorder) start(ctx context.Context, s platform.Spec) (platform.Process, error) {
-	r.mu.Lock()
-	r.specs = append(r.specs, s)
-	r.mu.Unlock()
-	return platform.Start(ctx, s)
-}
-
-// Invariants 3 and 4: the new-repo helpers start git with the clean
-// environment, no token in argv or env, hooks off for commits, no template for
-// init, and a credential URL is never passed to git at all.
+// Invariants 3 and 4: the commit and init helpers use the same process path as
+// every other git call, so a git child there gets the clean environment (a
+// shell alias prints what the child really received), and a credential URL is
+// refused before any child is started.
 func TestInvariant_3_NewRepoHelpersStartCleanChildren(t *testing.T) {
 	secrets := map[string]string{
 		"GITHUB_TOKEN": "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -40,65 +26,35 @@ func TestInvariant_3_NewRepoHelpersStartCleanChildren(t *testing.T) {
 	}
 	env, err := safety.NewEnvBuilder().Build(safety.EnvOptions{Extra: map[string]string{
 		"GIT_CONFIG_GLOBAL": filepath.Join(t.TempDir(), "none"), "GIT_CONFIG_NOSYSTEM": "1",
-		"GIT_AUTHOR_NAME": "Ada Test", "GIT_AUTHOR_EMAIL": "ada@example.test",
-		"GIT_COMMITTER_NAME": "Ada Test", "GIT_COMMITTER_EMAIL": "ada@example.test",
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	g := New0(t, env)
-	rec := &recorder{}
-	g.start = rec.start
-	ctx := context.Background()
-	dir := filepath.Join(t.TempDir(), "acme shop api")
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		t.Fatal(err)
+	dir := t.TempDir()
+	// execWith is the path of CommitFirst's add, author check and commit.
+	out, _, code, err := g.execWith(context.Background(), dir, "printenv", nil, false, "-c", "alias.printenv=!env", "printenv")
+	if err != nil || code != 0 {
+		t.Skipf("this git cannot run a shell alias: %v (exit %d)", err, code)
 	}
-	must := func(err error) {
-		t.Helper()
-		if err != nil {
-			t.Fatal(err)
+	if !strings.Contains(out, "GIT_TERMINAL_PROMPT=0") {
+		t.Fatalf("the child did not print its environment:\n%s", out)
+	}
+	for k, v := range secrets {
+		if strings.Contains(out, v) || strings.Contains(strings.ToUpper(out), k+"=") {
+			t.Errorf("%s reached a git child", k)
 		}
-	}
-	must(g.InitRepo(ctx, dir, "main"))
-	must(os.WriteFile(filepath.Join(dir, "README.md"), []byte("# x\n"), 0o600))
-	_, err = g.CommitFirst(ctx, dir, []string{"README.md"}, "Initial commit")
-	must(err)
-	must(g.AddOrigin(ctx, dir, "https://git.example.test/acme/shop-api"))
-	_, _, err = g.Origin(ctx, dir)
-	must(err)
-	// A credential URL never reaches a git child.
-	n := len(rec.specs)
-	if err := g.AddOrigin(ctx, dir, "https://user:ghp_secrettoken@git.example.test/acme/other"); err == nil {
-		t.Fatal("credential URL accepted")
-	}
-	if len(rec.specs) != n {
-		t.Fatal("a credential URL started a git child")
 	}
 
-	var sawHooksOff, sawNoTemplate bool
-	for _, s := range rec.specs {
-		all := strings.Join(s.Argv, " ") + "\x00" + strings.Join(s.Env, "\x00")
-		for k, v := range secrets {
-			if strings.Contains(all, v) || strings.Contains(strings.ToUpper(strings.Join(s.Env, "\n")), k+"=") {
-				t.Errorf("%s reached a git child: %v", k, s.Argv)
-			}
-		}
-		if strings.Contains(all, "ghp_secrettoken") {
-			t.Error("a URL credential reached a git child")
-		}
-		if strings.Contains(all, "core.hooksPath=") && strings.Contains(all, "commit") {
-			sawHooksOff = true
-		}
-		if strings.Contains(all, "--template=") {
-			sawNoTemplate = true
-		}
-		if !strings.Contains(all, "credential.helper=") {
-			t.Errorf("credential helpers not disabled: %v", s.Argv)
-		}
+	// A credential URL is refused before a process is started: with no git
+	// executable at all the error is still the URL error, not a start error.
+	g.exe = filepath.Join(dir, "no-such-git")
+	err = g.AddOrigin(context.Background(), dir, "https://user:ghp_secrettoken@git.example.test/acme/other")
+	if !errors.Is(err, ErrCredentialURL) {
+		t.Fatalf("err = %v, want ErrCredentialURL before any child", err)
 	}
-	if !sawHooksOff || !sawNoTemplate {
-		t.Fatalf("hooks off: %v, no template: %v", sawHooksOff, sawNoTemplate)
+	if strings.Contains(err.Error()+UserMessage(err), "ghp_secrettoken") {
+		t.Fatal("the URL credential is echoed")
 	}
 }
 

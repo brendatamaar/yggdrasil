@@ -51,7 +51,7 @@ func NewGitHTTPServer(t *testing.T) *GitHTTPServer {
 	t.Helper()
 	s := &GitHTTPServer{Token: "test-token-not-a-secret", repos: map[string]*memory.Storage{}}
 	s.Server = httptest.NewTLSServer(http.HandlerFunc(s.serve))
-	t.Cleanup(s.Server.Close)
+	t.Cleanup(s.Close)
 	return s
 }
 
