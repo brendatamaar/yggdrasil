@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/api"
+	"github.com/brendatamaar/yggdrasil/internal/audit"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	corehosts "github.com/brendatamaar/yggdrasil/internal/core/hosts"
 	corenewrepos "github.com/brendatamaar/yggdrasil/internal/core/newrepos"
@@ -124,10 +125,13 @@ func (s *Service) audit(ctx context.Context, tx *db.Tx, actor string, cmds []cor
 		if err != nil {
 			return err
 		}
-		if err := tx.AppendAudit(ctx, core.AuditEntry{
-			ID: core.AuditID(s.d.IDs("aud")), At: now, Actor: actor, Action: a.Action,
-			Subject: "newrepo:" + string(a.Operation), Detail: detail,
-		}); err != nil {
+		e, err := audit.Prepare(core.AuditEntry{
+			Actor: actor, Action: a.Action, Subject: "newrepo:" + string(a.Operation), Detail: detail,
+		}, redactFunc(s.d.Redact), core.AuditID(s.d.IDs("aud")), now)
+		if err != nil {
+			return fmt.Errorf("prepare audit entry: %w", err)
+		}
+		if err := tx.AppendAudit(ctx, e); err != nil {
 			return err
 		}
 	}
@@ -311,3 +315,8 @@ func stateCode(st corenewrepos.State) (api.NewRepoState, error) {
 	}
 	return "", errors.New("unknown new repo state")
 }
+
+// redactFunc adapts the Deps redaction function to safety.Redactor.
+type redactFunc func(string) string
+
+func (f redactFunc) Redact(s string) string { return f(s) }
