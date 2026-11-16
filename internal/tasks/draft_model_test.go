@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"sync"
 	"testing"
@@ -66,6 +67,7 @@ type impOp struct {
 type reqRec struct {
 	digest string
 	task   core.TaskID
+	op     impOp // the committed request, so it can be replayed later
 }
 
 type draftModel struct {
@@ -160,7 +162,11 @@ func (m *draftModel) scope(op impOp) string {
 
 func (m *draftModel) doImport(t *testing.T, op impOp) {
 	ctx := context.Background()
-	if m.scope(op) != "" || op.freshRequestKey {
+	// An out-of-scope repo keeps its request key on purpose: scope must refuse
+	// before the digest check and before a replay, so a committed request
+	// replayed after the repo left scope (same or changed payload) is predicted
+	// as a scope refusal, never as the original task or a digest mismatch.
+	if op.freshRequestKey {
 		m.nextReq++
 		op.req = core.RequestID(fmt.Sprintf("req_fresh%d", m.nextReq))
 	}
@@ -169,6 +175,8 @@ func (m *draftModel) doImport(t *testing.T, op impOp) {
 	res, err := m.h.svc.ImportIssueDraft(ctx, spec)
 	d := digestOf(spec)
 	key := string(spec.Project) + "|" + spec.Issue.DedupKey()
+	// Predicted order: scope refusal, then digest mismatch, then replay returns
+	// the original, then issue dedup, then create.
 	switch {
 	case m.scope(op) != "":
 		if !rejectedWith(err, m.scope(op)) || res.Task.ID != "" || errors.Is(err, db.ErrNotFound) {
@@ -189,14 +197,14 @@ func (m *draftModel) doImport(t *testing.T, op impOp) {
 		if err != nil || res.Created || res.Task.ID != m.issues[key] {
 			t.Fatalf("issue dedup must return %s, got %+v %v", m.issues[key], res, err)
 		}
-		m.requests[op.req] = reqRec{digest: d, task: res.Task.ID}
+		m.requests[op.req] = reqRec{digest: d, task: res.Task.ID, op: op}
 		m.links[res.Task.ID]++
 		return
 	}
 	if err != nil || !res.Created {
 		t.Fatalf("first import must create a draft, got %+v %v", res, err)
 	}
-	m.requests[op.req] = reqRec{digest: d, task: res.Task.ID}
+	m.requests[op.req] = reqRec{digest: d, task: res.Task.ID, op: op}
 	m.issues[key] = res.Task.ID
 	m.links[res.Task.ID]++
 	m.tasks[res.Task.ID] = &modelDraft{project: spec.Project, repo: spec.Repo, issue: spec.Issue.Source(), title: spec.Title, brief: spec.Brief, model: spec.Model}
@@ -207,13 +215,14 @@ func (m *draftModel) burst(t *testing.T, issue int) {
 	m.log = append(m.log, fmt.Sprintf("burst issue=%d", issue))
 	const n = 4
 	specs := make([]coretasks.DraftSpec, n)
+	ops := make([]impOp, n)
 	results := make([]DraftResult, n)
 	errs := make([]error, n)
 	var wg sync.WaitGroup
 	for i := range specs {
 		m.nextReq++
 		op := impOp{req: core.RequestID(fmt.Sprintf("req_fresh%d", m.nextReq)), repo: repoA0, issue: issue, title: "Burst", brief: "burst"}
-		specs[i] = m.specOf(op)
+		specs[i], ops[i] = m.specOf(op), op
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -238,7 +247,7 @@ func (m *draftModel) burst(t *testing.T, issue int) {
 		if results[i].Created {
 			created++
 		}
-		m.requests[specs[i].RequestID] = reqRec{digest: digestOf(specs[i]), task: winner}
+		m.requests[specs[i].RequestID] = reqRec{digest: digestOf(specs[i]), task: winner, op: ops[i]}
 		m.links[winner]++
 	}
 	if (known == "" && created != 1) || (known != "" && created != 0) {
@@ -249,6 +258,34 @@ func (m *draftModel) burst(t *testing.T, issue int) {
 		m.issues[key] = winner
 		m.tasks[winner] = &modelDraft{project: s.Project, repo: s.Repo, issue: s.Issue.Source(), title: s.Title, brief: s.Brief, model: s.Model}
 	}
+}
+
+// replayCommitted replays an already-committed request ID, with the same
+// payload or with a changed one. When the repo has since left scope (untracked)
+// the model predicts a scope refusal in both cases; otherwise the original
+// task (same payload) or a digest mismatch (changed payload).
+func (m *draftModel) replayCommitted(t *testing.T, r *rand.Rand, changed, preferOutOfScope bool) {
+	var ids []core.RequestID
+	for id := range m.requests {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	var pick []core.RequestID
+	for _, id := range ids {
+		if !preferOutOfScope || m.scope(m.requests[id].op) != "" {
+			pick = append(pick, id)
+		}
+	}
+	if len(pick) == 0 {
+		return
+	}
+	rec := m.requests[pick[r.Intn(len(pick))]]
+	op := rec.op
+	op.freshRequestKey = false
+	if changed {
+		op.title += " (edited)"
+	}
+	m.doImport(t, op)
 }
 
 func (m *draftModel) pickDraft(r *rand.Rand, started bool) core.TaskID {
@@ -446,10 +483,17 @@ func TestPropIssueImportAndStartSequences(t *testing.T) {
 					m.h.restart()
 				case p < 18:
 					if !m.a1Untacked {
+						// Commit one shop-web request first, so the replays below
+						// have an out-of-scope repo to hit.
+						m.doImport(t, impOp{repo: repoA1, issue: 1 + r.Intn(3), title: "Fix login", brief: "Users cannot log in.", freshRequestKey: true})
 						m.log = append(m.log, "untrack shop-web")
 						dbtest.UntrackRepo(t, m.h.store, m.h.repos[1])
 						m.a1Untacked = true
+						m.replayCommitted(t, r, false, true) // scope precedes replay
+						m.replayCommitted(t, r, true, true)  // scope precedes the digest check
 					}
+				case p < 19:
+					m.replayCommitted(t, r, r.Intn(2) == 0, r.Intn(2) == 0)
 				default:
 					m.doImport(t, impOp{req: pool[r.Intn(len(pool))], repo: repoA0, issue: 1 + r.Intn(3), title: "Fix login", brief: "Users cannot log in."})
 				}

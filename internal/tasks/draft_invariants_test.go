@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -298,14 +299,26 @@ func TestDraftDirectEditSharesEditorLockAndCancelReleasesIt(t *testing.T) {
 		}
 	}
 	start(a.Task.ID)
-	time.Sleep(150 * time.Millisecond)
+	// Wait for the scheduler's own verdict (the task is held back for the build),
+	// not for a fixed time, then check that nothing ran.
+	waitFor(t, 5*time.Second, func() bool { return h.svc.blockedReason(a.Task.ID) != "" }, "the scheduler to hold the draft back for the build")
 	if len(h.adapter.Starts()) != 0 || h.state(a.Task.ID).Row.Status != core.TaskQueued {
 		t.Fatal("a draft edited the main checkout beside a build")
 	}
 	rel()
 	waitFor(t, 5*time.Second, func() bool { return len(h.adapter.Starts()) == 1 }, "the first editor")
 	start(b.Task.ID)
-	time.Sleep(150 * time.Millisecond)
+	// The board holds the second draft back while the first owns the main
+	// checkout, so no Admit is ever produced and nothing else signals it. Run one
+	// scheduling pass ourselves (the same function the loop runs): if the board
+	// would admit the draft, it leaves Waiting synchronously, inside this call.
+	h.svc.scheduleOnce()
+	h.svc.boardMu.Lock()
+	kind := h.svc.board.Tasks[b.Task.ID].Kind
+	h.svc.boardMu.Unlock()
+	if kind != coretasks.KindWaiting {
+		t.Fatalf("the second draft left the waiting queue (%v) beside the first editor", kind)
+	}
 	if len(h.adapter.Starts()) != 1 {
 		t.Fatal("two drafts edit one main checkout")
 	}
@@ -364,17 +377,27 @@ func TestExplicitStartAcrossTwoServicesAdmitsOneFirstTurn(t *testing.T) {
 
 // noProbeLock hides Held, so only TryAcquire (the authority) guards the editor
 // lock and the LocksDenied path is the one exercised.
-type noProbeLock struct{ l *fakeMainLock }
+// It counts refusals, so a test can wait for the scheduler to have been refused
+// (and to have asked again) instead of sleeping.
+type noProbeLock struct {
+	l       *fakeMainLock
+	refused *atomic.Int32
+}
 
 func (n noProbeLock) TryAcquire(repos []core.RepoID, owner string) (Release, string, bool) {
-	return n.l.TryAcquire(repos, owner)
+	rel, holder, ok := n.l.TryAcquire(repos, owner)
+	if !ok {
+		n.refused.Add(1)
+	}
+	return rel, holder, ok
 }
 
 func TestDraftDirectEditHonoursTheEditorLockWithoutAProbe(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t, []string{"shop-api"})
 	h.adapter.caps.Enforcement = agents.EnforcementHook
-	h.tune = func(c *Config) { c.MainLock = noProbeLock{h.lock} }
+	refused := &atomic.Int32{}
+	h.tune = func(c *Config) { c.MainLock = noProbeLock{h.lock, refused} }
 	h.start()
 	id := startDraftOf(t, h)
 	rel, _, ok := h.lock.TryAcquire([]core.RepoID{h.repos[0].ID}, "build:1")
@@ -384,7 +407,8 @@ func TestDraftDirectEditHonoursTheEditorLockWithoutAProbe(t *testing.T) {
 	if _, err := h.svc.StartDraft(ctx, coretasks.DraftStart{Task: id, Mode: core.ModeCurrentBranch, OptIn: true}, ""); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(200 * time.Millisecond)
+	// Two refusals: the first admission, and a retry on the LockRetry tick.
+	waitFor(t, 5*time.Second, func() bool { return refused.Load() >= 2 }, "the lock to refuse the draft twice")
 	if len(h.adapter.Starts()) != 0 {
 		t.Fatal("the draft edited the main checkout while another holder had it")
 	}

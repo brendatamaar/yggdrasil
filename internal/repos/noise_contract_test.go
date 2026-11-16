@@ -343,7 +343,9 @@ func TestNoiseAndHistoryPortsAreReadOnly(t *testing.T) {
 func TestObservingNoiseAndHistoryNeverMutatesTheRepo(t *testing.T) {
 	fx := newGitFx(t)
 	dir := fx.repo("shop-api")
-	fx.commit(dir, "a.txt", "a\r\n", "init")
+	// A fixed commit time, so the history window below does not use the clock.
+	committedAt := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
+	fx.at(committedAt, committedAt).commit(dir, "a.txt", "a\r\n", "init")
 	fx.run(dir, "update-ref", "refs/remotes/origin/main", "HEAD")
 	fx.run(dir, "config", "remote.origin.url", "https://example.invalid/acme/shop-api.git")
 	fx.run(dir, "config", "branch.main.remote", "origin")
@@ -376,9 +378,9 @@ func TestObservingNoiseAndHistoryNeverMutatesTheRepo(t *testing.T) {
 		if _, err := svc.NoiseFacts(ctx, row.ID); err != nil {
 			t.Fatal(err)
 		}
-		now := time.Now()
-		if _, _, err := history.Commits(ctx, row.ID, now.Add(-time.Hour), now.Add(time.Hour), 50); err != nil {
-			t.Fatal(err)
+		got, _, err := history.Commits(ctx, row.ID, committedAt.Add(-time.Hour), committedAt.Add(time.Hour), 50)
+		if err != nil || len(got) != 1 {
+			t.Fatalf("history read %d commits, err %v: the window must contain the commit", len(got), err)
 		}
 	}
 	if after := treeHash(t, dir); after != before {

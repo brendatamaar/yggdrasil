@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	corerepos "github.com/brendatamaar/yggdrasil/internal/core/repos"
 	"github.com/brendatamaar/yggdrasil/internal/git"
@@ -74,6 +75,15 @@ func (f *gitFx) runErr(dir string, args ...string) error {
 		return fmt.Errorf("git %v: exit %d, err %w: %s", args, code, err, errb.String())
 	}
 	return nil
+}
+
+// at returns a copy of the fixture whose git commands stamp the given author
+// and committer times, so no test depends on the real clock.
+func (f *gitFx) at(author, committer time.Time) *gitFx {
+	g := *f
+	g.env = append(append([]string(nil), f.env...),
+		"GIT_AUTHOR_DATE="+author.Format(time.RFC3339), "GIT_COMMITTER_DATE="+committer.Format(time.RFC3339))
+	return &g
 }
 
 func (f *gitFx) write(dir, name, content string) {
