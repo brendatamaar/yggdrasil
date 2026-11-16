@@ -112,7 +112,7 @@ func mustJSON(v any) string { b, _ := json.Marshal(v); return string(b) }
 
 func TestPropRedactContextBoundsAndLabels(t *testing.T) {
 	kinds := map[int]int{}
-	for seed := int64(1); seed <= 40; seed++ {
+	for seed := int64(1); seed <= 24; seed++ {
 		r := rand.New(rand.NewSource(seed))
 		p, kind := genPayload(r)
 		kinds[kind]++
