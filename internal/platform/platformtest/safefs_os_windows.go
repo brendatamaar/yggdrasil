@@ -12,7 +12,7 @@ import (
 // access with read-only sharing then gets a sharing violation.
 func osLockFile(t *testing.T, path string) func() {
 	t.Helper()
-	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	f, err := os.OpenFile(path, os.O_RDWR, 0) //nolint:gosec // test helper on a temp path
 	if err != nil {
 		t.Fatal(err)
 	}
