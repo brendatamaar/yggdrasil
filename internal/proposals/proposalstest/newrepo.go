@@ -197,13 +197,13 @@ func (f *NewRepoFake) move(op core.OperationID, mut func(*OpState)) {
 // Published after publishing.
 func (f *NewRepoFake) Finish(op core.OperationID) {
 	f.move(op, func(s *OpState) {
-		switch {
-		case s.Phase == PhaseRunning || s.Phase == PhaseUncertain:
-			if s.Flow == FlowPublish {
-				s.Phase = PhasePublished
-			} else {
-				s.Phase = PhaseReady
-			}
+		if s.Phase != PhaseRunning && s.Phase != PhaseUncertain {
+			return
+		}
+		if s.Flow == FlowPublish {
+			s.Phase = PhasePublished
+		} else {
+			s.Phase = PhaseReady
 		}
 	})
 }
@@ -311,7 +311,7 @@ func (f *NewRepoFake) ReconcileOperation(ctx context.Context, op core.OperationI
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	f.record(NewRepoCall{Method: "ReconcileOperation", Op: op})
+	_, _ = f.record(NewRepoCall{Method: "ReconcileOperation", Op: op})
 	f.mu.Lock()
 	s, ok := f.ops[op]
 	to, reason := f.recTo, f.recStop

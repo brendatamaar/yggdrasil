@@ -110,6 +110,8 @@ func seenAttempts(rec db.ReservationRecord, effects []db.EffectRecord) []int {
 		out = append(out, v.Attempt)
 	case newrepos.Stopped:
 		out = append(out, v.Attempt)
+	case newrepos.Reserved, newrepos.AwaitingConfirm, newrepos.Ready, newrepos.Published:
+		// No attempt has run in these states.
 	}
 	for _, e := range effects {
 		if e.Stage != "" {
@@ -186,6 +188,8 @@ func publishSpecInState(st newrepos.State) (newrepos.PublishSpec, bool) {
 		r = v.Resume
 	case newrepos.Stopped:
 		r = v.Resume
+	case newrepos.Reserved, newrepos.AwaitingConfirm, newrepos.Initializing, newrepos.Ready, newrepos.Published:
+		return newrepos.PublishSpec{}, false
 	}
 	if rp, ok := r.(newrepos.ResumePublish); ok {
 		return rp.Spec, true
@@ -256,8 +260,6 @@ const (
 	// followAfterCall: the lifecycle accepted the call (or nothing needed one);
 	// a running or uncertain operation is the lifecycle's to finish.
 	followAfterCall followMode = iota
-	// followAfterLoss: the reply was lost; whatever is not proven is unknown.
-	followAfterLoss
 	// followAfterReconcile: a read-only reconciliation just ran.
 	followAfterReconcile
 )

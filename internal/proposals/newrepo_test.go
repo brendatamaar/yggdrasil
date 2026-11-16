@@ -228,11 +228,13 @@ func TestStoppedOperationFailsTheProposalAndRetryNeedsANewAttempt(t *testing.T) 
 	if _, err := x.svc.Retry(x.ctx, v.ID, "user"); err != nil {
 		t.Fatal(err)
 	}
-	deadline := 0
-	for x.fake.Confirms() < 2 && deadline < 10000 {
-		x.settleQueue()
-		deadline++
+	for i := 0; x.fake.Confirms() < 2; i++ {
+		if i > 5000 {
+			t.Fatal("the retry never reached the lifecycle")
+		}
+		time.Sleep(2 * time.Millisecond)
 	}
+	x.settleQueue()
 	calls := x.fake.Calls()
 	if len(calls) != 2 || calls[1].Attempt <= calls[0].Attempt {
 		t.Fatalf("calls = %+v, want a newer attempt on the retry", calls)
