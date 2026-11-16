@@ -116,6 +116,15 @@ func (f *NewRepoFake) AddReady(op core.OperationID, publishHash string) {
 	f.mu.Unlock()
 }
 
+// SetPublishHash sets the publish spec hash an initialized operation accepts.
+func (f *NewRepoFake) SetPublishHash(op core.OperationID, publishHash string) {
+	f.mu.Lock()
+	if s, ok := f.ops[op]; ok {
+		s.PubHash = publishHash
+	}
+	f.mu.Unlock()
+}
+
 // Script makes the next ConfirmInit or ConfirmPublish fail as fault says with err.
 func (f *NewRepoFake) Script(fault Fault, err error) {
 	f.mu.Lock()
