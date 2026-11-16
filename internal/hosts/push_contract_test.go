@@ -87,7 +87,7 @@ func authorizeContract(t *testing.T, authorize func(context.Context, *http.Reque
 								// Sample the product space: every combination is
 								// covered for the pieces that matter by the loops
 								// above; keep the run short with a stride.
-								if (len(h)+len(p)+len(q)+len(f)+len(rh)+len(u))%3 != 0 && !(scheme == "https" && u == "" && h == "git.acme.test:8443") {
+								if (len(h)+len(p)+len(q)+len(f)+len(rh)+len(u))%3 != 0 && (scheme != "https" || u != "" || h != "git.acme.test:8443") {
 									continue
 								}
 								req := pushRequest(t, scheme, u, h, p, q, f, rh)

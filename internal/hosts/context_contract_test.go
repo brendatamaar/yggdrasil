@@ -174,7 +174,6 @@ type contractWorld struct {
 	inst    corehosts.Instance
 	calls   func() int
 	tokens  func() []string
-	gate    func() chan struct{}
 	hold    func(gatePath string) (release func())
 	entered chan struct{}
 	cancels func() int

@@ -19,7 +19,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
@@ -156,7 +155,6 @@ func (f *fakeCommentHost) FindReviewComment(_ context.Context, _ core.RepoID, _ 
 type httpCommentWorld struct {
 	fakeCommentHost // state only; its methods are not used for the host
 	h               *ConfirmedHosts
-	scopeRev        atomic.Int32
 	lab             bool
 	pageFails       bool
 }
