@@ -135,7 +135,7 @@ func kinds(cmds []Command) []string {
 
 func wantKinds(t *testing.T, cmds []Command, want ...string) {
 	t.Helper()
-	if got := kinds(cmds); !reflect.DeepEqual(got, append([]string{}, want...)) && !(len(got) == 0 && len(want) == 0) {
+	if got := kinds(cmds); len(got) != len(want) || (len(got) > 0 && !reflect.DeepEqual(got, want)) {
 		t.Fatalf("commands = %v, want %v", got, want)
 	}
 }

@@ -26,7 +26,8 @@ import (
 //   - A stage result carries the Attempt and Stage it answers. A result for any
 //     other attempt or stage is ignored (fencing). The shell supplies strictly
 //     increasing attempt numbers for Confirmed, PublishConfirmed and
-//     RetryConfirmed; an Uncertain retry must also exceed the uncertain attempt.
+//     RetryConfirmed, and a retry must exceed the attempt that stopped or
+//     became uncertain (Stopped.Attempt, Uncertain.Attempt).
 //   - A receipt of the wrong sealed variant, or one that does not match the
 //     confirmed spec, is an impossible input (die class): the operation Stops
 //     with StopConflict, the worker is cancelled and no further stage runs.
@@ -159,6 +160,8 @@ func publishReceiptOK(spec PublishSpec, stage PublishStage, done []Receipt, rc R
 		return ok && r.URL == v.URL
 	case PushReceipt:
 		return v.Head == spec.ExpectedHead
+	case DirReceipt, GitReceipt, FileReceipt, CommitReceipt, TrackedReceipt:
+		return false
 	default:
 		return false
 	}
@@ -170,7 +173,7 @@ func refuse(o Operation, reason StopReason) (Operation, []Command) {
 }
 
 // stop moves to Stopped. A die stop (an impossible input) also cancels the worker.
-func stop(o Operation, stage Stage, reason StopReason, resume Resumable, die bool) (Operation, []Command) {
+func stop(o Operation, attempt int, stage Stage, reason StopReason, resume Resumable, die bool) (Operation, []Command) {
 	cmds := []Command{
 		PersistFailure{Operation: o.ID, Stage: stage, Reason: string(reason)},
 		record(o, "newrepo.stopped", stage, string(reason)),
@@ -179,7 +182,7 @@ func stop(o Operation, stage Stage, reason StopReason, resume Resumable, die boo
 	if die {
 		cmds = append(cmds, CancelWorker{Operation: o.ID})
 	}
-	return with(o, Stopped{Stage: stage, Reason: reason, Resume: resume}), cmds
+	return with(o, Stopped{Stage: stage, Reason: reason, Resume: resume, Attempt: attempt}), cmds
 }
 
 // uncertain moves to Uncertain and asks for the read-only check. It never runs a stage.
@@ -263,20 +266,28 @@ func beginPublish(o Operation, spec PublishSpec, attempt int, stage PublishStage
 // --- stage results ---
 
 func stepSucceeded(o Operation, in StageSucceeded) (Operation, []Command) {
-	switch st := o.State.(type) {
-	case Initializing:
-		if in.Attempt != st.Attempt || in.Stage != Stage(st.Stage) {
-			return o, nil
-		}
-		return advanceInit(o, st.Spec, st.Attempt, st.Stage, st.Done, in.Receipt, "newrepo.stage_done")
-	case Publishing:
-		if in.Attempt != st.Attempt || in.Stage != Stage(st.Stage) {
-			return o, nil
-		}
-		return advancePublish(o, st.Spec, st.Attempt, st.Stage, st.Done, in.Receipt, "newrepo.stage_done")
-	default:
+	v := describe(o.State)
+	if v.kind != kindRunning || in.Attempt != v.attempt || in.Stage != v.stage {
 		return o, nil
 	}
+	return advance(o, v, in.Receipt, "newrepo.stage_done")
+}
+
+// advance records a receipt for the view's stage, whichever flow it belongs to.
+func advance(o Operation, v view, rc Receipt, action string) (Operation, []Command) {
+	switch r := v.resume.(type) {
+	case ResumeInit:
+		if s, ok := v.stage.(InitStage); ok {
+			return advanceInit(o, r.Spec, v.attempt, s, r.Done, rc, action)
+		}
+	case ResumePublish:
+		if s, ok := v.stage.(PublishStage); ok {
+			return advancePublish(o, r.Spec, v.attempt, s, r.Done, rc, action)
+		}
+	case ResumeNone:
+	default:
+	}
+	return o, nil
 }
 
 // advanceInit records the receipt of stage and starts the next one, or finishes.
@@ -287,7 +298,7 @@ func advanceInit(o Operation, spec InitSpec, attempt int, stage InitStage, done 
 	}
 	resume := ResumeInit{Spec: spec, Done: withReceipt(done)}
 	if !initReceiptOK(spec, stage, rc) {
-		return stop(o, stage, StopConflict, resume, true)
+		return stop(o, attempt, stage, StopConflict, resume, true)
 	}
 	all := withReceipt(done, rc)
 	records := []Command{
@@ -297,7 +308,7 @@ func advanceInit(o Operation, spec InitSpec, attempt int, stage InitStage, done 
 	if idx == len(InitStages())-1 {
 		c, ok := commitOf(all)
 		if !ok {
-			return stop(o, stage, StopConflict, resume, true)
+			return stop(o, attempt, stage, StopConflict, resume, true)
 		}
 		return with(o, Ready{Repo: spec.Repo, InitialHead: c.Commit}), append(records, record(o, "newrepo.ready", stage, "ready"))
 	}
@@ -315,7 +326,7 @@ func advancePublish(o Operation, spec PublishSpec, attempt int, stage PublishSta
 	}
 	resume := ResumePublish{Spec: spec, Done: withReceipt(done)}
 	if !publishReceiptOK(spec, stage, done, rc) {
-		return stop(o, stage, StopConflict, resume, true)
+		return stop(o, attempt, stage, StopConflict, resume, true)
 	}
 	all := withReceipt(done, rc)
 	records := []Command{
@@ -325,7 +336,7 @@ func advancePublish(o Operation, spec PublishSpec, attempt int, stage PublishSta
 	if idx == len(PublishStages())-1 {
 		r, ok := remoteOf(all)
 		if !ok {
-			return stop(o, stage, StopConflict, resume, true)
+			return stop(o, attempt, stage, StopConflict, resume, true)
 		}
 		return with(o, Published{RemoteID: r.RemoteID, URL: r.URL, Head: spec.ExpectedHead}),
 			append(records, record(o, "newrepo.published", stage, "published"))
@@ -339,70 +350,46 @@ func stepFailed(o Operation, in StageFailed) (Operation, []Command) {
 	if in.Outcome != OutcomeDefiniteFailure && in.Outcome != OutcomeUnknown {
 		return o, nil
 	}
-	var (
-		attempt int
-		stage   Stage
-		resume  Resumable
-	)
-	switch st := o.State.(type) {
-	case Initializing:
-		attempt, stage, resume = st.Attempt, st.Stage, ResumeInit{Spec: st.Spec, Done: withReceipt(st.Done)}
-	case Publishing:
-		attempt, stage, resume = st.Attempt, st.Stage, ResumePublish{Spec: st.Spec, Done: withReceipt(st.Done)}
-	default:
-		return o, nil
-	}
-	if in.Attempt != attempt || in.Stage != stage {
+	v := describe(o.State)
+	if v.kind != kindRunning || in.Attempt != v.attempt || in.Stage != v.stage {
 		return o, nil
 	}
 	if in.Outcome == OutcomeUnknown {
-		return uncertain(o, attempt, stage, reasonUnknownOutcome, resume)
+		return uncertain(o, v.attempt, v.stage, reasonUnknownOutcome, v.resume)
 	}
 	reason := in.Reason
 	if reason == "" || reason.Validate() != nil {
 		reason = StopStageFailed
 	}
-	return stop(o, stage, reason, resume, false)
+	return stop(o, v.attempt, v.stage, reason, v.resume, false)
 }
 
 func stepRecovered(o Operation) (Operation, []Command) {
-	switch st := o.State.(type) {
-	case Initializing:
-		return uncertain(o, st.Attempt, st.Stage, reasonRestarted, ResumeInit{Spec: st.Spec, Done: withReceipt(st.Done)})
-	case Publishing:
-		return uncertain(o, st.Attempt, st.Stage, reasonRestarted, ResumePublish{Spec: st.Spec, Done: withReceipt(st.Done)})
-	default:
+	v := describe(o.State)
+	if v.kind != kindRunning {
 		return o, nil
 	}
+	return uncertain(o, v.attempt, v.stage, reasonRestarted, v.resume)
 }
 
 // stepReconciled handles the answer of the read-only check. Only an exact
 // success moves forward; nothing here ever repeats the uncertain stage.
 func stepReconciled(o Operation, in Reconciled) (Operation, []Command) {
-	st, ok := o.State.(Uncertain)
-	if !ok || in.Attempt != st.Attempt || in.Stage != st.Stage {
+	v := describe(o.State)
+	if v.kind != kindUncertain || in.Attempt != v.attempt || in.Stage != v.stage {
 		return o, nil
 	}
 	switch in.Outcome {
 	case ReconcileExactSuccess:
-		switch r := st.Resume.(type) {
-		case ResumeInit:
-			if s, ok := st.Stage.(InitStage); ok {
-				return advanceInit(o, r.Spec, st.Attempt, s, r.Done, in.Receipt, "newrepo.reconciled")
-			}
-		case ResumePublish:
-			if s, ok := st.Stage.(PublishStage); ok {
-				return advancePublish(o, r.Spec, st.Attempt, s, r.Done, in.Receipt, "newrepo.reconciled")
-			}
-		default:
-		}
-		return o, nil
+		return advance(o, v, in.Receipt, "newrepo.reconciled")
 	case ReconcileAbsent:
 		// The effect is not there: the stage did not run. A retry needs a fresh confirmation.
-		return stop(o, st.Stage, StopStageFailed, st.Resume, false)
+		return stop(o, v.attempt, v.stage, StopStageFailed, v.resume, false)
 	case ReconcileConflict:
-		return stop(o, st.Stage, StopConflict, st.Resume, false)
-	default: // ReconcileUnknown and anything else: stay Uncertain, write nothing
+		return stop(o, v.attempt, v.stage, StopConflict, v.resume, false)
+	case ReconcileUnknown:
+		return o, nil // stay Uncertain, write nothing
+	default:
 		return o, nil
 	}
 }
@@ -414,28 +401,16 @@ func stepReconciled(o Operation, in Reconciled) (Operation, []Command) {
 func retryable(r StopReason) bool { return r != StopRejected && r != StopUntracked }
 
 func stepRetry(o Operation, in RetryConfirmed) (Operation, []Command) {
-	var (
-		stage      Stage
-		resume     Resumable
-		minAttempt = 1
-	)
-	switch st := o.State.(type) {
-	case Stopped:
-		if !retryable(st.Reason) {
-			return o, nil
-		}
-		stage, resume = st.Stage, st.Resume
-	case Uncertain:
-		stage, resume, minAttempt = st.Stage, st.Resume, st.Attempt+1
-	default:
+	v := describe(o.State)
+	if v.kind != kindUncertain && (v.kind != kindStopped || !retryable(v.reason)) {
 		return o, nil
 	}
-	if in.Attempt < minAttempt {
+	if in.Attempt < v.attempt+1 || in.Attempt < 1 {
 		return o, nil
 	}
-	switch r := resume.(type) {
+	switch r := v.resume.(type) {
 	case ResumeInit:
-		s, ok := stage.(InitStage)
+		s, ok := v.stage.(InitStage)
 		if !ok || initIndex(s) != len(r.Done) || in.Hash != r.Spec.Hash() {
 			return o, nil
 		}
@@ -444,7 +419,7 @@ func stepRetry(o Operation, in RetryConfirmed) (Operation, []Command) {
 		}
 		return beginInit(o, r.Spec, in.Attempt, s, r.Done, "newrepo.retry")
 	case ResumePublish:
-		s, ok := stage.(PublishStage)
+		s, ok := v.stage.(PublishStage)
 		if !ok || publishIndex(s) != len(r.Done) || in.Hash != r.Spec.Hash() {
 			return o, nil
 		}
@@ -452,6 +427,8 @@ func stepRetry(o Operation, in RetryConfirmed) (Operation, []Command) {
 			return refuse(o, StopPreconditions)
 		}
 		return beginPublish(o, r.Spec, in.Attempt, s, r.Done, "newrepo.retry")
+	case ResumeNone:
+		return o, nil
 	default:
 		return o, nil
 	}
@@ -479,36 +456,68 @@ func stepPublishConfirmed(o Operation, in PublishConfirmed) (Operation, []Comman
 // --- reject and untracked ---
 
 func stepReject(o Operation) (Operation, []Command) {
-	switch o.State.(type) {
-	case Reserved, AwaitingConfirm:
-		return with(o, Stopped{Reason: StopRejected, Resume: ResumeNone{}}), []Command{
-			PersistFailure{Operation: o.ID, Reason: string(StopRejected)},
-			record(o, "newrepo.reject", nil, string(StopRejected)),
-		}
-	default:
+	_, reserved := o.State.(Reserved)
+	_, awaiting := o.State.(AwaitingConfirm)
+	if !reserved && !awaiting {
 		return o, nil
+	}
+	return with(o, Stopped{Reason: StopRejected, Resume: ResumeNone{}}), []Command{
+		PersistFailure{Operation: o.ID, Reason: string(StopRejected)},
+		record(o, "newrepo.reject", nil, string(StopRejected)),
 	}
 }
 
 func stepUntracked(o Operation) (Operation, []Command) {
-	var (
-		stage  Stage
-		resume Resumable = ResumeNone{}
-	)
-	switch st := o.State.(type) {
-	case Reserved, AwaitingConfirm, Ready:
-	case Initializing:
-		stage, resume = st.Stage, ResumeInit{Spec: st.Spec, Done: withReceipt(st.Done)}
-	case Publishing:
-		stage, resume = st.Stage, ResumePublish{Spec: st.Spec, Done: withReceipt(st.Done)}
-	case Uncertain:
-		stage, resume = st.Stage, st.Resume
-	default: // nil, Published, Stopped
+	v := describe(o.State)
+	if v.kind != kindIdle && v.kind != kindRunning && v.kind != kindUncertain {
 		return o, nil
 	}
-	return with(o, Stopped{Stage: stage, Reason: StopUntracked, Resume: resume}), []Command{
-		PersistFailure{Operation: o.ID, Stage: stage, Reason: string(StopUntracked)},
-		record(o, "newrepo.untracked", stage, string(StopUntracked)),
+	return with(o, Stopped{Stage: v.stage, Reason: StopUntracked, Resume: v.resume, Attempt: v.attempt}), []Command{
+		PersistFailure{Operation: o.ID, Stage: v.stage, Reason: string(StopUntracked)},
+		record(o, "newrepo.untracked", v.stage, string(StopUntracked)),
 		CancelWorker{Operation: o.ID},
+	}
+}
+
+type viewKind int
+
+const (
+	kindNone      viewKind = iota // no operation yet
+	kindIdle                      // Reserved, AwaitingConfirm, Ready: nothing in flight
+	kindRunning                   // Initializing, Publishing
+	kindUncertain                 // Uncertain
+	kindStopped                   // Stopped
+	kindFinal                     // Published
+)
+
+// view is the part of a State the generic transitions need: where the stage in
+// flight (or parked) stands and what a retry or reconciliation resumes from.
+type view struct {
+	kind    viewKind
+	attempt int
+	stage   Stage
+	resume  Resumable
+	reason  StopReason
+}
+
+// describe is the one place that lists every State variant.
+func describe(st State) view {
+	switch v := st.(type) {
+	case nil:
+		return view{kind: kindNone}
+	case Reserved, AwaitingConfirm, Ready:
+		return view{kind: kindIdle, resume: ResumeNone{}}
+	case Initializing:
+		return view{kind: kindRunning, attempt: v.Attempt, stage: v.Stage, resume: ResumeInit{Spec: v.Spec, Done: withReceipt(v.Done)}}
+	case Publishing:
+		return view{kind: kindRunning, attempt: v.Attempt, stage: v.Stage, resume: ResumePublish{Spec: v.Spec, Done: withReceipt(v.Done)}}
+	case Uncertain:
+		return view{kind: kindUncertain, attempt: v.Attempt, stage: v.Stage, resume: v.Resume}
+	case Stopped:
+		return view{kind: kindStopped, attempt: v.Attempt, stage: v.Stage, resume: v.Resume, reason: v.Reason}
+	case Published:
+		return view{kind: kindFinal}
+	default:
+		return view{kind: kindNone}
 	}
 }

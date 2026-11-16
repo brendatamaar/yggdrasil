@@ -130,6 +130,10 @@ type Stopped struct {
 	Stage  Stage
 	Reason StopReason
 	Resume Resumable
+	// Attempt is the attempt that ran Stage (0 when none ran). A retry needs a
+	// strictly greater attempt, so a late result of the old attempt can never
+	// be taken for the retry's.
+	Attempt int
 }
 
 func (Reserved) isState()        {}

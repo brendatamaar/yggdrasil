@@ -435,9 +435,6 @@ func TestRowRetry(t *testing.T) {
 			"empty hash":      {Attempt: 2, PreconditionsHold: true},
 			"old attempt (0)": {Hash: h, Attempt: -3, PreconditionsHold: true},
 		} {
-			if name == "stopped" && bn == "same attempt" {
-				continue // Stopped carries no attempt; the shell supplies fresh ones
-			}
 			o3, cmds := Step(from, in)
 			if !same(from, o3) || len(cmds) != 0 {
 				t.Errorf("%s/%s: changed", name, bn)
