@@ -60,25 +60,34 @@ You are the lead for building Yggdrasil. Follow .claude/CLAUDE.md and docs/AGENT
 Start Phase <N> from docs/PLAN.md. Previous phases are tagged up to <LAST_TAG>.
 
 Step 1 - Plan only. Read docs/PLAN.md Phase <N>, every docs/PRD.md requirement it references, the PRD decision log, docs/spikes.md, and the code you'll build on. Write docs/phases/phase-<N>.md:
-- foundations first (shared interfaces, Event/core types, migrations, generated code) done by you or one agent and committed to main before any fan-out;
+- foundations first (shared interfaces, Event/core types, migrations, generated code) done by you or one agent and committed to main before any fan-out; design docs (short) only for tasks that add a new state machine;
 - then parallel batches of at most 3 subagents, where no two parallel tasks own the same file or package;
 - for each task: owner agent, PRD IDs, owned paths, interfaces to use, definition of done;
-- which docs/PLAN.md exit criteria each task contributes to, and what I'll have to verify by hand on Windows.
+- which docs/PLAN.md exit criteria each task contributes to, and what I'll have to verify by hand on Windows;
+- tasks sized for about 40 agent turns each, and a status table at the top (one line per batch);
+- which batches touch a safety invariant (they get the reviewers), and where the test-engineer passes go.
+Put the execution log in docs/phases/phase-<N>-log.md, not in the plan file.
 Then stop and show me the plan. Don't spawn anyone yet.
 ```
 
-After approval:
+After approval, run foundations once, then **one batch per session**:
 
 ```
-Plan approved. Execute it following .claude/CLAUDE.md steps 2-7. Give me a short update after each batch is merged and reviewed. Stop at phase close.
+Plan approved. Do the foundations from docs/phases/phase-<N>.md and commit them to main. Then stop.
 ```
+
+```
+Run Batch <K> of Phase <N> only, following .claude/CLAUDE.md. Run <1|2|3> agents at once. Update the status table in docs/phases/phase-<N>.md and the log, give me a short update, and stop.
+```
+
+Start a fresh session for each batch (`/clear` or a new Claude Code session) so the lead's context stays small.
 
 ---
 
 ## 4. Resume after a usage limit or interruption
 
 ```
-Resume Phase <N>. Read docs/phases/phase-<N>.md, `git log --oneline -20`, `git worktree list` and `git branch --list`. Tell me:
+Resume Phase <N>. Read the status table in docs/phases/phase-<N>.md (not the whole log file unless something is unclear), `git log --oneline -20`, `git worktree list` and `git branch --list`. Tell me:
 - which tasks are merged, which branches finished but aren't merged, and which tasks need restarting;
 - anything half-done in a worktree.
 Then continue from the first unfinished step in .claude/CLAUDE.md. Don't redo merged work.
@@ -89,7 +98,7 @@ Then continue from the first unfinished step in .claude/CLAUDE.md. Don't redo me
 ## 5. Close a phase (if it didn't stop on its own, or you want a re-check)
 
 ```
-Close Phase <N>. Re-run task generate, lint, typecheck, test and test:web on main. Run safety-reviewer on `git diff <PHASE_START_COMMIT>..main`. Check every docs/PLAN.md exit criterion for Phase <N> with evidence. Give me the phase-close report from .claude/CLAUDE.md step 7 and the proposed tag. Don't tag or push.
+Close Phase <N>. Re-run task generate, lint, typecheck, test and test:web on main. Run safety-reviewer (on the main model) and functional-effect:fe-reviewer on `git diff <PHASE_START_COMMIT>..main`, plus /functional-effect:review on the packages the phase touched. Check every docs/PLAN.md exit criterion for Phase <N> with evidence. Give me the phase-close report from .claude/CLAUDE.md step 7 and the proposed tag. Don't tag or push.
 ```
 
 Tag yourself after checking the manual list:
@@ -121,8 +130,9 @@ Without changing anything, list every docs/PRD.md requirement ID with status: do
 
 ## 7. Tips
 
-- **Parallelism vs limits.** `.claude/settings.json` caps concurrent subagents at 3. If you hit usage limits often, lower it to 2, or ask the lead to run batches one agent at a time.
-- **Models.** Implementers use `sonnet`; the reviewer inherits your main model. Change `model:` in `.claude/agents/*.md` if you want otherwise.
+- **Parallelism vs limits.** `.claude/settings.json` caps concurrent subagents at 3. Parallel agents spend the same tokens faster, so name the number in the batch prompt ("Run 2 agents at once") and use 1 when you are near a limit.
+- **Where tokens go.** A long lead session (context grows every turn), test-engineer runs that mutate every test, reviewers on every batch, and agents resumed after the turn cap. Hence: one session per batch, mutation evidence only for invariant and safety tests, reviewers only on safety-critical batches and at phase close, tasks sized for about 40 turns.
+- **Models.** All agents in `.claude/agents/*.md` use `sonnet`, including `safety-reviewer`. For the phase-close review, ask the lead to run it on your main model. Change `model:` in the agent files if you want otherwise.
 - **Background work.** Press `Ctrl+B` to send a running subagent to the background. Its permission prompts still show up in the main session, labelled with its name.
 - **Leftover worktrees.** Worktrees with changes stay on disk after a subagent finishes. Once the lead has merged a branch, you can remove its worktree yourself (`git worktree remove <path>`); the settings ask before Claude does it.
 - **Destructive commands are denied**, both in Bash and PowerShell: force push, `reset --hard`, branch deletion, `git clean`, `rm -r`, `Remove-Item`. That's deliberate; do those yourself if ever needed.

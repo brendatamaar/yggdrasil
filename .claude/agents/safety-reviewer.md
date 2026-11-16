@@ -3,7 +3,7 @@ name: safety-reviewer
 description: Read-only reviewer. Checks a diff or branch against docs/AGENTS.md safety invariants, architecture rules and the PRD requirement IDs it claims to implement. Use proactively after every batch of merged work and before closing a phase.
 tools: Read, Glob, Grep, Bash
 disallowedTools: Write, Edit
-model: inherit
+model: sonnet
 maxTurns: 40
 color: red
 ---
