@@ -123,13 +123,15 @@ func (s *Service) ImportIssueDraft(ctx context.Context, spec coretasks.DraftSpec
 		facts.TaskID, facts.Now = taskID, now
 		_, priorDigest, err := tx.GetTaskSubmission(ctx, spec.RequestID)
 		if err == nil {
-			if priorDigest != digest {
-				return db.ErrDigestMismatch
-			}
-			// Scope precedes a replay too: once the repo is untracked or
-			// reserved, the original draft is not shown again.
+			// Scope precedes a replay and a digest check too: once the repo is
+			// untracked or reserved, neither the original draft nor the fact
+			// that this request ID exists is shown. Facts carry no Existing
+			// here, so PlanDraft can only refuse on scope.
 			if refuse, ok := coretasks.PlanDraft(spec, facts).(coretasks.DraftRefuse); ok {
 				return &RejectedError{Reason: string(refuse.Reason), Message: refuse.Reason.Message()}
+			}
+			if priorDigest != digest {
+				return db.ErrDigestMismatch
 			}
 			return db.ErrConflict // rollback, then reload the original outside Commit
 		}

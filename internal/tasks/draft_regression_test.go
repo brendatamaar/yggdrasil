@@ -7,18 +7,11 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/db/dbtest"
 )
 
-// DEFECT (DO NOT MERGE UNTIL FIXED): a replay of an import request returns the
-// original draft even after its repo stopped being tracked.
-//
-// ImportIssueDraft checks the request link (draft.go, "priorDigest" block,
-// returning db.ErrConflict, which is then answered with the stored task after
-// the transaction) BEFORE it calls coretasks.PlanDraft, which is the only place
-// the repo scope (tracked and ready) is refused. So the scope facts are read but
-// ignored when the same RequestID and payload arrive again. The T test map
-// ("Scope precedes dedup") and the code's own comment require untracked,
-// reserved and foreign repos to refuse even when an issue or REQUEST link
-// already exists; TestIssueImportUntrackedRepoDoesNotRevealExistingDraft covers
-// only a new request ID for the same issue.
+// Regression: a replay of an import request once returned the original draft
+// even after its repo stopped being tracked, because the request link was
+// checked before the scope facts. Scope now precedes a replay (and the digest
+// check), so untracked, reserved and foreign repos refuse even when an issue or
+// request link already exists.
 func TestIssueImportReplayOfRequestRefusesWhenRepoNoLongerTracked(t *testing.T) {
 	h := newHarness(t, []string{"shop-api"})
 	h.start()
