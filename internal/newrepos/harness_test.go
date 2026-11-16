@@ -562,7 +562,9 @@ func (w *world) waitSettled(op core.OperationID) corenewrepos.State {
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		st := w.get(op)
-		if settled(st) && fmt.Sprintf("%+v", st) == fmt.Sprintf("%+v", last) {
+		// Settled also means no worker owns the operation: an Uncertain state is
+		// transient while its reconciliation runs.
+		if settled(st) && !w.svc.hasWorker(op) && fmt.Sprintf("%+v", st) == fmt.Sprintf("%+v", last) {
 			stable++
 			if stable >= 4 {
 				return st
@@ -624,4 +626,11 @@ func (w *world) publish(rec db.ReservationRecord, name string) (PublishPreview, 
 	return pv, w.svc.ConfirmPublish(w.ctx, rec.Operation.ID, pv.Hash, 1)
 }
 
-func timeAfter() <-chan time.Time { return time.After(5 * time.Millisecond) }
+func (s *Service) hasWorker(op core.OperationID) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.workers[op]
+	return ok
+}
+
+func timeAfter()<-chan time.Time { return time.After(5 * time.Millisecond) }
