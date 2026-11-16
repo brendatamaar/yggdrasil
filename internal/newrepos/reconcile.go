@@ -2,8 +2,8 @@ package newrepos
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/sha1" //nolint:gosec // git object IDs are SHA-1; this is not a security use
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -134,7 +134,7 @@ func (s *Service) checkInit(ctx context.Context, spec corenewrepos.InitSpec, sta
 	}
 	if err := s.d.FS.VerifyChildDir(ctx, parent, spec.Leaf, id); err != nil {
 		if errors.Is(err, platform.ErrChanged) || errors.Is(err, platform.ErrUnsafePath) {
-			return conflict, nil
+			return conflict, nil //nolint:nilerr // a swapped or linked folder is a conflict, not a read failure
 		}
 		return check{}, err
 	}
@@ -180,7 +180,7 @@ func checkGitDir(dir, branch string, id platform.DirIdentity) (check, error) {
 	case !fi.IsDir() || fi.Mode()&fs.ModeSymlink != 0:
 		return conflict, nil
 	}
-	head, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
+	head, err := os.ReadFile(filepath.Join(gitDir, "HEAD")) //nolint:gosec // dir is the canonical project folder plus one validated leaf
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return absent, nil // git init did not get as far as HEAD
@@ -241,17 +241,25 @@ func (s *Service) checkPublish(ctx context.Context, rec db.ReservationRecord, sp
 		cur, exists, err := s.d.Origin.Origin(ctx, dir)
 		switch {
 		case exists && err != nil:
-			return conflict, nil // an origin that is not a plain address
+			return conflict, nil //nolint:nilerr // an origin that is not a plain address is a conflict, not a read failure
 		case err != nil:
 			return check{}, err
 		case !exists:
 			return absent, nil
 		}
-		want, verr := git.ValidateRemoteURL(remote.URL)
-		if verr != nil || cur != want {
-			return conflict, nil
+		if want, verr := git.ValidateRemoteURL(remote.URL); verr == nil && cur == want {
+			return found(corenewrepos.OriginReceipt{URL: remote.URL}), nil
 		}
-		return found(corenewrepos.OriginReceipt{URL: remote.URL}), nil
+		return conflict, nil
+	}
+	return s.checkPush(ctx, rec, spec, stage, done)
+}
+
+func (s *Service) checkPush(ctx context.Context, rec db.ReservationRecord, spec corenewrepos.PublishSpec,
+	stage corenewrepos.PublishStage, done []corenewrepos.Receipt) (check, error) {
+	switch stage {
+	case corenewrepos.StageCreateRemote, corenewrepos.StageAddOrigin:
+		return conflict, nil
 	case corenewrepos.StagePushHead:
 		remote, ok := remoteOf(done)
 		if !ok {

@@ -459,6 +459,7 @@ func (s *Service) reconcileLocked(ctx context.Context, op core.OperationID) erro
 		// Step answers Recovered only for running states; an operation loaded
 		// as Uncertain gets its read-only check re-issued here.
 		return s.startLocked(op, []corenewrepos.Command{corenewrepos.ReconcileStage{Operation: op, Attempt: st.Attempt, Stage: st.Stage}})
+	case corenewrepos.Reserved, corenewrepos.AwaitingConfirm, corenewrepos.Ready, corenewrepos.Published, corenewrepos.Stopped:
 	}
 	return nil
 }

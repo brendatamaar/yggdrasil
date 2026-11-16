@@ -95,8 +95,10 @@ func (s *Service) drive(ctx context.Context, op core.OperationID, queue []corene
 				return // unknown or cancelled: stay Uncertain, write nothing
 			}
 			in = r
-		default:
-			continue
+		case corenewrepos.PersistReservationAndSetupDraft, corenewrepos.PublishPreview, corenewrepos.PersistIntent,
+			corenewrepos.PersistReceipt, corenewrepos.PersistFailure, corenewrepos.Audit, corenewrepos.CancelWorker,
+			corenewrepos.Explain:
+			continue // records and presentation were handled by apply
 		}
 		// The result is recorded even when ctx was cancelled meanwhile: that is
 		// how a cancelled stage becomes Uncertain instead of being forgotten.

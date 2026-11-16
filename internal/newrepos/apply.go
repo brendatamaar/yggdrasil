@@ -215,6 +215,8 @@ func (s *Service) recordEffects(ctx context.Context, tx *db.Tx, rec db.Reservati
 						return err
 					}
 				}
+			case corenewrepos.Reserved, corenewrepos.AwaitingConfirm, corenewrepos.Initializing, corenewrepos.Ready,
+				corenewrepos.Publishing, corenewrepos.Published:
 			}
 		case corenewrepos.RunInitStage, corenewrepos.RunPublishStage, corenewrepos.ReconcileStage,
 			corenewrepos.PersistReservationAndSetupDraft, corenewrepos.PublishPreview, corenewrepos.Audit,
@@ -233,6 +235,9 @@ func (s *Service) recordEffects(ctx context.Context, tx *db.Tx, rec db.Reservati
 			if err := insert(c.Stage, c.Attempt); err != nil {
 				return err
 			}
+		case corenewrepos.ReconcileStage, corenewrepos.PersistReservationAndSetupDraft, corenewrepos.PublishPreview,
+			corenewrepos.Audit, corenewrepos.CancelWorker, corenewrepos.Explain, corenewrepos.PersistIntent,
+			corenewrepos.PersistReceipt, corenewrepos.PersistFailure:
 		}
 	}
 	return nil
