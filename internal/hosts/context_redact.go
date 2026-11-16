@@ -33,7 +33,9 @@ func redactContext(r ContextResult, tokens ...string) ContextResult {
 	remaining := corehosts.ContextMaxPromptBytes
 	truncated := false
 	text := func(s string) string {
-		s = strings.ToValidUTF8(red.Redact(s), "")
+		// Strip invalid bytes first: removing them after redaction could join the
+		// two halves of a credential that the redactor could not see as one.
+		s = strings.ToValidUTF8(red.Redact(strings.ToValidUTF8(s, "")), "")
 		if len(s) > remaining {
 			truncated = true
 			s = strings.ToValidUTF8(s[:remaining], "")
@@ -116,6 +118,9 @@ func redactContext(r ContextResult, tokens ...string) ContextResult {
 	return boundContext(r)
 }
 
+// maxUnavailableSource is the longest label of a missing part that boundContext leaves whole.
+const maxUnavailableSource = 256
+
 // boundContext also bounds structural overhead (IDs, labels, empty strings and
 // JSON field names), rather than counting only the visible body text.
 func boundContext(r ContextResult) ContextResult {
@@ -134,8 +139,12 @@ func boundContext(r ContextResult) ContextResult {
 		if len(encoded) <= corehosts.ContextMaxPromptBytes {
 			return r
 		}
+		// Labels of missing parts are short; only an oversized one is cut, so a
+		// body overflow never mangles "external checks" into "externa".
 		for i := range r.Unavailable {
-			r.Unavailable[i].Source = half(r.Unavailable[i].Source)
+			if len(r.Unavailable[i].Source) > maxUnavailableSource {
+				r.Unavailable[i].Source = half(r.Unavailable[i].Source)
+			}
 		}
 		if len(r.Unavailable) > 1 {
 			r.Unavailable = r.Unavailable[:len(r.Unavailable)/2]
