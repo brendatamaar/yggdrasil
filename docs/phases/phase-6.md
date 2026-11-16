@@ -1035,6 +1035,33 @@ Still open, none Blocking/Must-fix, none a code gap that can be closed before wi
   input); log/audit when PreviousMode falls back; DraftBadFacts shown as recoverable;
   NoiseFacts.Truncated now means "partial" (rename); redactContext runs twice
   (harmless); Referer on the log redirect hop (no token).
-- TM1 (test-engineer) still owns the named tests and test-map work in
-  phase-6-batch-2-test-map.md; not dispatched. Leftover worktrees and branches
-  (worktree-agent-*, t3/*) are not deleted: that needs the human's say-so.
+- Leftover worktrees and branches (worktree-agent-*, t3/*, plus a temporary detached
+  worktree in the session scratchpad) are not deleted: that needs the human's say-so.
+
+## Batch 2 test handoff TM1 (2026-11-16)
+
+TM1-T (tasks), TM1-R (repos), TM1-H (hosts) executed the test map. Test files only; every
+test shown to fail by controlled mutation and restored exactly (reports list each
+mutation). Merged one at a time, five-task gate green after each (frontend 528/528).
+- TM1-R: no defect. Three surviving mutants were redundant code, not gaps.
+- TM1-H found two real defects, both fixed in `internal/hosts/context_redact.go`
+  (1918c01): (1) invariant 4: invalid UTF-8 was stripped after redaction, so a credential
+  split by an invalid byte was reassembled; now stripped first. (2) boundContext halved
+  every Unavailable label ("external checks" -> "externa"); now cuts only labels over 256 B.
+- TM1-T found one defect, fixed in `internal/tasks/draft.go` (fd8c144, 2ce20e9): a replay
+  of an import after the repo left scope returned the original draft; scope now precedes
+  the replay and the digest check.
+- Review gate on 3ab08d2..main: safety-reviewer PASS, fe-reviewer no Blocking/Must-fix.
+  Should-fix follow-ups (test-only) dispatched: model property reaches replay-after-untrack
+  and changed-payload-out-of-scope; redaction generator splits the token with an invalid
+  byte; label-preservation property; no wall-clock branches in repos contracts; no fixed
+  sleeps for negative assertions.
+- Not done / observations: no ContextService-level random-sequence property; github/gitlab
+  wrappers not run through the contract (import cycle); "tokens never reach child env" and
+  audit clauses have no hosts test (no process, no audit entry there); one failed-jobs log
+  over 256 KiB ends the read without listing the remaining jobs (design doc says "labelled
+  partial": decide); MR.State and other closed-set fields not redacted (built from a closed
+  set today); core.checkID accepts \v, \f and NUL; title/identity checks reject only C0 and
+  DEL (C1/bidi pass); replay decision still half in the shell (PlanDraft used only to
+  extract refusals; consider a Replay fact in DraftFacts); `TestUnknownCommandFailsTheTask`
+  and settings.test.tsx "saves maxAgents" are timing-sensitive under machine load.
