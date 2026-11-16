@@ -142,6 +142,14 @@ type Config struct {
 	// StageID derives the ID of a removal's staging folder from its proposal (1-64 of
 	// [A-Za-z0-9_-]). It must be deterministic, so a retry plans the same folder; default StageIDFor.
 	StageID func(core.ProposalID) string
+
+	// Phase 6 ports (docs/design/phase-6-*.md). Each is optional: without its
+	// port the kind is refused at Create and, if one is stored anyway, fails at
+	// execution having done nothing. Ignore edits .gitignore, Comments posts a
+	// review comment, Pull fast-forwards the main checkout.
+	Ignore   IgnoreWriter
+	Comments CommentHost
+	Pull     PullRunner
 }
 
 // Service creates, decides and executes proposals (RV-02, GH-03).
@@ -429,6 +437,9 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (View, error) {
 		case coreprop.MergeLocal, coreprop.RemoveWorktree:
 			return View{}, refusal(coreprop.RefuseUnsupported, "An agent cannot propose this. Merging and removing a worktree are started from the change set.")
 		}
+	}
+	if why := s.portMissing(req.Action); why != "" {
+		return View{}, refusal(coreprop.RefuseUnsupported, why)
 	}
 	if err := req.Task.Validate(); err != nil {
 		return View{}, refusal(coreprop.RefuseBadFacts, "The task for this proposal is not valid.")

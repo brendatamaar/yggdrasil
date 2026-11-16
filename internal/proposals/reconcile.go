@@ -110,6 +110,12 @@ func (s *Service) reconcile(ctx context.Context, p coreprop.Proposal) (coreprop.
 		return s.reconcileMerge(ctx, p, a)
 	case coreprop.RemoveWorktree:
 		return s.reconcileRemove(ctx, p, a)
+	case coreprop.IgnoreEntries:
+		return s.reconcileIgnore(ctx, p, a)
+	case coreprop.ReviewComment:
+		return s.reconcileComment(ctx, p, a)
+	case coreprop.PullFF:
+		return s.reconcilePull(ctx, p, a)
 	}
 	return unknown() // Install: the build may or may not have run
 }
