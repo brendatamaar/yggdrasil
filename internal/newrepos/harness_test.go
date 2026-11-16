@@ -633,4 +633,4 @@ func (s *Service) hasWorker(op core.OperationID) bool {
 	return ok
 }
 
-func timeAfter()<-chan time.Time { return time.After(5 * time.Millisecond) }
+func timeAfter() <-chan time.Time { return time.After(5 * time.Millisecond) }
