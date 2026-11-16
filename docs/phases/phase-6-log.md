@@ -931,3 +931,16 @@ Order: A = N1 + N2; B = N3a + P; C = N3b + Q; then test-engineer passes and the 
 
 Backend agents run Go checks only (go build/vet, golangci-lint on their packages, CGO_ENABLED=0 go test);
 the lead runs the full gate with Node 22 in the scratchpad.
+
+### Batch 3 round A (merged)
+- N1 platform safe FS + IgnoreWriter merged (--no-ff). Windows code compiles (GOOS=windows vet) but has never run; manual
+  checklist from the report: run `go test ./internal/platform/... -run "SafeInit|IgnoreWriter|Junction|ShortName"` on Windows,
+  hold `.gitignore` open to see ErrLocked, `mklink /J` a parent, `\\wsl$` and subst parents refused, >260-char parent works.
+  Risks: Unix refuses every symlinked ancestor of the project parent (a symlinked home is refused); a OneDrive placeholder
+  `.gitignore` is refused; ReFS file-index uniqueness; Unix cannot fully exclude a concurrent editor (advisory flock + readback).
+- N2 git init/origin/in-process publish transport merged. go-git v5.19.3 already pinned; transitive licences checked by hand
+  (Apache/BSD/MIT; securejoin BSD-3 AND MPL-2.0 ok), `task license` not run (go-licenses not installed): run at the gate.
+  Open: no TreeHash helper (shell must use receipts); no test that the missing-author refusal leaves the index untouched.
+- After each: golangci-lint 0 issues, platform/git/archtest tests green, task lint and typecheck green.
+- Round B (N3a core Step, P1 ignore/comment/pull executors) dispatched; P split into P1 (this) and P2 (InitRepo/PublishRepo) because
+  five executors do not fit 40 turns. Round C = N3b + P2, round D = Q + test-engineer.
