@@ -156,6 +156,10 @@ func (s *Service) portMissing(a coreprop.Action) string {
 		if s.cfg.Pull == nil {
 			return "Pulling from the workspace is not set up in this build of Yggdrasil yet."
 		}
+	case coreprop.InitRepo, coreprop.PublishRepo:
+		if s.cfg.NewRepos == nil {
+			return "Creating and publishing repos is not set up in this build of Yggdrasil yet."
+		}
 	}
 	return ""
 }

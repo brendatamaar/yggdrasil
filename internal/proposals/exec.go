@@ -22,6 +22,9 @@ type outcome struct {
 	kind      coreprop.FailKind
 	msg       string
 	retryable bool
+	// pending: the work was handed to a durable worker that owns it now. The
+	// proposal stays Confirmed; its result arrives through OperationChanged.
+	pending bool
 }
 
 func done(r coreprop.Result) outcome { return outcome{done: true, result: r} }
@@ -53,6 +56,10 @@ func keyOf(a coreprop.Action) string {
 	case coreprop.ReviewComment:
 		return "repo:" + string(v.Repo)
 	case coreprop.PullFF:
+		return "repo:" + string(v.Repo)
+	case coreprop.InitRepo:
+		return "repo:" + string(v.Repo)
+	case coreprop.PublishRepo:
 		return "repo:" + string(v.Repo)
 	}
 	return "other"
@@ -153,6 +160,10 @@ func (s *Service) runExecute(p coreprop.Proposal, cmd coreprop.Execute) {
 	if ctx.Err() != nil {
 		return
 	}
+	if out.pending {
+		// A durable worker owns the work now: nothing is recorded until it reports.
+		return
+	}
 	now := s.now()
 	var in coreprop.Input = coreprop.ExecDone{Attempt: cmd.Attempt, Result: out.result, Now: now}
 	if !out.done {
@@ -221,6 +232,8 @@ func (s *Service) execute(ctx context.Context, p coreprop.Proposal, attempt int)
 		return s.execComment(ctx, p, a, attempt)
 	case coreprop.PullFF:
 		return s.execPull(ctx, p, a, attempt)
+	case coreprop.InitRepo, coreprop.PublishRepo:
+		return s.execNewRepo(ctx, p, attempt)
 	}
 	return failed(coreprop.FailPrecondition, false, "This kind of proposal cannot run yet.")
 }
