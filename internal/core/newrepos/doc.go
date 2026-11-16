@@ -11,6 +11,6 @@
 // internal/newrepos interprets the commands through platform, git and host
 // capabilities, and persists state, receipts and audit in one Store.Commit.
 //
-// The Step in this foundation is a documented stub: it returns the operation
-// unchanged with no commands, so nothing can write to disk or a remote.
+// Step is the full transition table of the design (step.go): it reserves, confirms,
+// advances, reconciles and stops, and returns every unlisted pair unchanged.
 package newrepos
