@@ -990,3 +990,51 @@ TestInvariant_4_HostContextRedacted (test-engineer batch).
 Each task: follow functional-effect:model; add a regression test per fix that
 fails without it; all five task commands pass; commit on its branch with the
 agent report format. No safety invariant is weakened by any item.
+
+## Batch 2 follow-up: result (human approved fixing the deferred items)
+
+Merged in order, each followed by the five-task gate (all exit 0, frontend 528/528):
+F6 PTY exit-signal race 1db2d46 (Unix-only; Windows PTY still manual); H-A host
+writes 5d3ec46; T import transaction d8fb82c; R noise 76b1f2d; H-B context shell
+988f298 plus lead resolver-kind fix in confirmed.go; review-found follow-up
+(H-B 608e39d: atomic publish answer, ErrContextSuperseded, slot cap 256, closed
+ContextRefusal set; lead c8b3cf2: FindReviewComment scope recheck after reading,
+archtest dot-import and PushAuthorizer/NewPushTransport). `-race` clean on hosts,
+core/hosts, tasks, repos, archtest. Gate logs /tmp/ygg-{HA,T,R,HB,HB2}-main-gate.log.
+
+Review gate on 91b0666..main: safety PASS (no Blocking/Must-fix). fe-reviewer found
+one new Must-fix (empty success when a publish raced a scope change): fixed with a
+deterministic race test. Re-check by both reviewers on ecd14d6..main: no Blocking
+or Must-fix.
+
+Closed (each with a regression test shown to fail without the fix): archtest keeps
+host writers out of api/mcp/agents (also dot-import and push names); push credential
+bound to the repo path; 400/422 -> ErrWriteRejected, 401/403 -> unauthorized, rest
+Unknown; empty-ref proof (200 [] or 409 + empty branches/tags); http only to loopback;
+shell interprets every ContextCommand and the core decides no-client/no-token;
+ContextRejected in the sealed set with a closed refusal type; deterministic provider
+errors not retried; GitLab MR without a diff version is retryable; resolver errors keep
+their kind (reader and confirmed writes); failed read keeps its slot; injected sleeper;
+rate-limit authority decided in the design; Blocked negative cache (5 s); zero-time
+inputs ignored; ScopeChanged/ConfigChanged produced by the shell; ImportIssueDraft reads
+scope and dedup in the transaction, scope before dedup; PreviousMode fallback; zero
+Now/TaskID refused; noise sample bounded, nested candidates dropped, partial marker.
+
+Still open, none Blocking/Must-fix, none a code gap that can be closed before wiring:
+- Wiring contracts: API shows ErrContextSuperseded as "try again" and maps Blocked.Until;
+  the real ContextResolver wraps ErrContextScope for not-tracked/not-ready/foreign;
+  issue provenance must come from a ContextResolver-validated read (test at wiring);
+  NewGetterWithLogOrigins needs an explicit allowlist; wiring uses NewPushTransport
+  (Authorize alone checks only the origin); executor treats ErrWriteRejected and
+  unauthorized FetchError as definite failures; noise shell consumes NoiseStep.
+- Needs a human or another owner: live GitHub proof that an empty repo answers 409 on
+  matching-refs (manual checklist, test account); internal/db tx-level
+  GetDraftByDedupKey/GetReservedRepo so the in-transaction read holds by construction.
+- Deferred Should-fix: per-log transient failure cached as retry_exhausted
+  (context_api.go); shell decides "wait does not fit the deadline" (should be a core
+  input); log/audit when PreviousMode falls back; DraftBadFacts shown as recoverable;
+  NoiseFacts.Truncated now means "partial" (rename); redactContext runs twice
+  (harmless); Referer on the log redirect hop (no token).
+- TM1 (test-engineer) still owns the named tests and test-map work in
+  phase-6-batch-2-test-map.md; not dispatched. Leftover worktrees and branches
+  (worktree-agent-*, t3/*) are not deleted: that needs the human's say-so.
