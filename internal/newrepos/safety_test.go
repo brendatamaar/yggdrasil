@@ -258,17 +258,18 @@ func TestInvariant_3_PublishNoTokenChild(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", sentinelToken)
 	t.Setenv("GH_TOKEN", sentinelToken)
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool { return !strings.HasSuffix(fi.Name(), "_test.go") }, parser.ImportsOnly)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, p := range pkgs {
-		for name, f := range p.Files {
-			for _, imp := range f.Imports {
-				switch imp.Path.Value {
-				case `"os/exec"`, `"syscall"`, `"golang.org/x/sys/windows"`:
-					t.Errorf("%s imports %s: every process starts through internal/platform", name, imp.Path.Value)
-				}
+	for _, name := range mustGlob(t, "*.go") {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, parser.ImportsOnly)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, imp := range f.Imports {
+			switch imp.Path.Value {
+			case `"os/exec"`, `"syscall"`, `"golang.org/x/sys/windows"`:
+				t.Errorf("%s imports %s: every process starts through internal/platform", name, imp.Path.Value)
 			}
 		}
 	}

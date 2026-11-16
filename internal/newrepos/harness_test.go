@@ -243,7 +243,7 @@ func (h *fakeHost) CreateRepo(ctx context.Context, spec hosts.CreateRepoSpec) (h
 		return nil
 	})
 	if errors.Is(err, errInjected) {
-		return hosts.CreatedRepo{}, fmt.Errorf("%w: %v", hosts.ErrOutcomeUnknown, err)
+		return hosts.CreatedRepo{}, fmt.Errorf("%w: %w", hosts.ErrOutcomeUnknown, err)
 	}
 	return out, err
 }
@@ -291,12 +291,6 @@ func (h *hubRec) PublishNewRepo(m api.NewRepoChangedMessage) {
 	if h.check != nil {
 		h.check(m)
 	}
-}
-
-func (h *hubRec) all() []api.NewRepoChangedMessage {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return append([]api.NewRepoChangedMessage(nil), h.msgs...)
 }
 
 // storeWrap fails the nth Commit with a simulated crash (the commit does not

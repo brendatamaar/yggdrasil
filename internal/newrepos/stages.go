@@ -170,7 +170,7 @@ func (s *Service) sameParent(ctx context.Context, spec corenewrepos.InitSpec, pa
 		return definiteErr(corenewrepos.StopPreconditions, err)
 	}
 	was := filepath.Dir(r.Path)
-	if was != parent && !(s.d.Paths.FoldCase() && strings.EqualFold(was, parent)) {
+	if was != parent && (!s.d.Paths.FoldCase() || !strings.EqualFold(was, parent)) {
 		return definiteErr(corenewrepos.StopPreconditions, errors.New("the project folder changed since the reservation"))
 	}
 	return nil
