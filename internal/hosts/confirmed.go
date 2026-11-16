@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -62,6 +63,18 @@ func hostAPIRoot(in corehosts.Instance) string {
 	}
 	return in.Base + "/api/v3"
 }
+
+// resolveFailure maps an error of the scope resolver. Only a real scope error
+// (the repo is not tracked, linked or owned) is ErrContextScope; anything else,
+// a database failure say, keeps its kind so it is not shown as "not tracked".
+// Either way nothing is written: the caller stops before any POST.
+func resolveFailure(repo core.RepoID, err error) error {
+	if errors.Is(err, ErrContextScope) {
+		return ErrContextScope
+	}
+	return fmt.Errorf("resolve host scope for %s: %w", repo, err)
+}
+
 func (h *ConfirmedHosts) commentTarget(ctx context.Context, repo core.RepoID, mr int, head string) (ContextTarget, corehosts.Instance, string, error) {
 	key := corehosts.ContextKey{Repo: repo, Kind: corehosts.ContextMRDiff, ObjectID: strconv.Itoa(mr), Head: head}
 	// MRHead resolves scope before the head is known: the head is what it learns
@@ -75,7 +88,10 @@ func (h *ConfirmedHosts) commentTarget(ctx context.Context, repo core.RepoID, mr
 		return ContextTarget{}, corehosts.Instance{}, "", ErrContextScope
 	}
 	target, err := h.resolver.ResolveContext(ctx, key)
-	if err != nil || !validContextProject(target.Project) {
+	if err != nil {
+		return target, corehosts.Instance{}, "", resolveFailure(repo, err)
+	}
+	if !validContextProject(target.Project) {
 		return target, corehosts.Instance{}, "", ErrContextScope
 	}
 	inst, token, err := h.instance(target.Instance)
@@ -151,7 +167,10 @@ func (h *ConfirmedHosts) PostReviewComment(ctx context.Context, repo core.RepoID
 		return "", ErrContextScope
 	}
 	fresh, err := h.resolver.ResolveContext(ctx, corehosts.ContextKey{Repo: repo, Kind: corehosts.ContextMRDiff, ObjectID: strconv.Itoa(mr), Head: head})
-	if err != nil || fresh != target {
+	if err != nil {
+		return "", resolveFailure(repo, err)
+	}
+	if fresh != target {
 		return "", ErrContextScope
 	}
 	path := commentPath(inst, target.Project, mr) + "/comments"
@@ -196,7 +215,10 @@ func (h *ConfirmedHosts) FindReviewComment(ctx context.Context, repo core.RepoID
 	}
 
 	fresh, scopeErr := h.resolver.ResolveContext(ctx, corehosts.ContextKey{Repo: repo, Kind: corehosts.ContextMRDiff, ObjectID: strconv.Itoa(mr), Head: head})
-	if scopeErr != nil || fresh != target {
+	if scopeErr != nil {
+		return unknown, resolveFailure(repo, scopeErr)
+	}
+	if fresh != target {
 		return unknown, ErrContextScope
 	}
 	path := commentPath(inst, target.Project, mr) + "/comments"
