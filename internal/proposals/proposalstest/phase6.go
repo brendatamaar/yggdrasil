@@ -15,14 +15,12 @@ package proposalstest
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"sync"
 	"testing"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	coreproposals "github.com/brendatamaar/yggdrasil/internal/core/proposals"
 	"github.com/brendatamaar/yggdrasil/internal/platform"
-	"github.com/brendatamaar/yggdrasil/internal/platform/platformtest"
 )
 
 // Fault says how the next call of a fake fails.
@@ -38,34 +36,31 @@ const (
 	FailAfter
 )
 
-// IgnoreFake is an in-memory IgnoreWriter (platformtest's fake disk) that counts
-// calls and injects one-shot faults.
+// IgnoreFake is an in-memory IgnoreWriter with the documented semantics of the
+// platform writer: the reviewed state (absent or checksum) is enforced, existing
+// bytes are kept (platform.PlanIgnoreAppend), a changed file is ErrChanged and
+// untouched. It counts calls and injects one-shot faults.
 type IgnoreFake struct {
 	mu      sync.Mutex
-	inner   *platformtest.FakeIgnoreWriter
-	disk    *platformtest.FakeDisk
+	files   map[string][]byte // root -> .gitignore bytes; a missing key is an absent file
 	reads   int
 	appends int
 	fault   Fault
 	err     error
 }
 
-// NewIgnoreFake returns a fake with an empty disk.
-func NewIgnoreFake() *IgnoreFake {
-	d := platformtest.NewFakeDisk()
-	return &IgnoreFake{inner: platformtest.NewFakeIgnoreWriter(d), disk: d}
-}
+// NewIgnoreFake returns a fake with no files.
+func NewIgnoreFake() *IgnoreFake { return &IgnoreFake{files: map[string][]byte{}} }
 
-// Fixture lets a contract suite arrange the disk.
-func (f *IgnoreFake) Fixture() platformtest.FSFixture { return f.inner.Fixture() }
-
-// Seed makes root a folder, with a .gitignore of content when present.
+// Seed sets the .gitignore of root: content when present, absent otherwise.
 func (f *IgnoreFake) Seed(t *testing.T, root string, content []byte, present bool) {
 	t.Helper()
-	f.disk.Mkdir(root)
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if present {
-		fx := f.inner.Fixture()
-		fx.WriteFile(t, filepath.Join(root, ".gitignore"), content)
+		f.files[root] = append([]byte(nil), content...)
+	} else {
+		delete(f.files, root)
 	}
 }
 
@@ -86,30 +81,64 @@ func (f *IgnoreFake) Calls() int { return f.Reads() + f.Appends() }
 // Content returns the file's bytes.
 func (f *IgnoreFake) Content(t *testing.T, root string) (data []byte, exists bool) {
 	t.Helper()
-	return f.inner.Fixture().ReadFile(t, filepath.Join(root, ".gitignore"))
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	b, ok := f.files[root]
+	return append([]byte(nil), b...), ok
 }
 
 func (f *IgnoreFake) ReadIgnore(ctx context.Context, root string) (platform.IgnoreSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return platform.IgnoreSnapshot{}, err
+	}
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.reads++
-	f.mu.Unlock()
-	return f.inner.ReadIgnore(ctx, root)
+	b, ok := f.files[root]
+	if !ok {
+		return platform.IgnoreSnapshot{Absent: true}, nil
+	}
+	return platform.IgnoreSnapshot{Hash: platform.HashHex(b), Size: int64(len(b))}, nil
 }
 
 func (f *IgnoreFake) AppendIgnore(ctx context.Context, root string, entries []string, expect platform.IgnoreExpectation) (platform.IgnoreOutcome, platform.IgnoreSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return "", platform.IgnoreSnapshot{}, err
+	}
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.appends++
 	fault, ferr := f.fault, f.err
 	f.fault, f.err = NoFault, nil
-	f.mu.Unlock()
 	if fault == FailBefore {
 		return "", platform.IgnoreSnapshot{}, ferr
 	}
-	out, snap, err := f.inner.AppendIgnore(ctx, root, entries, expect)
-	if fault == FailAfter && err == nil {
+	if expect.Absent == (expect.Hash != "") || len(entries) == 0 {
+		return "", platform.IgnoreSnapshot{}, platform.ErrInvalidArgument
+	}
+	cur, exists := f.files[root]
+	switch {
+	case expect.Absent && exists, !expect.Absent && !exists, !expect.Absent && platform.HashHex(cur) != expect.Hash:
+		return "", platform.IgnoreSnapshot{}, platform.ErrChanged
+	}
+	add, err := platform.PlanIgnoreAppend(cur, entries)
+	if err != nil {
+		return "", platform.IgnoreSnapshot{}, err
+	}
+	out := platform.IgnoreAppended
+	if !exists {
+		out = platform.IgnoreCreated
+	}
+	if add == nil {
+		out = platform.IgnoreAlreadyPresent
+	} else {
+		f.files[root] = append(append([]byte(nil), cur...), add...)
+	}
+	b := f.files[root]
+	if fault == FailAfter && add != nil {
 		return "", platform.IgnoreSnapshot{}, ferr
 	}
-	return out, snap, err
+	return out, platform.IgnoreSnapshot{Hash: platform.HashHex(b), Size: int64(len(b))}, nil
 }
 
 var _ platform.IgnoreWriter = (*IgnoreFake)(nil)
