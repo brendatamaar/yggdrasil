@@ -224,7 +224,7 @@ func (m *draftModel) burst(t *testing.T, issue int) {
 	key := string(specs[0].Project) + "|" + specs[0].Issue.DedupKey()
 	known := m.issues[key]
 	created := 0
-	var winner core.TaskID = known
+	winner := known
 	for i := range results {
 		if errs[i] != nil {
 			t.Fatalf("burst contender %d: %v", i, errs[i])
