@@ -1,0 +1,4 @@
+go test fuzz v1
+string("sentinel-cr\xeaedential-7f3a91")
+string("0")
+byte('\x03')

@@ -1,0 +1,357 @@
+{
+ "answers": {
+  "issue_foreign": [
+   {
+    "body": {
+     "iid": 6,
+     "title": "Another issue",
+     "updated_at": "2026-03-01T10:00:00Z"
+    },
+    "path": "/api/v4/projects/acme/shop/issues/5",
+    "query": "",
+    "status": 200
+   }
+  ],
+  "issue_is_pull_request": [
+   {
+    "body": {
+     "iid": 5,
+     "pull_request": {
+      "x": 1
+     },
+     "title": "A merge request",
+     "updated_at": "2026-03-01T10:00:00Z"
+    },
+    "path": "/api/v4/projects/acme/shop/issues/5",
+    "query": "",
+    "status": 200
+   }
+  ],
+  "issue_ok": [
+   {
+    "body": {
+     "author": {
+      "username": "cy"
+     },
+     "description": "Steps to reproduce: open search.",
+     "iid": 5,
+     "labels": [
+      "perf"
+     ],
+     "title": "Search is slow",
+     "updated_at": "2026-03-01T10:00:00Z",
+     "web_url": "{{BASE}}/acme/shop/-/issues/5"
+    },
+    "path": "/api/v4/projects/acme/shop/issues/5",
+    "query": "",
+    "status": 200
+   }
+  ],
+  "issues_401": [
+   {
+    "body": {
+     "message": "401 Unauthorized"
+    },
+    "path": "/api/v4/projects/acme/shop/issues",
+    "query": "state=opened&per_page=50&page=1",
+    "status": 401
+   }
+  ],
+  "issues_404": [
+   {
+    "body": {
+     "message": "404 Project Not Found"
+    },
+    "path": "/api/v4/projects/acme/shop/issues",
+    "query": "state=opened&per_page=50&page=1",
+    "status": 404
+   }
+  ],
+  "issues_429": [
+   {
+    "body": {
+     "message": "Retry later"
+    },
+    "headers": {
+     "Retry-After": "2"
+    },
+    "path": "/api/v4/projects/acme/shop/issues",
+    "query": "state=opened&per_page=50&page=1",
+    "status": 429
+   }
+  ],
+  "issues_503": [
+   {
+    "body": {
+     "message": "unavailable"
+    },
+    "path": "/api/v4/projects/acme/shop/issues",
+    "query": "state=opened&per_page=50&page=1",
+    "status": 503
+   }
+  ],
+  "issues_empty": [
+   {
+    "body": [],
+    "path": "/api/v4/projects/acme/shop/issues",
+    "query": "state=opened&per_page=50&page=1",
+    "status": 200
+   }
+  ],
+  "issues_ok": [
+   {
+    "body": [
+     {
+      "author": {
+       "username": "ana"
+      },
+      "iid": 1,
+      "labels": [
+       "bug",
+       "cart"
+      ],
+      "title": "Cart total is wrong after coupon",
+      "updated_at": "2026-03-01T10:00:00Z"
+     },
+     {
+      "author": {
+       "username": "ben"
+      },
+      "iid": 2,
+      "labels": [],
+      "title": "Add dark mode to admin",
+      "updated_at": "2026-03-02T09:30:00Z"
+     }
+    ],
+    "path": "/api/v4/projects/acme/shop/issues",
+    "query": "state=opened&per_page=50&page=1",
+    "status": 200
+   }
+  ],
+  "issues_too_large": [
+   {
+    "body_repeat": {
+     "count": 1048577,
+     "fill": "x"
+    },
+    "path": "/api/v4/projects/acme/shop/issues",
+    "query": "state=opened&per_page=50&page=1",
+    "status": 200
+   }
+  ],
+  "issues_unusable": [
+   {
+    "body": {
+     "message": "not a list"
+    },
+    "path": "/api/v4/projects/acme/shop/issues",
+    "query": "state=opened&per_page=50&page=1",
+    "status": 200
+   }
+  ],
+  "jobs_ok": [
+   {
+    "body": {
+     "id": 12,
+     "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "path": "/api/v4/projects/acme/shop/pipelines/12",
+    "query": "",
+    "status": 200
+   },
+   {
+    "body": [
+     {
+      "id": 101,
+      "name": "unit",
+      "stage": "test",
+      "status": "failed"
+     }
+    ],
+    "path": "/api/v4/projects/acme/shop/pipelines/12/jobs",
+    "query": "per_page=50&page=1",
+    "status": 200
+   },
+   {
+    "body_text": "FAIL: TestCartTotal\n",
+    "path": "/api/v4/projects/acme/shop/jobs/101/trace",
+    "query": "",
+    "status": 200
+   }
+  ],
+  "jobs_partial": [
+   {
+    "body": {
+     "id": 12,
+     "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "status": "failed"
+    },
+    "path": "/api/v4/projects/acme/shop/pipelines/12",
+    "query": "",
+    "status": 200
+   },
+   {
+    "body": [
+     {
+      "id": 101,
+      "name": "unit",
+      "stage": "test",
+      "status": "failed"
+     },
+     {
+      "id": 102,
+      "name": "lint",
+      "stage": "test",
+      "status": "failed"
+     },
+     {
+      "id": 103,
+      "name": "build",
+      "stage": "build",
+      "status": "success"
+     }
+    ],
+    "path": "/api/v4/projects/acme/shop/pipelines/12/jobs",
+    "query": "per_page=50&page=1",
+    "status": 200
+   },
+   {
+    "body_text": "FAIL: TestCartTotal\n",
+    "path": "/api/v4/projects/acme/shop/jobs/101/trace",
+    "query": "",
+    "status": 200
+   },
+   {
+    "body": {
+     "message": "404 Not Found"
+    },
+    "path": "/api/v4/projects/acme/shop/jobs/102/trace",
+    "query": "",
+    "status": 404
+   }
+  ],
+  "mr_head_moved": [
+   {
+    "body": {
+     "diff_refs": {
+      "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     },
+     "iid": 3,
+     "source_branch": "feature/coupon",
+     "state": "opened",
+     "target_branch": "main",
+     "title": "Add coupon cap"
+    },
+    "path": "/api/v4/projects/acme/shop/merge_requests/3",
+    "query": "",
+    "status": 200
+   },
+   {
+    "body": [
+     {
+      "head_commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "id": 77
+     }
+    ],
+    "path": "/api/v4/projects/acme/shop/merge_requests/3/versions",
+    "query": "per_page=50",
+    "status": 200
+   },
+   {
+    "body": {
+     "diffs": [
+      {
+       "collapsed": false,
+       "diff": "@@ -1 +1 @@\n-total\n+cappedTotal",
+       "new_path": "cart.go",
+       "old_path": "cart.go",
+       "too_large": false
+      }
+     ],
+     "head_commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "overflow": false
+    },
+    "path": "/api/v4/projects/acme/shop/merge_requests/3/versions/77",
+    "query": "",
+    "status": 200
+   },
+   {
+    "body": {
+     "diff_refs": {
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+     },
+     "iid": 3,
+     "source_branch": "feature/coupon",
+     "state": "opened",
+     "target_branch": "main",
+     "title": "Add coupon cap"
+    },
+    "path": "/api/v4/projects/acme/shop/merge_requests/3",
+    "query": "",
+    "status": 200
+   }
+  ],
+  "mr_ok": [
+   {
+    "body": {
+     "diff_refs": {
+      "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     },
+     "iid": 3,
+     "source_branch": "feature/coupon",
+     "state": "opened",
+     "target_branch": "main",
+     "title": "Add coupon cap"
+    },
+    "path": "/api/v4/projects/acme/shop/merge_requests/3",
+    "query": "",
+    "status": 200
+   },
+   {
+    "body": [
+     {
+      "head_commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "id": 77
+     }
+    ],
+    "path": "/api/v4/projects/acme/shop/merge_requests/3/versions",
+    "query": "per_page=50",
+    "status": 200
+   },
+   {
+    "body": {
+     "diffs": [
+      {
+       "collapsed": false,
+       "diff": "@@ -1 +1 @@\n-total\n+cappedTotal",
+       "new_path": "cart.go",
+       "old_path": "cart.go",
+       "too_large": false
+      }
+     ],
+     "head_commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "overflow": false
+    },
+    "path": "/api/v4/projects/acme/shop/merge_requests/3/versions/77",
+    "query": "",
+    "status": 200
+   },
+   {
+    "body": {
+     "diff_refs": {
+      "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     },
+     "iid": 3,
+     "source_branch": "feature/coupon",
+     "state": "opened",
+     "target_branch": "main",
+     "title": "Add coupon cap"
+    },
+    "path": "/api/v4/projects/acme/shop/merge_requests/3",
+    "query": "",
+    "status": 200
+   }
+  ]
+ },
+ "provider": "gitlab"
+}
