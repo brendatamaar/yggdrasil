@@ -441,6 +441,11 @@ type harness struct {
 	beforeCommit func(id core.TaskID, in coretasks.Input) error
 	// tune changes the Config before the service is built.
 	tune func(*Config)
+	// dbPath, dbh and wtCfg let reopenDatabase close the SQLite file and open it
+	// again, as a process restart does.
+	dbPath string
+	dbh    *db.DB
+	wtCfg  worktrees.Config
 }
 
 // restart closes the service and starts a new one on the same database, as
@@ -456,13 +461,14 @@ type opt func(*harness)
 
 func newHarness(t *testing.T, repoNames []string, opts ...opt) *harness {
 	t.Helper()
-	d, err := db.Open(context.Background(), filepath.Join(t.TempDir(), "y.db"))
+	dbPath := filepath.Join(t.TempDir(), "y.db")
+	d, err := db.Open(context.Background(), dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
 	st := db.NewStore(d, nil)
-	h := &harness{t: t, store: st, adapter: newScriptAdapter(), hub: &fakeHub{}, killer: &fakeKiller{}, lock: &fakeMainLock{}, scanner: &testScanner{}, snap: &testSnap{}}
+	h := &harness{t: t, store: st, adapter: newScriptAdapter(), hub: &fakeHub{}, killer: &fakeKiller{}, lock: &fakeMainLock{}, scanner: &testScanner{}, snap: &testSnap{}, dbPath: dbPath, dbh: d}
 	root := t.TempDir()
 	h.project = dbtest.Project(t, st, core.Project{Name: "acme-shop", Path: filepath.Join(root, "acme-shop")})
 	for _, n := range repoNames {
@@ -479,10 +485,11 @@ func newHarness(t *testing.T, repoNames []string, opts ...opt) *harness {
 	if err := os.MkdirAll(filepath.Join(h.wtRoot, "wt"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	ens, err := worktrees.New(worktrees.Config{
+	h.wtCfg = worktrees.Config{
 		Git: worktreestest.NewGit(), Store: worktrees.DBStore{S: st}, Rand: &worktreestest.Rand{},
 		Now: func() time.Time { return time.Now().UTC() }, NewID: db.NewID, DataDir: h.wtRoot,
-	})
+	}
+	ens, err := worktrees.New(h.wtCfg)
 	if err != nil {
 		t.Fatal(err)
 	}
