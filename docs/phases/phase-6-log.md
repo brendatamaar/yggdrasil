@@ -944,3 +944,24 @@ the lead runs the full gate with Node 22 in the scratchpad.
 - After each: golangci-lint 0 issues, platform/git/archtest tests green, task lint and typecheck green.
 - Round B (N3a core Step, P1 ignore/comment/pull executors) dispatched; P split into P1 (this) and P2 (InitRepo/PublishRepo) because
   five executors do not fit 40 turns. Round C = N3b + P2, round D = Q + test-engineer.
+
+### Batch 3 rounds B and C (merged)
+- N3a core/newrepos Step merged. Additive frozen-type changes: `StageFailed.Reason`, `Stopped.Attempt` (retry needs a strictly
+  greater attempt). Lead fixed db to persist `Stopped.Attempt` (9b13054, mutation-checked).
+- P1 proposals IgnoreEntries/ReviewComment/PullFF merged; P2 InitRepo/PublishRepo merged. Agents cannot create InitRepo/PublishRepo
+  proposals (P2 choice). **Batch 5 decision:** MCP-05 lists `propose_publish`, so W must allow agent-created PublishRepo
+  (never InitRepo), still human-confirmed.
+- N3b new-repo shell merged (+ follow-up: Retry, audit through audit.Prepare after the archtest caught it, waitSettled flake,
+  Untracked-while-running test; `-race -count=3` green).
+- Wiring contracts for Batch 5 (from the reports):
+  - call `proposals.Service.OperationChanged(ctx, op)` on every lifecycle state change; nothing calls it yet;
+  - `newrepos.TryLock(mainlock.Registry, poll)` adapts the registry to MainLock; `PreparePublish(op, req, proposalID)` before
+    `ConfirmPublish` (pending publish spec is in memory: restart means preview again); effect rows need real proposal rows first;
+  - ConfirmInit/ConfirmPublish get `InitSpec.Hash()`/`PublishSpec.Hash()`, not the proposal action hash;
+  - the lifecycle port has no Reject: rejecting an init proposal leaves the operation AwaitingConfirm (wire Service.Reject);
+  - the proposal hand-off effect stays at `intent` (db allows receipts only for comment effects): small db change if wanted;
+  - proposals wiring: wrap the hosts sentinel in `proposals.ErrOutcomeUnknown`; map pull refusals to ErrPullHeadChanged/ErrPullBusy;
+    comment errors unclassified are treated as unknown; real GitHub 404 on lookup is reported unknown, so Retry of create_remote
+    stays refused until a human acts (fake host says absent);
+  - PullFF is creatable by agents (confirmation still required): decide at MCP registration;
+  - ignore/pull effects use audit stage entries, not effect rows; Windows platform code is untested on Windows.
