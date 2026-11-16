@@ -13,7 +13,11 @@ package notify
 import (
 	"errors"
 	"fmt"
+	"slices"
+	"sort"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
 )
@@ -253,15 +257,153 @@ func (PublishNotice) isCommand()         {}
 // Step is (state2, commands) = Step(state1, input) following
 // docs/design/phase-6-notifications.md.
 //
-// PENDING (task Q): the foundation freezes the types. Every input returns the
-// state unchanged and no commands, so no notice is produced and none can carry
-// a body.
+//	Empty            Recovered              -> Current, no commands
+//	Empty / Current  notifiable newer       -> Current, PersistNoticeAndAudit + PublishNotice
+//	Empty / Current  other newer            -> Current, PersistHighWater
+//	Empty / Current  stale or replayed      -> unchanged
+//	Empty / Current  Stop                   -> Closed
+//
+// "Newer" is a revision above the high-water mark of the transition's Key, so
+// a replay, an out-of-order older revision and a transition whose notice was
+// trimmed from history are all ignored. Any other pair, and any input that is
+// not valid (the shell parses at the boundary; this is the backstop), returns
+// the state unchanged and no commands. The state is never mutated: a new
+// Current has its own map and slice.
 func Step(s State, in Input) (State, []Command) {
-	switch in.(type) {
-	case TaskTransition, VerificationTransition, Recovered, Stop:
+	switch st := s.(type) {
+	case Closed:
 		return s, nil
+	case Empty:
+		switch x := in.(type) {
+		case Recovered:
+			return recovered(x), nil
+		case Stop:
+			return Closed{}, nil
+		case TaskTransition, VerificationTransition:
+			return transition(Current{}, in)
+		}
+	case Current:
+		switch in.(type) {
+		case Stop:
+			return Closed{}, nil
+		case TaskTransition, VerificationTransition:
+			return transition(st, in)
+		}
 	}
 	return s, nil
+}
+
+// recovered builds the running state from stored history. Invalid notices and
+// marks are dropped, history is kept oldest first and bounded, and every
+// retained notice raises its source's mark so no retained notice can be
+// produced again.
+func recovered(r Recovered) Current {
+	cur := Current{HighWater: make(map[Key]int64, len(r.HighWater))}
+	for k, rev := range r.HighWater {
+		if rev > 0 && k.Task.Validate() == nil && k.Source.Validate() == nil {
+			cur.HighWater[k] = rev
+		}
+	}
+	for _, n := range r.Recent {
+		if n.Validate() != nil {
+			continue
+		}
+		cur.Recent = append(cur.Recent, n)
+		k := Key{Task: n.Task, Source: n.Source}
+		if cur.HighWater[k] < n.SourceRevision {
+			cur.HighWater[k] = n.SourceRevision
+		}
+	}
+	sort.SliceStable(cur.Recent, func(i, j int) bool { return cur.Recent[i].Cursor < cur.Recent[j].Cursor })
+	cur.Recent = trimRecent(cur.Recent)
+	return cur
+}
+
+// trimRecent keeps the newest MaxRecent notices of a list ordered oldest first.
+func trimRecent(r []Notice) []Notice {
+	if len(r) > MaxRecent {
+		r = r[len(r)-MaxRecent:]
+	}
+	return r
+}
+
+// verifyStatus maps a verification result to the notice it produces, if any.
+func verifyStatus(r VerifyResult) (Status, bool, bool) {
+	switch r {
+	case VerifyPassed:
+		return VerificationPassed, true, true
+	case VerifyFailed:
+		return VerificationFailed, true, true
+	case VerifyInProgress:
+		return "", false, true
+	}
+	return "", false, false
+}
+
+// clipTitle bounds a title to MaxTitle bytes without cutting a character.
+func clipTitle(t string) string {
+	if len(t) <= MaxTitle {
+		return t
+	}
+	t = t[:MaxTitle]
+	for len(t) > 0 && !utf8.ValidString(t) {
+		t = t[:len(t)-1]
+	}
+	return t
+}
+
+// transition handles a task or verification transition in the running state.
+func transition(cur Current, in Input) (State, []Command) {
+	var (
+		key        Key
+		title      string
+		rev        int64
+		at         time.Time
+		id         core.NoticeID
+		status     Status
+		notifiable bool
+	)
+	switch x := in.(type) {
+	case TaskTransition:
+		if x.Status.Validate() != nil {
+			return cur, nil
+		}
+		key = Key{Task: x.Task, Source: Source{Kind: SourceTask}}
+		title, rev, at, id = x.Title, x.Revision, x.Now, x.ID
+		status, notifiable = OfTaskStatus(x.Status)
+	case VerificationTransition:
+		var valid bool
+		status, notifiable, valid = verifyStatus(x.Result)
+		if !valid {
+			return cur, nil
+		}
+		key = Key{Task: x.Task, Source: Source{Kind: SourceVerification, RunID: x.RunID}}
+		title, rev, at, id = x.Title, x.Revision, x.Now, x.ID
+	default:
+		return cur, nil
+	}
+	if key.Task.Validate() != nil || key.Source.Validate() != nil || rev <= 0 {
+		return cur, nil
+	}
+	if rev <= cur.HighWater[key] {
+		return cur, nil // a replay or an older revision: nothing, ever
+	}
+	next := Current{HighWater: make(map[Key]int64, len(cur.HighWater)+1), Recent: cur.Recent}
+	for k, v := range cur.HighWater {
+		next.HighWater[k] = v
+	}
+	if !notifiable {
+		next.HighWater[key] = rev
+		return next, []Command{PersistHighWater{Key: key, Revision: rev}}
+	}
+	n := Notice{ID: id, Task: key.Task, TaskTitle: clipTitle(title), Status: status, Source: key.Source,
+		SourceRevision: rev, CreatedAt: at}
+	if n.Validate() != nil || at.IsZero() || strings.TrimSpace(n.TaskTitle) == "" {
+		return cur, nil
+	}
+	next.HighWater[key] = rev
+	next.Recent = trimRecent(append(slices.Clone(cur.Recent), n))
+	return next, []Command{PersistNoticeAndAudit{Notice: n, HighWater: rev}, PublishNotice{ID: id}}
 }
 
 // CursorGap reports whether a client that last saw cursor `after` missed
