@@ -1,0 +1,344 @@
+{
+ "answers": {
+  "issue_foreign": [
+   {
+    "body": {
+     "number": 6,
+     "title": "Another issue",
+     "updated_at": "2026-03-01T10:00:00Z"
+    },
+    "path": "/api/v3/repos/acme/shop/issues/5",
+    "query": "",
+    "status": 200
+   }
+  ],
+  "issue_is_pull_request": [
+   {
+    "body": {
+     "number": 5,
+     "pull_request": {
+      "url": "x"
+     },
+     "title": "A pull request",
+     "updated_at": "2026-03-01T10:00:00Z"
+    },
+    "path": "/api/v3/repos/acme/shop/issues/5",
+    "query": "",
+    "status": 200
+   }
+  ],
+  "issue_ok": [
+   {
+    "body": {
+     "body": "Steps to reproduce: open search.",
+     "html_url": "{{BASE}}/acme/shop/issues/5",
+     "labels": [
+      {
+       "name": "perf"
+      }
+     ],
+     "number": 5,
+     "title": "Search is slow",
+     "updated_at": "2026-03-01T10:00:00Z",
+     "user": {
+      "login": "cy"
+     }
+    },
+    "path": "/api/v3/repos/acme/shop/issues/5",
+    "query": "",
+    "status": 200
+   }
+  ],
+  "issues_401": [
+   {
+    "body": {
+     "message": "Bad credentials"
+    },
+    "path": "/api/v3/repos/acme/shop/issues",
+    "query": "state=open&per_page=50&page=1",
+    "status": 401
+   }
+  ],
+  "issues_404": [
+   {
+    "body": {
+     "message": "Not Found"
+    },
+    "path": "/api/v3/repos/acme/shop/issues",
+    "query": "state=open&per_page=50&page=1",
+    "status": 404
+   }
+  ],
+  "issues_429": [
+   {
+    "body": {
+     "message": "rate limited"
+    },
+    "headers": {
+     "Retry-After": "2"
+    },
+    "path": "/api/v3/repos/acme/shop/issues",
+    "query": "state=open&per_page=50&page=1",
+    "status": 429
+   }
+  ],
+  "issues_503": [
+   {
+    "body": {
+     "message": "unavailable"
+    },
+    "path": "/api/v3/repos/acme/shop/issues",
+    "query": "state=open&per_page=50&page=1",
+    "status": 503
+   }
+  ],
+  "issues_empty": [
+   {
+    "body": [],
+    "path": "/api/v3/repos/acme/shop/issues",
+    "query": "state=open&per_page=50&page=1",
+    "status": 200
+   }
+  ],
+  "issues_ok": [
+   {
+    "body": [
+     {
+      "labels": [
+       {
+        "name": "bug"
+       },
+       {
+        "name": "cart"
+       }
+      ],
+      "number": 1,
+      "title": "Cart total is wrong after coupon",
+      "updated_at": "2026-03-01T10:00:00Z",
+      "user": {
+       "login": "ana"
+      }
+     },
+     {
+      "labels": [],
+      "number": 2,
+      "title": "Add dark mode to admin",
+      "updated_at": "2026-03-02T09:30:00Z",
+      "user": {
+       "login": "ben"
+      }
+     }
+    ],
+    "path": "/api/v3/repos/acme/shop/issues",
+    "query": "state=open&per_page=50&page=1",
+    "status": 200
+   }
+  ],
+  "issues_too_large": [
+   {
+    "body_repeat": {
+     "count": 1048577,
+     "fill": "x"
+    },
+    "path": "/api/v3/repos/acme/shop/issues",
+    "query": "state=open&per_page=50&page=1",
+    "status": 200
+   }
+  ],
+  "issues_unusable": [
+   {
+    "body": {
+     "message": "not a list"
+    },
+    "path": "/api/v3/repos/acme/shop/issues",
+    "query": "state=open&per_page=50&page=1",
+    "status": 200
+   }
+  ],
+  "jobs_ok": [
+   {
+    "body": {
+     "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "id": 12
+    },
+    "path": "/api/v3/repos/acme/shop/actions/runs/12",
+    "query": "",
+    "status": 200
+   },
+   {
+    "body": {
+     "jobs": [
+      {
+       "conclusion": "failure",
+       "id": 101,
+       "name": "unit"
+      }
+     ]
+    },
+    "path": "/api/v3/repos/acme/shop/actions/runs/12/jobs",
+    "query": "per_page=50&page=1",
+    "status": 200
+   },
+   {
+    "body_text": "FAIL: TestCartTotal\n",
+    "path": "/api/v3/repos/acme/shop/actions/jobs/101/logs",
+    "query": "",
+    "status": 200
+   }
+  ],
+  "jobs_partial": [
+   {
+    "body": {
+     "conclusion": "failure",
+     "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "id": 12,
+     "status": "completed"
+    },
+    "path": "/api/v3/repos/acme/shop/actions/runs/12",
+    "query": "",
+    "status": 200
+   },
+   {
+    "body": {
+     "jobs": [
+      {
+       "conclusion": "failure",
+       "id": 101,
+       "name": "unit"
+      },
+      {
+       "conclusion": "failure",
+       "id": 102,
+       "name": "lint"
+      },
+      {
+       "conclusion": "success",
+       "id": 103,
+       "name": "build"
+      }
+     ]
+    },
+    "path": "/api/v3/repos/acme/shop/actions/runs/12/jobs",
+    "query": "per_page=50&page=1",
+    "status": 200
+   },
+   {
+    "body_text": "FAIL: TestCartTotal\n",
+    "path": "/api/v3/repos/acme/shop/actions/jobs/101/logs",
+    "query": "",
+    "status": 200
+   },
+   {
+    "body": {
+     "message": "Not Found"
+    },
+    "path": "/api/v3/repos/acme/shop/actions/jobs/102/logs",
+    "query": "",
+    "status": 404
+   }
+  ],
+  "mr_head_moved": [
+   {
+    "body": {
+     "base": {
+      "ref": "main",
+      "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+     },
+     "head": {
+      "ref": "feature/coupon",
+      "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     },
+     "number": 3,
+     "state": "open",
+     "title": "Add coupon cap"
+    },
+    "path": "/api/v3/repos/acme/shop/pulls/3",
+    "query": "",
+    "status": 200
+   },
+   {
+    "body": {
+     "files": [
+      {
+       "filename": "cart.go",
+       "patch": "@@ -1 +1 @@\n-total\n+cappedTotal"
+      }
+     ]
+    },
+    "path": "/api/v3/repos/acme/shop/compare/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "query": "",
+    "status": 200
+   },
+   {
+    "body": {
+     "base": {
+      "ref": "main",
+      "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+     },
+     "head": {
+      "ref": "feature/coupon",
+      "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+     },
+     "number": 3,
+     "state": "open",
+     "title": "Add coupon cap"
+    },
+    "path": "/api/v3/repos/acme/shop/pulls/3",
+    "query": "",
+    "status": 200
+   }
+  ],
+  "mr_ok": [
+   {
+    "body": {
+     "base": {
+      "ref": "main",
+      "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+     },
+     "head": {
+      "ref": "feature/coupon",
+      "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     },
+     "number": 3,
+     "state": "open",
+     "title": "Add coupon cap"
+    },
+    "path": "/api/v3/repos/acme/shop/pulls/3",
+    "query": "",
+    "status": 200
+   },
+   {
+    "body": {
+     "files": [
+      {
+       "filename": "cart.go",
+       "patch": "@@ -1 +1 @@\n-total\n+cappedTotal"
+      }
+     ]
+    },
+    "path": "/api/v3/repos/acme/shop/compare/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "query": "",
+    "status": 200
+   },
+   {
+    "body": {
+     "base": {
+      "ref": "main",
+      "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+     },
+     "head": {
+      "ref": "feature/coupon",
+      "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     },
+     "number": 3,
+     "state": "open",
+     "title": "Add coupon cap"
+    },
+    "path": "/api/v3/repos/acme/shop/pulls/3",
+    "query": "",
+    "status": 200
+   }
+  ]
+ },
+ "provider": "github"
+}
