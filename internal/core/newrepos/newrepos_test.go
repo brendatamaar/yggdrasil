@@ -143,19 +143,3 @@ func stagesOf[T Stage](in []T) []Stage {
 	}
 	return out
 }
-
-// The foundation Step is a documented stub: nothing is reserved, written or
-// published by it.
-func TestStepIsInert(t *testing.T) {
-	op := Operation{ID: "op_1", Project: "prj_1", Repo: "rep_1"}
-	for _, in := range []Input{
-		Reserve{Spec: validInit()}, ProposalCreated{ID: "p", Hash: "h"}, Confirmed{Attempt: 1}, StageSucceeded{Attempt: 1},
-		StageFailed{Attempt: 1}, PublishConfirmed{Attempt: 1}, Recovered{}, Reconciled{Attempt: 1}, RetryConfirmed{Attempt: 1},
-		Reject{}, Untracked{},
-	} {
-		got, cmds := Step(op, in)
-		if got.State != nil || got.Version != op.Version || len(cmds) != 0 {
-			t.Errorf("Step(%T) = %+v, %v", in, got, cmds)
-		}
-	}
-}
