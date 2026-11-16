@@ -261,7 +261,7 @@ func (h *ConfirmedHosts) scanComments(ctx context.Context, path, token string, a
 			Body string `json:"body"`
 		}
 		if json.Unmarshal(resp.Body, &notes) != nil || notes == nil || len(notes) > 50 {
-			return unknown, nil
+			return unknown, nil //nolint:nilerr // an unreadable page proves nothing: Unknown is the outcome, to be reconciled, not an error
 		}
 		for _, n := range notes {
 			if !strings.Contains(n.Body, "ygg:"+marker) {
