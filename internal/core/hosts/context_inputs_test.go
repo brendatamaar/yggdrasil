@@ -47,17 +47,17 @@ func TestContextRejectsMalformedPayloadBoundaries(t *testing.T) {
 	key := ContextKey{Repo: "rep_1", Kind: ContextFailedJobs, ObjectID: "1", Head: head}
 	// An unusable payload for the current attempt is a terminal answer, not a
 	// silent no-op that leaves the entry Loading for ever.
-	assertBlocked := func(t *testing.T, e ContextEntry, in ContextInput) {
+	assertBlocked := func(t *testing.T, e ContextEntry, in ContextInput, want ContextBlockReason) {
 		t.Helper()
 		got, cmd := ContextStep(e, in)
 		b, ok := got.State.(CtxBlocked)
-		if !ok || b.Reason != ContextUnsupported || !b.Until.Equal(now.Add(ContextBlockedTTL)) {
-			t.Fatalf("unusable payload left %#v", got.State)
+		if !ok || b.Reason != want || !b.Until.Equal(now.Add(ContextBlockedTTL)) {
+			t.Fatalf("unusable payload left %#v, want Blocked{%s}", got.State, want)
 		}
 		if len(cmd) != 1 {
 			t.Fatal(cmd)
 		}
-		if ex, ok := cmd[0].(CtxExplain); !ok || ex.Reason != ContextUnsupported {
+		if ex, ok := cmd[0].(CtxExplain); !ok || ex.Reason != want {
 			t.Fatal(cmd)
 		}
 	}
@@ -71,17 +71,18 @@ func TestContextRejectsMalformedPayloadBoundaries(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := ctxStart(key, now)
-			assertBlocked(t, e, ContextFetched{Key: key, Attempt: e.Seq, Value: payload, Now: now})
+			// Not the object the key names (also a head that moved): not found.
+			assertBlocked(t, e, ContextFetched{Key: key, Attempt: e.Seq, Value: payload, Now: now}, ContextNotFound)
 		})
 	}
 	issueKey := ContextKey{Repo: "rep_1", Kind: ContextIssues}
 	t.Run("unknown gap reason", func(t *testing.T) {
 		e := ctxStart(issueKey, now)
-		assertBlocked(t, e, ContextFetched{Key: issueKey, Attempt: e.Seq, Value: IssueList{}, Unavailable: []ContextUnavailable{{Source: "log", Reason: "unparsed outside text"}}, Now: now})
+		assertBlocked(t, e, ContextFetched{Key: issueKey, Attempt: e.Seq, Value: IssueList{}, Unavailable: []ContextUnavailable{{Source: "log", Reason: "unparsed outside text"}}, Now: now}, ContextUnsupported)
 	})
 	t.Run("more than the gap limit", func(t *testing.T) {
 		e := ctxStart(issueKey, now)
-		assertBlocked(t, e, ContextFetched{Key: issueKey, Attempt: e.Seq, Value: IssueList{}, Unavailable: make([]ContextUnavailable, ContextMaxEntries+1), Now: now})
+		assertBlocked(t, e, ContextFetched{Key: issueKey, Attempt: e.Seq, Value: IssueList{}, Unavailable: make([]ContextUnavailable, ContextMaxEntries+1), Now: now}, ContextUnsupported)
 	})
 	t.Run("late attempt is still ignored", func(t *testing.T) {
 		e := ctxStart(issueKey, now)
@@ -95,26 +96,32 @@ func TestContextRejectsMalformedPayloadBoundaries(t *testing.T) {
 func TestContextRejectedIsPartOfTheInputSet(t *testing.T) {
 	now := time.Unix(1000, 0)
 	key := ContextKey{Repo: "rep_1", Kind: ContextIssues}
-	for _, reason := range []ContextBlockReason{ContextNotFound, ContextUnsupported, ContextTooLarge} {
+	// Every refusal ends the current attempt, with the matching reason. A value
+	// outside the closed set degrades to unsupported instead of leaving the entry
+	// Loading.
+	for refusal, want := range map[ContextRefusal]ContextBlockReason{
+		RefusedNotFound:    ContextNotFound,
+		RefusedUnsupported: ContextUnsupported,
+		RefusedTooLarge:    ContextTooLarge,
+		"boom":             ContextUnsupported,
+		"":                 ContextUnsupported,
+	} {
 		e := ctxStart(key, now)
-		got, cmd := ContextStep(e, ContextRejected{Key: key, Attempt: e.Seq, Reason: reason, Now: now})
+		got, cmd := ContextStep(e, ContextRejected{Key: key, Attempt: e.Seq, Reason: refusal, Now: now})
 		b, ok := got.State.(CtxBlocked)
-		if !ok || b.Reason != reason || len(cmd) != 1 {
-			t.Fatalf("%s: %#v %v", reason, got.State, cmd)
+		if !ok || b.Reason != want || len(cmd) != 1 {
+			t.Fatalf("%q: %#v %v", refusal, got.State, cmd)
 		}
-		if ex, ok := cmd[0].(CtxExplain); !ok || ex.Reason != reason {
-			t.Fatalf("%s: %v", reason, cmd)
+		if ex, ok := cmd[0].(CtxExplain); !ok || ex.Reason != want {
+			t.Fatalf("%q: %v", refusal, cmd)
 		}
 	}
-	// Not a refusal the shell may report, a stale attempt, a foreign key and a
-	// zero time all change nothing.
+	// A stale attempt, a foreign key and a zero time change nothing.
 	e := ctxStart(key, now)
 	for name, in := range map[string]ContextRejected{
-		"retry exhausted is not a refusal": {Key: key, Attempt: e.Seq, Reason: ContextRetryExhausted, Now: now},
-		"unknown reason":                   {Key: key, Attempt: e.Seq, Reason: "boom", Now: now},
-		"stale attempt":                    {Key: key, Attempt: e.Seq - 1, Reason: ContextNotFound, Now: now},
-		"foreign key":                      {Key: ContextKey{Repo: "rep_2", Kind: ContextIssues}, Attempt: e.Seq, Reason: ContextNotFound, Now: now},
-		"zero time":                        {Key: key, Attempt: e.Seq, Reason: ContextNotFound},
+		"stale attempt": {Key: key, Attempt: e.Seq - 1, Reason: RefusedNotFound, Now: now},
+		"foreign key":   {Key: ContextKey{Repo: "rep_2", Kind: ContextIssues}, Attempt: e.Seq, Reason: RefusedNotFound, Now: now},
+		"zero time":     {Key: key, Attempt: e.Seq, Reason: RefusedNotFound},
 	} {
 		got, cmd := ContextStep(e, in)
 		if !reflect.DeepEqual(got, e) || len(cmd) > 0 {
@@ -122,8 +129,8 @@ func TestContextRejectedIsPartOfTheInputSet(t *testing.T) {
 		}
 	}
 	// A rejection of a finished attempt is ignored too.
-	done, _ := ContextStep(e, ContextRejected{Key: key, Attempt: e.Seq, Reason: ContextNotFound, Now: now})
-	got, cmd := ContextStep(done, ContextRejected{Key: key, Attempt: e.Seq, Reason: ContextUnsupported, Now: now})
+	done, _ := ContextStep(e, ContextRejected{Key: key, Attempt: e.Seq, Reason: RefusedNotFound, Now: now})
+	got, cmd := ContextStep(done, ContextRejected{Key: key, Attempt: e.Seq, Reason: RefusedUnsupported, Now: now})
 	if !reflect.DeepEqual(got, done) || len(cmd) > 0 {
 		t.Fatal("a second rejection changed a blocked entry")
 	}
@@ -141,7 +148,7 @@ func TestContextZeroTimeIsInvalidInput(t *testing.T) {
 		"requested": {ContextEntry{Key: key, State: CtxEmpty{}}, ContextRequested{Key: key, Scope: ScopeTracked}},
 		"fetched":   {loading, ContextFetched{Key: key, Attempt: loading.Seq, Value: IssueList{}}},
 		"failed":    {loading, ContextFetchFailed{Key: key, Attempt: loading.Seq, Class: FailTransient}},
-		"rejected":  {loading, ContextRejected{Key: key, Attempt: loading.Seq, Reason: ContextNotFound}},
+		"rejected":  {loading, ContextRejected{Key: key, Attempt: loading.Seq, Reason: RefusedNotFound}},
 		"limited":   {loading, ContextRateLimited{Key: key, Attempt: loading.Seq, Until: now.Add(time.Second)}},
 		"wake":      {waiting, ContextWake{Attempt: waiting.Seq}},
 	} {

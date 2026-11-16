@@ -93,7 +93,8 @@ func contextSequence(seed int64, key ContextKey) []ContextInput {
 	r := rand.New(rand.NewSource(seed))
 	keys := contextPropKeys()
 	classes := []FailKind{FailTransient, FailRateLimited, FailUnauthorized, FailNotFound}
-	reasons := []ContextBlockReason{ContextNotFound, ContextUnsupported, ContextTooLarge, ContextForbidden, ContextNoToken}
+	// Includes values outside the closed set: they must end the attempt too.
+	reasons := []ContextRefusal{RefusedNotFound, RefusedUnsupported, RefusedTooLarge, "boom", ""}
 	var inputs []ContextInput
 	// The generator folds its own inputs so that most results aim at the attempt
 	// that is current at that point.
@@ -197,21 +198,9 @@ func contextResultFor(in ContextInput) (ContextKey, int, bool) {
 	return ContextKey{}, 0, false
 }
 
-// contextIgnoredRejection: the reasons the shell never reports through Rejected.
-func contextIgnoredRejection(in ContextInput) bool {
-	rj, ok := in.(ContextRejected)
-	if !ok {
-		return false
-	}
-	switch rj.Reason {
-	case ContextNotFound, ContextUnsupported, ContextTooLarge:
-		return false
-	}
-	return true
-}
-
-// contextIsUselessRateLimit: a rate-limit report whose deadline already passed
-// asks for no wait, so it changes nothing.
+// contextIsUselessRateLimit: a rate-limit report whose deadline is not in the
+// future asks for no wait, so it changes nothing. It is not a result: the
+// shell owns the read in flight and goes on reading.
 func contextIsUselessRateLimit(in ContextInput) bool {
 	rl, ok := in.(ContextRateLimited)
 	return ok && !rl.Until.After(rl.Now)
@@ -240,10 +229,25 @@ func checkContextSequence(key ContextKey, ins []ContextInput) error {
 				return fail("a late or foreign result changed the entry")
 			}
 			now, _ := contextInputNow(in)
-			if current && !now.IsZero() && !contextIgnoredRejection(in) && !contextIsUselessRateLimit(in) {
+			if current && !now.IsZero() && !contextIsUselessRateLimit(in) {
 				if _, still := next.State.(CtxLoading); still {
 					return fail("a result for the current attempt left it Loading")
 				}
+			}
+		}
+		// Waiting names the newest attempt and the retries used so far.
+		if w, ok := next.State.(CtxWaiting); ok && (w.Attempt != next.Seq || w.Retries != next.Retries) {
+			return fail("waiting %d/%d does not match seq %d retries %d", w.Attempt, w.Retries, next.Seq, next.Retries)
+		}
+		// A block that came from the supplied scope has no window; a block that
+		// ends a read lasts ContextBlockedTTL from the supplied time.
+		if b, ok := next.State.(CtxBlocked); ok && !reflect.DeepEqual(e, next) {
+			if _, fromScope := in.(ContextRequested); fromScope {
+				if !b.Until.IsZero() {
+					return fail("a scope block has a window %v", b.Until)
+				}
+			} else if now, _ := contextInputNow(in); !b.Until.Equal(now.Add(ContextBlockedTTL)) {
+				return fail("a read block lasts until %v, want now+TTL", b.Until)
 			}
 		}
 		for _, c := range cmd {
@@ -307,6 +311,9 @@ func checkContextSequence(key ContextKey, ins []ContextInput) error {
 		case ContextScopeChanged, ContextConfigChanged:
 			if _, ok := next.State.(CtxEmpty); !ok {
 				return fail("a scope or config change kept %T", next.State)
+			}
+			if next.Seq <= e.Seq {
+				return fail("a scope or config change did not raise the attempt counter")
 			}
 		case ContextRequested, ContextFetched, ContextFetchFailed, ContextRejected, ContextRateLimited, ContextWake, ContextCancelled:
 		}

@@ -71,9 +71,13 @@ type ContextReader interface {
 	Read(ctx context.Context, key corehosts.ContextKey) (ContextOutcome, error)
 }
 
-// ContextOutcome is the answer of ContextReader: exactly one of Result (a Ready
-// or Partial value) or Blocked is set. A blocked read is an answer, not an
-// error; it carries the plain reason so callers can degrade to metadata.
+// ContextOutcome is the answer of ContextReader when the error is nil. It has
+// exactly one of three shapes: Result (a Ready or Partial value), Blocked (a
+// reason, with Until when the block is cached for a short window), or RetryAt
+// alone (a retry that does not fit in this request, to be asked again at that
+// time). It is never empty: a call that has no answer returns an error
+// (ErrContextSuperseded when it was overtaken). A blocked read is an answer, not
+// an error; it carries the plain reason so callers can degrade to metadata.
 type ContextOutcome struct {
 	Result  *ContextResult
 	Blocked *corehosts.CtxBlocked
@@ -89,6 +93,14 @@ type ContextOutcome struct {
 // foreign run id, a pull request where an issue was asked for) returns it too:
 // the reader then refuses the read as "not found" without retrying.
 var ErrContextScope = errContext("host context: the repo is not tracked or has no host")
+
+// ErrContextSuperseded is returned by ContextReader.Read when the read was
+// overtaken while it ran: the target the key resolves to, the instance or its
+// token changed, or another call dropped the attempt. It is not a scope error
+// and says nothing about tracking: the caller may ask again at once and gets a
+// fresh read. ErrContextScope stays reserved for a repo that is not tracked,
+// not ready, not linked or foreign.
+var ErrContextSuperseded = errContext("host context: the read was overtaken by a change; ask again")
 
 // ErrContextUnsupported is returned by a ContextClient for a kind the provider
 // cannot give (Gitea logs, GitHub external checks).
