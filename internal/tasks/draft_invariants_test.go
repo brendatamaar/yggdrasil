@@ -361,3 +361,36 @@ func TestExplicitStartAcrossTwoServicesAdmitsOneFirstTurn(t *testing.T) {
 		t.Fatalf("turns %d starts %d", len(turns), len(h.adapter.Starts()))
 	}
 }
+
+// noProbeLock hides Held, so only TryAcquire (the authority) guards the editor
+// lock and the LocksDenied path is the one exercised.
+type noProbeLock struct{ l *fakeMainLock }
+
+func (n noProbeLock) TryAcquire(repos []core.RepoID, owner string) (Release, string, bool) {
+	return n.l.TryAcquire(repos, owner)
+}
+
+func TestDraftDirectEditHonoursTheEditorLockWithoutAProbe(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t, []string{"shop-api"})
+	h.adapter.caps.Enforcement = agents.EnforcementHook
+	h.tune = func(c *Config) { c.MainLock = noProbeLock{h.lock} }
+	h.start()
+	id := startDraftOf(t, h)
+	rel, _, ok := h.lock.TryAcquire([]core.RepoID{h.repos[0].ID}, "build:1")
+	if !ok {
+		t.Fatal("no lock")
+	}
+	if _, err := h.svc.StartDraft(ctx, coretasks.DraftStart{Task: id, Mode: core.ModeCurrentBranch, OptIn: true}, ""); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if len(h.adapter.Starts()) != 0 {
+		t.Fatal("the draft edited the main checkout while another holder had it")
+	}
+	rel()
+	h.waitStatus(id, core.TaskReview)
+	if len(h.adapter.Starts()) != 1 || h.lock.held(h.repos[0].ID) != "" {
+		t.Fatalf("starts %d, holder %q", len(h.adapter.Starts()), h.lock.held(h.repos[0].ID))
+	}
+}
