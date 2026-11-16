@@ -14,18 +14,32 @@ import (
 	"unicode/utf8"
 
 	corehosts "github.com/brendatamaar/yggdrasil/internal/core/hosts"
+	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
 
 const redactTok = "sentinel-credential-7f3a91"
+
+// tokenWithInvalidByte is the credential with one invalid UTF-8 byte inside it
+// (position 0..len), which only a reader that strips invalid bytes BEFORE
+// redacting can still recognize.
+func tokenWithInvalidByte(at int) string { return redactTok[:at] + "\xff" + redactTok[at:] }
 
 func genText(r *rand.Rand, max int) string {
 	pieces := []string{"plain ", "日本語", "Überweisung ", redactTok, "x", "\n", "🙂", "\xff", "a b c "}
 	var b strings.Builder
 	for b.Len() < max && r.Intn(40) != 0 {
+		if r.Intn(8) == 0 {
+			b.WriteString(tokenWithInvalidByte(r.Intn(len(redactTok) + 1)))
+			continue
+		}
 		b.WriteString(pieces[r.Intn(len(pieces))])
 	}
 	if max >= 5000 && r.Intn(4) == 0 { // a big one, to cross the budget at arbitrary byte offsets
 		b.WriteString(strings.Repeat(pieces[r.Intn(len(pieces)-4)], r.Intn(6000)))
+	}
+	if max >= 5000 && r.Intn(3) == 0 { // the credential straddling the 64 KiB budget
+		b.WriteString(strings.Repeat("x", corehosts.ContextMaxPromptBytes-r.Intn(len(redactTok)+4)-b.Len()%corehosts.ContextMaxPromptBytes))
+		b.WriteString(redactTok)
 	}
 	return b.String()
 }
@@ -98,12 +112,31 @@ func checkRedacted(in ContextResult, out ContextResult) string {
 	}
 	// Loss is labelled: whatever the independent measure says did not fit has a flag.
 	// Invalid bytes are dropped by the reader (json shows them as \ufffd).
-	redacted := strings.ReplaceAll(strings.ReplaceAll(mustJSON(in), redactTok, "[REDACTED]"), `\ufffd`, "")
+	redacted := strings.ReplaceAll(strings.ReplaceAll(mustJSON(in), `\ufffd`, ""), redactTok, "[REDACTED]")
 	if len(redacted) > 64*1024 && !anyTruncatedFlag(out.Value) {
 		return "content was dropped without a truncation label"
 	}
 	if len(in.Unavailable) > 0 && len(out.Unavailable) == 0 {
 		return "a labelled gap disappeared"
+	}
+	// A label of a missing part of at most 256 bytes is shown whole (redacted) or
+	// replaced by the sentinel for the parts that were left out; bounding the
+	// payload never shortens it ("externa").
+	red := safety.NewRedactor(redactTok)
+	for i, g := range out.Unavailable {
+		if len(g.Source) > 256 || g.Source == "additional context omitted" {
+			continue
+		}
+		if i >= len(in.Unavailable) {
+			return "an unavailable label appeared from nowhere: " + g.Source
+		}
+		want := strings.ToValidUTF8(red.Redact(strings.ToValidUTF8(in.Unavailable[i].Source, "")), "")
+		if len(want) > 256 {
+			continue // an oversized label may be cut
+		}
+		if g.Source != want {
+			return "an unavailable label was shortened: " + want + " became " + g.Source
+		}
 	}
 	return ""
 }
@@ -119,6 +152,10 @@ func TestPropRedactContextBoundsAndLabels(t *testing.T) {
 		var gaps []corehosts.ContextUnavailable
 		for i, n := 0, r.Intn(4); i < n; i++ {
 			gaps = append(gaps, corehosts.ContextUnavailable{Source: genText(r, 30), Reason: corehosts.ContextNotFound})
+		}
+		// Short, readable labels that must survive a payload overflow whole.
+		for _, label := range []string{"job log 1", "external checks", "review threads"}[:r.Intn(4)] {
+			gaps = append(gaps, corehosts.ContextUnavailable{Source: label, Reason: corehosts.ContextNotFound})
 		}
 		in := ContextResult{Value: p, Unavailable: gaps}
 		out := redactContext(in, redactTok)
@@ -145,6 +182,58 @@ func TestRedactContextManySmallLabelsAndGaps(t *testing.T) {
 	out := redactContext(in, redactTok)
 	if msg := checkRedacted(in, out); msg != "" {
 		t.Fatal(msg)
+	}
+}
+
+// The credential with an invalid byte inside it, at every position and in every
+// field kind, is still redacted: the invalid bytes go first, then the redactor
+// sees the joined token.
+func TestRedactContextInvalidByteInsideCredential(t *testing.T) {
+	for at := 0; at <= len(redactTok); at++ {
+		bad := tokenWithInvalidByte(at)
+		in := ContextResult{
+			Value:       corehosts.IssueDetail{Summary: corehosts.IssueSummary{Number: 5, Title: "t " + bad, Author: bad, Labels: []string{bad}}, Body: "body " + bad + " end"},
+			Unavailable: []corehosts.ContextUnavailable{{Source: "log " + bad, Reason: corehosts.ContextNotFound}},
+		}
+		out := redactContext(in, redactTok)
+		if msg := checkRedacted(in, out); msg != "" {
+			t.Fatalf("invalid byte at %d: %s", at, msg)
+		}
+		if strings.Contains(mustJSON(out), "sentinel-") {
+			t.Fatalf("invalid byte at %d: part of the credential survived: %s", at, mustJSON(out))
+		}
+	}
+}
+
+// The credential straddling the budget boundary: whichever offset the cut falls
+// on, neither the whole credential nor a recognizable start of it is left.
+func TestRedactContextCredentialStraddlesBudget(t *testing.T) {
+	for start := corehosts.ContextMaxPromptBytes - len(redactTok) - 40; start <= corehosts.ContextMaxPromptBytes+2; start++ {
+		body := strings.Repeat("x", start) + redactTok + " tail"
+		in := ContextResult{Value: corehosts.IssueDetail{Summary: corehosts.IssueSummary{Number: 5, Title: "t"}, Body: body}}
+		out := redactContext(in, redactTok)
+		if msg := checkRedacted(in, out); msg != "" {
+			t.Fatalf("credential at offset %d: %s", start, msg)
+		}
+		if strings.Contains(mustJSON(out), "sentin") {
+			t.Fatalf("credential at offset %d: the start of the credential survived the cut", start)
+		}
+	}
+}
+
+// Overflowing the payload keeps the label of a missing part whole (the
+// externa/external checks regression). With several labels the list is halved
+// and ends in the "additional context omitted" sentinel, which the property
+// test checks.
+func TestRedactContextOverflowKeepsGapLabelWhole(t *testing.T) {
+	gaps := []corehosts.ContextUnavailable{{Source: "external checks", Reason: corehosts.ContextNotFound}}
+	in := ContextResult{Value: corehosts.IssueDetail{Summary: corehosts.IssueSummary{Number: 5, Title: "t"}, Body: strings.Repeat("🙂 line\n", 20000)}, Unavailable: gaps}
+	out := redactContext(in, redactTok)
+	if msg := checkRedacted(in, out); msg != "" {
+		t.Fatal(msg)
+	}
+	if len(out.Unavailable) != 1 || out.Unavailable[0].Source != "external checks" {
+		t.Fatalf("label changed: %+v", out.Unavailable)
 	}
 }
 
