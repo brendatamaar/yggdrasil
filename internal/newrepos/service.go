@@ -87,6 +87,12 @@ func (s *Service) Close() error {
 	return nil
 }
 
+func (s *Service) isClosed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closed
+}
+
 func (s *Service) logErr(msg string, err error, args ...any) {
 	s.d.Logger.Error(msg, append(args, "error", s.d.Redact(err.Error()))...)
 }
@@ -293,6 +299,9 @@ func (s *Service) AttachProposal(ctx context.Context, op core.OperationID, propo
 // ConfirmInit starts initialization after the user confirmed hash. It returns
 // once the durable worker owns the operation.
 func (s *Service) ConfirmInit(ctx context.Context, op core.OperationID, hash string, attempt int) error {
+	if s.isClosed() {
+		return ErrClosed
+	}
 	res, err := s.apply(ctx, op, func(db.ReservationRecord) (corenewrepos.Input, extra) {
 		return corenewrepos.Confirmed{Hash: hash, Attempt: attempt, Now: s.d.Clock()}, extra{actor: "user"}
 	})
@@ -385,6 +394,9 @@ func (s *Service) PreparePublish(ctx context.Context, op core.OperationID, req P
 
 // ConfirmPublish starts publishing a ready repo after the user confirmed hash.
 func (s *Service) ConfirmPublish(ctx context.Context, op core.OperationID, hash string, attempt int) error {
+	if s.isClosed() {
+		return ErrClosed
+	}
 	s.mu.Lock()
 	pend, ok := s.pending[op]
 	s.mu.Unlock()

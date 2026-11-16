@@ -9,6 +9,7 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	corenewrepos "github.com/brendatamaar/yggdrasil/internal/core/newrepos"
 	"github.com/brendatamaar/yggdrasil/internal/db"
+	"github.com/brendatamaar/yggdrasil/internal/git"
 	"github.com/brendatamaar/yggdrasil/internal/hosts"
 	"github.com/brendatamaar/yggdrasil/internal/platform"
 )
@@ -83,6 +84,13 @@ func (s *Service) execInit(ctx context.Context, c corenewrepos.RunInitStage) (co
 	dir := filepath.Join(parent, spec.Leaf)
 	switch c.Stage {
 	case corenewrepos.StageCreateDirectory:
+		// A missing git identity is refused before any disk effect.
+		switch ok, aerr := s.d.Git.HasAuthor(ctx, parent); {
+		case aerr != nil:
+			return nil, definiteErr(corenewrepos.StopPreconditions, aerr)
+		case !ok:
+			return nil, definiteErr(corenewrepos.StopMissingAuthor, git.ErrNoAuthor)
+		}
 		release, err := s.lock(ctx, spec.Repo)
 		if err != nil {
 			return nil, err
