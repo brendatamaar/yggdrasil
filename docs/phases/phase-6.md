@@ -1055,7 +1055,7 @@ mutation). Merged one at a time, five-task gate green after each (frontend 528/5
   Should-fix follow-ups (test-only) dispatched: model property reaches replay-after-untrack
   and changed-payload-out-of-scope; redaction generator splits the token with an invalid
   byte; label-preservation property; no wall-clock branches in repos contracts; no fixed
-  sleeps for negative assertions.
+  sleeps for negative assertions. Done and merged (8966339), gate green; every new test shown to fail by mutation, no new defect.
 - Not done / observations: no ContextService-level random-sequence property; github/gitlab
   wrappers not run through the contract (import cycle); "tokens never reach child env" and
   audit clauses have no hosts test (no process, no audit entry there); one failed-jobs log
