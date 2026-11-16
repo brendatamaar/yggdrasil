@@ -305,14 +305,7 @@ func TestRowPublishUnrelatedReceiptsDie(t *testing.T) {
 // Rows: definite failure, unknown outcome, Recovered.
 func TestRowFailureAndUncertain(t *testing.T) {
 	for _, o := range []Operation{initializingAt(t, StageInitGit), publishingAt(t, StageAddOrigin)} {
-		var attempt = 1
-		var stage Stage
-		switch st := o.State.(type) {
-		case Initializing:
-			stage = st.Stage
-		case Publishing:
-			stage = st.Stage
-		}
+		attempt, stage := 1, describe(o.State).stage
 		o2, cmds := Step(o, StageFailed{Attempt: attempt, Stage: stage, Outcome: OutcomeDefiniteFailure})
 		sp, ok := o2.State.(Stopped)
 		if !ok || sp.Reason != StopStageFailed || sp.Stage != stage {

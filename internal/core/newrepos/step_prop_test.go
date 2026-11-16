@@ -75,14 +75,13 @@ func (w *world) allStages() []Stage {
 }
 
 func (w *world) validReceipt(s Stage) Receipt {
-	switch v := s.(type) {
-	case InitStage:
+	if v, ok := s.(InitStage); ok {
 		return initReceiptFor(w.init, v)
-	case PublishStage:
-		return publishReceiptFor(w.pub, v)
-	default:
-		return nil
 	}
+	if v, ok := s.(PublishStage); ok {
+		return publishReceiptFor(w.pub, v)
+	}
+	return nil
 }
 
 func (w *world) badReceipt(s Stage) Receipt {
@@ -106,14 +105,13 @@ func (w *world) receipt(s Stage) Receipt {
 }
 
 func resumeHash(r Resumable) string {
-	switch v := r.(type) {
-	case ResumeInit:
+	if v, ok := r.(ResumeInit); ok {
 		return v.Spec.Hash()
-	case ResumePublish:
-		return v.Spec.Hash()
-	default:
-		return "none"
 	}
+	if v, ok := r.(ResumePublish); ok {
+		return v.Spec.Hash()
+	}
+	return "none"
 }
 
 func (w *world) initHash(h string) string {
@@ -225,15 +223,14 @@ func (w *world) targeted() Input {
 			return Recovered{}
 		}
 		return RetryConfirmed{Hash: w.initHash(resumeHash(st.Resume)), Attempt: w.fresh(), PreconditionsHold: r.Intn(4) != 0}
-	default:
-		return []Input{Recovered{}, Untracked{}, Reject{}, Confirmed{Hash: "x", Attempt: 1}}[r.Intn(4)]
+	case Published:
 	}
+	return []Input{Recovered{}, Untracked{}, Reject{}, Confirmed{Hash: "x", Attempt: 1}}[r.Intn(4)]
 }
 
 func (w *world) perturb(in Input) Input {
 	r := w.r
-	switch v := in.(type) {
-	case StageSucceeded:
+	if v, ok := in.(StageSucceeded); ok {
 		switch r.Intn(3) {
 		case 0:
 			v.Attempt += r.Intn(5) - 2
@@ -243,32 +240,36 @@ func (w *world) perturb(in Input) Input {
 			v.Receipt = w.badReceipt(v.Stage)
 		}
 		return v
-	case StageFailed:
+	}
+	if v, ok := in.(StageFailed); ok {
 		if r.Intn(2) == 0 {
 			v.Attempt += r.Intn(5) - 2
 		} else {
 			v.Stage = w.allStages()[r.Intn(9)]
 		}
 		return v
-	case Reconciled:
+	}
+	if v, ok := in.(Reconciled); ok {
 		if r.Intn(2) == 0 {
 			v.Attempt += r.Intn(5) - 2
 		} else {
 			v.Stage = w.allStages()[r.Intn(9)]
 		}
 		return v
-	case Confirmed:
+	}
+	if v, ok := in.(Confirmed); ok {
 		v.Hash, v.Attempt = "wrong", r.Intn(3)-1
 		return v
-	case RetryConfirmed:
-		v.Attempt = r.Intn(3) - 1
-		return v
-	case PublishConfirmed:
-		v.Attempt = r.Intn(3) - 1
-		return v
-	default:
-		return in
 	}
+	if v, ok := in.(RetryConfirmed); ok {
+		v.Attempt = r.Intn(3) - 1
+		return v
+	}
+	if v, ok := in.(PublishConfirmed); ok {
+		v.Attempt = r.Intn(3) - 1
+		return v
+	}
+	return in
 }
 
 func (w *world) gen() Input {
@@ -283,38 +284,43 @@ func (w *world) gen() Input {
 }
 
 func curStage(st State) (attempt int, stage Stage, ok bool) {
-	switch v := st.(type) {
-	case Initializing:
-		return v.Attempt, v.Stage, true
-	case Publishing:
-		return v.Attempt, v.Stage, true
-	case Uncertain:
-		return v.Attempt, v.Stage, true
-	default:
-		return 0, nil, false
+	v := describe(st)
+	if v.kind == kindRunning || v.kind == kindUncertain {
+		return v.attempt, v.stage, true
 	}
+	return 0, nil, false
 }
 
 func rank(c Command) int {
-	switch c.(type) {
-	case PersistReservationAndSetupDraft, PersistIntent, PersistReceipt, PersistFailure, Audit:
-		return 0
-	case PublishPreview, Explain:
-		return 1
-	default:
+	if _, ok := c.(RunInitStage); ok {
 		return 2
 	}
+	if _, ok := c.(RunPublishStage); ok {
+		return 2
+	}
+	if _, ok := c.(ReconcileStage); ok {
+		return 2
+	}
+	if _, ok := c.(CancelWorker); ok {
+		return 2
+	}
+	if _, ok := c.(PublishPreview); ok {
+		return 1
+	}
+	if _, ok := c.(Explain); ok {
+		return 1
+	}
+	return 0 // the records
 }
 
 func isRun(c Command) (attempt int, stage Stage, ok bool) {
-	switch v := c.(type) {
-	case RunInitStage:
+	if v, ok := c.(RunInitStage); ok {
 		return v.Attempt, v.Stage, true
-	case RunPublishStage:
-		return v.Attempt, v.Stage, true
-	default:
-		return 0, nil, false
 	}
+	if v, ok := c.(RunPublishStage); ok {
+		return v.Attempt, v.Stage, true
+	}
+	return 0, nil, false
 }
 
 func (w *world) step() {
@@ -383,26 +389,22 @@ func (w *world) check(prev Operation, in Input, next Operation, cmds []Command) 
 	}
 
 	// Fencing.
-	switch v := in.(type) {
-	case StageSucceeded:
-		a, s, ok := curStage(prev.State)
-		_, uncertain := prev.State.(Uncertain)
-		if (!ok || uncertain || v.Attempt != a || v.Stage != s) && !inert {
+	a, st, running := curStage(prev.State)
+	_, uncertain := prev.State.(Uncertain)
+	if v, ok := in.(StageSucceeded); ok {
+		if (!running || uncertain || v.Attempt != a || v.Stage != st) && !inert {
 			w.fail(propStageAttemptFenced, "stale StageSucceeded(%d,%v) accepted in %T", v.Attempt, v.Stage, prev.State)
 		}
-	case StageFailed:
-		a, s, ok := curStage(prev.State)
-		_, uncertain := prev.State.(Uncertain)
-		if (!ok || uncertain || v.Attempt != a || v.Stage != s) && !inert {
+	}
+	if v, ok := in.(StageFailed); ok {
+		if (!running || uncertain || v.Attempt != a || v.Stage != st) && !inert {
 			w.fail(propStageAttemptFenced, "stale StageFailed(%d,%v) accepted in %T", v.Attempt, v.Stage, prev.State)
 		}
-	case Reconciled:
-		a, s, ok := curStage(prev.State)
-		_, uncertain := prev.State.(Uncertain)
-		if (!ok || !uncertain || v.Attempt != a || v.Stage != s) && !inert {
+	}
+	if v, ok := in.(Reconciled); ok {
+		if (!running || !uncertain || v.Attempt != a || v.Stage != st) && !inert {
 			w.fail(propStageAttemptFenced, "stale Reconciled(%d,%v) accepted in %T", v.Attempt, v.Stage, prev.State)
 		}
-	default:
 	}
 	if pi, ok := prev.State.(Initializing); ok {
 		if ni, ok := next.State.(Initializing); ok && ni.Attempt == pi.Attempt && !inert {
@@ -420,8 +422,7 @@ func (w *world) check(prev Operation, in Input, next Operation, cmds []Command) 
 		if !isRunCmd {
 			continue
 		}
-		switch v := c.(type) {
-		case RunInitStage:
+		if v, ok := c.(RunInitStage); ok {
 			if !w.confirmedInit {
 				w.fail(propInitOnlyAfterConfirm, "RunInitStage(%v) before a matching confirmation (%T)", v.Stage, in)
 			}
@@ -431,7 +432,8 @@ func (w *world) check(prev Operation, in Input, next Operation, cmds []Command) 
 			if err := validatePrefix(v.Stage, v.Done); err != nil {
 				w.fail(propInitNeverOverwrites, "stage %v has receipts %d: %v", v.Stage, len(v.Done), err)
 			}
-		case RunPublishStage:
+		}
+		if v, ok := c.(RunPublishStage); ok {
 			if w.confirmedPub == nil {
 				w.fail(propPublishPrivateDefault, "RunPublishStage(%v) without a valid confirmation (%T)", v.Stage, in)
 			} else if v.Spec != *w.confirmedPub {
@@ -452,7 +454,6 @@ func (w *world) check(prev Operation, in Input, next Operation, cmds []Command) 
 					w.fail(propNoUnrelatedRemote, "push runs without this operation's origin: %+v", v.Done)
 				}
 			}
-		default:
 		}
 		key := fmt.Sprintf("%d/%s", a, s.Name())
 		if w.ran[key] {
@@ -461,25 +462,27 @@ func (w *world) check(prev Operation, in Input, next Operation, cmds []Command) 
 		w.ran[key] = true
 
 		// A stage that may have partly run is never restarted without a fresh confirmation.
-		switch rc := in.(type) {
-		case Confirmed, StageSucceeded, PublishConfirmed, RetryConfirmed:
-		case Reconciled:
-			if rc.Outcome != ReconcileExactSuccess {
-				w.fail(propUnknownNeverBlind, "a reconcile answer %s started a stage", rc.Outcome)
-			}
-		default:
+		retry, isRetry := in.(RetryConfirmed)
+		rc, isRec := in.(Reconciled)
+		_, isConfirm := in.(Confirmed)
+		_, isSucc := in.(StageSucceeded)
+		_, isPub := in.(PublishConfirmed)
+		if !isRetry && !isRec && !isConfirm && !isSucc && !isPub {
 			w.fail(propUnknownNeverBlind, "%T started a stage", in)
 		}
+		if isRec && rc.Outcome != ReconcileExactSuccess {
+			w.fail(propUnknownNeverBlind, "a reconcile answer %s started a stage", rc.Outcome)
+		}
 		if prevUncertain || prevStopped {
-			switch v := in.(type) {
-			case RetryConfirmed:
-				if pa, ok := w.pendingAttempt(prev); ok && v.Attempt <= pa {
-					w.fail(propUnknownNeverBlind, "retry with a non-fresh attempt %d <= %d", v.Attempt, pa)
+			switch {
+			case isRetry:
+				if pa, ok := w.pendingAttempt(prev); ok && retry.Attempt <= pa {
+					w.fail(propUnknownNeverBlind, "retry with a non-fresh attempt %d <= %d", retry.Attempt, pa)
 				}
-				if !v.PreconditionsHold || v.Hash != resumeHashOf(prev.State) {
+				if !retry.PreconditionsHold || retry.Hash != resumeHashOf(prev.State) {
 					w.fail(propUnknownNeverBlind, "retry without a fresh matching confirmation")
 				}
-			case Reconciled:
+			case isRec:
 				if w.pend != nil && s == w.pend.stage {
 					w.fail(propUnknownNeverBlind, "the uncertain stage %s was repeated after a reconcile", s.Name())
 				}
@@ -490,14 +493,11 @@ func (w *world) check(prev Operation, in Input, next Operation, cmds []Command) 
 	}
 
 	// An unknown outcome only asks to reconcile.
-	switch v := in.(type) {
-	case StageFailed:
-		if v.Outcome == OutcomeUnknown {
-			w.checkUnknown(prev, next, cmds, in)
-		}
-	case Recovered:
+	if v, ok := in.(StageFailed); ok && v.Outcome == OutcomeUnknown {
 		w.checkUnknown(prev, next, cmds, in)
-	default:
+	}
+	if _, ok := in.(Recovered); ok {
+		w.checkUnknown(prev, next, cmds, in)
 	}
 	if _, ok := next.State.(Uncertain); !ok {
 		w.pend = nil
@@ -505,25 +505,17 @@ func (w *world) check(prev Operation, in Input, next Operation, cmds []Command) 
 }
 
 func resumeHashOf(st State) string {
-	switch v := st.(type) {
-	case Uncertain:
-		return resumeHash(v.Resume)
-	case Stopped:
-		return resumeHash(v.Resume)
-	default:
-		return ""
+	if v := describe(st); v.kind == kindUncertain || v.kind == kindStopped {
+		return resumeHash(v.resume)
 	}
+	return ""
 }
 
 func (w *world) pendingAttempt(prev Operation) (int, bool) {
-	switch u := prev.State.(type) {
-	case Uncertain:
-		return u.Attempt, true
-	case Stopped:
-		return u.Attempt, true
-	default:
-		return 0, false
+	if v := describe(prev.State); v.kind == kindUncertain || v.kind == kindStopped {
+		return v.attempt, true
 	}
+	return 0, false
 }
 
 func (w *world) checkUnknown(prev, next Operation, cmds []Command, in Input) {
