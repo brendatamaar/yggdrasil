@@ -88,6 +88,10 @@ type scriptedContextClient struct {
 	// set, holds the call until it is closed or the call's context ends.
 	started chan struct{}
 	gate    chan struct{}
+	// Scripts of the other kinds; nil means the kind is unsupported.
+	issue func(number int) (ContextResult, error)
+	mr    func(number int) (ContextResult, error)
+	jobs  func(runID, head string) (ContextResult, error)
 }
 
 func (f *scriptedContextClient) Issues(ctx context.Context, _ corehosts.Instance, _ string, _ corehosts.ProjectPath) (ContextResult, error) {
@@ -107,14 +111,23 @@ func (f *scriptedContextClient) Issues(ctx context.Context, _ corehosts.Instance
 	}
 	return f.script(n)
 }
-func (f *scriptedContextClient) Issue(context.Context, corehosts.Instance, string, corehosts.ProjectPath, int) (ContextResult, error) {
-	return ContextResult{}, ErrContextUnsupported
+func (f *scriptedContextClient) Issue(_ context.Context, _ corehosts.Instance, _ string, _ corehosts.ProjectPath, number int) (ContextResult, error) {
+	if f.issue == nil {
+		return ContextResult{}, ErrContextUnsupported
+	}
+	return f.issue(number)
 }
-func (f *scriptedContextClient) MRDiff(context.Context, corehosts.Instance, string, corehosts.ProjectPath, int) (ContextResult, error) {
-	return ContextResult{}, ErrContextUnsupported
+func (f *scriptedContextClient) MRDiff(_ context.Context, _ corehosts.Instance, _ string, _ corehosts.ProjectPath, number int) (ContextResult, error) {
+	if f.mr == nil {
+		return ContextResult{}, ErrContextUnsupported
+	}
+	return f.mr(number)
 }
-func (f *scriptedContextClient) FailedJobs(context.Context, corehosts.Instance, string, corehosts.ProjectPath, string, string) (ContextResult, error) {
-	return ContextResult{}, ErrContextUnsupported
+func (f *scriptedContextClient) FailedJobs(_ context.Context, _ corehosts.Instance, _ string, _ corehosts.ProjectPath, runID, head string) (ContextResult, error) {
+	if f.jobs == nil {
+		return ContextResult{}, ErrContextUnsupported
+	}
+	return f.jobs(runID, head)
 }
 
 func okIssues() (ContextResult, error) {
@@ -186,9 +199,14 @@ func (h *contextHarness) setToken(token string) {
 
 func (h *contextHarness) read() (ContextOutcome, error) {
 	h.t.Helper()
+	return h.readKey(h.key)
+}
+
+func (h *contextHarness) readKey(key corehosts.ContextKey) (ContextOutcome, error) {
+	h.t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return h.c.Read(ctx, h.key)
+	return h.c.Read(ctx, key)
 }
 
 func (h *contextHarness) slot() *contextSlot {
@@ -396,7 +414,9 @@ func TestContextShellUnusablePayloadBlocksInsteadOfHanging(t *testing.T) {
 		return ContextResult{Value: corehosts.IssueDetail{Summary: corehosts.IssueSummary{Number: 3}}}, nil
 	})
 	out, err := h.read()
-	if got := blockedReason(t, out, err); got != corehosts.ContextUnsupported {
+	// Not the object the key names (this is also what a moved MR head looks
+	// like): not found.
+	if got := blockedReason(t, out, err); got != corehosts.ContextNotFound {
 		t.Fatal(got)
 	}
 	if _, loading := h.entry().State.(corehosts.CtxLoading); loading {
@@ -616,6 +636,13 @@ func TestContextShellCancellationDuringRetryWaitReleasesWaiters(t *testing.T) {
 	})
 	h.sleep.block = true
 	h.sleep.entered = make(chan struct{}, 1)
+	parked := make(chan struct{}, 1)
+	h.c.onJoin = func() {
+		select {
+		case parked <- struct{}{}:
+		default:
+		}
+	}
 	ownerCtx, cancelOwner := context.WithCancel(context.Background())
 	defer cancelOwner()
 	ownerDone := make(chan error, 1)
@@ -639,8 +666,13 @@ func TestContextShellCancellationDuringRetryWaitReleasesWaiters(t *testing.T) {
 		out, err := h.c.Read(ctx, h.key)
 		joiner <- answer{out, err}
 	}()
-	// The joiner is waiting on the owner's read, not reading itself.
-	time.Sleep(20 * time.Millisecond)
+	// Wait until the joiner is parked on the owner's read (no sleeping): only
+	// then is "one read so far" a statement about the joiner.
+	select {
+	case <-parked:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the joiner never parked on the owner's read")
+	}
 	if h.client.calls.Load() != 1 {
 		t.Fatal("the joiner started a second read")
 	}

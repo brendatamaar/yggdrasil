@@ -367,13 +367,49 @@ type ContextWake struct {
 	Now     time.Time
 }
 
+// ContextRefusal is why a read was refused for good: a closed set that is a
+// subset of ContextBlockReason, so a refusal can never name a reason that
+// means something else (forbidden, no token, untracked, retry exhausted).
+type ContextRefusal string
+
+const (
+	// RefusedNotFound: the object is not there or is another one.
+	RefusedNotFound ContextRefusal = "not_found"
+	// RefusedUnsupported: the host cannot give this, or sent an unusable answer.
+	RefusedUnsupported ContextRefusal = "unsupported"
+	// RefusedTooLarge: the object is over the budget.
+	RefusedTooLarge ContextRefusal = "too_large"
+)
+
+// Validate reports whether r is a known refusal.
+func (r ContextRefusal) Validate() error {
+	switch r {
+	case RefusedNotFound, RefusedUnsupported, RefusedTooLarge:
+		return nil
+	}
+	return fmt.Errorf("unknown host context refusal %q", string(r))
+}
+
+// BlockReason is the reason a refusal is shown as. An unknown refusal maps to
+// unsupported, so the step never leaves an attempt hanging on a bad value.
+func (r ContextRefusal) BlockReason() ContextBlockReason {
+	switch r {
+	case RefusedNotFound:
+		return ContextNotFound
+	case RefusedTooLarge:
+		return ContextTooLarge
+	case RefusedUnsupported:
+	}
+	return ContextUnsupported
+}
+
 // ContextRejected: attempt Attempt ended with a terminal refusal that retrying
 // cannot fix: the host cannot give this (unsupported), the object is not there
 // or is another one (not found), or it is over the budget (too large).
 type ContextRejected struct {
 	Key     ContextKey
 	Attempt int
-	Reason  ContextBlockReason
+	Reason  ContextRefusal
 	Now     time.Time
 }
 
@@ -503,8 +539,13 @@ func ContextStep(e ContextEntry, in ContextInput) (ContextEntry, []ContextComman
 			return e, nil
 		}
 		// A current attempt with an unusable payload must not stay Loading for
-		// ever: the host answered something this key cannot use.
-		if !ContextPayloadMatches(e.Key, v.Value) || len(v.Unavailable) > ContextMaxEntries {
+		// ever. A payload that is not the object the key names (another run or
+		// issue, an MR whose head moved) is "not found"; gaps outside the bounds
+		// are an answer the host cannot give in a usable form (unsupported).
+		if !ContextPayloadMatches(e.Key, v.Value) {
+			return contextBlock(e, ContextNotFound, v.Now)
+		}
+		if len(v.Unavailable) > ContextMaxEntries {
 			return contextBlock(e, ContextUnsupported, v.Now)
 		}
 		for _, gap := range v.Unavailable {
@@ -549,11 +590,9 @@ func ContextStep(e ContextEntry, in ContextInput) (ContextEntry, []ContextComman
 		if !contextCurrent(e, v.Key, v.Attempt) || v.Now.IsZero() {
 			return e, nil
 		}
-		switch v.Reason {
-		case ContextNotFound, ContextUnsupported, ContextTooLarge:
-			return contextBlock(e, v.Reason, v.Now)
-		}
-		return e, nil
+		// Every refusal ends the attempt; a value outside the closed set (it
+		// cannot come from the shell) degrades to unsupported.
+		return contextBlock(e, v.Reason.BlockReason(), v.Now)
 	case ContextRateLimited:
 		if !contextCurrent(e, v.Key, v.Attempt) || v.Now.IsZero() || !v.Until.After(v.Now) {
 			return e, nil

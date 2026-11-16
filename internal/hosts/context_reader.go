@@ -83,6 +83,65 @@ type contextSlot struct {
 	// attempt and cancel describe the read in flight (valid while done != nil).
 	attempt int
 	cancel  context.CancelFunc
+	// used is the last time (injected clock) a call asked for this key; the
+	// least recently used idle slot is evicted first.
+	used time.Time
+}
+
+// contextMaxSlots caps the slot map. Every key (repo, kind, object, head) holds
+// up to 64 KiB (MR diff) or 1 MiB (job logs), and an MR head is an open key
+// space, so idle slots are evicted: expired ones on every insert, then the
+// least recently used idle one when the map is still full. A slot with a read
+// in flight is never evicted, so the cap can be exceeded only by reads that are
+// running at that moment (bounded by the callers' own concurrency).
+const contextMaxSlots = 256
+
+// idleExpired reports a slot that holds nothing worth keeping at now and has no
+// read in flight: Empty, an expired Ready/Partial, a Blocked past its window, or
+// a Loading/Waiting entry nobody owns.
+func (s *contextSlot) idleExpired(now time.Time) bool {
+	if s.done != nil {
+		return false
+	}
+	switch st := s.entry.State.(type) {
+	case corehosts.CtxReady:
+		return !now.Before(st.Expires)
+	case corehosts.CtxPartial:
+		return !now.Before(st.Expires)
+	case corehosts.CtxBlocked:
+		return !now.Before(st.Until)
+	case corehosts.CtxEmpty, corehosts.CtxLoading, corehosts.CtxWaiting:
+	}
+	return true
+}
+
+// insertSlotLocked adds an Empty slot for key, evicting first so the map stays
+// within contextMaxSlots (when idle slots allow it).
+func (c *ContextService) insertSlotLocked(key corehosts.ContextKey, target ContextTarget, credential [32]byte, inst corehosts.Instance, now time.Time) *contextSlot {
+	for k, s := range c.slots {
+		if s.idleExpired(now) {
+			delete(c.slots, k)
+		}
+	}
+	for len(c.slots) >= contextMaxSlots {
+		var oldest corehosts.ContextKey
+		var found bool
+		for k, s := range c.slots {
+			if s.done != nil {
+				continue
+			}
+			if !found || s.used.Before(c.slots[oldest].used) {
+				oldest, found = k, true
+			}
+		}
+		if !found {
+			break // every slot has a read in flight
+		}
+		delete(c.slots, oldest)
+	}
+	slot := &contextSlot{entry: corehosts.ContextEntry{Key: key, State: corehosts.CtxEmpty{}}, target: target, credential: credential, instance: inst, used: now}
+	c.slots[key] = slot
+	return slot
 }
 
 // ContextService owns only an ephemeral read cache. Reads execute synchronously
@@ -104,6 +163,12 @@ type ContextService struct {
 	mu       sync.Mutex
 	slots    map[corehosts.ContextKey]*contextSlot
 	limited  map[corehosts.InstanceID]time.Time
+
+	// Test hooks (nil in production). onJoin runs when a caller is about to park
+	// on another caller's read; afterStep runs on the owner right after it fed a
+	// result to the core and took its answer, outside the lock.
+	onJoin    func()
+	afterStep func()
 }
 
 func NewContextService(s *Service, resolver ContextResolver, opts ...ContextOption) *ContextService {
@@ -135,6 +200,7 @@ type contextEnv struct {
 type contextCalls struct {
 	caller context.Context
 	read   context.Context
+	slot   *contextSlot
 }
 
 func (c *ContextService) Read(parent context.Context, key corehosts.ContextKey) (ContextOutcome, error) {
@@ -158,12 +224,13 @@ func (c *ContextService) Read(parent context.Context, key corehosts.ContextKey) 
 		env.target = target
 		credential := sha256.Sum256([]byte(env.token))
 
+		now := c.service.d.Clock()
 		c.mu.Lock()
 		slot := c.slots[key]
 		if slot == nil {
-			slot = &contextSlot{entry: corehosts.ContextEntry{Key: key, State: corehosts.CtxEmpty{}}, target: target, credential: credential, instance: env.inst}
-			c.slots[key] = slot
+			slot = c.insertSlotLocked(key, target, credential, env.inst, now)
 		}
+		slot.used = now
 		// What the shell can see change, the core is told about. Anything held
 		// for the key was read under the old target or configuration.
 		changed := false
@@ -182,12 +249,12 @@ func (c *ContextService) Read(parent context.Context, key corehosts.ContextKey) 
 			// to leave before this caller starts a read of its own.
 			done := slot.done
 			c.mu.Unlock()
-			if err := waitContextDone(ctx, done); err != nil {
+			if err := c.waitDone(ctx, done); err != nil {
 				return ContextOutcome{}, err
 			}
 			continue
 		}
-		cmds := c.stepLocked(slot, corehosts.ContextRequested{Key: key, Scope: scope, Now: c.service.d.Clock()})
+		cmds := c.stepLocked(slot, corehosts.ContextRequested{Key: key, Scope: scope, Now: now})
 		var (
 			answer *ContextOutcome
 			join   chan struct{}
@@ -222,7 +289,7 @@ func (c *ContextService) Read(parent context.Context, key corehosts.ContextKey) 
 			return *answer, nil
 		case join != nil:
 			c.mu.Unlock()
-			if err := waitContextDone(ctx, join); err != nil {
+			if err := c.waitDone(ctx, join); err != nil {
 				return ContextOutcome{}, err
 			}
 			continue
@@ -236,7 +303,7 @@ func (c *ContextService) Read(parent context.Context, key corehosts.ContextKey) 
 		slot.cancel = cancelRead
 		c.mu.Unlock()
 
-		out, err := c.run(contextCalls{caller: ctx, read: readCtx}, slot, env, *read)
+		out, err := c.run(contextCalls{caller: ctx, read: readCtx, slot: slot}, slot, env, *read)
 
 		cancelRead()
 		c.mu.Lock()
@@ -247,9 +314,20 @@ func (c *ContextService) Read(parent context.Context, key corehosts.ContextKey) 
 		// through the core; a still-valid value held for the key (which this
 		// call never touched) is kept.
 		c.stepLocked(slot, corehosts.ContextCancelled{Attempt: slot.entry.Seq})
+		slot.used = c.service.d.Clock()
 		c.mu.Unlock()
+		if err == nil && contextOutcomeEmpty(out) {
+			// Never a success without an answer: if nothing was left to say, the
+			// read was overtaken.
+			err = ErrContextSuperseded
+		}
 		return out, err
 	}
+}
+
+// contextOutcomeEmpty reports an outcome that carries no answer at all.
+func contextOutcomeEmpty(o ContextOutcome) bool {
+	return o.Result == nil && o.Blocked == nil && o.RetryAt.IsZero()
 }
 
 var closedContextChan = func() chan struct{} {
@@ -258,7 +336,12 @@ var closedContextChan = func() chan struct{} {
 	return ch
 }()
 
-func waitContextDone(ctx context.Context, done <-chan struct{}) error {
+// waitDone waits for the owner of a read to leave (or for ctx). The onJoin hook
+// is for tests: it runs once the caller is about to park.
+func (c *ContextService) waitDone(ctx context.Context, done <-chan struct{}) error {
+	if c.onJoin != nil {
+		c.onJoin()
+	}
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -342,9 +425,14 @@ func (c *ContextService) scopeGone(key corehosts.ContextKey) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if slot := c.slots[key]; slot != nil {
-		// The Explain command of an untracked key is this error.
-		c.stepLocked(slot, corehosts.ContextRequested{Key: key, Scope: corehosts.ScopeUntracked, Now: c.service.d.Clock()})
+		for _, cmd := range c.stepLocked(slot, corehosts.ContextRequested{Key: key, Scope: corehosts.ScopeUntracked, Now: c.service.d.Clock()}) {
+			if ex, ok := cmd.(corehosts.CtxExplain); ok && ex.Reason == corehosts.ContextUntracked {
+				// The core's explanation of an untracked key is this error.
+				return ErrContextScope
+			}
+		}
 	}
+	// No slot, nothing held to drop: nothing to tell the core.
 	return ErrContextScope
 }
 
@@ -378,54 +466,82 @@ func (c *ContextService) run(calls contextCalls, slot *contextSlot, env contextE
 		if err != nil {
 			return ContextOutcome{}, err
 		}
-		cmds := c.step(slot, in)
-		var (
-			answer *ContextOutcome
-			again  *corehosts.CtxReadContext
-		)
-		for _, cmd := range cmds {
-			switch v := cmd.(type) {
-			case corehosts.CtxPublishContext:
-				c.mu.Lock()
-				out := contextAnswer(slot.entry)
-				c.mu.Unlock()
-				answer = &out
-			case corehosts.CtxExplain:
-				out := blockedContext(v.Reason)
-				c.mu.Lock()
-				if _, ok := slot.entry.State.(corehosts.CtxBlocked); ok {
-					out = contextAnswer(slot.entry) // carries the block's deadline
-				}
-				c.mu.Unlock()
-				answer = &out
-			case corehosts.CtxScheduleWake:
-				out, next, err := c.sleepUntil(calls, slot, v)
-				if err != nil {
-					return ContextOutcome{}, err
-				}
-				answer, again = out, next
-			case corehosts.CtxReadContext, corehosts.CtxReturnCached, corehosts.CtxJoinRequest, corehosts.CtxCancelRead:
-				// Not produced by a result input.
-			}
+		answer, wake, err := c.feed(slot, in, attempt)
+		if c.afterStep != nil {
+			c.afterStep()
 		}
-		switch {
-		case answer != nil:
+		if err != nil {
+			return ContextOutcome{}, err
+		}
+		if answer != nil {
 			return *answer, nil
-		case again != nil:
-			attempt = again.Attempt
-			continue
 		}
-		// The core gave no command: it ignored the input. Either the attempt was
-		// superseded (a scope or config change dropped it) or the input itself
-		// was invalid (a clock that returned no time). Never leave it Loading.
-		c.mu.Lock()
-		current := slot.entry.Seq == attempt
-		c.mu.Unlock()
-		if current {
-			return ContextOutcome{}, errors.New("host context: the read result was not accepted")
+		out, next, err := c.sleepUntil(calls, slot, *wake)
+		switch {
+		case err != nil:
+			return ContextOutcome{}, err
+		case out != nil:
+			return *out, nil
 		}
-		return ContextOutcome{}, ErrContextScope
+		attempt = next.Attempt
 	}
+}
+
+// feed gives one result input to the core and interprets the commands that come
+// back. The step and the answer are taken in ONE critical section: the answer
+// is read from the entry the step just stored, so a change another call makes
+// afterwards cannot turn a published value into an empty outcome. Exactly one
+// of answer and wake is set when err is nil.
+func (c *ContextService) feed(slot *contextSlot, in corehosts.ContextInput, attempt int) (answer *ContextOutcome, wake *corehosts.CtxScheduleWake, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, cmd := range c.stepLocked(slot, in) {
+		switch v := cmd.(type) {
+		case corehosts.CtxPublishContext:
+			out := contextAnswer(slot.entry)
+			answer = &out
+		case corehosts.CtxExplain:
+			out := blockedContext(v.Reason)
+			if _, ok := slot.entry.State.(corehosts.CtxBlocked); ok {
+				out = contextAnswer(slot.entry) // carries the block's deadline
+			}
+			answer = &out
+		case corehosts.CtxScheduleWake:
+			wake = &v
+		case corehosts.CtxReadContext, corehosts.CtxReturnCached, corehosts.CtxJoinRequest, corehosts.CtxCancelRead:
+			// Not produced by a result input.
+		}
+	}
+	if answer != nil && contextOutcomeEmpty(*answer) {
+		return nil, nil, c.cancelledErrLocked(slot)
+	}
+	if answer != nil || wake != nil {
+		return answer, wake, nil
+	}
+	// The core gave no command: it ignored the input. Either the attempt was
+	// superseded (a scope or config change dropped it) or the input itself was
+	// invalid (a clock that returned no time). Never leave it Loading.
+	if slot.entry.Seq == attempt {
+		return nil, nil, errors.New("host context: the read result was not accepted")
+	}
+	return nil, nil, c.cancelledErrLocked(slot)
+}
+
+// cancelledErrLocked names why this call's attempt was dropped by someone else:
+// the repo went out of scope (the core holds Blocked{untracked}: a real scope
+// error), or anything else (target, instance or token changed, another call
+// dropped the attempt): superseded, ask again.
+func (c *ContextService) cancelledErrLocked(slot *contextSlot) error {
+	if b, ok := slot.entry.State.(corehosts.CtxBlocked); ok && b.Reason == corehosts.ContextUntracked {
+		return ErrContextScope
+	}
+	return ErrContextSuperseded
+}
+
+func (c *ContextService) cancelledErr(calls contextCalls) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cancelledErrLocked(calls.slot)
 }
 
 // sleepUntil interprets ScheduleWake: wait until the wake time with the
@@ -439,7 +555,7 @@ func (c *ContextService) sleepUntil(calls contextCalls, slot *contextSlot, wake 
 		return &ContextOutcome{RetryAt: wake.At}, nil, nil
 	}
 	if err := c.sleeper.Sleep(calls.read, d); err != nil {
-		return nil, nil, endContextErr(calls, err)
+		return nil, nil, c.endContextErr(calls, err)
 	}
 	for _, cmd := range c.step(slot, corehosts.ContextWake{Attempt: wake.Attempt, Now: wake.At}) {
 		if read, ok := cmd.(corehosts.CtxReadContext); ok {
@@ -447,17 +563,17 @@ func (c *ContextService) sleepUntil(calls contextCalls, slot *contextSlot, wake 
 		}
 	}
 	// The core dropped the wait: a scope or config change cancelled it.
-	return nil, nil, ErrContextScope
+	return nil, nil, c.cancelledErr(calls)
 }
 
 // endContextErr names why a read stopped: the caller gave up (their error), or
 // the core cancelled the read because scope or configuration changed.
-func endContextErr(calls contextCalls, err error) error {
+func (c *ContextService) endContextErr(calls contextCalls, err error) error {
 	if calls.caller.Err() != nil {
 		return calls.caller.Err()
 	}
 	if calls.read.Err() != nil {
-		return ErrContextScope
+		return c.cancelledErr(calls)
 	}
 	return err
 }
@@ -496,7 +612,7 @@ func (c *ContextService) stillInScope(calls contextCalls, env contextEnv, key co
 			return calls.caller.Err()
 		}
 		if calls.read.Err() != nil {
-			return ErrContextScope
+			return c.cancelledErr(calls)
 		}
 		if errors.Is(err, ErrContextScope) {
 			return ErrContextScope
@@ -504,7 +620,8 @@ func (c *ContextService) stillInScope(calls contextCalls, env contextEnv, key co
 		return fmt.Errorf("resolve host context for %s: %w", key.Repo, err)
 	}
 	if target != env.target {
-		return ErrContextScope
+		// Relinked or another revision while the read ran: not a scope error.
+		return ErrContextSuperseded
 	}
 	return nil
 }
@@ -538,7 +655,7 @@ func (c *ContextService) readOnce(calls contextCalls, env contextEnv, key coreho
 		return nil, calls.caller.Err()
 	}
 	if calls.read.Err() != nil {
-		return nil, ErrContextScope
+		return nil, c.cancelledErr(calls)
 	}
 	if scopeErr := c.stillInScope(calls, env, key); scopeErr != nil {
 		return nil, scopeErr
@@ -554,7 +671,9 @@ func (c *ContextService) readOnce(calls contextCalls, env contextEnv, key coreho
 	secrets := c.service.cfg.Secrets()
 	c.service.mu.Unlock()
 	if current != env.token || !sameInstance {
-		return nil, ErrContextScope
+		// The token or instance changed while the read ran: its result was read
+		// under the old configuration and is dropped, but this is not a scope error.
+		return nil, ErrContextSuperseded
 	}
 	now = c.service.d.Clock()
 	if err == nil {
@@ -587,14 +706,14 @@ func (c *ContextService) readOnce(calls contextCalls, env contextEnv, key coreho
 //     be used (the same request gets the same answer);
 //   - not found: the object is not the one asked for (foreign run, a pull
 //     request where an issue was asked for).
-func contextRefusal(err error) (corehosts.ContextBlockReason, bool) {
+func contextRefusal(err error) (corehosts.ContextRefusal, bool) {
 	switch {
 	case errors.Is(err, ErrContextTooLarge):
-		return corehosts.ContextTooLarge, true
+		return corehosts.RefusedTooLarge, true
 	case errors.Is(err, ErrContextUnsupported), errors.Is(err, ErrContextInvalid):
-		return corehosts.ContextUnsupported, true
+		return corehosts.RefusedUnsupported, true
 	case errors.Is(err, ErrContextScope):
-		return corehosts.ContextNotFound, true
+		return corehosts.RefusedNotFound, true
 	}
 	return "", false
 }

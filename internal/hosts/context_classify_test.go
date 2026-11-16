@@ -65,9 +65,9 @@ func TestContextProviderNamesDeterministicFailures(t *testing.T) {
 			if !refused {
 				t.Fatalf("%v would be retried", err)
 			}
-			wantReason := corehosts.ContextUnsupported
+			wantReason := corehosts.RefusedUnsupported
 			if errors.Is(c.want, ErrContextScope) {
-				wantReason = corehosts.ContextNotFound
+				wantReason = corehosts.RefusedNotFound
 			}
 			if reason != wantReason {
 				t.Fatalf("reason %s, want %s", reason, wantReason)
