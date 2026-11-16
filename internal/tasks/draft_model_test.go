@@ -197,7 +197,7 @@ func (m *draftModel) doImport(t *testing.T, op impOp) {
 		if err != nil || res.Created || res.Task.ID != m.issues[key] {
 			t.Fatalf("issue dedup must return %s, got %+v %v", m.issues[key], res, err)
 		}
-		m.requests[op.req] = reqRec{digest: d, task: res.Task.ID}
+		m.requests[op.req] = reqRec{digest: d, task: res.Task.ID, op: op}
 		m.links[res.Task.ID]++
 		return
 	}
@@ -247,7 +247,7 @@ func (m *draftModel) burst(t *testing.T, issue int) {
 		if results[i].Created {
 			created++
 		}
-		m.requests[specs[i].RequestID] = reqRec{digest: digestOf(specs[i]), task: winner}
+		m.requests[specs[i].RequestID] = reqRec{digest: digestOf(specs[i]), task: winner, op: ops[i]}
 		m.links[winner]++
 	}
 	if (known == "" && created != 1) || (known != "" && created != 0) {
@@ -483,10 +483,17 @@ func TestPropIssueImportAndStartSequences(t *testing.T) {
 					m.h.restart()
 				case p < 18:
 					if !m.a1Untacked {
+						// Commit one shop-web request first, so the replays below
+						// have an out-of-scope repo to hit.
+						m.doImport(t, impOp{repo: repoA1, issue: 1 + r.Intn(3), title: "Fix login", brief: "Users cannot log in.", freshRequestKey: true})
 						m.log = append(m.log, "untrack shop-web")
 						dbtest.UntrackRepo(t, m.h.store, m.h.repos[1])
 						m.a1Untacked = true
+						m.replayCommitted(t, r, false, true) // scope precedes replay
+						m.replayCommitted(t, r, true, true)  // scope precedes the digest check
 					}
+				case p < 19:
+					m.replayCommitted(t, r, r.Intn(2) == 0, r.Intn(2) == 0)
 				default:
 					m.doImport(t, impOp{req: pool[r.Intn(len(pool))], repo: repoA0, issue: 1 + r.Intn(3), title: "Fix login", brief: "Users cannot log in."})
 				}
