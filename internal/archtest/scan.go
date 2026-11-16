@@ -19,6 +19,9 @@ type file struct {
 	test bool
 	// imports are the import paths.
 	imports []string
+	// dotImports are the paths imported as `import . "path"`: their exported
+	// names are used unqualified, so no selector expression shows them in uses.
+	dotImports []string
 	// uses are "importpath.Name" for every qualified identifier, such as
 	// "os.Environ" or "runtime.GOOS".
 	uses []string
@@ -45,6 +48,9 @@ func parse(dir, name string, src any) (file, error) {
 			continue
 		}
 		f.imports = append(f.imports, p)
+		if imp.Name != nil && imp.Name.Name == "." {
+			f.dotImports = append(f.dotImports, p)
+		}
 		n := path.Base(p)
 		if strings.HasPrefix(n, "v") && len(n) > 1 && n[1] >= '0' && n[1] <= '9' {
 			n = path.Base(path.Dir(p)) // github.com/x/y/v3 is imported as y
@@ -83,6 +89,8 @@ func parse(dir, name string, src any) (file, error) {
 	})
 	return f, nil
 }
+
+func (f file) dotImports1(p string) bool { return slices.Contains(f.dotImports, p) }
 
 func (f file) imports1(p string) bool { return slices.Contains(f.imports, p) }
 

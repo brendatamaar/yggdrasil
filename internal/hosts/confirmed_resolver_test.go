@@ -2,6 +2,8 @@ package hosts
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,6 +12,7 @@ import (
 	"testing"
 
 	corehosts "github.com/brendatamaar/yggdrasil/internal/core/hosts"
+	coreproposals "github.com/brendatamaar/yggdrasil/internal/core/proposals"
 )
 
 // A resolver failure that is not a scope error (a database failure, say) must
@@ -67,4 +70,46 @@ func pick(fail bool, err error) error {
 		return err
 	}
 	return nil
+}
+
+// Found and Absent are conclusive, so scope is proven again after the pages are
+// read: a repo relinked while they were read must not yield a receipt or leave
+// to act.
+func TestFindReviewCommentRechecksScopeAfterReading(t *testing.T) {
+	head := strings.Repeat("a", 40)
+	marker := strings.Repeat("b", 16)
+	body := "Review text"
+	digest := sha256.Sum256([]byte(body))
+	stored := body + "\n\n" + commentMarker(marker, head)
+	for name, listing := range map[string]string{
+		"found":  fmt.Sprintf(`[{"id":99,"body":%q}]`, stored),
+		"absent": `[]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var read atomic.Bool
+			srv, in, cfg := contextFixture(t, func(w http.ResponseWriter, r *http.Request) {
+				if strings.Contains(r.URL.Path, "/pulls/") {
+					fmt.Fprintf(w, `{"number":7,"head":{"sha":%q}}`, head)
+					return
+				}
+				read.Store(true)
+				fmt.Fprint(w, listing)
+			})
+			resolve := contextResolverFunc(func(context.Context, corehosts.ContextKey) (ContextTarget, error) {
+				rev := "1"
+				if read.Load() {
+					rev = "2" // relinked while the pages were read
+				}
+				return ContextTarget{Instance: in.ID, Project: "acme/shop", Revision: rev}, nil
+			})
+			h := NewConfirmedHosts(New(Deps{Config: cfg}), resolve, srv.Client())
+			got, err := h.FindReviewComment(context.Background(), "rep_1", 7, marker, hex.EncodeToString(digest[:]), head)
+			if !errors.Is(err, ErrContextScope) {
+				t.Fatalf("want ErrContextScope, got %+v, %v", got, err)
+			}
+			if got.Outcome == coreproposals.CommentFound || got.Outcome == coreproposals.CommentAbsent {
+				t.Fatalf("a conclusive outcome %v escaped a scope change", got.Outcome)
+			}
+		})
+	}
 }

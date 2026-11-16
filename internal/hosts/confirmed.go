@@ -227,6 +227,27 @@ func (h *ConfirmedHosts) FindReviewComment(ctx context.Context, repo core.RepoID
 		path = commentPath(inst, target.Project, mr) + "/notes"
 		auth = AuthPrivateToken
 	}
+	lookup, err := h.scanComments(ctx, path, token, auth, marker, bodyHash, head)
+	if err != nil || (lookup.Outcome != coreproposals.CommentFound && lookup.Outcome != coreproposals.CommentAbsent) {
+		return lookup, err
+	}
+	// Found and Absent are conclusive: the executor takes Found as the receipt
+	// and Absent as leave to act. The repo may have been relinked or untracked
+	// while the pages were read, so the scope is proven again before either.
+	after, err := h.resolver.ResolveContext(ctx, corehosts.ContextKey{Repo: repo, Kind: corehosts.ContextMRDiff, ObjectID: strconv.Itoa(mr), Head: head})
+	if err != nil {
+		return unknown, resolveFailure(repo, err)
+	}
+	if after != target {
+		return unknown, ErrContextScope
+	}
+	return lookup, nil
+}
+
+// scanComments reads the comment pages of one merge request, within the
+// response budget, and decides what they prove. It does not check scope.
+func (h *ConfirmedHosts) scanComments(ctx context.Context, path, token string, auth AuthStyle, marker, bodyHash, head string) (coreproposals.CommentLookup, error) {
+	unknown := coreproposals.CommentLookup{Outcome: coreproposals.CommentUnknown}
 	remaining := corehosts.ContextMaxResponseBytes
 	found := ""
 	for page := 1; page <= corehosts.ContextMaxPages; page++ {

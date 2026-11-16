@@ -204,6 +204,12 @@ func TestRulesCatchViolations(t *testing.T) {
 		{"host writers are not reachable from api, mcp or agents", "internal/api", "x.go", `package api; import "` + module + `internal/hosts"; var _ = hosts.New`, 0},
 		{"host writers are not reachable from api, mcp or agents", "internal/proposals", "x.go", `package proposals; import "` + module + `internal/hosts"; var _ hosts.RepoHost`, 0},
 		{"host writers are not reachable from api, mcp or agents", "internal/hosts", "x.go", `package hosts; type ConfirmedHosts struct{}`, 0},
+		{"host writers are not reachable from api, mcp or agents", "internal/api", "x.go", `package api; import . "` + module + `internal/hosts"; var _ *ConfirmedHosts`, 1},
+		{"host writers are not reachable from api, mcp or agents", "internal/mcp", "x.go", `package mcp; import . "` + module + `internal/hosts"; var _ = New`, 1},
+		{"host writers are not reachable from api, mcp or agents", "internal/proposals", "x.go", `package proposals; import . "` + module + `internal/hosts"; var _ *ConfirmedHosts`, 0},
+		{"host writers are not reachable from api, mcp or agents", "internal/api", "x.go", `package api; import "` + module + `internal/hosts"; var _ = hosts.NewPushTransport`, 1},
+		{"host writers are not reachable from api, mcp or agents", "internal/agents", "x.go", `package agents; import "` + module + `internal/hosts"; var _ hosts.PushAuthorizer`, 1},
+		{"host writers are not reachable from api, mcp or agents", "internal/proposals", "x.go", `package proposals; import "` + module + `internal/hosts"; var _ = hosts.NewPushTransport`, 0},
 		{"audit does not import api or agents", "internal/audit", "x.go", `package audit; import _ "` + module + `internal/agents"`, 1},
 		{"git does not import the layers above it", "internal/git", "x.go", `package git; import _ "` + module + `internal/db"`, 1},
 	}

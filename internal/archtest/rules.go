@@ -228,7 +228,10 @@ var phase4NoDelete = rule{name: "phase 4 code never deletes", check: func(f file
 // confirmedHostNames are the exported names of internal/hosts that can write to
 // a host (post a comment, create a repository). Only the confirmed proposal
 // executor may hold them (invariant 2).
-var confirmedHostNames = []string{"ConfirmedHosts", "NewConfirmedHosts", "CommentHost", "RepoHost"}
+//
+// PushAuthorizer and NewPushTransport are listed too: they attach the host
+// credential to a publication request, which is also proposal execution only.
+var confirmedHostNames = []string{"ConfirmedHosts", "NewConfirmedHosts", "CommentHost", "RepoHost", "PushAuthorizer", "NewPushTransport"}
 
 // noConfirmedHostWriters keeps host writers away from the surfaces that take
 // input from agents or the network: HTTP handlers, the MCP server and the agent
@@ -240,6 +243,11 @@ var noConfirmedHostWriters = rule{name: "host writers are not reachable from api
 		return nil
 	}
 	var out []string
+	// A dot-import makes the names unqualified, which the selector scan cannot
+	// see; there is no reason for these packages to import hosts that way.
+	if f.dotImports1(internalPrefix + "hosts") {
+		out = append(out, violation(f, "dot-imports internal/hosts, which hides host writers from this rule (invariant 2)"))
+	}
 	for _, n := range confirmedHostNames {
 		if f.uses1(internalPrefix + "hosts." + n) {
 			out = append(out, violation(f, "references hosts.%s; host writes belong to proposal execution only (invariant 2)", n))
