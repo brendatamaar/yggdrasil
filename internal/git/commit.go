@@ -97,7 +97,11 @@ func (g *Git) execWith(ctx context.Context, dir, op string, stdin io.Reader, red
 	argv := append([]string{g.exe}, baseConfig...)
 	argv = append(argv, args...)
 	var so, se bytes.Buffer
-	p, err := platform.Start(ctx, platform.Spec{
+	start := g.start
+	if start == nil {
+		start = platform.Start
+	}
+	p, err := start(ctx, platform.Spec{
 		Argv: argv, Dir: dir, Env: g.env, TaskID: g.taskID, Stdin: stdin, Stdout: &so, Stderr: &se,
 	})
 	if err != nil {

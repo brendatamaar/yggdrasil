@@ -52,7 +52,7 @@ func ValidateRemoteURL(raw string) (string, error) {
 		return "", fmt.Errorf("%w: only https is allowed", ErrBadRemoteURL)
 	}
 	host := strings.ToLower(u.Hostname())
-	if host == "" || strings.ContainsAny(host, "%[]") || strings.HasPrefix(host, ".") || strings.HasPrefix(host, "-") {
+	if host == "" || strings.ContainsAny(u.Host, "%[]") || strings.HasPrefix(host, ".") || strings.HasPrefix(host, "-") {
 		return "", fmt.Errorf("%w: host", ErrBadRemoteURL)
 	}
 	if p := u.Port(); p != "" {

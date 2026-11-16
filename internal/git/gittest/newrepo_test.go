@@ -21,3 +21,11 @@ func TestFakeOriginManagerContract(t *testing.T) {
 func TestRealOriginManagerContract(t *testing.T) {
 	gittest.RunOriginManagerContract(t, gittest.NewRealInitWorld)
 }
+
+func TestFakePublishTransportContract(t *testing.T) {
+	gittest.RunPublishTransportContract(t, gittest.NewFakePublishWorld)
+}
+
+func TestRealPublishTransportContract(t *testing.T) {
+	gittest.RunPublishTransportContract(t, gittest.NewRealPublishWorld)
+}

@@ -243,6 +243,11 @@ func (t *GoGitTransport) PublishBranch(ctx context.Context, req PublishRequest) 
 		return PublishResult{}, err
 	}
 	repo, err := gogit.PlainOpen(req.Dir)
+	if errors.Is(err, gogit.ErrUnknownExtension) || errors.Is(err, gogit.ErrUnsupportedExtensionRepositoryFormatVersion) ||
+		errors.Is(err, gogit.ErrUnsupportedRepositoryFormatVersion) {
+		return PublishResult{}, &Error{Op: "publish", Err: fmt.Errorf("%w: %s", ErrUnsupportedFormat, err.Error()),
+			UserMsg: "This repo uses a format Yggdrasil cannot publish from here. You can publish it yourself with git."}
+	}
 	if err != nil {
 		return PublishResult{}, &Error{Op: "publish", Err: fmt.Errorf("open repo: %w", err),
 			UserMsg: "Yggdrasil could not open the repo to publish it."}
