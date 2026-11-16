@@ -907,3 +907,27 @@ mutation). Merged one at a time, five-task gate green after each (frontend 528/5
   DEL (C1/bidi pass); replay decision still half in the shell (PlanDraft used only to
   extract refusals; consider a Replay fact in DraftFacts); `TestUnknownCommandFailsTheTask`
   and settings.test.tsx "saves maxAgents" are timing-sensitive under machine load.
+
+## Human decisions before Batch 5 (2026-11-16)
+
+- Failed-jobs log over 256 KiB: label the job partial AND keep listing the remaining failed
+  jobs ("omitted: size limit"), as the design says. Owner: Batch 5 task W (or a hosts follow-up).
+- Replay decision moves into the core: add a Replay fact to `DraftFacts` so `core/tasks` decides
+  replay / new / refuse; the shell only supplies facts. Small serial task before Batch 5 wiring.
+
+## Batch 3 breakdown (2026-11-16, 2 agents at once; deviation: N split into four tasks of ~40 turns)
+
+Base: main 2b73dbf. No two parallel tasks own the same package.
+Order: A = N1 + N2; B = N3a + P; C = N3b + Q; then test-engineer passes and the review gate.
+
+| Task | Agent | Owns | PRD |
+|---|---|---|---|
+| N1 safe FS | platform-windows | internal/platform (SafeInitFS, IgnoreWriter, platformtest fakes+contracts) | NR-01, WS-09 |
+| N2 git | go-backend | internal/git (RepoInitializer, OriginManager, go-git PublishTransport, gittest fakes+contracts) | NR-01/03/04 |
+| N3a core | go-backend | internal/core/newrepos (pure Step, properties) | NR-01-04 |
+| P proposals | go-backend | internal/proposals, internal/core/proposals (executors, Enabled) | AC-02/03/04, WS-09, NR-01/03/04, RV-02, MCP-05 |
+| N3b shell | go-backend | internal/newrepos (worker, recovery, reconcile) | NR-01-04 |
+| Q notify | go-backend | internal/notify, internal/core/notify | UI-06, D11 |
+
+Backend agents run Go checks only (go build/vet, golangci-lint on their packages, CGO_ENABLED=0 go test);
+the lead runs the full gate with Node 22 in the scratchpad.
