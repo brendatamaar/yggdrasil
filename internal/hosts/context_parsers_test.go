@@ -204,6 +204,21 @@ func TestContextProviderIssueAcceptedIffValid(t *testing.T) {
 			if want != (err == nil) {
 				t.Fatalf("%s seed %d: number %d title %q pull %v badLabel %v: oracle %v, got %v", gh(lab), seed, number, title, pull, badLabel, want, err)
 			}
+			// The same wire item inside a list: a pull request is skipped, any other
+			// invalid item fails the page, and a valid one is kept.
+			listRaw, _ := json.Marshal([]any{w})
+			lapi, lin := memAPI(lab, map[string]memRoute{issuePath(lab) + "?" + listQuery(lab): {body: listRaw}})
+			lres, lerr := lapi.Issues(context.Background(), lin, "tok", "acme/shop")
+			wantList := pull || oracleIssue(lab, number, title, false, !badLabel)
+			if wantList != (lerr == nil) {
+				t.Fatalf("%s seed %d list: number %d title %q pull %v badLabel %v: oracle %v, got %v", gh(lab), seed, number, title, pull, badLabel, wantList, lerr)
+			}
+			if lerr == nil {
+				items := lres.Value.(corehosts.IssueList).Items
+				if (len(items) == 1) == pull {
+					t.Fatalf("%s seed %d list: %d items for pull=%v", gh(lab), seed, len(items), pull)
+				}
+			}
 			if err == nil {
 				accepted++
 				d := res.Value.(corehosts.IssueDetail)
