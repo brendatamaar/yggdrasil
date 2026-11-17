@@ -973,3 +973,18 @@ the lead runs the full gate with Node 22 in the scratchpad.
   except re-dispatching it).
 - Remaining for Batch 3: finish Q, merge, TE-1 (re-dispatch), full gate (generate, lint, typecheck, test, test:web, task license),
   safety-reviewer + fe-reviewer on 2b73dbf..main, fix Blocking/Must-fix, close Batch 3.
+
+### Batch 3 round D (Q, TE-1, reviews) 2026-11-17
+- Q notify producer merged; TE-1 new-repo tests and ~40 killed mutants merged (defect found: COM/LPT superscript device names accepted
+  by CheckLeaf; fixed by lead in 36981a3 with a test shown to fail without it).
+- Review gate on 2b73dbf..main: safety-reviewer PASS; fe-reviewer PASS (no Blocking/Must-fix).
+  Lead fixed in 36981a3 (each mutation-checked where noted): publish credential bound to the repo path, not only the host
+  (same-host redirect to another repo refused: test shown to fail without it); `user.useConfigOnly=true` for HasAuthor and the first
+  commit (no auto-detected machine identity); `commit.gpgsign=false`.
+  fe Should-fix 1-4 (executor Retry path, untrack settles as Unknown, stuck worker, StopConflict retry mismatch) dispatched as BF3.
+  Still open as Consider: re-verify folder identity after each git stage (git works by path, small local race); `.git/HEAD` read
+  follows a symlink (read only); HighWater grows per verification run (notify); persistHighWater does not treat ErrConflict as no-op;
+  CommentHostContract runs only against the fake; no fuzz of ValidateReceipt beyond seeds; platform Windows-specific tests not added.
+- Gate on main before BF3: generate (no diff), lint, typecheck, `go test ./...`, test:web 528/528 all green.
+  `task license` cannot run here: go-licenses v2.0.0 cannot parse the `tool` directive in go.mod (and fails on stdlib module info);
+  go.mod did not change in Batch 3 (go-git was already a pinned indirect), and N2 checked the transitive licences by hand. Verify in CI.
