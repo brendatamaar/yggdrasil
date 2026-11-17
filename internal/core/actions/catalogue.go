@@ -1,6 +1,12 @@
 package actions
 
-import "github.com/brendatamaar/yggdrasil/internal/core"
+import (
+	"slices"
+	"sort"
+	"strconv"
+
+	"github.com/brendatamaar/yggdrasil/internal/core"
+)
 
 // Capabilities are what the server can do for one repo right now. They are
 // facts supplied by the shell, never assumptions: code checks them instead of
@@ -59,7 +65,9 @@ const (
 
 // Offering is one entry of the catalogue.
 type Offering struct {
-	Kind   Kind
+	Kind Kind
+	// Reason is the attention reason the offering answers; empty for an
+	// offering that is not about one (an open MR, ignore suggestions).
 	Reason Reason
 	// Mode is Kind.Mode(), repeated so the UI can show it without a table.
 	Mode    core.TaskMode
@@ -71,16 +79,161 @@ type Offering struct {
 	WaitingForFolder bool
 	// Note is a plain sentence explaining a degraded context, empty otherwise.
 	Note string
+	// OptionalVerify (additive field): the offering may run the fast
+	// verification after a confirmed pull. Set only for PullAndCheck; the user
+	// opts in on the preview, it is never implied.
+	OptionalVerify bool
 }
 
-// Catalogue returns the typed offerings for the facts, in a stable order:
-// by reason (the order of Reasons), primary kind first. Every reason in the
-// facts yields at least one offering (TestPropEveryAttentionReasonHasAction).
-//
-// PENDING (task A): the foundation defines the contract (PrimaryKind, Mode,
-// Offering) but returns no offerings, so a premature caller shows nothing
-// instead of a wrong action. The orchestration task implements it.
+// UntrackedNoiseThreshold mirrors repos.NoiseMinUntracked: at or above this
+// untracked count the catalogue offers ignore suggestions (WS-09). The core
+// domain packages are leaves, so the value is repeated here.
+const UntrackedNoiseThreshold = 100
+
+// Catalogue returns the typed offerings for the facts, in a stable order: the
+// attention reasons in the order of Reasons (the primary kind first, then a
+// separate follow-up such as FixPipeline), then reason-less offerings (an open
+// merge request, ignore suggestions). It is total: every reason in the facts
+// yields at least one offering that starts an agent turn or a proposal, never
+// one that only opens a detail page, and a missing token, host capability or
+// unreadable folder only degrades the offering's context and says so
+// (TestPropEveryAttentionReasonHasAction, AC-01 fallback, E6). Reasons this
+// package does not know are given the safe repo diagnosis. Duplicate reasons
+// collapse; no ranking or limit ever drops an offering.
 func Catalogue(f Facts) []Offering {
-	_ = f
+	present := map[Reason]bool{}
+	var unknown []Reason
+	for _, r := range f.Reasons {
+		if r.Validate() == nil {
+			present[r] = true
+		} else if !slices.Contains(unknown, r) {
+			unknown = append(unknown, r)
+		}
+	}
+	sort.Slice(unknown, func(i, j int) bool { return unknown[i] < unknown[j] })
+
+	var out []Offering
+	for _, r := range Reasons() {
+		if present[r] {
+			out = append(out, forReason(f, r)...)
+		}
+	}
+	for _, r := range unknown {
+		out = append(out, diagnoseRepo(f, r, "This problem isn't one the app knows yet, so the agent only gets the repo's tracked facts."))
+	}
+	if f.MRNumber > 0 && f.MRHead != "" {
+		out = append(out, reviewMR(f))
+	}
+	if f.Readable && f.UntrackedCount >= UntrackedNoiseThreshold {
+		r := Reason("")
+		if present[ReasonDirty] {
+			r = ReasonDirty
+		}
+		out = append(out, offer(f, ProposeIgnore, r, "", ContextAvailable,
+			"The agent looks at a bounded sample of the untracked files and suggests .gitignore entries; you confirm the exact lines."))
+	}
+	return out
+}
+
+// Pin is the value a preview pins and a submit is checked against: the MR head
+// for a review, the pipeline's commit for a pipeline action when it is known,
+// the repo HEAD otherwise. The shell passes Pin(facts-now, kind) as
+// SubmitRequested.ScopeHead.
+func Pin(f Facts, k Kind) string {
+	switch k {
+	case ReviewMR:
+		return f.MRHead
+	case DiagnosePipeline, FixPipeline:
+		if f.CIHead != "" {
+			return f.CIHead
+		}
+	}
+	return f.Head
+}
+
+const (
+	noteFolder = "The folder can't be read right now. The task is saved as a draft and waits until the folder is restored; nothing runs on a folder that isn't there."
+	noteRepo   = "the agent gets only tracked facts (branch, commits, names of conflicted files), and it will not reset, merge or delete anything."
+)
+
+func forReason(f Facts, r Reason) []Offering {
+	switch r {
+	case ReasonUnreadable:
+		return []Offering{diagnoseRepo(f, r, "The folder can't be read. The agent gets only tracked metadata and the draft waits for a valid folder.")}
+	case ReasonConflicts:
+		return []Offering{diagnoseRepo(f, r, "Merge conflicts: "+noteRepo)}
+	case ReasonDiverged:
+		return []Offering{diagnoseRepo(f, r, "The branch has diverged from its upstream: "+noteRepo)}
+	case ReasonFailedCI:
+		if f.CIRunID == "" {
+			return []Offering{diagnoseRepo(f, r, "The failed pipeline isn't identified, so the agent gets only the repo's tracked facts and no job log.")}
+		}
+		ctx, note := ContextAvailable, ""
+		if !f.Caps.HostLogs {
+			ctx, note = ContextMetadataOnly, "The job log isn't available (no linked host or token). The agent gets only the pipeline's name, status and commit."
+		}
+		return []Offering{
+			offer(f, DiagnosePipeline, r, f.CIRunID, ctx, note),
+			offer(f, FixPipeline, r, f.CIRunID, ctx, joinNote("A separate Code task in its own worktree; it never changes the diagnosis task.", note)),
+		}
+	case ReasonFailedBuild:
+		if f.BuildID == "" {
+			return []Offering{diagnoseRepo(f, r, "The failed build isn't identified, so the agent gets only the repo's tracked facts and no build log.")}
+		}
+		if !f.Caps.BuildLog {
+			return []Offering{offer(f, DiagnoseBuild, r, f.BuildID, ContextMetadataOnly,
+				"The build log can't be read. The agent gets only the build's command and result.")}
+		}
+		return []Offering{offer(f, DiagnoseBuild, r, f.BuildID, ContextAvailable, "")}
+	case ReasonBehind:
+		o := offer(f, PullAndCheck, r, "", ContextNone,
+			"A fast-forward pull you confirm. If the repo has local changes, has diverged or is locked, it says why and changes nothing.")
+		o.OptionalVerify = true
+		return []Offering{o}
+	case ReasonDirty:
+		ctx := ContextAvailable
+		if !f.Readable {
+			ctx = ContextMetadataOnly
+		}
+		return []Offering{offer(f, ProposeCommits, r, "", ctx,
+			"The agent groups the current diff by exact paths and drafts one commit proposal per group; nothing is staged or committed until you confirm.")}
+	}
 	return nil
+}
+
+func diagnoseRepo(f Facts, r Reason, note string) Offering {
+	return offer(f, DiagnoseRepo, r, "", ContextMetadataOnly, note)
+}
+
+func reviewMR(f Facts) Offering {
+	ctx, note := ContextAvailable, "The agent reads the pinned diff and drafts comments as proposals; nothing is posted until you confirm each one."
+	if !f.Caps.HostMR {
+		ctx, note = ContextMetadataOnly, "The merge request's diff can't be read (no linked host or token). The agent gets only its title and head."
+	}
+	if !f.Caps.CommentPost {
+		note = joinNote(note, "Posting comments isn't available for this host, so the drafts can only be copied.")
+	}
+	return offer(f, ReviewMR, "", strconv.Itoa(f.MRNumber), ctx, note)
+}
+
+// offer builds one offering and applies the folder rule: every kind except a
+// draft import needs a working directory for its task, so an unreadable repo
+// marks it as waiting for the folder.
+func offer(f Facts, k Kind, r Reason, source string, ctx ContextAvailability, note string) Offering {
+	o := Offering{Kind: k, Reason: r, Mode: k.Mode(), Context: ctx, SourceID: source, Note: note}
+	if !f.Readable && k != ImportIssue {
+		o.WaitingForFolder = true
+		o.Note = joinNote(note, noteFolder)
+	}
+	return o
+}
+
+func joinNote(a, b string) string {
+	switch {
+	case a == "":
+		return b
+	case b == "":
+		return a
+	}
+	return a + " " + b
 }
