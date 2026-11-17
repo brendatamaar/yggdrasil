@@ -8,6 +8,7 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	corenotify "github.com/brendatamaar/yggdrasil/internal/core/notify"
 	"github.com/brendatamaar/yggdrasil/internal/db"
+	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
 
 // Consumer-local ports of the notification producer (UI-06, D11,
@@ -52,6 +53,9 @@ type Deps struct {
 	// Clock and IDs are the shell's time and randomness; the core never makes one.
 	Clock func() time.Time
 	IDs   func(prefix string) core.NoticeID
+	// Redactor masks the free text of audit entries (invariant 4). Nil means
+	// the built-in patterns of safety.NewRedactor.
+	Redactor safety.Redactor
 }
 
 // *db.Store is the live NoticeStore, and *api.Server the live Publisher.
