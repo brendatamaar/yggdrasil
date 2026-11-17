@@ -562,7 +562,9 @@ func encodeNewRepoState(st newrepos.State) (code, stage string, attempt int, det
 		d.Reason = v.Reason
 		d.Resume, err = encodeResume(v.Resume)
 	case newrepos.Stopped:
-		code = "stopped"
+		// The attempt that stopped is kept: a retry must use a greater one, so a late
+		// result of the old attempt can never be taken for the retry's.
+		code, attempt = "stopped", v.Attempt
 		if v.Stage != nil {
 			stage = v.Stage.Name()
 		}
@@ -681,7 +683,7 @@ func decodeNewRepoState(spec newrepos.InitSpec, code, stage string, attempt int,
 		if err != nil {
 			return nil, err
 		}
-		return newrepos.Stopped{Stage: st, Reason: reason, Resume: res}, nil
+		return newrepos.Stopped{Stage: st, Reason: reason, Attempt: attempt, Resume: res}, nil
 	}
 	return nil, fmt.Errorf("bad reservation in database: unknown state %q", code)
 }

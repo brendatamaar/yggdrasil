@@ -130,6 +130,10 @@ type Stopped struct {
 	Stage  Stage
 	Reason StopReason
 	Resume Resumable
+	// Attempt is the attempt that ran Stage (0 when none ran). A retry needs a
+	// strictly greater attempt, so a late result of the old attempt can never
+	// be taken for the retry's.
+	Attempt int
 }
 
 func (Reserved) isState()        {}
@@ -258,7 +262,10 @@ type StageFailed struct {
 	Attempt int
 	Stage   Stage
 	Outcome FailOutcome
-	Now     time.Time
+	// Reason classifies a definite failure. Empty (or unknown) means
+	// StopStageFailed. It is ignored for OutcomeUnknown.
+	Reason StopReason
+	Now    time.Time
 }
 
 // PublishConfirmed: the user confirmed the exact publish hash for a ready repo.
@@ -428,19 +435,3 @@ func (Audit) isCommand()                           {}
 func (ReconcileStage) isCommand()                  {}
 func (CancelWorker) isCommand()                    {}
 func (Explain) isCommand()                         {}
-
-// Step is (operation2, commands) = Step(operation1, input) following the
-// transition table of docs/design/phase-6-newrepos.md.
-//
-// PENDING (task N): the foundation freezes the types. Every input returns the
-// operation unchanged and no commands: nothing is reserved, written or
-// published, and no success is ever reported. It must not be wired before the
-// new-repo task lands.
-func Step(o Operation, in Input) (Operation, []Command) {
-	switch in.(type) {
-	case Reserve, ProposalCreated, Confirmed, StageSucceeded, StageFailed, PublishConfirmed,
-		Recovered, Reconciled, RetryConfirmed, Reject, Untracked:
-		return o, nil
-	}
-	return o, nil
-}

@@ -907,3 +907,69 @@ mutation). Merged one at a time, five-task gate green after each (frontend 528/5
   DEL (C1/bidi pass); replay decision still half in the shell (PlanDraft used only to
   extract refusals; consider a Replay fact in DraftFacts); `TestUnknownCommandFailsTheTask`
   and settings.test.tsx "saves maxAgents" are timing-sensitive under machine load.
+
+## Human decisions before Batch 5 (2026-11-16)
+
+- Failed-jobs log over 256 KiB: label the job partial AND keep listing the remaining failed
+  jobs ("omitted: size limit"), as the design says. Owner: Batch 5 task W (or a hosts follow-up).
+- Replay decision moves into the core: add a Replay fact to `DraftFacts` so `core/tasks` decides
+  replay / new / refuse; the shell only supplies facts. Small serial task before Batch 5 wiring.
+
+## Batch 3 breakdown (2026-11-16, 2 agents at once; deviation: N split into four tasks of ~40 turns)
+
+Base: main 2b73dbf. No two parallel tasks own the same package.
+Order: A = N1 + N2; B = N3a + P; C = N3b + Q; then test-engineer passes and the review gate.
+
+| Task | Agent | Owns | PRD |
+|---|---|---|---|
+| N1 safe FS | platform-windows | internal/platform (SafeInitFS, IgnoreWriter, platformtest fakes+contracts) | NR-01, WS-09 |
+| N2 git | go-backend | internal/git (RepoInitializer, OriginManager, go-git PublishTransport, gittest fakes+contracts) | NR-01/03/04 |
+| N3a core | go-backend | internal/core/newrepos (pure Step, properties) | NR-01-04 |
+| P proposals | go-backend | internal/proposals, internal/core/proposals (executors, Enabled) | AC-02/03/04, WS-09, NR-01/03/04, RV-02, MCP-05 |
+| N3b shell | go-backend | internal/newrepos (worker, recovery, reconcile) | NR-01-04 |
+| Q notify | go-backend | internal/notify, internal/core/notify | UI-06, D11 |
+
+Backend agents run Go checks only (go build/vet, golangci-lint on their packages, CGO_ENABLED=0 go test);
+the lead runs the full gate with Node 22 in the scratchpad.
+
+### Batch 3 round A (merged)
+- N1 platform safe FS + IgnoreWriter merged (--no-ff). Windows code compiles (GOOS=windows vet) but has never run; manual
+  checklist from the report: run `go test ./internal/platform/... -run "SafeInit|IgnoreWriter|Junction|ShortName"` on Windows,
+  hold `.gitignore` open to see ErrLocked, `mklink /J` a parent, `\\wsl$` and subst parents refused, >260-char parent works.
+  Risks: Unix refuses every symlinked ancestor of the project parent (a symlinked home is refused); a OneDrive placeholder
+  `.gitignore` is refused; ReFS file-index uniqueness; Unix cannot fully exclude a concurrent editor (advisory flock + readback).
+- N2 git init/origin/in-process publish transport merged. go-git v5.19.3 already pinned; transitive licences checked by hand
+  (Apache/BSD/MIT; securejoin BSD-3 AND MPL-2.0 ok), `task license` not run (go-licenses not installed): run at the gate.
+  Open: no TreeHash helper (shell must use receipts); no test that the missing-author refusal leaves the index untouched.
+- After each: golangci-lint 0 issues, platform/git/archtest tests green, task lint and typecheck green.
+- Round B (N3a core Step, P1 ignore/comment/pull executors) dispatched; P split into P1 (this) and P2 (InitRepo/PublishRepo) because
+  five executors do not fit 40 turns. Round C = N3b + P2, round D = Q + test-engineer.
+
+### Batch 3 rounds B and C (merged)
+- N3a core/newrepos Step merged. Additive frozen-type changes: `StageFailed.Reason`, `Stopped.Attempt` (retry needs a strictly
+  greater attempt). Lead fixed db to persist `Stopped.Attempt` (9b13054, mutation-checked).
+- P1 proposals IgnoreEntries/ReviewComment/PullFF merged; P2 InitRepo/PublishRepo merged. Agents cannot create InitRepo/PublishRepo
+  proposals (P2 choice). **Batch 5 decision:** MCP-05 lists `propose_publish`, so W must allow agent-created PublishRepo
+  (never InitRepo), still human-confirmed.
+- N3b new-repo shell merged (+ follow-up: Retry, audit through audit.Prepare after the archtest caught it, waitSettled flake,
+  Untracked-while-running test; `-race -count=3` green).
+- Wiring contracts for Batch 5 (from the reports):
+  - call `proposals.Service.OperationChanged(ctx, op)` on every lifecycle state change; nothing calls it yet;
+  - `newrepos.TryLock(mainlock.Registry, poll)` adapts the registry to MainLock; `PreparePublish(op, req, proposalID)` before
+    `ConfirmPublish` (pending publish spec is in memory: restart means preview again); effect rows need real proposal rows first;
+  - ConfirmInit/ConfirmPublish get `InitSpec.Hash()`/`PublishSpec.Hash()`, not the proposal action hash;
+  - the lifecycle port has no Reject: rejecting an init proposal leaves the operation AwaitingConfirm (wire Service.Reject);
+  - the proposal hand-off effect stays at `intent` (db allows receipts only for comment effects): small db change if wanted;
+  - proposals wiring: wrap the hosts sentinel in `proposals.ErrOutcomeUnknown`; map pull refusals to ErrPullHeadChanged/ErrPullBusy;
+    comment errors unclassified are treated as unknown; real GitHub 404 on lookup is reported unknown, so Retry of create_remote
+    stays refused until a human acts (fake host says absent);
+  - PullFF is creatable by agents (confirmation still required): decide at MCP registration;
+  - ignore/pull effects use audit stage entries, not effect rows; Windows platform code is untested on Windows.
+
+### Batch 3 interruption (usage limit, 2026-11-16 evening; resumed 2026-11-17)
+- Main at the last merge of P2 plus log commits. N1, N2, N3a, N3b(+Retry), P1, P2 merged and green.
+- In flight when the limit hit: **Q** (worktree-agent-a026d09494e536e46: core transition table + producer committed, tests NOT written,
+  was fixing the ID generator); **TE-1** (newrepos mutation evidence and gap tests; died before creating a worktree, nothing to resume
+  except re-dispatching it).
+- Remaining for Batch 3: finish Q, merge, TE-1 (re-dispatch), full gate (generate, lint, typecheck, test, test:web, task license),
+  safety-reviewer + fe-reviewer on 2b73dbf..main, fix Blocking/Must-fix, close Batch 3.

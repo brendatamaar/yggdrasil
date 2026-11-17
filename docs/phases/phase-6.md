@@ -169,7 +169,7 @@ Execution log (design approvals, SHAs, review results, decisions, deviations, in
 | F0–F5 foundations | closed | see log | none |
 | Batch 1 | closed | see log | none |
 | Batch 2 + TM1 tests | closed | 8966339 | see "Still open" and "Batch 2 test handoff TM1" in the log |
-| Batch 3 | not started | | |
+| Batch 3 | in progress: round A (N1 platform, N2 git) | 2b73dbf | decisions recorded in log; see Batch 3 breakdown |
 | Batch 4 | not started | | |
 | Batch 5 | not started | | |
 | Batch 6 | not started | | |

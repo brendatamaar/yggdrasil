@@ -142,6 +142,18 @@ type Config struct {
 	// StageID derives the ID of a removal's staging folder from its proposal (1-64 of
 	// [A-Za-z0-9_-]). It must be deterministic, so a retry plans the same folder; default StageIDFor.
 	StageID func(core.ProposalID) string
+
+	// Phase 6 ports (docs/design/phase-6-*.md). Each is optional: without its
+	// port the kind is refused at Create and, if one is stored anyway, fails at
+	// execution having done nothing. Ignore edits .gitignore, Comments posts a
+	// review comment, Pull fast-forwards the main checkout.
+	Ignore   IgnoreWriter
+	Comments CommentHost
+	Pull     PullRunner
+	// NewRepos is the durable new-repo lifecycle (internal/newrepos) that the
+	// InitRepo and PublishRepo executors hand their confirmed work to. Wire its
+	// progress back with Service.OperationChanged.
+	NewRepos NewRepoLifecycle
 }
 
 // Service creates, decides and executes proposals (RV-02, GH-03).
@@ -428,12 +440,33 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (View, error) {
 		switch req.Action.(type) {
 		case coreprop.MergeLocal, coreprop.RemoveWorktree:
 			return View{}, refusal(coreprop.RefuseUnsupported, "An agent cannot propose this. Merging and removing a worktree are started from the change set.")
+		case coreprop.InitRepo, coreprop.PublishRepo:
+			return View{}, refusal(coreprop.RefuseUnsupported, "An agent cannot propose this. Creating and publishing a repo are started by you, from the new repo dialog.")
 		}
+	}
+	if why := s.portMissing(req.Action); why != "" {
+		return View{}, refusal(coreprop.RefuseUnsupported, why)
 	}
 	if err := req.Task.Validate(); err != nil {
 		return View{}, refusal(coreprop.RefuseBadFacts, "The task for this proposal is not valid.")
 	}
-	facts, repo, detail, err := s.gatherFacts(ctx, req)
+	var (
+		facts  coreprop.Facts
+		repo   core.RepoID
+		detail string
+		err    error
+		reserv *db.ReservationRecord // set for an InitRepo: linked in the same transaction
+	)
+	if ia, ok := req.Action.(coreprop.InitRepo); ok {
+		facts, repo, reserv, err = s.initFacts(ctx, req, ia)
+	} else {
+		facts, repo, detail, err = s.gatherFacts(ctx, req)
+		if err == nil && facts.RepoTracked {
+			if pa, ok := req.Action.(coreprop.PublishRepo); ok {
+				err = s.checkPublishCreate(ctx, pa)
+			}
+		}
+	}
 	if err != nil {
 		return View{}, err
 	}
@@ -480,6 +513,11 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (View, error) {
 		created = p
 		if err := tx.CreateProposalRecord(ctx, p); err != nil {
 			return err
+		}
+		if reserv != nil {
+			if err := s.linkReservation(ctx, tx, *reserv, p, now); err != nil {
+				return err
+			}
 		}
 		return s.writeAudit(ctx, tx, p, cmds, "", now)
 	})
@@ -562,7 +600,7 @@ func (s *Service) persistDecision(ctx context.Context, id core.ProposalID, mk fu
 		if err != nil {
 			return View{}, nil, fmt.Errorf("load proposal %s: %w", id, err)
 		}
-		tracked := s.repoTracked(ctx, rec.Proposal.Repo)
+		tracked := s.proposalTracked(ctx, rec.Proposal)
 		now := s.now()
 		next, cmds := coreprop.Step(rec.Proposal, mk(rec, tracked, now))
 		if r, ok := containsRefuse(cmds); ok {

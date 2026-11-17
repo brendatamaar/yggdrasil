@@ -32,6 +32,7 @@ func (s *Service) runReconcile(p coreprop.Proposal, cmd coreprop.Reconcile) {
 		return
 	}
 	out, res := coreprop.ReconcileUnknown, coreprop.Result{}
+	keep := false
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -39,9 +40,17 @@ func (s *Service) runReconcile(p coreprop.Proposal, cmd coreprop.Reconcile) {
 				out = coreprop.ReconcileUnknown
 			}
 		}()
+		if _, isNR := isNewRepoAction(p.Action); isNR {
+			rctx, cancel := context.WithTimeout(ctx, s.cfg.ExecTimeout)
+			defer cancel()
+			out, res, keep = s.reconcileNewRepo(rctx, p)
+			return
+		}
 		out, res = s.reconcile(ctx, p)
 	}()
-	if ctx.Err() != nil {
+	if ctx.Err() != nil || keep {
+		// keep: a durable worker still owns the operation; its result arrives
+		// through OperationChanged and the proposal stays Confirmed.
 		return
 	}
 	in := coreprop.Reconciled{Attempt: cmd.Attempt, Outcome: out, Result: res, Now: s.now()}
@@ -110,8 +119,14 @@ func (s *Service) reconcile(ctx context.Context, p coreprop.Proposal) (coreprop.
 		return s.reconcileMerge(ctx, p, a)
 	case coreprop.RemoveWorktree:
 		return s.reconcileRemove(ctx, p, a)
+	case coreprop.IgnoreEntries:
+		return s.reconcileIgnore(ctx, p, a)
+	case coreprop.ReviewComment:
+		return s.reconcileComment(ctx, p, a)
+	case coreprop.PullFF:
+		return s.reconcilePull(ctx, p, a)
 	}
-	return unknown() // Install: the build may or may not have run
+	return unknown() // Install, and the new-repo kinds (reconcileNewRepo): not judged here
 }
 
 // reconcilePush: the branch on the remote equals the proposed commit means the
