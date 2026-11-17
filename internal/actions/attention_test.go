@@ -37,7 +37,10 @@ func TestPhase6NeedsAttentionActions(t *testing.T) {
 		{
 			name: "unreadable folder keeps a waiting draft",
 			setup: func(e *env) {
-				e.scope.set(func(f *coreactions.Facts) { f.Readable = false; f.Reasons = []coreactions.Reason{coreactions.ReasonUnreadable} })
+				e.scope.set(func(f *coreactions.Facts) {
+					f.Readable = false
+					f.Reasons = []coreactions.Reason{coreactions.ReasonUnreadable}
+				})
 			},
 			want: []want{{kind: coreactions.DiagnoseRepo, task: true, draft: true, inText: []string{"cannot be read", "waits until the folder is restored"}}},
 		},
@@ -45,7 +48,10 @@ func TestPhase6NeedsAttentionActions(t *testing.T) {
 			name: "unreadable folder without a draft store is refused, never faked",
 			noDr: true,
 			setup: func(e *env) {
-				e.scope.set(func(f *coreactions.Facts) { f.Readable = false; f.Reasons = []coreactions.Reason{coreactions.ReasonUnreadable} })
+				e.scope.set(func(f *coreactions.Facts) {
+					f.Readable = false
+					f.Reasons = []coreactions.Reason{coreactions.ReasonUnreadable}
+				})
 			},
 			want: []want{{kind: coreactions.DiagnoseRepo, refused: coreactions.RefuseAdmission}},
 		},
@@ -142,7 +148,10 @@ func TestPhase6NeedsAttentionActions(t *testing.T) {
 		{
 			name: "dirty but unreadable is a waiting draft",
 			setup: func(e *env) {
-				e.scope.set(func(f *coreactions.Facts) { f.Readable = false; f.Reasons = []coreactions.Reason{coreactions.ReasonDirty} })
+				e.scope.set(func(f *coreactions.Facts) {
+					f.Readable = false
+					f.Reasons = []coreactions.Reason{coreactions.ReasonDirty}
+				})
 			},
 			want: []want{{kind: coreactions.ProposeCommits, task: true, draft: true}},
 		},

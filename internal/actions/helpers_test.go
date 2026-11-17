@@ -193,11 +193,11 @@ func (f *fakeTasks) SubmitWithRequest(_ context.Context, id core.RequestID, req 
 	defer f.mu.Unlock()
 	f.submits++
 	f.requests = append(f.requests, req)
-	if f.failBefore != nil {
-		return tasks.MessageResult{}, f.failBefore
-	}
 	if f.beforeCreate != nil {
 		f.beforeCreate()
+	}
+	if f.failBefore != nil {
+		return tasks.MessageResult{}, f.failBefore
 	}
 	if tid, ok := f.byReq[id]; ok {
 		return tasks.MessageResult{Task: core.Task{ID: tid}}, nil
@@ -516,3 +516,16 @@ func (e *env) ciFacts(log string) {
 }
 
 var _ = coreproposals.PullFF{}
+
+func nowUTC() time.Time { return time.Now().UTC() }
+
+func waitFor(t *testing.T, ok func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !ok() {
+		if time.Now().After(deadline) {
+			t.Fatal("condition not reached in time")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
