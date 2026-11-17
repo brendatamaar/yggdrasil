@@ -244,7 +244,9 @@ func (s *Service) execNewRepo(ctx context.Context, p coreprop.Proposal, attempt 
 	case coreprop.PlanNewRepoReconcile:
 		return s.reconcileThenFollow(ctx, p, t, attempt)
 	case coreprop.PlanNewRepoStart:
-		return s.startNewRepo(ctx, p, t, rec, attempt)
+		return s.startNewRepo(ctx, p, t, rec, attempt, false)
+	case coreprop.PlanNewRepoRetry:
+		return s.startNewRepo(ctx, p, t, rec, attempt, true)
 	}
 	// Refused: say why in the operation's own words when it has them.
 	if v := coreprop.JudgeOperation(t.kind, view); v.Kind == coreprop.VerdictFailed {
@@ -320,7 +322,11 @@ func (s *Service) beginHandoff(ctx context.Context, p coreprop.Proposal, t newRe
 	return err
 }
 
-func (s *Service) startNewRepo(ctx context.Context, p coreprop.Proposal, t newRepoTarget, rec db.ReservationRecord, attempt int) outcome {
+// startNewRepo hands this attempt to the lifecycle: a confirm when nothing ran,
+// or (retry) the human's fresh confirmation to retry a definitely stopped
+// stage. Both are recorded as a durable hand-off before the call, and an unknown
+// outcome is only ever reconciled.
+func (s *Service) startNewRepo(ctx context.Context, p coreprop.Proposal, t newRepoTarget, rec db.ReservationRecord, attempt int, retry bool) outcome {
 	if !s.proposalTracked(ctx, p) {
 		return failed(coreprop.FailRepoUntracked, false, "The project or repo is no longer tracked, so nothing was started. Track it again, then ask for a new proposal.")
 	}
@@ -339,9 +345,14 @@ func (s *Service) startNewRepo(ctx context.Context, p coreprop.Proposal, t newRe
 	if err != nil {
 		return failed(coreprop.FailInterrupted, true, "Yggdrasil lost its record of this hand-off before starting. Nothing was started. Retry checks the state first.")
 	}
-	if t.kind == core.ProposalInitRepo {
+	switch {
+	case retry:
+		// The lifecycle picks the retry's attempt itself; a confirm would be
+		// ignored by a stopped operation.
+		err = s.cfg.NewRepos.Retry(ctx, t.op, t.hash)
+	case t.kind == core.ProposalInitRepo:
 		err = s.cfg.NewRepos.ConfirmInit(ctx, t.op, t.hash, fresh)
-	} else {
+	default:
 		err = s.cfg.NewRepos.ConfirmPublish(ctx, t.op, t.hash, fresh)
 	}
 	if err == nil {

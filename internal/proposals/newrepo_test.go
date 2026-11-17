@@ -224,11 +224,13 @@ func TestStoppedOperationFailsTheProposalAndRetryNeedsANewAttempt(t *testing.T) 
 	if !got.Retryable || got.Attempt != 1 || !strings.Contains(got.Message, "Nothing was deleted") {
 		t.Fatalf("failure = %+v", got)
 	}
-	// A human retry is a new confirmation with a newer attempt.
+	// A human retry is a fresh confirmation: it reaches the lifecycle's Retry
+	// with the immutable hash, never a second confirm (a stopped operation
+	// ignores a confirm, and the executor would have looped in reconcile).
 	if _, err := x.svc.Retry(x.ctx, v.ID, "user"); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; x.fake.Confirms() < 2; i++ {
+	for i := 0; x.fake.Retries() < 1; i++ {
 		if i > 5000 {
 			t.Fatal("the retry never reached the lifecycle")
 		}
@@ -236,11 +238,67 @@ func TestStoppedOperationFailsTheProposalAndRetryNeedsANewAttempt(t *testing.T) 
 	}
 	x.settleQueue()
 	calls := x.fake.Calls()
-	if len(calls) != 2 || calls[1].Attempt <= calls[0].Attempt {
-		t.Fatalf("calls = %+v, want a newer attempt on the retry", calls)
+	if len(calls) != 2 || calls[0].Method != "ConfirmInit" || calls[1].Method != "Retry" || calls[1].Hash != x.spec.Hash() {
+		t.Fatalf("calls = %+v, want one confirm then one retry with the spec hash", calls)
+	}
+	if s, _ := x.fake.State(nrOp); s.Attempt <= calls[0].Attempt {
+		t.Fatalf("the retry attempt %d is not newer than %d", s.Attempt, calls[0].Attempt)
 	}
 	x.fake.Finish(nrOp)
 	x.waitFor(v.ID, core.ProposalExecuted)
+}
+
+// The publish flow retries through the same port call.
+func TestStoppedPublishIsRetriedThroughRetry(t *testing.T) {
+	x := newNR(t)
+	x.toReady()
+	v := x.mustCreate(x.publishAction())
+	x.confirm(v)
+	x.waitConfirmedAndRunning(v.ID)
+	x.fake.Stop(nrOp, "host_refused")
+	x.waitFor(v.ID, core.ProposalFailed)
+	if _, err := x.svc.Retry(x.ctx, v.ID, "user"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; x.fake.Retries() < 1; i++ {
+		if i > 5000 {
+			t.Fatal("the retry never reached the lifecycle")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	x.settleQueue()
+	if x.fake.Confirms() != 1 || x.fake.Reconciles() != 0 {
+		t.Fatalf("confirms %d, reconciles %d: a retry must not confirm or reconcile", x.fake.Confirms(), x.fake.Reconciles())
+	}
+	x.fake.Finish(nrOp)
+	x.waitFor(v.ID, core.ProposalExecuted)
+}
+
+// A retry the lifecycle refuses (nothing written) is a definite refusal: the
+// hand-off is failed, the proposal fails and can be retried, and nothing loops
+// through reconciliation.
+func TestRefusedRetryIsADefiniteRefusalNotAReconcileLoop(t *testing.T) {
+	x := newNR(t)
+	v := x.mustCreate(x.initAction())
+	x.confirm(v)
+	x.waitConfirmedAndRunning(v.ID)
+	x.fake.Stop(nrOp, "stage_failed")
+	x.waitFor(v.ID, core.ProposalFailed)
+	x.fake.Script(proposalstest.FailBefore, proposalstest.ErrFakeRefused{Msg: "Something changed since you confirmed."})
+	if _, err := x.svc.Retry(x.ctx, v.ID, "user"); err != nil {
+		t.Fatal(err)
+	}
+	x.waitForAttempt(v.ID, 2)
+	got := x.waitFor(v.ID, core.ProposalFailed)
+	if !got.Retryable || got.Attempt != 2 || !strings.Contains(got.Message, "Something changed") {
+		t.Fatalf("after a refused retry: %+v", got)
+	}
+	if x.fake.Retries() != 1 || x.fake.Reconciles() != 0 {
+		t.Fatalf("retries %d, reconciles %d", x.fake.Retries(), x.fake.Reconciles())
+	}
+	if es := x.effectStates(v.ID); len(es) != 2 || es[1] != db.EffectFailed {
+		t.Fatalf("effects = %v, want the refused hand-off failed", es)
+	}
 }
 
 // A rejection or an untracked project never resumes: the proposal fails and a

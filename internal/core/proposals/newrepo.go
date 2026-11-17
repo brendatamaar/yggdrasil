@@ -76,7 +76,12 @@ type NewRepoPlan string
 
 const (
 	// PlanNewRepoStart: call the lifecycle's confirm, once, for this attempt.
+	// Only offered when nothing ran yet.
 	PlanNewRepoStart NewRepoPlan = "start"
+	// PlanNewRepoRetry: the operation stopped definitely at a stage and this
+	// confirmed attempt is the human's fresh confirmation to retry it. Call the
+	// lifecycle's retry, once. A confirm cannot resume a stopped operation.
+	PlanNewRepoRetry NewRepoPlan = "retry"
 	// PlanNewRepoDone: the work is already finished; report it, call nothing.
 	PlanNewRepoDone NewRepoPlan = "done"
 	// PlanNewRepoWait: a worker owns the operation; call nothing and wait for it.
@@ -100,8 +105,8 @@ func StopRetryable(reason string) bool {
 }
 
 // PlanNewRepo decides what the executor of a kind (InitRepo or PublishRepo)
-// does with the operation as it is now. It never plans a second start while a
-// worker owns the operation or its outcome is unknown.
+// does with the operation as it is now. It never plans a start or a retry while
+// a worker owns the operation or its outcome is unknown.
 func PlanNewRepo(kind core.ProposalKind, v OperationView) NewRepoPlan {
 	switch kind {
 	case core.ProposalInitRepo:
@@ -137,7 +142,7 @@ func planInit(v OperationView) NewRepoPlan {
 		case v.Flow == FlowPublish:
 			return PlanNewRepoDone
 		case v.Flow == FlowInit && StopRetryable(v.StopReason):
-			return PlanNewRepoStart
+			return PlanNewRepoRetry
 		}
 	}
 	return PlanNewRepoRefuse
@@ -159,7 +164,7 @@ func planPublish(v OperationView) NewRepoPlan {
 		}
 	case OpStopped:
 		if v.Flow == FlowPublish && StopRetryable(v.StopReason) {
-			return PlanNewRepoStart
+			return PlanNewRepoRetry
 		}
 	}
 	return PlanNewRepoRefuse

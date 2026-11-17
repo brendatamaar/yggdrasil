@@ -17,6 +17,22 @@ func newRepoRig(t *testing.T) NewRepoRig {
 		Phase:   func(op core.OperationID) OpPhase { s, _ := f.State(op); return s.Phase },
 		Effects: f.Effects,
 		Finish:  f.Finish,
+		Stopped: func(t *testing.T) (core.OperationID, string) {
+			f.AddInit("op_stopped", "init-hash")
+			if err := f.ConfirmInit(context.Background(), "op_stopped", "init-hash", 1); err != nil {
+				t.Fatal(err)
+			}
+			f.Stop("op_stopped", "stage_failed")
+			return "op_stopped", "init-hash"
+		},
+		StoppedForGood: func(t *testing.T) (core.OperationID, string) {
+			f.AddInit("op_final", "init-hash")
+			if err := f.ConfirmInit(context.Background(), "op_final", "init-hash", 1); err != nil {
+				t.Fatal(err)
+			}
+			f.Stop("op_final", "rejected")
+			return "op_final", "init-hash"
+		},
 	}
 }
 

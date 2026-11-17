@@ -2,7 +2,10 @@ package proposalstest
 
 // FakeNewRepoLifecycle is an in-memory stand-in for the durable new-repo
 // lifecycle (internal/newrepos) behind the proposals port NewRepoLifecycle
-// (ConfirmInit, ConfirmPublish, ReconcileOperation). It keeps a small state
+// (ConfirmInit, ConfirmPublish, Retry, ReconcileOperation). It behaves like the
+// real service: a confirm starts an operation that has not run, a stopped
+// operation is NOT restarted by a confirm (only Retry resumes it), and every
+// refusal that started nothing says so (NothingWritten). It keeps a small state
 // machine per operation, counts every call and every effect that took hold,
 // injects one-shot faults (FailBefore: the call had no effect; FailAfter: the
 // effect happened and the reply was lost) and reports state changes in the
@@ -11,8 +14,7 @@ package proposalstest
 // (Service.OperationChanged). It never touches a disk or a host.
 //
 // NewRepoLifecycleContract runs the port's rules against this fake; the real
-// newrepos.Service runs the same suite when it is wired (the live run belongs
-// to wiring, because it needs the reservation store and platform fakes).
+// newrepos.Service runs the same suite from internal/newrepos tests.
 
 import (
 	"context"
@@ -55,7 +57,7 @@ type OpState struct {
 
 // NewRepoCall is one call of the port.
 type NewRepoCall struct {
-	Method  string // "ConfirmInit", "ConfirmPublish" or "ReconcileOperation"
+	Method  string // "ConfirmInit", "ConfirmPublish", "Retry" or "ReconcileOperation"
 	Op      core.OperationID
 	Hash    string
 	Attempt int
@@ -161,20 +163,25 @@ func (f *NewRepoFake) Calls() []NewRepoCall {
 }
 
 // Confirms counts ConfirmInit and ConfirmPublish calls.
-func (f *NewRepoFake) Confirms() int {
+func (f *NewRepoFake) Confirms() int { return f.count("ConfirmInit") + f.count("ConfirmPublish") }
+
+// Retries counts Retry calls.
+func (f *NewRepoFake) Retries() int { return f.count("Retry") }
+
+// Reconciles counts ReconcileOperation calls.
+func (f *NewRepoFake) Reconciles() int { return f.count("ReconcileOperation") }
+
+func (f *NewRepoFake) count(method string) int {
 	n := 0
 	for _, c := range f.Calls() {
-		if c.Method != "ReconcileOperation" {
+		if c.Method == method {
 			n++
 		}
 	}
 	return n
 }
 
-// Reconciles counts ReconcileOperation calls.
-func (f *NewRepoFake) Reconciles() int { return len(f.Calls()) - f.Confirms() }
-
-// Effects counts the confirms that started or resumed work.
+// Effects counts the confirms and retries that started or resumed work.
 func (f *NewRepoFake) Effects() int { f.mu.Lock(); defer f.mu.Unlock(); return f.effects }
 
 // move sets the operation's state and reports it (outside the lock).
@@ -243,8 +250,9 @@ func (f *NewRepoFake) record(c NewRepoCall) (fault Fault, ferr error) {
 
 // confirm is the shared rule of both confirms: a known operation, the immutable
 // hash, a fresh attempt. An operation that is already running, uncertain or
-// done takes no second start (the duplicate returns nil with no effect); a
-// stopped one resumes only with a strictly greater attempt.
+// done takes no second start (the duplicate returns nil with no effect). A
+// stopped operation is not restarted by a confirm: that is a refusal, and only
+// Retry resumes it.
 func (f *NewRepoFake) confirm(ctx context.Context, method string, op core.OperationID, hash string, attempt int, flow OpFlow) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -270,10 +278,7 @@ func (f *NewRepoFake) confirm(ctx context.Context, method string, op core.Operat
 			refusal = ErrFakeRefused{Msg: "That attempt was already used."}
 		}
 	case s.Phase == PhaseStopped && s.Flow == flow:
-		start = attempt > s.Attempt
-		if !start {
-			refusal = ErrFakeRefused{Msg: "A retry needs a newer attempt than the one that stopped."}
-		}
+		refusal = ErrFakeRefused{Msg: "This stopped. A confirm does not restart it; ask to retry it."}
 	case flow == FlowPublish && s.Phase == PhaseIdle:
 		refusal = ErrFakeRefused{Msg: "The repo is not ready to publish."}
 	}
@@ -303,6 +308,60 @@ func (f *NewRepoFake) ConfirmInit(ctx context.Context, op core.OperationID, hash
 // ConfirmPublish implements the port.
 func (f *NewRepoFake) ConfirmPublish(ctx context.Context, op core.OperationID, hash string, attempt int) error {
 	return f.confirm(ctx, "ConfirmPublish", op, hash, attempt, FlowPublish)
+}
+
+// stopRetryable mirrors the lifecycle: a rejection, an untracked project, a
+// conflict and a missing implementation never resume.
+func stopRetryable(reason string) bool {
+	switch reason {
+	case "rejected", "untracked", "conflict", "not_implemented":
+		return false
+	}
+	return true
+}
+
+// Retry implements the port: the fresh confirmation to resume a stopped
+// operation. It needs the immutable hash of the operation's flow and a stop
+// that can resume; the attempt is the stopped one plus one.
+func (f *NewRepoFake) Retry(ctx context.Context, op core.OperationID, hash string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	fault, ferr := f.record(NewRepoCall{Method: "Retry", Op: op, Hash: hash})
+	if fault == FailBefore {
+		return ferr
+	}
+	var refusal error
+	next := 0
+	var flow OpFlow
+	f.mu.Lock()
+	s, ok := f.ops[op]
+	switch {
+	case !ok:
+		refusal = ErrFakeRefused{Msg: "There is no such new repo operation."}
+	case s.Phase != PhaseStopped:
+		refusal = ErrFakeRefused{Msg: "This new repo is not waiting for that step."}
+	case !stopRetryable(s.Reason):
+		refusal = ErrFakeRefused{Msg: "This stopped for good; it is not retried."}
+	case s.Flow == FlowInit && hash != s.Hash, s.Flow == FlowPublish && hash != s.PubHash:
+		refusal = ErrFakeRefused{Msg: "What was confirmed is not what this operation holds."}
+	default:
+		next, flow = s.Attempt+1, s.Flow
+	}
+	f.mu.Unlock()
+	if refusal != nil {
+		return refusal
+	}
+	f.mu.Lock()
+	f.effects++
+	f.mu.Unlock()
+	f.move(op, func(s *OpState) {
+		s.Phase, s.Flow, s.Attempt, s.Reason = PhaseRunning, flow, next, ""
+	})
+	if fault == FailAfter {
+		return ferr
+	}
+	return nil
 }
 
 // ReconcileOperation implements the port: read-only unless a result was

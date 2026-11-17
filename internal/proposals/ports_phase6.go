@@ -58,6 +58,16 @@ type NewRepoLifecycle interface {
 	// ConfirmPublish starts publishing a ready repo after the user confirmed the
 	// PublishRepo hash.
 	ConfirmPublish(ctx context.Context, op core.OperationID, hash string, attempt int) error
+	// Retry is the human's fresh confirmation to retry the stage a Stopped (or
+	// Uncertain) operation parked at; hash is the immutable spec hash, as for the
+	// confirms. The lifecycle picks the attempt itself (the parked one plus one),
+	// rechecks read-only that the stage's effect is still absent and the original
+	// preconditions hold, and resumes only then. ConfirmInit and ConfirmPublish
+	// never resume a stopped operation; only Retry does. A refusal that started
+	// nothing (wrong hash, an operation that cannot retry, preconditions that
+	// changed) is an error with NothingWritten() true; any other error is
+	// treated as an unknown outcome and only reconciled.
+	Retry(ctx context.Context, op core.OperationID, hash string) error
 	// ReconcileOperation runs the read-only reconciliation of an operation left
 	// Initializing, Publishing or Uncertain by a crash.
 	ReconcileOperation(ctx context.Context, op core.OperationID) error
