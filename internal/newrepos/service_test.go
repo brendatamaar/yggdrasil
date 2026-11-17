@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/brendatamaar/yggdrasil/internal/api"
@@ -95,7 +96,10 @@ func TestMissingAuthorRefusesBeforeDiskEffects(t *testing.T) {
 // NR-01/02: the whole init flow on the real filesystem and real git.
 func TestInitHappyPath(t *testing.T) {
 	w := newWorld(t)
-	var seen []api.NewRepoState
+	var (
+		seenMu sync.Mutex
+		seen   []api.NewRepoState
+	)
 	w.hub.check = func(m api.NewRepoChangedMessage) {
 		// Every event is published after its state is committed, so the
 		// operation it names is always stored already.
@@ -103,7 +107,9 @@ func TestInitHappyPath(t *testing.T) {
 			t.Errorf("event for an operation that is not stored: %v", err)
 			return
 		}
+		seenMu.Lock()
 		seen = append(seen, m.State)
+		seenMu.Unlock()
 	}
 	rec := w.reserveAndPropose("shop-new")
 	if err := w.svc.ConfirmInit(w.ctx, rec.Operation.ID, rec.SpecHash, 1); err != nil {
@@ -152,6 +158,8 @@ func TestInitHappyPath(t *testing.T) {
 	if w.locks.max > 1 || w.locks.held != 0 || w.locks.total != 5 {
 		t.Errorf("main lock: max held %d, still held %d, takes %d (want one per local mutating stage, none left)", w.locks.max, w.locks.held, w.locks.total)
 	}
+	seenMu.Lock()
+	defer seenMu.Unlock()
 	if len(seen) < 7 {
 		t.Errorf("hub events = %v", seen)
 	}
