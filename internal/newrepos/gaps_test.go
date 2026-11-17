@@ -406,6 +406,7 @@ func TestNothingIsEverDeletedOrOverwritten(t *testing.T) {
 			w := newWorld(t)
 			mon := newDiskMonitor(t, w.parent)
 			w.f.observe = func(string) { mon.check("before a port call") }
+			w.f.after = func(string) { mon.check("after a port call") }
 			// A file somebody else owns sits beside the new folder; it must stay.
 			if err := os.WriteFile(filepath.Join(w.parent, "notes.txt"), []byte("mine\n"), 0o600); err != nil {
 				t.Fatal(err)
@@ -441,6 +442,7 @@ func TestNothingIsEverDeletedOrOverwritten(t *testing.T) {
 				w.waitFor(rec.Operation.ID, "ready", isState[corenewrepos.Ready])
 				mon.check("ready")
 				w.f.observe = func(string) { mon.check("before a port call") }
+				w.f.after = func(string) { mon.check("after a port call") }
 				w.f.on(c.op, 1, mode, c.err)
 				if _, err := w.publish(rec, "shop-new"); err != nil {
 					t.Fatal(err)
@@ -458,6 +460,7 @@ func TestNothingIsEverDeletedOrOverwritten(t *testing.T) {
 		w := newWorld(t)
 		mon := newDiskMonitor(t, w.parent)
 		w.f.observe = func(string) { mon.check("before a port call") }
+		w.f.after = func(string) { mon.check("after a port call") }
 		w.f.on("CommitFirst", 1, faultHang, nil)
 		rec := w.reserveAndPropose("shop-new")
 		_ = w.svc.ConfirmInit(w.ctx, rec.Operation.ID, rec.SpecHash, 1)
@@ -476,6 +479,7 @@ func TestNothingIsEverDeletedOrOverwritten(t *testing.T) {
 		w := newWorld(t)
 		mon := newDiskMonitor(t, w.parent)
 		w.f.observe = func(string) { mon.check("before a port call") }
+		w.f.after = func(string) { mon.check("after a port call") }
 		w.f.on("CreateFile", 2, faultHang, nil)
 		rec := w.reserveAndPropose("shop-new")
 		_ = w.svc.ConfirmInit(w.ctx, rec.Operation.ID, rec.SpecHash, 1)

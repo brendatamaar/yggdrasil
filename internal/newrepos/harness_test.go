@@ -51,6 +51,7 @@ type plan struct {
 type faults struct {
 	mu      sync.Mutex
 	observe func(op string) // called before every counted call, outside the lock
+	after   func(op string) // called after the effect of every counted call, before its result is returned
 	plans   map[string][]plan
 	calls   map[string]int
 	entered chan string
@@ -125,6 +126,9 @@ func (f *faults) run(ctx context.Context, op string, fn func() error) error {
 		}
 	}
 	err := fn()
+	if f.after != nil {
+		f.after(op)
+	}
 	if err == nil && p != nil && p.mode == faultLost {
 		return fmt.Errorf("%s: %w", op, p.err)
 	}

@@ -717,6 +717,7 @@ func FuzzValidateReceipt(f *testing.F) {
 				if v.Identity == "" || strings.ContainsAny(v.Identity, "\x00\r\n") {
 					t.Fatalf("accepted identity %q", v.Identity)
 				}
+			case GitReceipt, CommitReceipt, TrackedReceipt, PushReceipt:
 			}
 		}
 	})
