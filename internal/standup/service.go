@@ -21,6 +21,9 @@ import (
 // readConcurrency bounds the source reads that run at once.
 const readConcurrency = 8
 
+// maxFinished bounds the remembered polish results.
+const maxFinished = 256
+
 // ErrSuperseded means a newer refresh of the same project replaced this one.
 var ErrSuperseded = errors.New("standup request superseded")
 
@@ -37,6 +40,9 @@ type Service struct {
 	mu       sync.Mutex
 	projects map[core.ProjectID]*projectRead
 	inflight map[core.RequestID]*polishCall
+	// finished remembers the last maxFinished successful polishes by request ID.
+	finished      map[core.RequestID]*polishCall
+	finishedOrder []core.RequestID
 }
 
 // projectRead is the shared standup state of one project: the latest refresh
@@ -73,7 +79,7 @@ func New(d Deps) (*Service, error) {
 	case d.Clock == nil:
 		d.Clock = time.Now
 	}
-	return &Service{d: d, projects: map[core.ProjectID]*projectRead{}, inflight: map[core.RequestID]*polishCall{}}, nil
+	return &Service{d: d, projects: map[core.ProjectID]*projectRead{}, inflight: map[core.RequestID]*polishCall{}, finished: map[core.RequestID]*polishCall{}}, nil
 }
 
 // Result is what a refresh returns: the range and the state after the read,
@@ -116,6 +122,7 @@ func (s *Service) Refresh(ctx context.Context, project core.ProjectID, from, to 
 			}
 		case corestandup.ReadSources:
 			attempt = c.Attempt
+		case corestandup.ReturnSummary, corestandup.Explain, corestandup.SubmitAskDraft:
 		}
 	}
 	if attempt == 0 {

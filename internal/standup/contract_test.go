@@ -110,4 +110,3 @@ func (s *gitSource) ListRepos(context.Context, core.ProjectID) ([]core.Repo, err
 	defer s.mu.Unlock()
 	return append([]core.Repo(nil), s.repos...), nil
 }
-

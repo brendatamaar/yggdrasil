@@ -30,6 +30,7 @@ type script struct {
 	mu     sync.Mutex
 	broken map[core.RepoID]error
 	block  map[core.RepoID]bool
+	once   map[core.RepoID]bool
 	calls  map[core.RepoID]int
 }
 
@@ -37,6 +38,7 @@ func (s *script) init() {
 	if s.broken == nil {
 		s.broken = map[core.RepoID]error{}
 		s.block = map[core.RepoID]bool{}
+		s.once = map[core.RepoID]bool{}
 		s.calls = map[core.RepoID]int{}
 	}
 }
@@ -55,6 +57,14 @@ func (s *script) Block(repo core.RepoID) {
 	defer s.mu.Unlock()
 	s.init()
 	s.block[repo] = true
+}
+
+// BlockFirst makes only the first read of repo wait until its context is done.
+func (s *script) BlockFirst(repo core.RepoID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.init()
+	s.once[repo] = true
 }
 
 // Calls is how many reads of repo started.
@@ -83,6 +93,10 @@ func (s *script) enter(ctx context.Context, repo core.RepoID, known bool) error 
 	s.calls[repo]++
 	err, broken := s.broken[repo]
 	block := s.block[repo]
+	if s.once[repo] {
+		block = true
+		delete(s.once, repo)
+	}
 	s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err

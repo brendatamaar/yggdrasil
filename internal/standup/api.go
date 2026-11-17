@@ -40,7 +40,7 @@ func toResponse(project core.ProjectID, res Result) api.StandupResponse {
 	case corestandup.Failed:
 		out.Phase, out.Message = api.StandupFailed, st.Reason
 		return out
-	default:
+	case corestandup.Empty, corestandup.Loading:
 		out.Phase, out.Message = api.StandupFailed, "The standup is not available."
 		return out
 	}
@@ -82,15 +82,11 @@ func (s *Service) Polish(ctx context.Context, project core.ProjectID, req api.St
 	s.mu.Lock()
 	if c, ok := s.inflight[req.RequestID]; ok {
 		s.mu.Unlock()
-		if c.key != key {
-			return api.ActionResultDTO{}, apperr.New(apperr.Conflict, "This request was already used for a different standup. Try again.", nil)
-		}
-		select {
-		case <-c.done:
-			return c.res, c.err
-		case <-ctx.Done():
-			return api.ActionResultDTO{}, fmt.Errorf("wait for the standup polish: %w", ctx.Err())
-		}
+		return waitPolish(ctx, c, key)
+	}
+	if c, ok := s.finished[req.RequestID]; ok {
+		s.mu.Unlock()
+		return waitPolish(ctx, c, key)
 	}
 	c := &polishCall{key: key, done: make(chan struct{})}
 	s.inflight[req.RequestID] = c
@@ -99,9 +95,33 @@ func (s *Service) Polish(ctx context.Context, project core.ProjectID, req api.St
 	c.res, c.err = s.polish(ctx, project, rng, req)
 	s.mu.Lock()
 	delete(s.inflight, req.RequestID)
+	if c.err == nil {
+		// Remember the result so a repeat of this request answers the same task
+		// without another submission. Only successes are kept: a failed one may
+		// be retried with the same ID (the action path is idempotent too).
+		s.finished[req.RequestID] = c
+		s.finishedOrder = append(s.finishedOrder, req.RequestID)
+		if len(s.finishedOrder) > maxFinished {
+			delete(s.finished, s.finishedOrder[0])
+			s.finishedOrder = s.finishedOrder[1:]
+		}
+	}
 	s.mu.Unlock()
 	close(c.done)
 	return c.res, c.err
+}
+
+// waitPolish answers a repeat of a request that is running or finished.
+func waitPolish(ctx context.Context, c *polishCall, key string) (api.ActionResultDTO, error) {
+	if c.key != key {
+		return api.ActionResultDTO{}, apperr.New(apperr.Conflict, "This request was already used for a different standup. Try again.", nil)
+	}
+	select {
+	case <-c.done:
+		return c.res, c.err
+	case <-ctx.Done():
+		return api.ActionResultDTO{}, fmt.Errorf("wait for the standup polish: %w", ctx.Err())
+	}
 }
 
 func (s *Service) polish(ctx context.Context, project core.ProjectID, rng corestandup.Range, req api.StandupPolishRequest) (api.ActionResultDTO, error) {
@@ -124,7 +144,7 @@ func (s *Service) polish(ctx context.Context, project core.ProjectID, rng corest
 	st, _ = corestandup.Step(st, in)
 	switch st.State.(type) {
 	case corestandup.Ready, corestandup.Partial:
-	default:
+	case corestandup.Empty, corestandup.Loading, corestandup.Failed:
 		return api.ActionResultDTO{}, apperr.New(apperr.Unavailable, "The standup could not be read, so there is nothing to polish. Refresh and try again.", nil)
 	}
 	_, cmds := corestandup.Step(st, corestandup.PolishRequested{RequestID: req.RequestID})
@@ -157,7 +177,7 @@ func validAgent(agent, model string) error {
 		return bad("Choose an agent to polish the standup.")
 	}
 	for _, r := range agent {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.') {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-' && r != '_' && r != '.' {
 			return bad("The agent name is not valid.")
 		}
 	}

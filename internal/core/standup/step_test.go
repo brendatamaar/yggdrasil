@@ -289,7 +289,7 @@ func TestPropPartialNeverFabricated(t *testing.T) {
 			if len(labels) != 0 {
 				t.Fatalf("seed %d: Ready with labels", seed)
 			}
-		default:
+		case Empty, Loading, Failed:
 			t.Fatalf("seed %d: state %T", seed, st.State)
 		}
 	}
@@ -422,7 +422,7 @@ func TestPropPolishOnlyOnExplicitInput(t *testing.T) {
 				}
 				switch before.State.(type) {
 				case Ready, Partial:
-				default:
+				case Empty, Loading, Failed:
 					t.Fatalf("seed %d: SubmitAskDraft from %T", seed, before.State)
 				}
 				if sub.Text == "" || sub.RequestID.Validate() != nil {

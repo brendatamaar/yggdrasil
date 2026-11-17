@@ -94,7 +94,7 @@ func stepPolish(s Standup, in PolishRequested) (Standup, []Command) {
 		text = st.Summary.Text
 	case Partial:
 		text = st.Summary.Text
-	default:
+	case Empty, Loading, Failed:
 		return s, nil
 	}
 	if text == "" {
