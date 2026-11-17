@@ -358,8 +358,13 @@ func isDevice(seg string) bool {
 	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "CLOCK$":
 		return true
 	}
-	if len(stem) == 4 && (strings.HasPrefix(stem, "COM") || strings.HasPrefix(stem, "LPT")) {
-		return stem[3] >= '0' && stem[3] <= '9'
+	if strings.HasPrefix(stem, "COM") || strings.HasPrefix(stem, "LPT") {
+		rest := stem[3:]
+		// COM0-COM9 and LPT0-LPT9, and the superscript digits Windows also reserves.
+		switch rest {
+		case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "\u00b9", "\u00b2", "\u00b3":
+			return true
+		}
 	}
 	return false
 }

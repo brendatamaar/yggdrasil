@@ -90,11 +90,26 @@ type authRT struct {
 	inner http.RoundTripper
 	authz Authorizer
 	only  string
+	// prefix is the validated repository path (no trailing slash). The credential
+	// is for that one repository: a same-host request for another path is refused.
+	prefix string
+}
+
+// inRepoPath reports whether path is the repository's own path or below it.
+func inRepoPath(prefix, path string) bool {
+	if path == prefix || strings.HasPrefix(path, prefix+"/") {
+		return true
+	}
+	// A URL given without ".git" is served below "<path>.git/" by some hosts.
+	return !strings.HasSuffix(prefix, ".git") && strings.HasPrefix(path, prefix+".git/")
 }
 
 func (a *authRT) RoundTrip(req *http.Request) (*http.Response, error) {
 	if authority(req.URL) != a.only {
 		return nil, errors.New("refusing to send a request to another host")
+	}
+	if !inRepoPath(a.prefix, req.URL.Path) {
+		return nil, errors.New("refusing to send a request for another repository")
 	}
 	out := req.Clone(req.Context())
 	// Anything the credential holder sets other than Authorization is refused.
@@ -141,6 +156,7 @@ func (t *GoGitTransport) newCall(rawURL string) (*pubCall, error) {
 		return nil, &Error{Op: "publish", Err: ErrBadRemoteURL, UserMsg: "The remote address is not valid."}
 	}
 	only := authority(u)
+	prefix := strings.TrimRight(u.Path, "/")
 	base := t.factory()
 	if base == nil {
 		base = DefaultClientFactory()
@@ -150,12 +166,15 @@ func (t *GoGitTransport) newCall(rawURL string) (*pubCall, error) {
 		inner = http.DefaultTransport
 	}
 	hc := &http.Client{
-		Transport: &authRT{inner: inner, authz: t.authz, only: only},
+		Transport: &authRT{inner: inner, authz: t.authz, only: only, prefix: prefix},
 		Timeout:   base.Timeout,
 		// No cookie jar: nothing but the Authorizer's header carries identity.
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if authority(req.URL) != only {
 				return errors.New("the remote redirected to another host; Yggdrasil does not follow it")
+			}
+			if !inRepoPath(prefix, req.URL.Path) {
+				return errors.New("the remote redirected to another repository; Yggdrasil does not follow it")
 			}
 			return nil
 		},

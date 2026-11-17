@@ -129,6 +129,41 @@ func TestPublishRefusesRedirectToAnotherHost(t *testing.T) {
 	}
 }
 
+// A redirect to another repository on the SAME host is refused too: the
+// credential is for the one validated repository path, not for the whole host.
+func TestPublishRefusesRedirectToAnotherRepositoryOnTheSameHost(t *testing.T) {
+	w := realWorld(t)
+	w.Server.AddRepo("/acme/other-repo")
+	w.Server.Wrap = func(rw http.ResponseWriter, r *http.Request) bool {
+		if strings.HasPrefix(r.URL.Path, "/acme/other-repo") {
+			return false
+		}
+		rest := strings.TrimPrefix(r.URL.Path, "/acme/shop-api")
+		http.Redirect(rw, r, w.Server.URL+"/acme/other-repo"+rest+"?"+r.URL.RawQuery, http.StatusFound)
+		return true
+	}
+	tr, err := git.NewGoGitTransport(w.Authz, func() *http.Client { return w.Server.Client() })
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := w.Request()
+	ctx := context.Background()
+	if _, err := tr.PublishBranch(ctx, req); err == nil {
+		t.Fatal("a same-host redirect to another repository was followed")
+	}
+	if _, err := tr.RemoteBranch(ctx, req); err == nil {
+		t.Fatal("a same-host redirect to another repository was followed on read")
+	}
+	for _, r := range w.Server.Requests() {
+		if strings.HasPrefix(r.Path, "/acme/other-repo") {
+			t.Fatalf("the other repository received a request: %+v", r)
+		}
+	}
+	if w.Pushes() != 0 {
+		t.Fatal("something was pushed")
+	}
+}
+
 // The publish path starts no process: it works with an empty PATH, where no git
 // binary can be found, and no token can reach a child's environment.
 func TestPublishStartsNoSubprocess(t *testing.T) {

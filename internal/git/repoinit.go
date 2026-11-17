@@ -79,7 +79,7 @@ func (g *Git) InitRepo(ctx context.Context, dir, branch string) error {
 // commit will not fail for a missing identity.
 func (g *Git) HasAuthor(ctx context.Context, dir string) (bool, error) {
 	for _, v := range []string{"GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"} {
-		_, _, code, err := g.exec(ctx, dir, "author", nil, "var", v)
+		_, _, code, err := g.exec(ctx, dir, "author", nil, "-c", "user.useConfigOnly=true", "var", v)
 		if err != nil {
 			return false, err
 		}
@@ -122,7 +122,7 @@ func (g *Git) CommitFirst(ctx context.Context, dir string, files []string, messa
 	if err := g.Add(ctx, dir, files); err != nil {
 		return FirstCommit{}, err
 	}
-	argv := []string{"-c", "core.hooksPath=" + hooks, "-c", "core.fsmonitor=false", literal,
+	argv := []string{"-c", "core.hooksPath=" + hooks, "-c", "core.fsmonitor=false", "-c", "user.useConfigOnly=true", "-c", "commit.gpgsign=false", literal,
 		"commit", "--no-verify", "--only", "-q", "--cleanup=verbatim", "-F", "-", "--"}
 	argv = append(argv, files...)
 	if _, err := g.execOK(ctx, dir, "first commit", strings.NewReader(strings.TrimSpace(message)+"\n"), argv...); err != nil {

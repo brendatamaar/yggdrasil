@@ -75,7 +75,7 @@ func TestCheckLeafRejectionRules(t *testing.T) {
 		{"8.3 short name", []string{"PROGRA~1", "progra~1", "a~1", "LONGDI~1.TXT", "abcdef~12", "x~9.git"}},
 		{"classic device names", []string{"CON", "con", "Prn", "AUX", "NUL", "nul", "CONIN$", "CONOUT$", "CLOCK$"}},
 		{"device names with an extension", []string{"con.txt", "NUL.md", "aux.tar.gz", "COM1.txt", "LPT9.log"}},
-		{"numbered devices", []string{"COM0", "COM1", "com9", "LPT0", "lpt1", "LPT9"}},
+		{"numbered devices", []string{"COM0", "COM1", "com9", "LPT0", "lpt1", "LPT9", "COM\u00b9", "lpt\u00b2", "COM\u00b3.txt"}},
 	}
 	for _, r := range rules {
 		t.Run(r.rule, func(t *testing.T) {
