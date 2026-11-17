@@ -288,6 +288,9 @@ func Step(s State, in Input) (State, []Command) {
 			return Closed{}, nil
 		case TaskTransition, VerificationTransition:
 			return transition(st, in)
+		case Recovered:
+			// Already recovered: a second Recovered changes nothing.
+			return s, nil
 		}
 	}
 	return s, nil
@@ -379,7 +382,7 @@ func transition(cur Current, in Input) (State, []Command) {
 		}
 		key = Key{Task: x.Task, Source: Source{Kind: SourceVerification, RunID: x.RunID}}
 		title, rev, at, id = x.Title, x.Revision, x.Now, x.ID
-	default:
+	case Recovered, Stop:
 		return cur, nil
 	}
 	if key.Task.Validate() != nil || key.Source.Validate() != nil || rev <= 0 {

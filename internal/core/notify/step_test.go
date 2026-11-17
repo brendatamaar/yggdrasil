@@ -244,12 +244,14 @@ func TestPropStepInvariants(t *testing.T) {
 					if cc.Revision <= prevHW[cc.Key] {
 						t.Fatalf("seed %d: high-water write not above mark", seed)
 					}
+				case PublishNotice:
+					// checked with its PersistNoticeAndAudit above
 				}
 			}
 			if len(cmds) == 0 {
 				switch in.(type) {
 				case Stop, Recovered:
-				default:
+				case TaskTransition, VerificationTransition:
 					if reflect.TypeOf(s2) == reflect.TypeOf(prev) && !reflect.DeepEqual(s2, prev) {
 						t.Fatalf("seed %d: state changed with no command on %T", seed, in)
 					}
@@ -367,6 +369,7 @@ func TestPropRecoveredNoDuplicates(t *testing.T) {
 			switch in.(type) {
 			case Stop, Recovered:
 				continue
+			case TaskTransition, VerificationTransition:
 			}
 			all = append(all, in)
 			s, _ = Step(s, in)
