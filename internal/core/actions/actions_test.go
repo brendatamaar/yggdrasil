@@ -91,21 +91,3 @@ func TestDigestBindsTheRequest(t *testing.T) {
 		}
 	}
 }
-
-// The foundation Step and Catalogue are documented stubs: they change nothing
-// and ask for nothing, so no effect can run before the orchestration task.
-func TestStubsAreInert(t *testing.T) {
-	d := Submission{Request: Request{RequestID: "req_1"}, State: Idle{}}
-	for _, in := range []Input{
-		Requested{Request: d.Request}, Prepared{Attempt: 1}, PrepareFailed{Attempt: 1}, SubmitRequested{},
-		Submitted{Attempt: 1}, SubmitFailed{Attempt: 1}, Cancel{}, Recovered{}, Reconciled{Attempt: 1},
-	} {
-		got, cmds := Step(d, in)
-		if got.State != d.State || got.Seq != d.Seq || len(cmds) != 0 {
-			t.Errorf("Step(%T) = %+v, %v", in, got, cmds)
-		}
-	}
-	if got := Catalogue(Facts{Repo: "rep_1", Reasons: Reasons()}); len(got) != 0 {
-		t.Errorf("Catalogue returned %d offerings from a stub", len(got))
-	}
-}

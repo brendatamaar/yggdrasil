@@ -16,6 +16,10 @@ type Submission struct {
 	Seq     int
 	Version int64
 	State   State
+	// IDs (additive field) are the identifiers the shell chose at Requested,
+	// kept so the later Dispatch command carries them and the core never
+	// generates one.
+	IDs IDs
 }
 
 // State is where a submission is (sealed): Idle, Preparing, Ready,
@@ -281,20 +285,3 @@ func (Audit) isCommand()               {}
 func (Publish) isCommand()             {}
 func (ReconcileDispatch) isCommand()   {}
 func (CancelPreparation) isCommand()   {}
-
-// Step is (submission2, commands) = Step(submission1, input) following the table
-// of docs/design/phase-6-actions.md. An input that does not apply returns the
-// dispatch unchanged and no commands.
-//
-// PENDING (task A): the foundation freezes the types; the transitions are not
-// implemented. Every input returns the submission unchanged and no commands, so
-// the dispatcher can never report a start that did not happen. It must not be
-// wired before the orchestration task lands.
-func Step(d Submission, in Input) (Submission, []Command) {
-	switch in.(type) {
-	case Requested, Prepared, PrepareFailed, SubmitRequested, Submitted,
-		SubmitFailed, Cancel, Recovered, Reconciled:
-		return d, nil
-	}
-	return d, nil
-}
