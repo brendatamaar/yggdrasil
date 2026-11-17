@@ -212,10 +212,16 @@ func (s *Service) recordEffects(ctx context.Context, tx *db.Tx, rec db.Reservati
 					return err
 				}
 			case corenewrepos.Stopped:
-				// A conflict leaves the effect's real outcome unknown; every other
-				// stop means the stage did not take effect.
-				if st.Attempt > 0 && st.Reason != corenewrepos.StopConflict {
-					if err := settle(c.Stage, st.Attempt, db.EffectFailed, "", nil, ""); err != nil {
+				// Only a stop that proves the stage did not take effect settles it as
+				// failed. A conflict leaves the real outcome unknown, and so does an
+				// untrack: it cancels a worker whose stage may still complete or may
+				// already have run, and cancellation is Unknown, never failure.
+				if st.Attempt > 0 {
+					state := db.EffectFailed
+					if stopLeavesOutcomeUnknown(st.Reason) {
+						state = db.EffectUnknown
+					}
+					if err := settle(c.Stage, st.Attempt, state, "", nil, ""); err != nil {
 						return err
 					}
 				}
@@ -245,6 +251,13 @@ func (s *Service) recordEffects(ctx context.Context, tx *db.Tx, rec db.Reservati
 		}
 	}
 	return nil
+}
+
+// stopLeavesOutcomeUnknown says whether a stop does not prove that the stage in
+// flight had no effect: a conflict (what was found does not match) and an
+// untrack (the worker was cancelled mid-stage).
+func stopLeavesOutcomeUnknown(r corenewrepos.StopReason) bool {
+	return r == corenewrepos.StopConflict || r == corenewrepos.StopUntracked
 }
 
 // publishProposal is the proposal the publish effects of an operation belong

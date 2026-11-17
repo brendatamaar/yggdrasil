@@ -27,27 +27,42 @@ func everyView() []OperationView {
 
 var newRepoKinds = []core.ProposalKind{core.ProposalInitRepo, core.ProposalPublish}
 
-// A start is only planned when nothing ran or after a definite, retryable
-// stop of the right flow: never while a worker owns the operation, while a
-// stage's outcome is unknown, or when the work is finished.
+// A start is only planned when nothing ran; a retry only after a definite,
+// retryable stop of the right flow (a confirm cannot resume a stopped
+// operation, so the two are different plans). Neither is ever planned while a
+// worker owns the operation, while a stage's outcome is unknown, or when the
+// work is finished.
 func TestPropPlanNewRepoNeverStartsWhileOwnedOrUnknown(t *testing.T) {
 	for _, kind := range newRepoKinds {
 		for _, v := range everyView() {
 			plan := PlanNewRepo(kind, v)
-			if plan == PlanNewRepoStart {
+			if plan == PlanNewRepoStart || plan == PlanNewRepoRetry {
 				switch v.Phase {
 				case OpRunning, OpUncertain, OpPublished:
-					t.Fatalf("%s %+v: planned a start", kind, v)
-				case OpStopped:
-					if !StopRetryable(v.StopReason) {
-						t.Fatalf("%s %+v: restart after a stop that never resumes", kind, v)
-					}
+					t.Fatalf("%s %+v: planned %s", kind, v, plan)
+				}
+			}
+			if plan == PlanNewRepoStart {
+				if v.Phase == OpStopped {
+					t.Fatalf("%s %+v: a stopped operation is retried, never started again", kind, v)
 				}
 				if kind == core.ProposalInitRepo && v.Phase == OpReady {
 					t.Fatalf("%s %+v: re-init of a ready repo", kind, v)
 				}
 				if kind == core.ProposalPublish && v.Phase == OpIdle {
 					t.Fatalf("%s %+v: publish before the repo is ready", kind, v)
+				}
+			}
+			if plan == PlanNewRepoRetry {
+				if v.Phase != OpStopped || !StopRetryable(v.StopReason) {
+					t.Fatalf("%s %+v: retry of an operation that is not stopped or never resumes", kind, v)
+				}
+				want := FlowInit
+				if kind == core.ProposalPublish {
+					want = FlowPublish
+				}
+				if v.Flow != want {
+					t.Fatalf("%s %+v: retry in the wrong flow", kind, v)
 				}
 			}
 			if v.Phase == OpUncertain && plan != PlanNewRepoReconcile && plan != PlanNewRepoRefuse && plan != PlanNewRepoDone {
@@ -57,6 +72,23 @@ func TestPropPlanNewRepoNeverStartsWhileOwnedOrUnknown(t *testing.T) {
 	}
 	if PlanNewRepo(core.ProposalCommit, OperationView{Phase: OpIdle}) != PlanNewRepoRefuse {
 		t.Error("another kind was planned")
+	}
+}
+
+// The plan table of the stopped phase, spelled out.
+func TestPlanNewRepoStoppedRetriesOnlyResumableStops(t *testing.T) {
+	for _, r := range []string{"path_exists", "missing_author", "stage_failed", "host_refused", "name_collision", "origin_exists", "unsupported_transport", "preconditions_changed"} {
+		if got := PlanNewRepo(core.ProposalInitRepo, OperationView{Phase: OpStopped, Flow: FlowInit, StopReason: r}); got != PlanNewRepoRetry {
+			t.Errorf("init stopped %s: plan %s, want retry", r, got)
+		}
+		if got := PlanNewRepo(core.ProposalPublish, OperationView{Phase: OpStopped, Flow: FlowPublish, StopReason: r}); got != PlanNewRepoRetry {
+			t.Errorf("publish stopped %s: plan %s, want retry", r, got)
+		}
+	}
+	for _, r := range []string{"rejected", "untracked", "conflict", "not_implemented"} {
+		if got := PlanNewRepo(core.ProposalInitRepo, OperationView{Phase: OpStopped, Flow: FlowInit, StopReason: r}); got != PlanNewRepoRefuse {
+			t.Errorf("init stopped %s: plan %s, want refuse", r, got)
+		}
 	}
 }
 

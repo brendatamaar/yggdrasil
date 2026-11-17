@@ -457,6 +457,25 @@ func TestRowRetry(t *testing.T) {
 		unchanged(t, from, o5, cmds)
 		_ = name
 	}
+	// The die-class stops (an impossible input or a missing implementation, a
+	// wrong receipt) never resume either: no new stage may run.
+	for _, reason := range []StopReason{StopConflict, StopNotImplemented} {
+		for name, resume := range map[string]Resumable{
+			"init":    ResumeInit{Spec: validInit(), Done: st.Done},
+			"publish": ResumePublish{Spec: validPublish(), Done: asPub(t, po).Done},
+		} {
+			var stage Stage = StageWriteREADME
+			hash := h
+			if rp, ok := resume.(ResumePublish); ok {
+				stage, hash = StageAddOrigin, rp.Spec.Hash()
+			}
+			from := Operation{ID: o.ID, Project: o.Project, Repo: o.Repo, State: Stopped{Stage: stage, Reason: reason, Resume: resume, Attempt: 1}}
+			o7, cmds := Step(from, RetryConfirmed{Hash: hash, Attempt: 9, PreconditionsHold: true})
+			if !same(from, o7) || len(cmds) != 0 {
+				t.Errorf("%s/%s: a die-class stop was retried: %+v %v", reason, name, o7.State, cmds)
+			}
+		}
+	}
 	// Retry in a state that is neither Stopped nor Uncertain.
 	o6, cmds := Step(o, RetryConfirmed{Hash: h, Attempt: 9, PreconditionsHold: true})
 	unchanged(t, o, o6, cmds)

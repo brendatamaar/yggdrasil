@@ -2,6 +2,7 @@ package proposalstest
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
@@ -12,6 +13,7 @@ import (
 type Lifecycle interface {
 	ConfirmInit(ctx context.Context, op core.OperationID, hash string, attempt int) error
 	ConfirmPublish(ctx context.Context, op core.OperationID, hash string, attempt int) error
+	Retry(ctx context.Context, op core.OperationID, hash string) error
 	ReconcileOperation(ctx context.Context, op core.OperationID) error
 }
 
@@ -30,6 +32,21 @@ type NewRepoRig struct {
 	Phase       func(op core.OperationID) OpPhase
 	Effects     func() int
 	Finish      func(op core.OperationID)
+	// Stopped makes a new initialization operation run and stop definitely at a
+	// stage that can be retried (for example a failed stage) and returns it,
+	// with its immutable spec hash, once it is Stopped. StoppedForGood does the
+	// same for a stop that never resumes (a rejection). Effects counts the
+	// starts so far, so the contract compares it before and after. Both are
+	// optional: a rig without them skips the retry clauses.
+	Stopped        func(t *testing.T) (core.OperationID, string)
+	StoppedForGood func(t *testing.T) (core.OperationID, string)
+}
+
+// notWritten reports whether err says, by the NothingWritten marker the
+// proposals executor reads, that the call started nothing.
+func notWritten(err error) bool {
+	var nw interface{ NothingWritten() bool }
+	return errors.As(err, &nw) && nw.NothingWritten()
 }
 
 // NewRepoLifecycleContract is what the InitRepo and PublishRepo executors rely
@@ -37,7 +54,10 @@ type NewRepoRig struct {
 // returns once the worker owns it; a wrong hash, an unknown operation or an
 // operation not ready is refused and starts nothing; the same attempt twice
 // starts nothing twice; a stale attempt starts nothing; a read-only reconcile
-// never starts work. The fake runs it (newrepo_contract_test.go); the real
+// never starts work; every refusal says that nothing was written (the executor
+// treats any other error as an unknown outcome and only reconciles); a stopped
+// operation is NOT restarted by a confirm, and only Retry with the immutable
+// hash resumes it, and never after a stop that cannot resume. The fake runs it (newrepo_contract_test.go); the real
 // newrepos.Service must run the same suite when it is wired.
 func NewRepoLifecycleContract(t *testing.T, mk func(t *testing.T) NewRepoRig) {
 	t.Helper()
@@ -56,8 +76,12 @@ func NewRepoLifecycleContract(t *testing.T, mk func(t *testing.T) NewRepoRig) {
 	})
 	t.Run("a different hash is refused and nothing starts", func(t *testing.T) {
 		r := mk(t)
-		if err := r.L.ConfirmInit(ctx, r.Init, "0000000000000000000000000000000000000000000000000000000000000000", 1); err == nil {
+		err := r.L.ConfirmInit(ctx, r.Init, "0000000000000000000000000000000000000000000000000000000000000000", 1)
+		if err == nil {
 			t.Fatal("ConfirmInit accepted a different hash")
+		}
+		if !notWritten(err) {
+			t.Fatalf("a refused confirm must say nothing was written, got %v", err)
 		}
 		if r.Phase(r.Init) != PhaseIdle || r.Effects() != 0 {
 			t.Fatalf("phase %s, effects %d after a refused confirm", r.Phase(r.Init), r.Effects())
@@ -144,6 +168,81 @@ func NewRepoLifecycleContract(t *testing.T, mk func(t *testing.T) NewRepoRig) {
 		_ = r.L.ConfirmInit(ctx, r.Init, r.InitHash, 2)
 		if r.Phase(r.Init) != PhaseReady || r.Effects() != 1 {
 			t.Fatalf("phase %s, effects %d after confirming a finished operation", r.Phase(r.Init), r.Effects())
+		}
+	})
+	t.Run("a stopped operation is not restarted by a confirm", func(t *testing.T) {
+		r := mk(t)
+		if r.Stopped == nil {
+			t.Skip("the rig cannot stop an operation")
+		}
+		op, hash := r.Stopped(t)
+		before := r.Effects()
+		err := r.L.ConfirmInit(ctx, op, hash, 99)
+		if err != nil && !notWritten(err) {
+			t.Fatalf("a confirm of a stopped operation must be a definite refusal, got %v", err)
+		}
+		if r.Phase(op) != PhaseStopped || r.Effects() != before {
+			t.Fatalf("phase %s, effects %d -> %d: a confirm restarted a stopped operation", r.Phase(op), before, r.Effects())
+		}
+	})
+	t.Run("retry resumes a stopped operation with the immutable hash", func(t *testing.T) {
+		r := mk(t)
+		if r.Stopped == nil {
+			t.Skip("the rig cannot stop an operation")
+		}
+		op, hash := r.Stopped(t)
+		before := r.Effects()
+		if err := r.L.Retry(ctx, op, hash); err != nil {
+			t.Fatalf("Retry = %v", err)
+		}
+		if r.Effects() != before+1 {
+			t.Fatalf("effects %d -> %d, want one more", before, r.Effects())
+		}
+		if p := r.Phase(op); p != PhaseRunning && p != PhaseReady && p != PhaseStopped {
+			t.Fatalf("phase after retry = %s", p)
+		}
+	})
+	t.Run("retry with a different hash is refused and nothing starts", func(t *testing.T) {
+		r := mk(t)
+		if r.Stopped == nil {
+			t.Skip("the rig cannot stop an operation")
+		}
+		op, _ := r.Stopped(t)
+		before := r.Effects()
+		err := r.L.Retry(ctx, op, "0000000000000000000000000000000000000000000000000000000000000000")
+		if err == nil || !notWritten(err) {
+			t.Fatalf("Retry with another hash = %v, want a refusal that says nothing was written", err)
+		}
+		if r.Phase(op) != PhaseStopped || r.Effects() != before {
+			t.Fatalf("phase %s, effects %d -> %d after a refused retry", r.Phase(op), before, r.Effects())
+		}
+	})
+	t.Run("retry of a stop that never resumes is refused", func(t *testing.T) {
+		r := mk(t)
+		if r.StoppedForGood == nil {
+			t.Skip("the rig cannot stop an operation for good")
+		}
+		op, hash := r.StoppedForGood(t)
+		before := r.Effects()
+		err := r.L.Retry(ctx, op, hash)
+		if err == nil || !notWritten(err) {
+			t.Fatalf("Retry of a final stop = %v, want a refusal that says nothing was written", err)
+		}
+		if r.Phase(op) != PhaseStopped || r.Effects() != before {
+			t.Fatalf("phase %s, effects %d -> %d after a refused retry", r.Phase(op), before, r.Effects())
+		}
+	})
+	t.Run("retry of an operation that is not stopped is refused", func(t *testing.T) {
+		r := mk(t)
+		err := r.L.Retry(ctx, r.Init, r.InitHash)
+		if err == nil || !notWritten(err) {
+			t.Fatalf("Retry of an operation that never ran = %v, want a refusal that says nothing was written", err)
+		}
+		if err := r.L.Retry(ctx, "op_unknown", r.InitHash); err == nil {
+			t.Fatal("Retry of an unknown operation was accepted")
+		}
+		if r.Effects() != 0 {
+			t.Fatal("a refused retry started work")
 		}
 	})
 }

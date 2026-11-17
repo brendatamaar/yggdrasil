@@ -7,14 +7,27 @@ import (
 	corenewrepos "github.com/brendatamaar/yggdrasil/internal/core/newrepos"
 )
 
+// refusal is an error that says nothing was written: the request was refused
+// before any state or effect changed. It carries plain-language text and the
+// NothingWritten marker the proposal executors read to tell a definite refusal
+// from an unknown outcome (internal/proposals.definiteRefusal). Callers match
+// the exported variables with errors.Is.
+type refusal struct{ msg string }
+
+func (e *refusal) Error() string        { return e.msg }
+func (e *refusal) UserMessage() string  { return e.msg }
+func (e *refusal) NothingWritten() bool { return true }
+
 // Errors the API layer can translate. Their text is plain language.
 var (
-	// ErrHashMismatch: the confirmed hash is not the one previewed.
-	ErrHashMismatch = errors.New("what you confirmed is not what was previewed; preview again and confirm the new version")
+	// ErrHashMismatch: the confirmed hash is not the one previewed. Nothing was written.
+	ErrHashMismatch error = &refusal{"what you confirmed is not what was previewed; preview again and confirm the new version"}
 	// ErrNotApplicable: the operation is not in a state that takes this step
-	// (already running, finished, rejected, or not yet proposed).
-	ErrNotApplicable = errors.New("this new repo is not waiting for that step")
-	// ErrClosed: the service is shutting down.
+	// (already running, finished, rejected, stopped for good or not yet
+	// proposed). Nothing was written.
+	ErrNotApplicable error = &refusal{"this new repo is not waiting for that step"}
+	// ErrClosed: the service is shutting down. It is not marked as "nothing was
+	// written": a shutdown can interrupt a call after its state was committed.
 	ErrClosed = errors.New("yggdrasil is shutting down; try again after it restarts")
 )
 
@@ -23,7 +36,9 @@ type RefusedError struct {
 	Reason corenewrepos.StopReason
 }
 
-func (e *RefusedError) Error() string { return Explain(e.Reason) }
+func (e *RefusedError) Error() string        { return Explain(e.Reason) }
+func (e *RefusedError) UserMessage() string  { return Explain(e.Reason) }
+func (e *RefusedError) NothingWritten() bool { return true }
 
 // Explain is the plain-language sentence for a stop reason.
 func Explain(r corenewrepos.StopReason) string {

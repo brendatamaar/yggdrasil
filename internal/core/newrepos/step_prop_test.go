@@ -672,6 +672,11 @@ func TestPropCrashAtEveryStageBoundary(t *testing.T) {
 					bad, cmds := Step(sp, RetryConfirmed{Hash: "x", Attempt: 2, PreconditionsHold: true})
 					unchanged(t, sp, bad, cmds)
 					r, cmds := Step(sp, RetryConfirmed{Hash: f.hash, Attempt: 2, PreconditionsHold: true})
+					if out == ReconcileConflict {
+						// A conflicting finding is the die class: no new effect, ever.
+						unchanged(t, sp, r, cmds)
+						continue
+					}
 					a, s, _ := curStage(r.State)
 					if a != 2 || s != stage {
 						t.Fatalf("%s retry: %+v", out, r.State)
