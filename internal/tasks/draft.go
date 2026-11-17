@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	coretasks "github.com/brendatamaar/yggdrasil/internal/core/tasks"
@@ -110,8 +111,22 @@ func (s *Service) ImportIssueDraft(ctx context.Context, spec coretasks.DraftSpec
 	}
 	taskID := core.TaskID(s.c.NewID("tsk"))
 	now := s.c.Now().UTC()
+	// A racing writer can still turn a write into a conflict; the second pass
+	// reads the committed row as a fact and lets the core decide again.
+	for attempt := 0; ; attempt++ {
+		result, err := s.importOnce(ctx, spec, digest, taskID, now)
+		if errors.Is(err, db.ErrConflict) && attempt == 0 {
+			continue
+		}
+		return result, err
+	}
+}
+
+// importOnce reads the facts of one import inside a transaction, asks the core
+// what to do and interprets the outcome. It makes no decision of its own.
+func (s *Service) importOnce(ctx context.Context, spec coretasks.DraftSpec, digest string, taskID core.TaskID, now time.Time) (DraftResult, error) {
 	var result DraftResult
-	err = s.c.Store.Commit(ctx, func(tx *db.Tx) error {
+	err := s.c.Store.Commit(ctx, func(tx *db.Tx) error {
 		// Everything the decision depends on is read inside this transaction.
 		// The store has one write connection, so nothing can commit between
 		// these reads and the writes below. The reads go through the read
@@ -120,29 +135,20 @@ func (s *Service) ImportIssueDraft(ctx context.Context, spec coretasks.DraftSpec
 		if err != nil {
 			return err
 		}
-		facts.TaskID, facts.Now = taskID, now
-		_, priorDigest, err := tx.GetTaskSubmission(ctx, spec.RequestID)
-		if err == nil {
-			// Scope precedes a replay and a digest check too: once the repo is
-			// untracked or reserved, neither the original draft nor the fact
-			// that this request ID exists is shown. Facts carry no Existing
-			// here, so PlanDraft can only refuse on scope.
-			if refuse, ok := coretasks.PlanDraft(spec, facts).(coretasks.DraftRefuse); ok {
-				return &RejectedError{Reason: string(refuse.Reason), Message: refuse.Reason.Message()}
-			}
-			if priorDigest != digest {
-				return db.ErrDigestMismatch
-			}
-			return db.ErrConflict // rollback, then reload the original outside Commit
-		}
-		if !errors.Is(err, db.ErrNotFound) {
+		facts.TaskID, facts.Now, facts.Digest = taskID, now, digest
+		facts.Replay = coretasks.NoReplay{}
+		replayTask, priorDigest, err := tx.GetTaskSubmission(ctx, spec.RequestID)
+		switch {
+		case err == nil:
+			facts.Replay = coretasks.Replayed{Task: replayTask, Digest: priorDigest}
+		case !errors.Is(err, db.ErrNotFound):
 			return err
 		}
-		// Dedup is read only after the scope facts, and PlanDraft refuses on
-		// scope before it looks at Existing, so an untracked repo never
-		// reveals an existing draft.
+		// The issue's existing draft is read only for a first request in a
+		// repo of the project: any other outcome ignores it, so the read
+		// would be wasted IO (and the core refuses out-of-scope facts anyway).
 		var old core.Task
-		if facts.RepoTracked && facts.RepoReady {
+		if _, replayed := facts.Replay.(coretasks.Replayed); !replayed && facts.RepoTracked && facts.RepoReady {
 			old, err = s.c.Store.GetDraftByDedupKey(ctx, spec.Project, spec.Issue.DedupKey())
 			switch {
 			case err == nil:
@@ -152,6 +158,14 @@ func (s *Service) ImportIssueDraft(ctx context.Context, spec coretasks.DraftSpec
 			}
 		}
 		switch out := coretasks.PlanDraft(spec, facts).(type) {
+		case coretasks.DraftReplayed:
+			// Nothing to write: return the draft the request produced.
+			task, err := s.c.Store.GetTask(ctx, out.Task)
+			if err != nil {
+				return err
+			}
+			result = DraftResult{Task: task}
+			return nil
 		case coretasks.DraftCreate:
 			task, err := tx.CreateTask(ctx, out.Task)
 			if err != nil {
@@ -161,6 +175,9 @@ func (s *Service) ImportIssueDraft(ctx context.Context, spec coretasks.DraftSpec
 		case coretasks.DraftExists:
 			result = DraftResult{Task: old}
 		case coretasks.DraftRefuse:
+			if out.Reason == coretasks.DraftPayloadChanged {
+				return db.ErrDigestMismatch
+			}
 			return &RejectedError{Reason: string(out.Reason), Message: out.Reason.Message()}
 		}
 		if err := tx.LinkTaskSubmission(ctx, spec.RequestID, digest, result.Task.ID); err != nil {
@@ -168,18 +185,6 @@ func (s *Service) ImportIssueDraft(ctx context.Context, spec coretasks.DraftSpec
 		}
 		return s.appendImportAudit(ctx, tx, result.Task.ID, result.Created)
 	})
-	if errors.Is(err, db.ErrConflict) {
-		// The request was committed by an earlier call: return its task.
-		id, prior, lookupErr := s.c.Store.GetTaskSubmission(ctx, spec.RequestID)
-		if lookupErr != nil {
-			return DraftResult{}, fmt.Errorf("import issue: %w", err)
-		}
-		if prior != digest {
-			return DraftResult{}, db.ErrDigestMismatch
-		}
-		task, err := s.c.Store.GetTask(ctx, id)
-		return DraftResult{Task: task}, err
-	}
 	if err != nil {
 		return DraftResult{}, err
 	}
