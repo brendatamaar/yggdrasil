@@ -17,6 +17,12 @@ import (
 // system steps. The detail holds the kind, task, repo, attempt and outcome:
 // never a path, a message or a token.
 func (s *Service) writeAudit(ctx context.Context, tx *db.Tx, p coreprop.Proposal, cmds []coreprop.Command, by string, now time.Time) error {
+	return s.writeAuditFor(ctx, tx, p, cmds, by, now, "")
+}
+
+// writeAuditFor is writeAudit for a proposal created for a workspace-action
+// request: the request ID is added to the detail so the trail links the two.
+func (s *Service) writeAuditFor(ctx context.Context, tx *db.Tx, p coreprop.Proposal, cmds []coreprop.Command, by string, now time.Time, request core.RequestID) error {
 	for _, c := range cmds {
 		a, ok := c.(coreprop.Audit)
 		if !ok {
@@ -42,9 +48,13 @@ func (s *Service) writeAudit(ctx context.Context, tx *db.Tx, p coreprop.Proposal
 		case coreprop.Failed:
 			attempt = st.Attempt
 		}
-		detail, err := json.Marshal(map[string]any{
+		fields := map[string]any{
 			"kind": a.Entry.Kind, "task": p.Task, "repo": p.Repo, "attempt": attempt, "outcome": a.Entry.Outcome,
-		})
+		}
+		if request != "" {
+			fields["request"] = request
+		}
+		detail, err := json.Marshal(fields)
 		if err != nil {
 			return fmt.Errorf("audit detail: %w", err)
 		}
