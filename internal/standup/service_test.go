@@ -308,7 +308,9 @@ func TestStandupPolishDoubleClickStartsOneTask(t *testing.T) {
 	// The same ID with another range is refused, not merged.
 	other := req
 	other.To = to.Add(time.Hour)
-	if _, err := e.svc.Polish(context.Background(), project, other); err == nil {
+	octx, ocancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer ocancel()
+	if _, err := e.svc.Polish(octx, project, other); err == nil {
 		t.Error("same request id with another range accepted")
 	}
 	close(e.polish.Gate)
@@ -374,6 +376,8 @@ func TestPropReservedRepoNeverInStandup(t *testing.T) {
 		e.mrs.Seed(newRepo.ID, []corestandup.MR{mr(newRepo, 1, from.Add(time.Hour))})
 		e.builds.Seed(newRepo.ID, []corestandup.Build{bld(newRepo, 1, from.Add(time.Hour))})
 		e.commits.Seed(apiRepo.ID, []repos.HistoryCommit{hc(1, "api", from.Add(time.Hour))})
+		e.commits.Seed(webRepo.ID, []repos.HistoryCommit{hc(2, "web", from.Add(time.Hour))})
+		e.mrs.Seed(webRepo.ID, []corestandup.MR{mr(webRepo, 3, from.Add(time.Hour))})
 		// A misbehaving MR source returns the reserved repo's MR for the api repo.
 		if r.Intn(2) == 0 {
 			e.mrs.Seed(apiRepo.ID, []corestandup.MR{mr(newRepo, 2, from.Add(time.Hour))})
@@ -394,7 +398,7 @@ func TestPropReservedRepoNeverInStandup(t *testing.T) {
 			}
 		}
 		for _, m := range res.MRs {
-			if m.RepoID != apiRepo.ID && m.RepoID != webRepo.ID {
+			if (dropWeb && m.RepoID == webRepo.ID) || (m.RepoID != apiRepo.ID && m.RepoID != webRepo.ID) {
 				t.Fatalf("seed %d: foreign MR %+v", seed, m)
 			}
 		}
@@ -402,6 +406,9 @@ func TestPropReservedRepoNeverInStandup(t *testing.T) {
 			if b.RepoID == newRepo.ID {
 				t.Fatalf("seed %d: reserved build", seed)
 			}
+		}
+		if !dropWeb && len(res.Commits) != 2 {
+			t.Fatalf("seed %d: in-scope repos missing from %+v", seed, res.Commits)
 		}
 		if strings.Contains(res.Text, "shop-new") || strings.Contains(res.Text, "reserved") {
 			t.Fatalf("seed %d: reserved repo in text:\n%s", seed, res.Text)

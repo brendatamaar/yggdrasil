@@ -217,6 +217,9 @@ func TestPropSummaryDeterministic(t *testing.T) {
 				t.Fatalf("seed %d: order changed the summary:\n%s\n---\n%s", seed, a.Text, b.Text)
 			}
 		}
+		if !slices.IsSortedFunc(a.Commits, cmpCommit) || !slices.IsSortedFunc(a.MRs, cmpMR) || !slices.IsSortedFunc(a.Builds, cmpBuild) {
+			t.Fatalf("seed %d: summary lists are not in the documented order", seed)
+		}
 		// Format agrees with the summary's own order, whatever the slice order.
 		sh := a
 		sh.Commits = slices.Clone(a.Commits)
