@@ -21,6 +21,7 @@ type fakeDir struct {
 	branch      string
 	files       map[string]string
 	commit      *git.FirstCommit
+	committed   []string
 }
 
 // FakeRepoInitializer is an in-memory git.RepoInitializer. Directories are
@@ -63,6 +64,32 @@ func (f *FakeRepoInitializer) SetAuthor(known bool) {
 	f.author = known
 }
 
+// ReadFile returns a file of the fake working tree.
+func (f *FakeRepoInitializer) ReadFile(dir, rel string) (string, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.dirs[dir]
+	if !ok {
+		return "", false
+	}
+	c, ok := d.files[rel]
+	return c, ok
+}
+
+// Tracked lists the files of the fake's first commit (its index once committed;
+// the fake never stages anything it did not commit).
+func (f *FakeRepoInitializer) Tracked(dir string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.dirs[dir]
+	if !ok {
+		return nil
+	}
+	out := append([]string(nil), d.committed...)
+	sort.Strings(out)
+	return out
+}
+
 func (f *FakeRepoInitializer) InitRepo(_ context.Context, dir, branch string) error {
 	if err := fakeName(branch); err != nil {
 		return err
@@ -94,7 +121,7 @@ func (f *FakeRepoInitializer) HasAuthor(_ context.Context, _ string) (bool, erro
 }
 
 func (f *FakeRepoInitializer) CommitFirst(_ context.Context, dir string, files []string, message string) (git.FirstCommit, error) {
-	if len(files) == 0 || strings.TrimSpace(message) == "" {
+	if len(files) == 0 || strings.TrimSpace(message) == "" || strings.ContainsRune(message, 0) || len(message) > 64<<10 {
 		return git.FirstCommit{}, fmt.Errorf("first commit: %w", git.ErrInvalidArg)
 	}
 	for _, p := range files {
@@ -142,6 +169,7 @@ func (f *FakeRepoInitializer) CommitFirst(_ context.Context, dir string, files [
 		Author:      fakeAuthor,
 	}
 	d.commit = &fc
+	d.committed = listed
 	if hit {
 		return git.FirstCommit{}, ferr
 	}

@@ -23,6 +23,10 @@ type InitWorld interface {
 	InstallHooks(dir string) (ran func() bool)
 	Initializer() git.RepoInitializer
 	Origins() git.OriginManager
+	// ReadFile returns a file of the working tree as it is now.
+	ReadFile(dir, rel string) (content string, exists bool)
+	// Staged lists the paths in the index of dir's repo (sorted).
+	Staged(dir string) []string
 }
 
 var firstFiles = []string{"README.md", ".gitignore"}
@@ -107,6 +111,76 @@ func RunRepoInitializerContract(t *testing.T, newWorld func(t *testing.T) InitWo
 		if _, err := in.CommitFirst(ctx, dir, firstFiles, "Initial commit"); err != nil {
 			t.Fatalf("commit after the author was set: %v", err)
 		}
+	})
+
+	t.Run("every refusal leaves the index and the working tree untouched", func(t *testing.T) {
+		w := newWorld(t)
+		in := w.Initializer()
+		dir := w.NewDir()
+		if err := in.InitRepo(ctx, dir, "main"); err != nil {
+			t.Fatal(err)
+		}
+		const crlf = "# Shop API\r\nline two\r\n"
+		writeFirst(w, dir, crlf)
+		w.WriteFile(dir, "junk.txt", "not listed\n")
+		files := []string{"README.md", ".gitignore", "junk.txt"}
+		want := map[string]string{"README.md": crlf, ".gitignore": "node_modules/\n", "junk.txt": "not listed\n"}
+		assertUntouched := func(t *testing.T, what string, staged []string) {
+			t.Helper()
+			if got := w.Staged(dir); strings.Join(got, ",") != strings.Join(staged, ",") {
+				t.Fatalf("%s: index = %v, want %v", what, got, staged)
+			}
+			for _, name := range files {
+				if got, ok := w.ReadFile(dir, name); !ok || got != want[name] {
+					t.Fatalf("%s: %s = %q (exists %v), want %q", what, name, got, ok, want[name])
+				}
+			}
+			if _, found, _ := in.ReadFirstCommit(ctx, dir, "main"); found && staged == nil {
+				t.Fatalf("%s: a commit exists", what)
+			}
+		}
+		assertUntouched(t, "before any refusal", nil)
+
+		// No author: refused before anything is staged or written.
+		w.SetAuthor(false)
+		if _, err := in.CommitFirst(ctx, dir, firstFiles, "Initial commit"); !errors.Is(err, git.ErrNoAuthor) {
+			t.Fatalf("err = %v, want ErrNoAuthor", err)
+		}
+		assertUntouched(t, "missing author", nil)
+		w.SetAuthor(true)
+
+		// Invalid arguments and a missing file: refused as a whole.
+		for name, c := range map[string]struct {
+			files []string
+			msg   string
+		}{
+			"empty message":    {firstFiles, "  \n"},
+			"message with NUL": {firstFiles, "a\x00b"},
+			"dot":              {[]string{"README.md", "."}, "Initial commit"},
+			"parent":           {[]string{"README.md", "../x"}, "Initial commit"},
+			"git dir":          {[]string{"README.md", ".git/config"}, "Initial commit"},
+			"option":           {[]string{"README.md", "-A"}, "Initial commit"},
+			"missing file":     {[]string{"README.md", "nope.txt"}, "Initial commit"},
+			"listed twice":     {[]string{"README.md", "README.md", "nope.txt"}, "Initial commit"},
+		} {
+			if _, err := in.CommitFirst(ctx, dir, c.files, c.msg); err == nil {
+				t.Fatalf("%s: accepted", name)
+			}
+			assertUntouched(t, name, nil)
+		}
+
+		// After the first commit, a second first commit is refused and stages nothing new.
+		if _, err := in.CommitFirst(ctx, dir, firstFiles, "Initial commit"); err != nil {
+			t.Fatal(err)
+		}
+		tracked := []string{".gitignore", "README.md"}
+		w.WriteFile(dir, "later.txt", "later\n")
+		want["later.txt"] = "later\n"
+		files = append(files, "later.txt")
+		if _, err := in.CommitFirst(ctx, dir, []string{"later.txt"}, "Again"); !errors.Is(err, git.ErrNotFirstCommit) {
+			t.Fatalf("err = %v, want ErrNotFirstCommit", err)
+		}
+		assertUntouched(t, "second first commit", tracked)
 	})
 
 	t.Run("repo hooks do not run", func(t *testing.T) {

@@ -50,6 +50,8 @@ type plan struct {
 // calls of every operation, so a test can prove an effect ran exactly once.
 type faults struct {
 	mu      sync.Mutex
+	observe func(op string) // called before every counted call, outside the lock
+	after   func(op string) // called after the effect of every counted call, before its result is returned
 	plans   map[string][]plan
 	calls   map[string]int
 	entered chan string
@@ -63,6 +65,15 @@ func (f *faults) on(op string, nth int, mode faultMode, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.plans[op] = append(f.plans[op], plan{nth: nth, mode: mode, err: err})
+}
+
+// onWith scripts a failure and also runs fn just before the call, so a test can
+// change the world (a foreign commit, a moved remote head) in the same call
+// that then fails or loses its reply.
+func (f *faults) onWith(op string, nth int, mode faultMode, err error, fn func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.plans[op] = append(f.plans[op], plan{nth: nth, mode: mode, err: err, hook: fn})
 }
 
 func (f *faults) hook(op string, nth int, fn func()) {
@@ -90,7 +101,14 @@ func (f *faults) run(ctx context.Context, op string, fn func() error) error {
 			p = &f.plans[op][i]
 		}
 	}
+	obs := f.observe
 	f.mu.Unlock()
+	if obs != nil {
+		obs(op)
+	}
+	if p != nil && p.mode != faultHook && p.hook != nil {
+		p.hook()
+	}
 	if p != nil {
 		switch p.mode {
 		case faultBefore:
@@ -108,6 +126,9 @@ func (f *faults) run(ctx context.Context, op string, fn func() error) error {
 		}
 	}
 	err := fn()
+	if f.after != nil {
+		f.after(op)
+	}
 	if err == nil && p != nil && p.mode == faultLost {
 		return fmt.Errorf("%s: %w", op, p.err)
 	}

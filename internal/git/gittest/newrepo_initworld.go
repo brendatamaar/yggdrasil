@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/brendatamaar/yggdrasil/internal/git"
@@ -40,6 +42,10 @@ func (w *FakeInitWorld) SetAuthor(known bool)               { w.Init.SetAuthor(k
 func (w *FakeInitWorld) InstallHooks(string) func() bool    { return func() bool { return false } }
 func (w *FakeInitWorld) Initializer() git.RepoInitializer   { return w.Init }
 func (w *FakeInitWorld) Origins() git.OriginManager         { return w.Origin }
+func (w *FakeInitWorld) ReadFile(dir, rel string) (string, bool) {
+	return w.Init.ReadFile(dir, rel)
+}
+func (w *FakeInitWorld) Staged(dir string) []string { return w.Init.Tracked(dir) }
 
 // RealInitWorld is the InitWorld over real git in temp folders. The user's own
 // git config never applies: the world owns the global config.
@@ -132,6 +138,37 @@ func (w *RealInitWorld) InstallHooks(dir string) func() bool {
 	}
 	w.mustGit(dir, "config", "core.hooksPath", hooksPathDir)
 	return func() bool { _, err := os.Stat(marker); return err == nil }
+}
+
+func (w *RealInitWorld) ReadFile(dir, rel string) (string, bool) {
+	b, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel))) //nolint:gosec // a temp folder of the test world
+	if err != nil {
+		return "", false
+	}
+	return string(b), true
+}
+
+// Staged lists the paths in the index (git ls-files --cached).
+func (w *RealInitWorld) Staged(dir string) []string {
+	w.t.Helper()
+	var out, errb bytes.Buffer
+	p, err := platform.Start(context.Background(), platform.Spec{
+		Argv: []string{w.exe, "-c", "core.longpaths=true", "ls-files", "--cached", "-z"}, Dir: dir, Env: w.env, Stdout: &out, Stderr: &errb,
+	})
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	if code, err := p.Wait(); err != nil || code != 0 {
+		w.t.Fatalf("git ls-files: exit %d, %v: %s", code, err, errb.String())
+	}
+	var names []string
+	for _, n := range strings.Split(out.String(), "\x00") {
+		if n != "" {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (w *RealInitWorld) mustGit(dir string, args ...string) {
