@@ -23,7 +23,7 @@ func TestContextBoundedAndRedacted(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(old) })
 
 	leaky := "Authorization: Bearer abcdef0123456789abcdef\n" + token + "\nclone https://ci:hunter2pw@git.acme.dev/acme/shop-api.git\nthe secret is " + secret + "\n"
-	huge := strings.Repeat("log line of a very long failing job\n", 60000) // ~2 MiB
+	huge := strings.Repeat("log line of a very long failing job\n", 8000) // ~290 KiB, over every bound
 	e := newEnv(t)
 	e.ciFacts(leaky + huge)
 	e.scope.set(func(f *coreactions.Facts) {

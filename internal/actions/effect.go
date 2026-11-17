@@ -68,7 +68,7 @@ func (r *run) perform(ctx context.Context, c coreactions.Dispatch) (coreactions.
 func (r *run) submitTask(ctx context.Context, c coreactions.Dispatch) (coreactions.Result, *effectFailure) {
 	req := c.Request
 	mode := req.Kind.Mode()
-	if mode != core.ModeAsk && !(mode == core.ModeCode && req.Kind == coreactions.FixPipeline) {
+	if mode != core.ModeAsk && (mode != core.ModeCode || req.Kind != coreactions.FixPipeline) {
 		return coreactions.Result{}, definite(coreactions.RefuseNoOffering, "")
 	}
 	res, err := r.s.d.Tasks.SubmitWithRequest(ctx, req.RequestID, tasks.MessageRequest{

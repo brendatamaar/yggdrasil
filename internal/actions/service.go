@@ -237,6 +237,8 @@ func (s *Service) Preview(ctx context.Context, req coreactions.Request) (Preview
 		}
 	case coreactions.Refused:
 		p.Refusal, p.Message = st.Reason, message(st.Reason)
+	case coreactions.Idle, coreactions.Preparing, coreactions.Submitting, coreactions.Completed, coreactions.Cancelled:
+		// a preview stops at Ready or Refused
 	}
 	return p, nil
 }

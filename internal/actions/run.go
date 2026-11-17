@@ -46,6 +46,8 @@ func terminal(st coreactions.State) bool {
 	switch st.(type) {
 	case coreactions.Completed, coreactions.Refused, coreactions.Cancelled:
 		return true
+	case coreactions.Idle, coreactions.Preparing, coreactions.Ready, coreactions.Submitting:
+		return false
 	}
 	return false
 }
@@ -69,6 +71,9 @@ func (r *run) exec(ctx context.Context, cmds []coreactions.Command) {
 			audits = append(audits, c)
 		case coreactions.PersistIntent:
 			hasIntent = true
+		case coreactions.LoadFactsAndContext, coreactions.PresentPreview, coreactions.Explain, coreactions.Dispatch,
+			coreactions.PersistResult, coreactions.Publish, coreactions.ReconcileDispatch, coreactions.CancelPreparation:
+			// handled in the second pass, in order
 		}
 	}
 	if r.preview {
@@ -234,7 +239,7 @@ func (r *run) settle(ctx context.Context, as []coreactions.Audit) error {
 		rec.Task, rec.Batch, rec.Proposals = st.Result.TaskID, st.Result.BatchID, st.Result.ProposalIDs
 	case coreactions.Refused:
 		rec.State, rec.Refusal = db.ActionRefused, st.Reason
-	default:
+	case coreactions.Idle, coreactions.Preparing, coreactions.Ready, coreactions.Submitting, coreactions.Cancelled:
 		return nil
 	}
 	var v int64
@@ -270,7 +275,7 @@ func (r *run) outcome() Outcome {
 		o.State, o.Message = db.ActionSubmitting, "This request is being finished. It will not be started twice."
 	case coreactions.Cancelled:
 		o.State, o.Message = db.ActionCancelled, "This request was cancelled."
-	default:
+	case coreactions.Idle, coreactions.Preparing, coreactions.Ready:
 		o.Message = "The request is not ready."
 	}
 	return o
