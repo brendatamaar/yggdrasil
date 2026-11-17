@@ -264,6 +264,10 @@ func onPrepareFailed(d Submission, in PrepareFailed) (Submission, []Command) {
 	return refuse(d, why)
 }
 
+// reconcile looks up the durable link of the attempt in flight. Submitting and
+// ReconcileDispatch carry the same two fields.
+func reconcile(st Submitting) Command { return ReconcileDispatch(st) }
+
 func attemptKey(id core.RequestID, attempt int) string {
 	return "action:" + string(id) + ":" + strconv.Itoa(attempt)
 }
@@ -286,7 +290,7 @@ func onSubmitRequested(d Submission, in SubmitRequested) (Submission, []Command)
 	case Submitting:
 		// A double click or a retry of an uncertain submission looks the first
 		// one up; it never starts another.
-		return d, []Command{ReconcileDispatch{Attempt: st.Attempt, Key: st.Key}}
+		return d, []Command{reconcile(st)}
 	case Idle, Preparing, Completed, Refused, Cancelled:
 		return d, nil
 	}
@@ -302,7 +306,7 @@ func onResult(d Submission, attempt int, r Result) (Submission, []Command) {
 		return d, nil
 	}
 	if !resultFits(d.Request.Kind, r) {
-		return d, []Command{ReconcileDispatch{Attempt: st.Attempt, Key: st.Key}}
+		return d, []Command{reconcile(st)}
 	}
 	d = d.moved(Completed{Result: r})
 	return d, []Command{
@@ -319,7 +323,7 @@ func onSubmitFailed(d Submission, in SubmitFailed) (Submission, []Command) {
 	}
 	if in.Outcome != SubmitDefiniteRefusal {
 		// Unknown (or anything unrecognised): the effect may exist.
-		return d, []Command{ReconcileDispatch{Attempt: st.Attempt, Key: st.Key}}
+		return d, []Command{reconcile(st)}
 	}
 	why := in.Reason
 	if why.Validate() != nil {
@@ -334,7 +338,7 @@ func onCancel(d Submission) (Submission, []Command) {
 		return d.moved(Cancelled{}), nil
 	case Preparing:
 		d = d.moved(Cancelled{})
-		return d, []Command{CancelPreparation{Attempt: st.Attempt}, d.audit("action.cancelled", "preparing"), Publish{Request: d.Request.RequestID}}
+		return d, []Command{CancelPreparation(st), d.audit("action.cancelled", "preparing"), Publish{Request: d.Request.RequestID}}
 	case Ready:
 		d = d.moved(Cancelled{})
 		return d, []Command{CancelPreparation{Attempt: d.Seq}, d.audit("action.cancelled", "ready"), Publish{Request: d.Request.RequestID}}
@@ -348,7 +352,7 @@ func onCancel(d Submission) (Submission, []Command) {
 
 func onRecovered(d Submission) (Submission, []Command) {
 	if st, ok := stateOf(d).(Submitting); ok {
-		return d, []Command{ReconcileDispatch{Attempt: st.Attempt, Key: st.Key}}
+		return d, []Command{reconcile(st)}
 	}
 	return d, nil
 }

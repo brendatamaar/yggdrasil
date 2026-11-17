@@ -19,7 +19,7 @@ func cmdTypes(cmds []Command) []string {
 func wantCmds(t *testing.T, name string, cmds []Command, want ...string) {
 	t.Helper()
 	got := cmdTypes(cmds)
-	if !reflect.DeepEqual(got, want) && !(len(got) == 0 && len(want) == 0) {
+	if !reflect.DeepEqual(got, want) && (len(got) != 0 || len(want) != 0) {
 		t.Errorf("%s: commands %v, want %v", name, got, want)
 	}
 }

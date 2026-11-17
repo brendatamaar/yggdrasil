@@ -285,4 +285,3 @@ func (Audit) isCommand()               {}
 func (Publish) isCommand()             {}
 func (ReconcileDispatch) isCommand()   {}
 func (CancelPreparation) isCommand()   {}
-
