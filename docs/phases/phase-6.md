@@ -169,8 +169,8 @@ Execution log (design approvals, SHAs, review results, decisions, deviations, in
 | F0–F5 foundations | closed | see log | none |
 | Batch 1 | closed | see log | none |
 | Batch 2 + TM1 tests | closed | 8966339 | see "Still open" and "Batch 2 test handoff TM1" in the log |
-| Batch 3 | in progress: round A (N1 platform, N2 git) | 2b73dbf | decisions recorded in log; see Batch 3 breakdown |
-| Batch 4 | not started | | |
+| Batch 3 | closed (N1, N2, N3a, N3b, P1, P2, Q, TE-1, BF3; reviews PASS; -race clean) | see log | wiring contracts and Considers in the log; `task license` unrunnable locally (verify in CI) |
+| Batch 4 | in progress: round 1 (A1 core/actions, S standup) | | round 2 = A2 shell + Replay-fact task; round 3 = TM2 |
 | Batch 5 | not started | | |
 | Batch 6 | not started | | |
 

@@ -988,3 +988,11 @@ the lead runs the full gate with Node 22 in the scratchpad.
 - Gate on main before BF3: generate (no diff), lint, typecheck, `go test ./...`, test:web 528/528 all green.
   `task license` cannot run here: go-licenses v2.0.0 cannot parse the `tool` directive in go.mod (and fails on stdlib module info);
   go.mod did not change in Batch 3 (go-git was already a pinned indirect), and N2 checked the transitive licences by hand. Verify in CI.
+
+### Batch 3 closed (2026-11-17)
+- BF3 merged (executor Retry path with a real-service contract run, untrack settles Unknown, failed worker feeds Recovered, one
+  `StopReason.Retryable()` rule, Retry no longer holds the service lock: it self-deadlocked on publish). Test race in TestInitHappyPath
+  fixed by the lead. `-race` clean: newrepos, notify, git, platform, core/newrepos, core/notify. Not done (accepted, noted for wiring):
+  Uncertain-then-retry in one attempt; a late successful stage result after untrack is dropped (effect stays Unknown, no receipt).
+- Batch 4 plan: round 1 A1 (core/actions) + S (core/standup + internal/standup); round 2 A2 (internal/actions shell) + Replay-fact
+  task (internal/tasks + core/tasks, decided by the human); round 3 TM2 test-engineer (actions, standup). Reviews after Batches 4+5.
