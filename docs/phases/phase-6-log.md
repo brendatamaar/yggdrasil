@@ -996,3 +996,19 @@ the lead runs the full gate with Node 22 in the scratchpad.
   Uncertain-then-retry in one attempt; a late successful stage result after untrack is dropped (effect stays Unknown, no receipt).
 - Batch 4 plan: round 1 A1 (core/actions) + S (core/standup + internal/standup); round 2 A2 (internal/actions shell) + Replay-fact
   task (internal/tasks + core/tasks, decided by the human); round 3 TM2 test-engineer (actions, standup). Reviews after Batches 4+5.
+
+### Batch 4 round 1-2 (A1, S, A2 merged; T2, P3 in flight) 2026-11-17
+- A1 core/actions (total catalogue, E6 property over every reason combination, ~20 mutations killed), S standup core+shell,
+  A2 actions shell merged, each gated (lint 0 issues, tests green).
+- Deviations/decisions: commit-grouping, ignore and MR-review offerings submit Ask tasks that propose through the normal MCP/proposal
+  path (the frozen core result allows only a TaskID for them); only PullAndCheck creates a proposal from the shell. PullFF `Verify` is
+  always false (Request has no field for it): **open for Batch 5** (add the option to the DTO + core, or drop optional verification
+  from the UI with a human OK). Core `IDs.Task` is a placeholder (tasks generates the real ID).
+- **E6 gap until fixed:** the unreadable-repo action needs `FolderDrafts.SaveWaitingDraft` (nothing implements it; without it the
+  request is refused with a plain message). Owner: task T3 in internal/tasks (after T2), then wiring.
+- Adapters nobody implements yet (needed by Batch 5 wiring in cmd/ygg, composition root): actions.ScopeReader (Facts/StillTracked/
+  NoiseFacts/Target/ReposOf/PullTarget), ContextReader, ProposalCreator (P3 provides proposals.Service methods; cmd adapts),
+  FolderDrafts (T3), standup MRSource (cached host MRs) and BuildSource (db builds in [from,to)): task S2 for the last two.
+- Standup: refresh publishes nothing (no standup message on Phase6Hub); polish publishes PublishAction. API adapter for
+  api.ActionService (Catalogue, Preview, Execute, Get) is not written: W.
+- Observations not yet fixed: core.checkID accepts \v, \f, NUL; title/identity checks reject only C0 and DEL (C1/bidi pass).
