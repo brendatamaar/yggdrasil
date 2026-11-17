@@ -396,9 +396,11 @@ func stepReconciled(o Operation, in Reconciled) (Operation, []Command) {
 
 // --- retry ---
 
-// retryable: a rejected or untracked operation never resumes; everything else
-// needs a fresh human confirmation with the original preconditions.
-func retryable(r StopReason) bool { return r != StopRejected && r != StopUntracked }
+// retryable: a rejected or untracked operation never resumes, and neither does
+// one that stopped on an impossible input or a missing implementation (the die
+// class: a wrong receipt or a conflicting finding runs no new effect). Everything
+// else needs a fresh human confirmation with the original preconditions.
+func retryable(r StopReason) bool { return r.Retryable() }
 
 func stepRetry(o Operation, in RetryConfirmed) (Operation, []Command) {
 	v := describe(o.State)

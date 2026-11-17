@@ -199,6 +199,18 @@ func (r StopReason) Validate() error {
 	return invalid("unknown stop reason %q", string(r))
 }
 
+// Retryable reports whether a fresh human confirmation can resume an operation
+// that stopped for r. A rejection, an untracked project, a conflict (a wrong
+// receipt or a finding that does not match what was created) and a missing
+// implementation never resume: they are the die class and run no new effect.
+func (r StopReason) Retryable() bool {
+	switch r {
+	case StopRejected, StopUntracked, StopConflict, StopNotImplemented:
+		return false
+	}
+	return true
+}
+
 // Operation is the header of one new-repo operation plus its sealed State. A
 // nil State means it does not exist yet (only Reserve applies). Version is the
 // optimistic version of the stored row.

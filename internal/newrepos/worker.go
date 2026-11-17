@@ -38,28 +38,112 @@ func (s *Service) startLocked(op core.OperationID, effects []corenewrepos.Comman
 	if _, busy := s.workers[op]; busy {
 		return nil
 	}
+	w, wctx := s.claimLocked(op)
+	return s.launchLocked(op, w, wctx, effects)
+}
+
+// claimLocked reserves the one worker slot of op. s.mu must be held and the
+// slot free. While a slot is claimed no other start, reconciliation or retry
+// takes the operation, so a caller can release s.mu for slow reads and still
+// own the operation.
+func (s *Service) claimLocked(op core.OperationID) (*worker, context.Context) {
 	wctx, cancel := context.WithCancel(s.ctx)
 	w := &worker{cancel: cancel}
 	s.workers[op] = w
+	return w, wctx
+}
+
+// claim is claimLocked with the checks of a caller that holds no lock: it fails
+// when the service is closing or a worker (or another claim) owns op.
+func (s *Service) claim(op core.OperationID) (*worker, context.Context, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, nil, ErrClosed
+	}
+	if _, busy := s.workers[op]; busy {
+		return nil, nil, ErrNotApplicable // a worker still owns it; wait for it to settle
+	}
+	w, wctx := s.claimLocked(op)
+	return w, wctx, nil
+}
+
+// release gives a claimed slot back without starting anything.
+func (s *Service) release(op core.OperationID, w *worker) {
+	w.cancel()
+	s.mu.Lock()
+	if s.workers[op] == w {
+		delete(s.workers, op)
+	}
+	s.mu.Unlock()
+}
+
+// launchLocked starts the goroutine of a claimed slot. s.mu must be held.
+func (s *Service) launchLocked(op core.OperationID, w *worker, wctx context.Context, effects []corenewrepos.Command) error {
+	if s.closed {
+		w.cancel()
+		delete(s.workers, op)
+		return ErrClosed
+	}
 	s.eg.Go(func() error {
 		defer func() {
-			cancel()
+			w.cancel()
 			s.mu.Lock()
 			if s.workers[op] == w {
 				delete(s.workers, op)
 			}
 			s.mu.Unlock()
 		}()
-		defer func() {
-			if r := recover(); r != nil {
-				s.d.Logger.Error("new repo worker panicked", "operation", op,
-					"panic", s.d.Redact(fmt.Sprint(r)), "stack", s.d.Redact(string(debug.Stack())))
-			}
-		}()
-		s.drive(wctx, op, effects)
+		s.run(wctx, op, effects)
 		return nil
 	})
 	return nil
+}
+
+// recoveryAttempts bounds how often a failed worker tries to mark its
+// operation Uncertain before it leaves that to the next start.
+const recoveryAttempts = 3
+
+// run drives the effects of op. When the drive fails (a result could not be
+// recorded, or the worker panicked) the operation would otherwise stay
+// Initializing or Publishing with no worker: Retry refuses running states and
+// nothing re-issues Recovered until a restart. So the worker feeds Recovered:
+// the state becomes Uncertain and is reconciled read-only. No stage is ever
+// run from this path; only the reconciliation commands Recovered returns.
+func (s *Service) run(ctx context.Context, op core.OperationID, effects []corenewrepos.Command) {
+	if s.drive(ctx, op, effects) || s.ctx.Err() != nil {
+		return // done, or the service is closing: the next start recovers
+	}
+	for i := 0; i < recoveryAttempts; i++ {
+		res, err := s.markUncertain(op)
+		if err == nil {
+			var reconcile []corenewrepos.Command
+			for _, c := range res.effects {
+				if rc, ok := c.(corenewrepos.ReconcileStage); ok {
+					reconcile = append(reconcile, rc)
+				}
+			}
+			s.drive(ctx, op, reconcile)
+			return
+		}
+		s.logErr("could not mark a failed new repo worker's operation uncertain", err, "operation", op, "try", i+1)
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-time.After(s.d.RetryDelay):
+		}
+	}
+	s.d.Logger.Error("a new repo operation stays unsettled until the next start", "operation", op)
+}
+
+// markUncertain feeds Recovered for op: a running state becomes Uncertain, any
+// other state is left as it is.
+func (s *Service) markUncertain(op core.OperationID) (applied, error) {
+	dctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	defer cancel()
+	return s.apply(dctx, op, func(db.ReservationRecord) (corenewrepos.Input, extra) {
+		return corenewrepos.Recovered{Now: s.d.Clock()}, extra{actor: "system"}
+	})
 }
 
 func (s *Service) cancelWorker(op core.OperationID) {
@@ -76,10 +160,21 @@ func (s *Service) cancelWorker(op core.OperationID) {
 // is chosen. A cancelled context ends the loop: a stage that was in flight has
 // already been recorded as unknown (Uncertain), and the next start reconciles
 // it read-only.
-func (s *Service) drive(ctx context.Context, op core.OperationID, queue []corenewrepos.Command) {
+//
+// drive reports false when the worker failed: a result could not be recorded or
+// the worker panicked (logged without secrets). Cancellation and an unknown
+// reconciliation are not failures.
+func (s *Service) drive(ctx context.Context, op core.OperationID, queue []corenewrepos.Command) (ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.d.Logger.Error("new repo worker panicked", "operation", op,
+				"panic", s.d.Redact(fmt.Sprint(r)), "stack", s.d.Redact(string(debug.Stack())))
+			ok = false
+		}
+	}()
 	for len(queue) > 0 {
 		if ctx.Err() != nil {
-			return
+			return true
 		}
 		cmd := queue[0]
 		queue = queue[1:]
@@ -92,7 +187,7 @@ func (s *Service) drive(ctx context.Context, op core.OperationID, queue []corene
 		case corenewrepos.ReconcileStage:
 			r, ok := s.runReconcile(ctx, c)
 			if !ok {
-				return // unknown or cancelled: stay Uncertain, write nothing
+				return true // unknown or cancelled: stay Uncertain, write nothing
 			}
 			in = r
 		case corenewrepos.PersistReservationAndSetupDraft, corenewrepos.PublishPreview, corenewrepos.PersistIntent,
@@ -108,14 +203,15 @@ func (s *Service) drive(ctx context.Context, op core.OperationID, queue []corene
 		})
 		cancel()
 		if err != nil {
-			// The effect may have happened but is not recorded. Stop; the next
-			// start sees the intent, marks the stage Uncertain and reconciles it.
+			// The effect may have happened but is not recorded. Stop and tell the
+			// caller: run marks the stage Uncertain and reconciles it read-only.
 			s.logErr("could not record a new repo step", err, "operation", op)
-			return
+			return false
 		}
 		if res.cancel {
-			return
+			return true
 		}
 		queue = append(queue, res.effects...)
 	}
+	return true
 }

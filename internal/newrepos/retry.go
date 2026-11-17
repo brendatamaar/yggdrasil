@@ -17,14 +17,21 @@ import (
 // if they do not, nothing runs and the reason is explained. A rejected or
 // untracked operation never retries. Nothing here is automatic.
 func (s *Service) Retry(ctx context.Context, op core.OperationID, hash string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return ErrClosed
+	// s.mu is held only for the claim of the operation's worker slot, not across
+	// the disk, database and host reads below: they can be slow, and apply takes
+	// s.mu itself for publish stages (holding it here would deadlock a publish
+	// retry). The claim is what excludes a concurrent start, reconciliation or
+	// retry of the same operation meanwhile.
+	w, wctx, err := s.claim(op)
+	if err != nil {
+		return err
 	}
-	if _, busy := s.workers[op]; busy {
-		return ErrNotApplicable // a worker still owns it; wait for it to settle
-	}
+	launched := false
+	defer func() {
+		if !launched {
+			s.release(op, w)
+		}
+	}()
 	rec, err := s.d.Store.GetReservation(ctx, op)
 	if err != nil {
 		return err
@@ -36,7 +43,7 @@ func (s *Service) Retry(ctx context.Context, op core.OperationID, hash string) e
 	)
 	switch st := rec.Operation.State.(type) {
 	case corenewrepos.Stopped:
-		if st.Reason == corenewrepos.StopRejected || st.Reason == corenewrepos.StopUntracked {
+		if !st.Reason.Retryable() {
 			return ErrNotApplicable
 		}
 		attempt, stage, resume = st.Attempt, st.Stage, st.Resume
@@ -77,7 +84,11 @@ func (s *Service) Retry(ctx context.Context, op core.OperationID, hash string) e
 		}
 		return ErrNotApplicable
 	}
-	return s.startLocked(op, res.effects)
+	// The retry is committed: from here the claim belongs to the worker.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	launched = true
+	return s.launchLocked(op, w, wctx, res.effects)
 }
 
 // preconditions rechecks, read-only, that a retry is safe: the stage's effect

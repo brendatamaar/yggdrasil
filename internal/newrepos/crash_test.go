@@ -133,7 +133,7 @@ func TestNewRepoCrashAtEveryStage(t *testing.T) {
 	for k := 4; k <= 9; k++ {
 		t.Run(fmt.Sprintf("crash before commit %d", k), func(t *testing.T) {
 			w := newWorld(t)
-			w.sw.failAt = k
+			w.sw.crashAt = k
 			rec := w.reserveAndPropose("shop-new")
 			if err := w.svc.ConfirmInit(w.ctx, rec.Operation.ID, rec.SpecHash, 1); err != nil {
 				t.Fatal(err)
@@ -244,7 +244,7 @@ func TestNewRepoCrashAtEveryPublishStage(t *testing.T) {
 		t.Run(fmt.Sprintf("crash before publish commit %d", j), func(t *testing.T) {
 			w, rec := setup(t)
 			base := w.sw.commitCount()
-			w.sw.failAt = base + 1 + j
+			w.sw.crashAt = base + 1 + j
 			if _, err := w.publish(rec, "shop-new"); err != nil {
 				t.Fatal(err)
 			}

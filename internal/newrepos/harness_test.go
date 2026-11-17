@@ -314,24 +314,42 @@ func (h *hubRec) PublishNewRepo(m api.NewRepoChangedMessage) {
 	}
 }
 
-// storeWrap fails the nth Commit with a simulated crash (the commit does not
-// happen), so a test can stop the flow exactly between an effect and its record.
+// storeWrap fails commits on purpose. failAt makes the nth Commit fail once (a
+// store error: the commit does not happen and the process lives on). crashAt
+// is a process death at the nth Commit: that commit and every later one fail
+// until revive (the restart), so nothing can be recorded after the "crash".
 type storeWrap struct {
 	ReservationStore
 	mu      sync.Mutex
 	commits int
 	failAt  int
+	crashAt int
+	dead    bool
 }
 
 func (s *storeWrap) Commit(ctx context.Context, fn func(*db.Tx) error) error {
 	s.mu.Lock()
 	s.commits++
 	n := s.commits
+	if s.crashAt != 0 && n == s.crashAt {
+		s.dead = true
+	}
+	dead := s.dead
 	s.mu.Unlock()
+	if dead {
+		return errors.New("simulated crash: the process is gone")
+	}
 	if s.failAt != 0 && n == s.failAt {
-		return errors.New("simulated crash before the commit")
+		return errors.New("simulated store failure before the commit")
 	}
 	return s.ReservationStore.Commit(ctx, fn)
+}
+
+// revive is the restart after a simulated crash.
+func (s *storeWrap) revive() {
+	s.mu.Lock()
+	s.dead, s.crashAt = false, 0
+	s.mu.Unlock()
 }
 
 func (s *storeWrap) commitCount() int {
@@ -477,6 +495,7 @@ func (w *world) start() *Service {
 func (w *world) restart() {
 	w.t.Helper()
 	_ = w.svc.Close()
+	w.sw.revive()
 	w.f.mu.Lock()
 	w.f.plans = map[string][]plan{}
 	w.f.mu.Unlock()
