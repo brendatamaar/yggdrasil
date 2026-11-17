@@ -29,18 +29,3 @@ func TestParseRange(t *testing.T) {
 		}
 	}
 }
-
-// Format returns nothing rather than inventing text, and Step starts no read
-// and no agent, until the standup task lands.
-func TestStubsAreInert(t *testing.T) {
-	if got := Format(Summary{}); got != "" {
-		t.Errorf("Format = %q", got)
-	}
-	s := Standup{State: Empty{}}
-	for _, in := range []Input{Requested{}, SourcesRead{Attempt: 1}, ReadFailed{Attempt: 1}, Cancelled{Attempt: 1}, PolishRequested{RequestID: "r"}} {
-		got, cmds := Step(s, in)
-		if _, ok := got.State.(Empty); !ok || got.Seq != 0 || len(cmds) != 0 {
-			t.Errorf("Step(%T) = %+v, %v", in, got, cmds)
-		}
-	}
-}
