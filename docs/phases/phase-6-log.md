@@ -965,3 +965,11 @@ the lead runs the full gate with Node 22 in the scratchpad.
     stays refused until a human acts (fake host says absent);
   - PullFF is creatable by agents (confirmation still required): decide at MCP registration;
   - ignore/pull effects use audit stage entries, not effect rows; Windows platform code is untested on Windows.
+
+### Batch 3 interruption (usage limit, 2026-11-16 evening; resumed 2026-11-17)
+- Main at the last merge of P2 plus log commits. N1, N2, N3a, N3b(+Retry), P1, P2 merged and green.
+- In flight when the limit hit: **Q** (worktree-agent-a026d09494e536e46: core transition table + producer committed, tests NOT written,
+  was fixing the ID generator); **TE-1** (newrepos mutation evidence and gap tests; died before creating a worktree, nothing to resume
+  except re-dispatching it).
+- Remaining for Batch 3: finish Q, merge, TE-1 (re-dispatch), full gate (generate, lint, typecheck, test, test:web, task license),
+  safety-reviewer + fe-reviewer on 2b73dbf..main, fix Blocking/Must-fix, close Batch 3.
