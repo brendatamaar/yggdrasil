@@ -192,16 +192,19 @@ type DraftFacts struct {
 
 // PlanDraft decides what an import does, in this order: scope (so a repo
 // outside the project never reveals an existing draft, nor that the request ID
-// exists), replay of the same request ID (changed payload refuses, the same
-// payload returns the stored draft and writes nothing), valid shell facts
-// (a zero Now or an invalid TaskID creates nothing), deduplication by issue,
-// create.
+// exists), valid shell facts (a zero Now or an invalid TaskID creates
+// nothing), replay of the request ID (changed payload refuses, the same
+// payload returns the stored draft and writes nothing), deduplication by
+// issue, create.
 func PlanDraft(s DraftSpec, f DraftFacts) DraftOutcome {
 	if !f.RepoTracked {
 		return DraftRefuse{Reason: DraftRepoUntracked}
 	}
 	if !f.RepoReady {
 		return DraftRefuse{Reason: DraftRepoNotReady}
+	}
+	if f.Now.IsZero() || f.TaskID.Validate() != nil {
+		return DraftRefuse{Reason: DraftBadFacts}
 	}
 	if r, ok := f.Replay.(Replayed); ok {
 		switch {
@@ -211,9 +214,6 @@ func PlanDraft(s DraftSpec, f DraftFacts) DraftOutcome {
 			return DraftRefuse{Reason: DraftBadFacts}
 		}
 		return DraftReplayed{Task: r.Task}
-	}
-	if f.Now.IsZero() || f.TaskID.Validate() != nil {
-		return DraftRefuse{Reason: DraftBadFacts}
 	}
 	if f.Existing != "" {
 		return DraftExists{Task: f.Existing}

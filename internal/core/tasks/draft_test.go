@@ -132,6 +132,8 @@ func TestPropDraftNeverCreatesFromBadFacts(t *testing.T) {
 					t.Fatalf("accepted bad facts %+v", f)
 				}
 			case DraftRefuse:
+			case DraftReplayed:
+				t.Fatalf("replay without a stored request: %+v", f)
 			}
 		}
 	})
@@ -195,6 +197,8 @@ func TestPropImportNeverStarts(t *testing.T) {
 				if facts.RepoTracked {
 					t.Fatal("unexpected refusal")
 				}
+			case DraftReplayed:
+				t.Fatal("replay without a stored request")
 			}
 		}
 	})

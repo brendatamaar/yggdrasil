@@ -105,6 +105,8 @@ func TestPropPlanDraftSequences(t *testing.T) {
 				if tk.SessionID != "" || tk.ParentTaskID != nil {
 					t.Fatalf("import started work or made a sub-task: %+v", tk)
 				}
+			case DraftReplayed:
+				t.Fatalf("facts %+v: replay without a stored request", f)
 			default:
 				t.Fatalf("unknown outcome %T", out)
 			}
