@@ -72,12 +72,3 @@ func TestCursorGap(t *testing.T) {
 		}
 	}
 }
-
-func TestStepIsInert(t *testing.T) {
-	for _, in := range []Input{TaskTransition{Revision: 1}, VerificationTransition{Revision: 1}, Recovered{}, Stop{}} {
-		got, cmds := Step(Empty{}, in)
-		if _, ok := got.(Empty); !ok || len(cmds) != 0 {
-			t.Errorf("Step(%T) = %T, %v", in, got, cmds)
-		}
-	}
-}

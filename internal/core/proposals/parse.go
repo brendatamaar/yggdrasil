@@ -199,6 +199,8 @@ func parseKind(k core.ProposalKind, data []byte, strict bool) (Action, error) {
 			return nil, err
 		}
 		return buildRemoveWorktree(v)
+	case core.ProposalIgnoreEntries, core.ProposalReviewComment, core.ProposalPullFF, core.ProposalInitRepo, core.ProposalPublish:
+		return parsePhase6(k, data)
 	}
 	return nil, fmt.Errorf("%w: %q", ErrUnsupportedKind, string(k))
 }

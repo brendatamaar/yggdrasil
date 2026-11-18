@@ -206,7 +206,7 @@ func TestNewRepoStateRoundTripAndRejects(t *testing.T) {
 		newrepos.Publishing{Spec: pub, Attempt: 1, Stage: newrepos.StageAddOrigin, Done: []newrepos.Receipt{newrepos.RemoteReceipt{RemoteID: "R", URL: "https://github.com/acme/x.git"}}},
 		newrepos.Published{RemoteID: "R", URL: "https://github.com/acme/x.git", Head: strings.Repeat("c", 40)},
 		newrepos.Uncertain{Attempt: 1, Stage: newrepos.StageCreateRemote, Reason: "timed out", Resume: newrepos.ResumePublish{Spec: pub}},
-		newrepos.Stopped{Stage: newrepos.StageInitGit, Reason: newrepos.StopMissingAuthor, Resume: newrepos.ResumeInit{Spec: spec, Done: []newrepos.Receipt{newrepos.DirReceipt{Identity: "i"}}}},
+		newrepos.Stopped{Stage: newrepos.StageInitGit, Reason: newrepos.StopMissingAuthor, Attempt: 3, Resume: newrepos.ResumeInit{Spec: spec, Done: []newrepos.Receipt{newrepos.DirReceipt{Identity: "i"}}}},
 		newrepos.Stopped{Reason: newrepos.StopRejected, Resume: newrepos.ResumeNone{}},
 	}
 	for _, st := range states {

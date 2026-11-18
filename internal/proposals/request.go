@@ -73,6 +73,11 @@ func (s *Service) parseRequest(items []RequestProposal) (requestItems, error) {
 		if err != nil {
 			return requestItems{}, refusal(coreprop.RefuseBadFacts, "A proposal in this request is not valid.")
 		}
+		switch a.(type) {
+		case coreprop.InitRepo, coreprop.PublishRepo:
+			// These link a reservation and start from the new-repo dialog.
+			return requestItems{}, refusal(coreprop.RefuseUnsupported, "Creating and publishing a repo are started from the new repo dialog, not from an action.")
+		}
 		out[i] = coreprop.RequestItem{Task: it.Task, Repo: it.Repo, Summary: clip(s.redact(it.Summary), maxSummary), Action: a}
 	}
 	return requestItems{items: out}, nil
@@ -164,27 +169,15 @@ func (s *Service) createAll(ctx context.Context, req core.RequestID, items []cor
 	type prepared struct{ n newProposal }
 	prep := make([]prepared, len(items))
 	for i, it := range items {
-		if err := it.Task.Validate(); err != nil {
-			return nil, refusal(coreprop.RefuseBadFacts, "The task for this proposal is not valid.")
-		}
-		cr := CreateRequest{Task: it.Task, Action: it.Action, Summary: it.Summary, Source: coreprop.UserSource{}}
-		facts, repo, detail, err := s.gatherFacts(ctx, cr)
+		n, err := s.prepare(ctx, CreateRequest{Task: it.Task, Action: it.Action, Summary: it.Summary, Source: coreprop.UserSource{}})
 		if err != nil {
 			return nil, err
 		}
-		if repo != it.Repo {
+		if n.Repo != it.Repo {
 			return nil, refusal(coreprop.RefuseBadFacts, "A proposal names a repo its action does not act on.")
 		}
-		action := it.Action
-		if facts.RepoTracked && facts.PathsOK && facts.RemoteSupported {
-			if action, err = s.fillExpected(ctx, action); err != nil {
-				return nil, err
-			}
-		}
-		prep[i] = prepared{n: newProposal{
-			ID: ids[i], Task: it.Task, Repo: repo, Source: coreprop.UserSource{}, Action: action,
-			Summary: it.Summary, Facts: facts, Detail: detail,
-		}}
+		n.ID = ids[i]
+		prep[i] = prepared{n: n}
 	}
 	now := s.now()
 	created := make([]coreprop.Proposal, len(prep))

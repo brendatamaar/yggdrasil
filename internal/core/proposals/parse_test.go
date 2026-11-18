@@ -213,7 +213,7 @@ func TestParseActionRejectsBadJSON(t *testing.T) {
 }
 
 func TestParseActionRefusesUnavailableKinds(t *testing.T) {
-	for _, k := range []string{"publish", "subtasks", "", "force_push", "reset", "Commit"} {
+	for _, k := range []string{"subtasks", "", "force_push", "reset", "Commit"} {
 		if _, err := ParseAction(k, []byte(`{}`)); !errors.Is(err, ErrUnsupportedKind) {
 			t.Errorf("ParseAction(%q) = %v, want ErrUnsupportedKind", k, err)
 		}

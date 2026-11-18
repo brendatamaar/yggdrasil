@@ -142,6 +142,18 @@ type Config struct {
 	// StageID derives the ID of a removal's staging folder from its proposal (1-64 of
 	// [A-Za-z0-9_-]). It must be deterministic, so a retry plans the same folder; default StageIDFor.
 	StageID func(core.ProposalID) string
+
+	// Phase 6 ports (docs/design/phase-6-*.md). Each is optional: without its
+	// port the kind is refused at Create and, if one is stored anyway, fails at
+	// execution having done nothing. Ignore edits .gitignore, Comments posts a
+	// review comment, Pull fast-forwards the main checkout.
+	Ignore   IgnoreWriter
+	Comments CommentHost
+	Pull     PullRunner
+	// NewRepos is the durable new-repo lifecycle (internal/newrepos) that the
+	// InitRepo and PublishRepo executors hand their confirmed work to. Wire its
+	// progress back with Service.OperationChanged.
+	NewRepos NewRepoLifecycle
 }
 
 // Service creates, decides and executes proposals (RV-02, GH-03).
@@ -428,33 +440,22 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (View, error) {
 		switch req.Action.(type) {
 		case coreprop.MergeLocal, coreprop.RemoveWorktree:
 			return View{}, refusal(coreprop.RefuseUnsupported, "An agent cannot propose this. Merging and removing a worktree are started from the change set.")
+		case coreprop.InitRepo, coreprop.PublishRepo:
+			return View{}, refusal(coreprop.RefuseUnsupported, "An agent cannot propose this. Creating and publishing a repo are started by you, from the new repo dialog.")
 		}
 	}
-	if err := req.Task.Validate(); err != nil {
-		return View{}, refusal(coreprop.RefuseBadFacts, "The task for this proposal is not valid.")
-	}
-	facts, repo, detail, err := s.gatherFacts(ctx, req)
+	n, err := s.prepare(ctx, req)
 	if err != nil {
 		return View{}, err
 	}
-	if facts.RepoTracked && facts.PathsOK && facts.RemoteSupported {
-		if req.Action, err = s.fillExpected(ctx, req.Action); err != nil {
-			return View{}, err
-		}
-	}
-	src := req.Source
-	if src == nil {
-		src = coreprop.UserSource{}
-	}
 	id := core.ProposalID(s.cfg.NewID("prp"))
-	now := s.now()
+	n.ID = id
+	n.Now = s.now()
 	var created coreprop.Proposal
 	var cmds []coreprop.Command
 	err = s.cfg.Store.Commit(ctx, func(tx *db.Tx) error {
 		var err error
-		created, cmds, err = s.storePending(ctx, tx, newProposal{
-			ID: id, Task: req.Task, Repo: repo, Source: src, Action: req.Action, Summary: req.Summary, Facts: facts, Detail: detail, Now: now,
-		}, "")
+		created, cmds, err = s.storePending(ctx, tx, n, "")
 		return err
 	})
 	if err != nil {
@@ -468,6 +469,50 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (View, error) {
 	return s.view(ctx, created), nil
 }
 
+// prepare reads the facts a Created input needs and completes the pins of the
+// action, outside any transaction. A thing that is missing is a refusal; only
+// an unexpected error is an error. The caller sets ID and Now.
+func (s *Service) prepare(ctx context.Context, req CreateRequest) (newProposal, error) {
+	if why := s.portMissing(req.Action); why != "" {
+		return newProposal{}, refusal(coreprop.RefuseUnsupported, why)
+	}
+	if err := req.Task.Validate(); err != nil {
+		return newProposal{}, refusal(coreprop.RefuseBadFacts, "The task for this proposal is not valid.")
+	}
+	var (
+		facts  coreprop.Facts
+		repo   core.RepoID
+		detail string
+		err    error
+		reserv *db.ReservationRecord // set for an InitRepo: linked in the same transaction
+	)
+	if ia, ok := req.Action.(coreprop.InitRepo); ok {
+		facts, repo, reserv, err = s.initFacts(ctx, req, ia)
+	} else {
+		facts, repo, detail, err = s.gatherFacts(ctx, req)
+		if err == nil && facts.RepoTracked {
+			if pa, ok := req.Action.(coreprop.PublishRepo); ok {
+				err = s.checkPublishCreate(ctx, pa)
+			}
+		}
+	}
+	if err != nil {
+		return newProposal{}, err
+	}
+	if facts.RepoTracked && facts.PathsOK && facts.RemoteSupported {
+		if req.Action, err = s.fillExpected(ctx, req.Action); err != nil {
+			return newProposal{}, err
+		}
+	}
+	src := req.Source
+	if src == nil {
+		src = coreprop.UserSource{}
+	}
+	return newProposal{
+		Task: req.Task, Repo: repo, Source: src, Action: req.Action, Summary: req.Summary, Facts: facts, Detail: detail, Reserv: reserv,
+	}, nil
+}
+
 // newProposal is what storePending needs to create one pending proposal.
 type newProposal struct {
 	ID      core.ProposalID
@@ -478,7 +523,9 @@ type newProposal struct {
 	Summary string
 	Facts   coreprop.Facts
 	Detail  string
-	Now     time.Time
+	// Reserv is set for an InitRepo: the reservation is linked in the same transaction.
+	Reserv *db.ReservationRecord
+	Now    time.Time
 }
 
 // storePending runs Step for one Created input inside tx and stores the
@@ -513,6 +560,11 @@ func (s *Service) storePending(ctx context.Context, tx *db.Tx, n newProposal, re
 	}
 	if err := tx.CreateProposalRecord(ctx, p); err != nil {
 		return coreprop.Proposal{}, nil, err
+	}
+	if n.Reserv != nil {
+		if err := s.linkReservation(ctx, tx, *n.Reserv, p, n.Now); err != nil {
+			return coreprop.Proposal{}, nil, err
+		}
 	}
 	return p, cmds, s.writeAuditFor(ctx, tx, p, cmds, "", n.Now, request)
 }
@@ -585,7 +637,7 @@ func (s *Service) persistDecision(ctx context.Context, id core.ProposalID, mk fu
 		if err != nil {
 			return View{}, nil, fmt.Errorf("load proposal %s: %w", id, err)
 		}
-		tracked := s.repoTracked(ctx, rec.Proposal.Repo)
+		tracked := s.proposalTracked(ctx, rec.Proposal)
 		now := s.now()
 		next, cmds := coreprop.Step(rec.Proposal, mk(rec, tracked, now))
 		if r, ok := containsRefuse(cmds); ok {

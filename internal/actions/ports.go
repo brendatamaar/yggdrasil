@@ -12,6 +12,7 @@ import (
 	corerepos "github.com/brendatamaar/yggdrasil/internal/core/repos"
 	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/hosts"
+	"github.com/brendatamaar/yggdrasil/internal/safety"
 	"github.com/brendatamaar/yggdrasil/internal/tasks"
 )
 
@@ -30,6 +31,31 @@ type ScopeReader interface {
 	StillTracked(ctx context.Context, repo core.RepoID) error
 	// NoiseFacts returns the bounded noise facts for ignore suggestions.
 	NoiseFacts(ctx context.Context, repo core.RepoID) (corerepos.NoiseFacts, error)
+	// Target returns the project of a tracked READY repo and its host identity,
+	// resolved on the server (never from a browser URL).
+	Target(ctx context.Context, repo core.RepoID) (Target, error)
+	// ReposOf lists the tracked READY repos of a project (db.ErrNotFound when
+	// the project is unknown). Untracked and reserved repos never appear.
+	ReposOf(ctx context.Context, project core.ProjectID) ([]core.RepoID, error)
+	// PullTarget returns the checked-out branch, its upstream and HEAD for a
+	// fast-forward pull proposal.
+	PullTarget(ctx context.Context, repo core.RepoID) (PullTarget, error)
+}
+
+// Target is the project and host identity of a tracked repo. HasHost is false
+// for a repo with no linked host instance (an issue import is then refused).
+type Target struct {
+	Project     core.ProjectID
+	HasHost     bool
+	Instance    string
+	HostProject string
+}
+
+// PullTarget is what a PullFF proposal pins.
+type PullTarget struct {
+	Branch   string
+	Upstream string
+	Head     string
 }
 
 // ContextReader loads bounded, redacted, source-labelled context for an
@@ -67,11 +93,35 @@ type TaskSubmitter interface {
 // RequestID, so a retried dispatch finds the first proposals.
 type ProposalCreator interface {
 	CreateForRequest(ctx context.Context, id core.RequestID, items []ProposalSpec) ([]core.ProposalID, error)
+	// FindForRequest is the read-only reconciliation: the proposals created for
+	// id, or db.ErrNotFound when none exist. It never creates one.
+	FindForRequest(ctx context.Context, id core.RequestID) ([]core.ProposalID, error)
+}
+
+// FolderDrafts stores a draft task for a repo whose folder cannot be read, so a
+// diagnosis brief is kept and waits for a valid working directory. It starts
+// no turn, process or worktree, and is idempotent per RequestID with a
+// LookupRequest-style reconciliation through tasks.RequestSubmitter. Nil in
+// Deps: such a request is refused with a plain explanation (no run is faked).
+type FolderDrafts interface {
+	SaveWaitingDraft(ctx context.Context, id core.RequestID, d WaitingDraft) (core.TaskID, error)
+}
+
+// WaitingDraft is the draft a diagnosis leaves for an unreadable repo.
+type WaitingDraft struct {
+	Project core.ProjectID
+	Repo    core.RepoID
+	Title   string
+	Brief   string
+	Agent   string
+	Model   string
 }
 
 // ProposalSpec is one proposal to create: an already validated draft action
 // with its summary. The action type is core/proposals (frozen contracts).
 type ProposalSpec struct {
+	// ID is the proposal ID the dispatch generated (core Dispatch.IDs).
+	ID      core.ProposalID
 	Task    core.TaskID
 	Repo    core.RepoID
 	Summary string
@@ -106,6 +156,11 @@ type Deps struct {
 	Requests  RequestStore
 	Comments  ReviewCommentReader
 	Hub       api.Phase6Hub
+	// Drafts is optional (see FolderDrafts).
+	Drafts FolderDrafts
+	// Redactor redacts every free-text field before it is attached, stored or
+	// audited (invariant 4).
+	Redactor safety.Redactor
 	// Clock and IDs are the shell's time and randomness; the core never makes one.
 	Clock func() time.Time
 	IDs   func(prefix string) string

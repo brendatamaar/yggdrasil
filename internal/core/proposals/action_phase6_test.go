@@ -89,23 +89,40 @@ func TestPhase6HashCoversEveryField(t *testing.T) {
 	}
 }
 
-// The Phase 6 kinds are defined but not Enabled: ParseAction, ActionFromRow
-// and Step refuse them, so no proposal that cannot run is ever created.
-func TestPhase6KindsAreNotEnabledYet(t *testing.T) {
+// Every Phase 6 kind has its executor and is Enabled: ParseAction,
+// ActionFromRow and Step accept them. A kind that is not Enabled is refused
+// everywhere (the table keeps the disabled branch for the next one).
+func TestPhase6KindsEnabledStatus(t *testing.T) {
+	enabled := map[core.ProposalKind]bool{
+		core.ProposalIgnoreEntries: true, core.ProposalReviewComment: true, core.ProposalPullFF: true,
+		core.ProposalInitRepo: true, core.ProposalPublish: true,
+	}
+	facts := Facts{RepoTracked: true, PathsOK: true, RemoteSupported: true}
 	for _, a := range phase6Actions() {
 		k := a.Kind()
-		if Enabled(k) {
-			t.Errorf("%s is enabled before its executor exists", k)
+		if Enabled(k) != enabled[k] {
+			t.Errorf("Enabled(%s) = %v, want %v", k, Enabled(k), enabled[k])
 		}
 		_, payload := RowOf(a)
-		if _, err := ParseAction(string(k), payload); !errors.Is(err, ErrUnsupportedKind) {
-			t.Errorf("ParseAction(%s) = %v, want ErrUnsupportedKind", k, err)
-		}
-		if _, err := ActionFromRow(k, payload); !errors.Is(err, ErrUnsupportedKind) {
-			t.Errorf("ActionFromRow(%s) = %v, want ErrUnsupportedKind", k, err)
-		}
 		p := Proposal{ID: "prp_1", ChangeSet: "cs_1", Task: "tsk_1", Repo: "rep_1", Source: UserSource{}, Action: a}
-		got, cmds := Step(Proposal{}, Created{Proposal: p, Facts: Facts{RepoTracked: true, PathsOK: true, RemoteSupported: true}})
+		got, cmds := Step(Proposal{}, Created{Proposal: p, Facts: facts})
+		parsed, perr := ParseAction(string(k), payload)
+		row, rerr := ActionFromRow(k, payload)
+		if enabled[k] {
+			if perr != nil || rerr != nil || !reflect.DeepEqual(parsed, a) || !reflect.DeepEqual(row, a) {
+				t.Errorf("%s: ParseAction = %v, %v; ActionFromRow = %v, %v", k, parsed, perr, row, rerr)
+			}
+			if _, ok := got.State.(Pending); !ok {
+				t.Errorf("Step(Created %s) = %+v, %v, want a pending proposal", k, got.State, cmds)
+			}
+			if _, err := ParseDraftAction(string(k), payload); err != nil {
+				t.Errorf("ParseDraftAction(%s) = %v", k, err)
+			}
+			continue
+		}
+		if !errors.Is(perr, ErrUnsupportedKind) || !errors.Is(rerr, ErrUnsupportedKind) {
+			t.Errorf("%s: ParseAction = %v, ActionFromRow = %v, want ErrUnsupportedKind", k, perr, rerr)
+		}
 		if got.State != nil || len(cmds) != 1 {
 			t.Fatalf("Step(Created %s) = %+v, %v", k, got, cmds)
 		}

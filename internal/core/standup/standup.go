@@ -106,8 +106,10 @@ type Build struct {
 type Unavailable struct {
 	Source SourceKind
 	// Repo is empty when the whole source is unavailable.
-	Repo   core.RepoID
-	Reason string
+	Repo core.RepoID
+	// RepoName is optional: the text names the repo with it when present.
+	RepoName string
+	Reason   string
 }
 
 // Summary is the typed content of a standup. Truncated names the sources cut at
@@ -180,8 +182,12 @@ type SourcesRead struct {
 	MRs         []MR
 	Builds      []Build
 	Unavailable []Unavailable
-	// Readable is the number of sources that were readable (0 to 3).
+	// Readable is the number of sources that were readable (0 to 3). It must
+	// equal 3 minus the sources labelled wholly unavailable.
 	Readable int
+	// Truncated names the sources the shell cut at the per-repo cap (the
+	// reader said there was more). Additive field.
+	Truncated []SourceKind
 }
 
 // ReadFailed: Attempt failed before reading any source.
@@ -235,26 +241,3 @@ func (ReturnSummary) isCommand()  {}
 func (Explain) isCommand()        {}
 func (CancelRead) isCommand()     {}
 func (SubmitAskDraft) isCommand() {}
-
-// Format renders a summary deterministically: stable order by repo name, time
-// and identity, at most MaxTextBytes.
-//
-// PENDING (task S): the foundation freezes the signature. It returns an empty
-// string, never invented text.
-func Format(s Summary) string {
-	_ = s
-	return ""
-}
-
-// Step is (standup2, commands) = Step(standup1, input) following
-// docs/design/phase-6-standup.md.
-//
-// PENDING (task S): every input returns the standup unchanged and no commands,
-// so no source is read and no agent is started.
-func Step(s Standup, in Input) (Standup, []Command) {
-	switch in.(type) {
-	case Requested, SourcesRead, ReadFailed, Cancelled, PolishRequested:
-		return s, nil
-	}
-	return s, nil
-}

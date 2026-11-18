@@ -50,7 +50,7 @@ func TestCreatedTable(t *testing.T) {
 		{"repo untracked", func(c *Created) { c.Facts.RepoTracked = false }, RefuseRepoUntracked},
 		{"paths not ok", func(c *Created) { c.Facts.PathsOK = false }, RefuseBadFacts},
 		{"remote unsupported", func(c *Created) { c.Facts.RemoteSupported = false }, RefuseBadFacts},
-		{"publish kind", func(c *Created) { c.Proposal.Action = fakeAction{core.ProposalPublish} }, RefuseUnsupported},
+		{"subtasks kind", func(c *Created) { c.Proposal.Action = fakeAction{core.ProposalSubtasks} }, RefuseUnsupported},
 		{"no action", func(c *Created) { c.Proposal.Action = nil }, RefuseUnsupported},
 		{"task change set matches", func(c *Created) { c.Facts.TaskChangeSet = c.Proposal.ChangeSet }, ""},
 		{"task change set differs", func(c *Created) { c.Facts.TaskChangeSet = "cs-other" }, RefuseBadFacts},

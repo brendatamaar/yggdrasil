@@ -2,6 +2,7 @@ package newrepos
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/api"
@@ -54,6 +55,11 @@ type MainLock interface {
 	Lock(ctx context.Context, repo core.RepoID) (release func(), err error)
 }
 
+// ProjectReader reads the tracked project a reservation belongs to (*db.Store).
+type ProjectReader interface {
+	GetProject(ctx context.Context, id core.ProjectID) (core.Project, error)
+}
+
 // Trust and enforcement gates for the first prompt in direct-edit mode are the
 // existing tasks.Service admission (AG-08, SF-06, SF-09); this package starts
 // no task and calls no agent.
@@ -73,6 +79,22 @@ type Deps struct {
 	// Clock and IDs are the shell's time and randomness; the core never makes one.
 	Clock func() time.Time
 	IDs   func(prefix string) string
+
+	// Projects resolves the tracked project of a reservation. Paths gives the
+	// canonical form of the project's folder (platform.RealPaths in production).
+	// Both are additions to the original port list: the service needs the
+	// project's folder to build the one child path it creates.
+	Projects ProjectReader
+	Paths    platform.PathResolver
+	// Logger and Redact are optional. Every error text that is logged goes
+	// through Redact first (docs/AGENTS.md section 6, invariant 4).
+	Logger *slog.Logger
+	Redact func(string) string
+	// RetryDelay is the pause between the bounded retries of a read-only
+	// reconciliation (default 250ms). StageTimeout bounds one stage effect
+	// (default 2 minutes); a timeout is an unknown outcome, never a failure.
+	RetryDelay   time.Duration
+	StageTimeout time.Duration
 }
 
 // *db.Store is the live ReservationStore.
