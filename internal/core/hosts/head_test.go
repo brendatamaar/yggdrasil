@@ -58,7 +58,7 @@ func FuzzParseHead(f *testing.F) {
 		if got != s {
 			t.Fatalf("changed %q to %q", s, got)
 		}
-		if got != "" && !((len(got) == 40 || len(got) == 64) && strings.Trim(got, "0123456789abcdef") == "") {
+		if got != "" && ((len(got) != 40 && len(got) != 64) || strings.Trim(got, "0123456789abcdef") != "") {
 			t.Fatalf("accepted %q", got)
 		}
 		if again, err := ParseHead(got); err != nil || again != got {
