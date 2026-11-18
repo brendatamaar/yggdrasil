@@ -71,6 +71,10 @@ func proposalErr(err error) error {
 	return err
 }
 
+// NewProposalDTO converts a view for an adapter outside this package (the
+// composition root's noise adapter).
+func NewProposalDTO(v proposals.View) ProposalDTO { return proposalDTO(v) }
+
 // proposalDTO converts a view. Summary stays plain text: the UI must not
 // render it as markup or HTML.
 func proposalDTO(v proposals.View) ProposalDTO {
