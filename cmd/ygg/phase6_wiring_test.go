@@ -363,6 +363,12 @@ func TestPhase6ShutdownCommitsQueuedNotices(t *testing.T) {
 	}
 	ids := regexp.MustCompile(`(prj|rep)_[0-9a-f]+`).FindAllString(out.String(), -1)
 	task := dbtest.Task(t, a.store, core.Task{ProjectID: core.ProjectID(ids[0]), Scope: core.ScopeRepo, RepoIDs: []core.RepoID{core.RepoID(ids[1])}, Mode: core.ModeAsk, Status: core.TaskReview})
+	// A slow job first keeps the notice queued while the app stops, so only the
+	// shutdown order decides whether it reaches the store.
+	a.phase6.feeder.enqueue(func(context.Context, *notify.Producer) error {
+		time.Sleep(500 * time.Millisecond)
+		return nil
+	})
 	a.phase6.feeder.enqueue(func(ctx context.Context, p *notify.Producer) error {
 		return p.TaskStatus(ctx, task.ID, task.Title, core.TaskReview, 7)
 	})
