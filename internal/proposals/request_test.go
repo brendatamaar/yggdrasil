@@ -98,6 +98,9 @@ func TestPropCreateForRequestIdempotent(t *testing.T) {
 			if r.Intn(2) == 0 { // the branch moves; the retry must still be the same request
 				f := fmt.Sprintf("moved%d.txt", r.Intn(1000))
 				w.git.Write(w.wtDir, f, "x\n")
+				if err := w.git.Add(w.ctx, w.wtDir, []string{f}); err != nil {
+					t.Fatal(err)
+				}
 				if _, err := w.git.Commit(w.ctx, w.wtDir, []string{f}, "chore: move", w.head(w.wtDir)); err != nil {
 					t.Fatal(err)
 				}
@@ -240,13 +243,13 @@ func TestCreateForRequestRefusesDisabledAndInvalidItems(t *testing.T) {
 		items  []RequestProposal
 		reason coreprop.RefuseReason
 	}{
-		"disabled kind":   {[]RequestProposal{{Task: w.task.ID, Repo: w.repo.ID, Kind: core.ProposalReviewComment, Payload: []byte(`{}`)}}, coreprop.RefuseUnsupported},
+		"disabled kind":   {[]RequestProposal{{Task: w.task.ID, Repo: w.repo.ID, Kind: core.ProposalSubtasks, Payload: []byte(`{}`)}}, coreprop.RefuseUnsupported},
 		"unknown kind":    {[]RequestProposal{{Task: w.task.ID, Repo: w.repo.ID, Kind: "nuke", Payload: []byte(`{}`)}}, coreprop.RefuseUnsupported},
 		"bad payload":     {[]RequestProposal{{Task: w.task.ID, Repo: w.repo.ID, Kind: core.ProposalCommit, Payload: []byte(`{"x":1}`)}}, coreprop.RefuseBadFacts},
 		"no items":        {nil, coreprop.RefuseBadFacts},
 		"too many":        {slices.Repeat([]RequestProposal{good}, coreprop.MaxRequestProposals+1), coreprop.RefuseTooMany},
 		"foreign task":    {[]RequestProposal{{Task: "tsk_other", Repo: w.repo.ID, Kind: good.Kind, Payload: good.Payload}}, coreprop.RefuseBadFacts},
-		"good plus other": {[]RequestProposal{good, {Task: w.task.ID, Repo: w.repo.ID, Kind: core.ProposalInitRepo, Payload: []byte(`{}`)}}, coreprop.RefuseUnsupported},
+		"good plus other": {[]RequestProposal{good, {Task: w.task.ID, Repo: w.repo.ID, Kind: core.ProposalSubtasks, Payload: []byte(`{}`)}}, coreprop.RefuseUnsupported},
 	}
 	for name, c := range cases {
 		_, err := w.svc.CreateForRequest(w.ctx, core.RequestID("req_"+strings.ReplaceAll(name, " ", "_")), c.items)

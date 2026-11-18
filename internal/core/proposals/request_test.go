@@ -123,3 +123,21 @@ func TestRequestProposalIDsAreDistinctAndValid(t *testing.T) {
 		}
 	}
 }
+
+func TestActionFromDraftRowAcceptsMissingPinsOnly(t *testing.T) {
+	draft := Commit{Where: InWorktree{ID: "wt_one"}, Paths: []RelPath{"a.txt"}, Message: "m"}
+	kind, payload := RowOf(draft)
+	a, err := ActionFromDraftRow(kind, payload)
+	if err != nil || Hash(a) != Hash(draft) {
+		t.Fatalf("draft = %v, %v", a, err)
+	}
+	if _, err := ActionFromRow(kind, payload); err == nil {
+		t.Fatal("the strict reader must still require the pins")
+	}
+	if _, err := ActionFromDraftRow(kind, []byte(`{"worktree":"wt_one","paths":["a.txt"],"message":"m","extra":1}`)); err == nil {
+		t.Fatal("an unknown field must be rejected")
+	}
+	if _, err := ActionFromDraftRow(core.ProposalSubtasks, []byte(`{}`)); err == nil {
+		t.Fatal("a kind that cannot be created must be rejected")
+	}
+}

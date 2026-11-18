@@ -69,7 +69,7 @@ func (s *Service) parseRequest(items []RequestProposal) (requestItems, error) {
 		if !coreprop.Enabled(it.Kind) {
 			return requestItems{}, refusal(coreprop.RefuseUnsupported, "")
 		}
-		a, err := coreprop.ActionFromRow(it.Kind, it.Payload)
+		a, err := coreprop.ActionFromDraftRow(it.Kind, it.Payload)
 		if err != nil {
 			return requestItems{}, refusal(coreprop.RefuseBadFacts, "A proposal in this request is not valid.")
 		}
@@ -172,6 +172,11 @@ func (s *Service) createAll(ctx context.Context, req core.RequestID, items []cor
 		n, err := s.prepare(ctx, CreateRequest{Task: it.Task, Action: it.Action, Summary: it.Summary, Source: coreprop.UserSource{}})
 		if err != nil {
 			return nil, err
+		}
+		if !n.Facts.RepoTracked {
+			// Say so before the pins are judged: a draft on an untracked or
+			// reserved repo has none, and "not valid" would hide the cause.
+			return nil, refusal(coreprop.RefuseRepoUntracked, "")
 		}
 		if n.Repo != it.Repo {
 			return nil, refusal(coreprop.RefuseBadFacts, "A proposal names a repo its action does not act on.")

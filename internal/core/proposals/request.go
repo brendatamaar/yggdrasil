@@ -3,6 +3,7 @@ package proposals
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"strconv"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
@@ -24,6 +25,22 @@ type RequestItem struct {
 	Repo    core.RepoID
 	Summary string
 	Action  Action
+}
+
+// ActionFromDraftRow is ActionFromRow for a request's item: the action service
+// sends an already validated draft, whose expected head and diff checksum may
+// still be empty (the proposals service pins them before the action is hashed).
+// A pin that is present is checked as in ActionFromRow. The result is not
+// executable until the service has filled the pins and called Validate.
+func ActionFromDraftRow(kind core.ProposalKind, payload []byte) (Action, error) {
+	if err := supported(kind); err != nil {
+		return nil, err
+	}
+	a, err := parseKind(kind, payload, false)
+	if err != nil {
+		return nil, fmt.Errorf("read %s proposal: %w", kind, err)
+	}
+	return a, nil
 }
 
 // RequestProposalID is the ID of the i-th proposal of a request. It is derived
