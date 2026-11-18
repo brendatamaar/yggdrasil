@@ -172,7 +172,7 @@ Execution log (design approvals, SHAs, review results, decisions, deviations, in
 | Batch 3 | closed (N1, N2, N3a, N3b, P1, P2, Q, TE-1, BF3; reviews PASS; -race clean) | see log | wiring contracts and Considers in the log; `task license` unrunnable locally (verify in CI) |
 | Batch 4 | closed (A1, S, A2, T2, T3, P3, S2, TM2; full gate green) | see log | reviews run together with Batch 5; open items in the log under "Batch 4 closed" |
 
-| Batch 5 | in progress | | split into W1 API/wiring, W2 MCP, U1..Un frontend rounds; see log |
+| Batch 5 | in progress: round 1 (W1 API handlers, U1 frontend actions/standup) | | round 2 = W2 MCP + agent PublishRepo, U2 new-repo/notifications UI; round 3 = W3a cmd wiring; round 4 = W3b cmd wiring + API tests; then reviews of Batches 4+5 |
 | Batch 6 | not started | | |
 
 ### Workflow for the remaining batches (token budget; adopted 2026-11-16)
