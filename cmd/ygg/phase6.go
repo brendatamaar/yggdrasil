@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/actions"
@@ -129,13 +130,46 @@ func (p *phase6) start(ctx context.Context) {
 	if err := p.actions.Recover(ctx); err != nil {
 		p.log.Warn("could not reconcile the workspace actions of the last run", "err", err)
 	}
-	// New repos: the follow-up loop first, so what recovery settles reaches the
-	// proposals service. Recovery reconciles read-only and repeats no stage.
+	// New repos: the follow-up loop hands the proposals service what recovery
+	// settled (queued since recoverNewRepos), then the proposals are settled.
 	p.nr.notifier.start(ctx)
+	settleNewRepoProposals(ctx, p.log, p.nr.svc, p.store)
+}
+
+// recoverNewRepos reconciles the operations a crash or stop left running. It
+// runs BEFORE the proposals service starts, so a Confirmed proposal is judged
+// against an operation that recovery already settled, not one that is still
+// being checked (an operation still unsettled is "keep": it stays Confirmed and
+// its outcome arrives through the follow-up loop). Recovery reconciles
+// read-only and repeats no stage. The wait is bounded and ends early when the
+// operations stop changing (an operation parked for a human retry stays
+// unsettled by design).
+func (p *phase6) recoverNewRepos(ctx context.Context) {
 	if err := p.nr.svc.Recover(ctx); err != nil {
 		p.log.Warn("could not reconcile the new repos of the last run", "err", err)
 	}
-	settleNewRepoProposals(ctx, p.log, p.nr.svc, p.store)
+	deadline := time.Now().Add(5 * time.Second)
+	last, stable := "", 0
+	for time.Now().Before(deadline) && stable < 5 {
+		recs, err := p.store.ListUnsettledReservations(ctx)
+		if err != nil || len(recs) == 0 {
+			return
+		}
+		var sb strings.Builder
+		for _, r := range recs {
+			fmt.Fprintf(&sb, "%s:%d;", r.Operation.ID, r.Operation.Version)
+		}
+		if sb.String() == last {
+			stable++
+		} else {
+			last, stable = sb.String(), 0
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 // stopActions stops the action service, which calls tasks and proposals.

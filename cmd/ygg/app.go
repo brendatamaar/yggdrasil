@@ -357,6 +357,9 @@ func (a *app) run(ctx context.Context, ln net.Listener) error {
 		a.phase6.closeNotices()
 		return errors.Join(fmt.Errorf("start tasks: %w", err), a.db.Close())
 	}
+	// New repos are recovered first (read-only, nothing repeated), so the
+	// proposals below are judged against settled operations.
+	a.phase6.recoverNewRepos(ctx)
 	// Proposals that were Confirmed at the last shutdown are reconciled here,
 	// never executed again on their own.
 	if err := a.proposals.Start(ctx); err != nil {

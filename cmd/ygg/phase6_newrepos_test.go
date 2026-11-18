@@ -362,7 +362,7 @@ func mcpRPC(t *testing.T, base, token, tool string, args map[string]any) (string
 	var buf bytes.Buffer
 	_, _ = buf.ReadFrom(resp.Body)
 	raw := buf.String()
-	return raw, resp.StatusCode != 200 || strings.Contains(raw, `"isError":true`)
+	return raw, resp.StatusCode != 200 || strings.Contains(raw, `"isError":true`) || strings.Contains(raw, `"error":{`)
 }
 
 // ---- tests ----
@@ -498,7 +498,7 @@ func TestAgentProposesPublishOnlyAndNeverInit(t *testing.T) {
 	if isErr {
 		t.Fatalf("propose_publish: %s", raw)
 	}
-	pending, err := r.a.proposals.List(context.Background(), proposals.ListFilter{Task: ready.SetupTaskID})
+	pending, err := r.a.proposals.List(context.Background(), proposals.ListFilter{Task: task.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -565,7 +565,9 @@ func TestNewRepoShutdownAndRestartRecoverWithoutRepeating(t *testing.T) {
 	if r.tr.count("PublishBranch") != 1 || done.RemoteURL == "" {
 		t.Fatalf("push count %d, remote %q", r.tr.count("PublishBranch"), done.RemoteURL)
 	}
-	r.wait("the publish proposal to follow the outcome", func() bool { return r.proposal(p.ID).Status == core.ProposalExecuted })
+	r.wait("the publish proposal to follow the outcome", func() bool {
+		return r.proposal(p.ID).Status == core.ProposalExecuted
+	})
 }
 
 // Untracking the project while a stage runs stops the operation: it is not
