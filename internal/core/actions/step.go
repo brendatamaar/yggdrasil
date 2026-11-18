@@ -170,10 +170,10 @@ func onRequested(d Submission, in Requested) (Submission, []Command) {
 	}
 }
 
-// admit decides whether the facts still offer the requested action, and returns
+// Admit decides whether the facts still offer the requested action, and returns
 // the offering it is built from. It is the scope re-check of the design: a
 // different repo, a source that changed or an action no longer offered refuses.
-func admit(f Facts, r Request) (Offering, RefuseReason, bool) {
+func Admit(f Facts, r Request) (Offering, RefuseReason, bool) {
 	if f.Repo != r.RepoID {
 		return Offering{}, RefuseScopeChanged, false
 	}
@@ -197,6 +197,28 @@ func admit(f Facts, r Request) (Offering, RefuseReason, bool) {
 		return Offering{}, RefuseScopeChanged, false
 	}
 	return Offering{}, RefuseNoOffering, false
+}
+
+// StillCurrent reports whether the pin a preview showed (expected) is still the
+// pin of the facts now. It is the one stale-head rule: the machine applies it at
+// submit and the shell applies it again right before the effect, so no copy of
+// it exists outside the core. An empty pin matches only an empty pin: a repo
+// whose head could not be read is never taken to match one that could.
+func StillCurrent(expected, now string) bool { return expected == now }
+
+// ModeAllowed reports whether a task of this kind may be submitted in this mode.
+// Ask is the mode of every kind that submits a task; Code is only ever asked
+// for by FixPipeline, as a new task in its own worktree (AC-03, invariant 2).
+// The mode of a kind that starts no task (a draft import, a pull) is never
+// allowed, and neither is any other mode.
+func ModeAllowed(k Kind, m core.TaskMode) bool {
+	switch m {
+	case core.ModeAsk:
+		return k.Effect() == EffectSubmitTask
+	case core.ModeCode:
+		return k == FixPipeline
+	}
+	return false
 }
 
 // clampText cuts s to at most max bytes on a rune boundary.
@@ -243,7 +265,7 @@ func onPrepared(d Submission, in Prepared) (Submission, []Command) {
 	if !ok || p.Attempt != in.Attempt {
 		return d, nil
 	}
-	o, why, ok := admit(in.Facts, d.Request)
+	o, why, ok := Admit(in.Facts, d.Request)
 	if !ok {
 		return refuse(d, why)
 	}
@@ -275,7 +297,7 @@ func attemptKey(id core.RequestID, attempt int) string {
 func onSubmitRequested(d Submission, in SubmitRequested) (Submission, []Command) {
 	switch st := stateOf(d).(type) {
 	case Ready:
-		if in.ScopeHead != st.ExpectedHead {
+		if !StillCurrent(st.ExpectedHead, in.ScopeHead) {
 			return refuse(d, RefuseStaleHead)
 		}
 		d.Seq++

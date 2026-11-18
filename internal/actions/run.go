@@ -332,11 +332,11 @@ func (r *run) effect(ctx context.Context, c coreactions.Dispatch) {
 		r.feed(ctx, coreactions.SubmitFailed{Attempt: c.Attempt, Outcome: coreactions.SubmitDefiniteRefusal, Reason: scopeReason(err)})
 		return
 	}
-	if ok, why := offered(f, req); !ok {
+	if _, why, ok := coreactions.Admit(f, req); !ok {
 		r.feed(ctx, coreactions.SubmitFailed{Attempt: c.Attempt, Outcome: coreactions.SubmitDefiniteRefusal, Reason: why})
 		return
 	}
-	if pin := coreactions.Pin(f, req.Kind); r.expectedPin != "" && pin != r.expectedPin {
+	if !coreactions.StillCurrent(r.expectedPin, coreactions.Pin(f, req.Kind)) {
 		r.feed(ctx, coreactions.SubmitFailed{Attempt: c.Attempt, Outcome: coreactions.SubmitDefiniteRefusal, Reason: coreactions.RefuseStaleHead})
 		return
 	}
