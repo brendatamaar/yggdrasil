@@ -1,6 +1,7 @@
 import { apiFetch } from "../../api/client";
 import type {
   ActionCatalogueResponse,
+  ActionExecuteRequest,
   ActionPreviewDTO,
   ActionRequestDTO,
   ActionResultDTO,
@@ -11,12 +12,6 @@ import type {
 // the boundary: a malformed body is an error, never an optimistic result.
 
 const enc = encodeURIComponent;
-
-/**
- * The execute body. The Go type embeds ActionRequestDTO, so on the wire the fields are flat
- * (the generated `ActionExecuteRequest` shows the embedded struct as a nested key).
- */
-export type ActionExecuteBody = ActionRequestDTO & { digest: string; expectedHead?: string };
 
 export class ActionDecodeError extends Error {
   constructor(what: string) {
@@ -74,7 +69,7 @@ export const previewAction = async (req: ActionRequestDTO, signal?: AbortSignal)
   );
 
 /** Execute needs the digest from the preview; without it the call cannot be made (the type forbids it). */
-export const executeAction = async (body: ActionExecuteBody): Promise<ActionResultDTO> =>
+export const executeAction = async (body: ActionExecuteRequest): Promise<ActionResultDTO> =>
   parseResult(await apiFetch<unknown>("/api/actions/execute", { method: "POST", body: JSON.stringify(body) }));
 
 export const getAction = async (requestId: string): Promise<ActionResultDTO> =>

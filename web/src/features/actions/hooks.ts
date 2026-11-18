@@ -44,7 +44,8 @@ export interface ActionMachine {
   close: () => void;
 }
 
-const NO_AGENT = new Set(["pull_and_check", "propose_ignore"]);
+// The server asks for an agent whenever a task will exist (Ask, Code, draft); a pull proposal runs none.
+const NO_AGENT = new Set(["pull_and_check"]);
 
 /**
  * Runs the action-dialog reducer. The component and the palette only dispatch inputs; the

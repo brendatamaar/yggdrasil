@@ -1,4 +1,4 @@
-import { ApiError, describeError } from "../../api/client";
+import { describeError } from "../../api/client";
 import { HostContextDecodeError } from "./api";
 import type { HostContextReason, HostContextStatusDTO } from "../../api/gen/api.gen";
 
@@ -70,16 +70,12 @@ export function describeStatus(s: HostContextStatusDTO): StatusView {
   }
 }
 
-/** A read that failed with a transport or server error (not a normal blocked answer). */
-export function readErrorText(err: unknown): { text: string; superseded: boolean } {
-  // A read overtaken by a newer change: asking again is the fix (host-context design, ErrContextSuperseded).
-  const superseded = err instanceof ApiError && (err.code === "superseded" || err.status === 409);
-  return {
-    text: superseded
-      ? "A newer change replaced this read. Ask again."
-      : err instanceof HostContextDecodeError
-        ? err.message
-        : describeError(err),
-    superseded,
-  };
+/**
+ * A read that failed with a transport or server error (not a normal blocked answer). A read
+ * overtaken by a newer change comes back as 503 "unavailable" with a plain "try again" message
+ * (the server's TryAgain); the Try again button next to the text is the retry hint.
+ */
+export function readErrorText(err: unknown): { text: string } {
+  if (err instanceof HostContextDecodeError) return { text: err.message };
+  return { text: describeError(err) };
 }

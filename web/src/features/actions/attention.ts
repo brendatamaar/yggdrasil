@@ -1,6 +1,5 @@
 import {
   ActionDiagnoseBuild,
-  ActionDiagnosePipeline,
   ActionDiagnoseRepo,
   ActionProposeCommits,
   ActionPullAndCheck,
@@ -25,8 +24,9 @@ export const FALLBACK_KIND: Record<AttentionReason, ActionKind> = {
   [ReasonUnreadable]: ActionDiagnoseRepo,
   [ReasonConflicts]: ActionDiagnoseRepo,
   [ReasonDiverged]: ActionDiagnoseRepo,
-  [ReasonFailedCI]: ActionDiagnosePipeline,
-  [ReasonFailedBuild]: ActionDiagnoseBuild,
+  // A run or build action needs a pinned source; without one the safe fallback is a repo diagnosis.
+  [ReasonFailedCI]: ActionDiagnoseRepo,
+  [ReasonFailedBuild]: ActionDiagnoseRepo,
   [ReasonBehind]: ActionPullAndCheck,
   [ReasonDirty]: ActionProposeCommits,
 };
@@ -88,14 +88,14 @@ export function actionsForReasons(
   return reasons.map((reason) => {
     const own = (catalogue ?? []).filter((o) => o.reason === reason);
     if (own.length > 0) return { reason, offerings: own, fallback: false };
-    const kind = FALLBACK_KIND[reason] ?? ActionDiagnoseRepo;
     const sourceId = pins[reason];
+    const kind = reason === ReasonFailedBuild && sourceId ? ActionDiagnoseBuild : (FALLBACK_KIND[reason] ?? ActionDiagnoseRepo);
     const fb: ActionOfferingDTO = {
       kind,
       reason,
       title: kindTitle(kind),
       context: "metadata_only",
-      ...(sourceId ? { sourceId } : {}),
+      ...(sourceId && kind !== ActionDiagnoseRepo ? { sourceId } : {}),
       ...(reason === ReasonUnreadable ? { waitingForFolder: true } : {}),
     };
     return { reason, offerings: [fb], fallback: true };

@@ -95,10 +95,13 @@ describe("host context views", () => {
     expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
   });
 
-  it("a superseded read says to ask again", async () => {
-    stubApi(on(/issues/, () => ({ status: 409, body: { code: "superseded", message: "Overtaken." } })));
+  it("a superseded read (503, try again) shows the server's plain text and a retry", async () => {
+    stubApi(
+      on(/issues/, () => ({ status: 503, body: { code: "unavailable", message: "That changed while it was being read. Try again.", hint: "Try again in a moment." } })),
+    );
     await renderWidget(() => <IssuesView repoId="r1" repoName="shop-api" onImport={() => undefined} />);
-    expect((await screen.findByRole("alert")).textContent).toContain("A newer change replaced this read");
+    expect((await screen.findByRole("alert")).textContent).toContain("That changed while it was being read.");
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
   });
 
   it("a malformed body is an error, not an empty list", async () => {
