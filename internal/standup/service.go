@@ -362,6 +362,10 @@ func reasonOf(err error) string {
 		return "the read timed out"
 	case errors.Is(err, repos.ErrHistoryUnavailable):
 		return "the repo history could not be read"
+	case errors.Is(err, ErrMRNotLinked):
+		return "the repo is not linked to a git host"
+	case errors.Is(err, ErrMRNotCached):
+		return "merge request data has not been fetched yet"
 	case errors.Is(err, errInvalidData):
 		return "the source returned data that could not be used"
 	}
