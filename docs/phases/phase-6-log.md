@@ -1051,3 +1051,8 @@ The API handlers do not exist yet (only route consts and ports), and cmd/ygg own
 - Round 2: W2 (internal/mcp + core/mcp: `propose_publish`, review-comment proposal tool; allow agent-created PublishRepo, never InitRepo; internal/proposals edit for that) and U2 (new-repo/init/publish UI, notifications, browser delivery).
 - Round 3: W3a (cmd/ygg wiring of actions, standup, drafts, host context, noise, notify; ScopeReader/ContextReader/ProposalCreator/FolderDrafts adapters).
 - Round 4: W3b (cmd/ygg wiring of newrepos and proposals lifecycle, shutdown order) plus API-level tests. Then the Batch 4+5 review gate and the Batch 5 full gate.
+
+### Batch 5 round 1: W1 merged
+- W1 (internal/api handlers for all 22 Phase 6 routes; every route registered by a table test; 501 when unbound; Host/Origin/session on every route; responses redacted and bounded; no handler confirms a proposal; mutations caught for session/Origin, body bound, error leak, nil-service). Merged; lead fixed tygo output for embedded request DTOs (`tstype:",extends"`, flat JSON).
+- Wiring for cmd/ygg from W1: implement the seven service ports exactly as in phase6.go; wrap errors from packages that import api: `api.TryAgain` for hosts `ErrContextSuperseded` and standup `ErrSuperseded`, `api.ShuttingDown` for `ErrClosed` in actions/newrepos/notify, `Blocked.Until` into `HostContextStatusDTO.ExpiresAt`, `newrepos.RefusedError`/`ErrHashMismatch`/`ErrNotApplicable` map to 409 without wrapping, other unclassified errors need `apperr.New(class, message, cause)`. Added `RetryNewRepoRequest{hash}`. Path IDs malformed give 400 (Phase 5 routes give 404).
+- Round 1 continues with U1; W2 (MCP) started in parallel; U2 waits for U1 (both extend web/src/features/proposals).
