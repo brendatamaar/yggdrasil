@@ -1368,8 +1368,7 @@ export interface ActionPreviewDTO {
  * ActionExecuteRequest is the body of POST /api/actions/execute. Digest and
  * ExpectedHead are copied from the preview; a changed scope refuses.
  */
-export interface ActionExecuteRequest {
-  ActionRequestDTO: ActionRequestDTO;
+export interface ActionExecuteRequest extends ActionRequestDTO {
   digest: string;
   expectedHead?: string;
 }
@@ -1794,9 +1793,8 @@ export interface NewRepoPreviewResponse {
  * initialization proposal; no folder is created until that proposal is
  * confirmed through the proposals API with the previewed hash.
  */
-export interface ReserveNewRepoRequest {
+export interface ReserveNewRepoRequest extends NewRepoPreviewRequest {
   requestId: core.RequestID;
-  NewRepoPreviewRequest: NewRepoPreviewRequest;
   /**
    * Hash is the hash of the previewed spec; a different spec is refused.
    */
@@ -1875,9 +1873,15 @@ export interface PublishPreviewResponse {
  * proposal (a ProposalDTO), confirmed through the proposals API; the remote is
  * never created before that confirmation.
  */
-export interface PublishNewRepoRequest {
+export interface PublishNewRepoRequest extends PublishPreviewRequest {
   requestId: core.RequestID;
-  PublishPreviewRequest: PublishPreviewRequest;
+  hash: string;
+}
+/**
+ * RetryNewRepoRequest is the body of POST /api/new-repos/{id}/retry: the
+ * immutable spec hash the user confirms again. A retry is never automatic.
+ */
+export interface RetryNewRepoRequest {
   hash: string;
 }
 

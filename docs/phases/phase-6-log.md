@@ -1044,3 +1044,10 @@ Open items carried into Batch 5 and the reviews:
 - Real `FindForRequest` returns `(nil, nil)` for an unknown request where the port comment says `db.ErrNotFound` (the shell accepts both; align the comment or code in W).
 - Standup MR source is a partial view and the builds source scans the newest 1000 builds (see Batch 4 round 3).
 - Review of Batches 4 and 5 together, range 2b73dbf..main, after Batch 5.
+
+## Batch 5 plan and round 1 (2026-11-18)
+The API handlers do not exist yet (only route consts and ports), and cmd/ygg owns one package, so tasks that touch it run in sequence.
+- Round 1: W1 (internal/api handlers for all 22 routes, archtest rule for host writers; agent a00150420f5510447) and U1 (web actions/standup/host context/noise; agent ab414312630a23787).
+- Round 2: W2 (internal/mcp + core/mcp: `propose_publish`, review-comment proposal tool; allow agent-created PublishRepo, never InitRepo; internal/proposals edit for that) and U2 (new-repo/init/publish UI, notifications, browser delivery).
+- Round 3: W3a (cmd/ygg wiring of actions, standup, drafts, host context, noise, notify; ScopeReader/ContextReader/ProposalCreator/FolderDrafts adapters).
+- Round 4: W3b (cmd/ygg wiring of newrepos and proposals lifecycle, shutdown order) plus API-level tests. Then the Batch 4+5 review gate and the Batch 5 full gate.
