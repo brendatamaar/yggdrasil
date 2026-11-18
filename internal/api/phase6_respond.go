@@ -61,7 +61,8 @@ func (s *Server) phase6Err(err error) error {
 	case errors.Is(err, proposals.ErrRequestChanged):
 		return cls(apperr.Conflict, "This request already made different proposals. Reload the page and start again.")
 	case errors.As(err, &ref) || errors.Is(err, proposals.ErrAlreadyDecided) || errors.Is(err, proposals.ErrNotStarted):
-		if pe := proposalErr(err); pe != err {
+		pe := proposalErr(err)
+		if _, ok := apperr.ClassOf(pe); ok {
 			return s.redactClassed(pe)
 		}
 	case errors.Is(err, db.ErrNotFound):
