@@ -32,6 +32,10 @@ type Config struct {
 	Proposer   Proposer
 	Audit      Auditor
 
+	// Publish prepares propose_publish. Optional: when nil the tool is not
+	// offered.
+	Publish Publishing
+
 	// Sessions is the token registry; the tasks service issues and revokes
 	// through it. Default: a new registry that adds tokens to Redactor.
 	Sessions *Sessions
@@ -186,8 +190,9 @@ func (s *Server) serverFor(r *http.Request) *sdk.Server {
 	return srv
 }
 
-// offered is core Offered plus the one shell-only rule: merge requests need a
-// GitLab remote on a repo the task works in.
+// offered is core Offered plus two shell-only rules: merge requests need a
+// GitLab remote on a repo the task works in, and publishing needs the new repos
+// service.
 func (s *Server) offered(ctx context.Context, act Active) []cmcp.Tool {
 	snap, err := s.cfg.Workspace.Snapshot(ctx, act.Task)
 	if err != nil {
@@ -196,6 +201,9 @@ func (s *Server) offered(ctx context.Context, act Active) []cmcp.Tool {
 	cctx := s.coreContext(act, snap)
 	out := cmcp.Offered(cctx)
 	if i := slices.Index(out, cmcp.ToolProposeMR); i >= 0 && !s.anyGitLab(ctx, snap) {
+		out = slices.Delete(out, i, i+1)
+	}
+	if i := slices.Index(out, cmcp.ToolProposePublish); i >= 0 && s.cfg.Publish == nil {
 		out = slices.Delete(out, i, i+1)
 	}
 	return out
@@ -262,6 +270,17 @@ func newCallID() string {
 	b := make([]byte, 4)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// newMarker makes the operation marker of a review comment: 32 random
+// lowercase hex digits, not secret. It goes into the posted text so a lost
+// reply can be reconciled by reading the comments for it.
+func newMarker() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 func genericFailure(id string) string {

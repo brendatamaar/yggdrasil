@@ -89,6 +89,35 @@ type (
 		Paths   []string
 		Summary string
 	}
+	// ProposeIgnore proposes adding anchored folder entries such as "/dist/" to
+	// the .gitignore at the root of the repo's main checkout (WS-09).
+	ProposeIgnore struct {
+		Repo    RepoRef
+		Entries []string
+		Summary string
+	}
+	// ProposeReviewComment proposes one comment on a merge request (GH-06).
+	// ExpectedHead is the MR head the review was made against.
+	ProposeReviewComment struct {
+		Repo         RepoRef
+		MR           int
+		ExpectedHead string
+		Body         string
+		Summary      string
+	}
+	// ProposePublish proposes publishing a repo made with the new repo dialog
+	// to a host account (MCP-05, NR-04). Visibility is "private" or "public";
+	// ParseCall fills "private" when it is left out. There is no variant that
+	// proposes creating a repo.
+	ProposePublish struct {
+		Repo       RepoRef
+		Host       string
+		Owner      string
+		OwnerKind  string
+		Name       string
+		Visibility string
+		Summary    string
+	}
 )
 
 func (ListRepos) Tool() Tool           { return ToolListRepos }
@@ -115,6 +144,10 @@ func (ProposeInstall) Tool() Tool      { return ToolProposeInstall }
 func (ProposeAgentFile) Tool() Tool    { return ToolProposeAgentFile }
 func (ProposeDeleteFiles) Tool() Tool  { return ToolProposeDelete }
 
+func (ProposeIgnore) Tool() Tool        { return ToolProposeIgnore }
+func (ProposeReviewComment) Tool() Tool { return ToolProposeReviewComment }
+func (ProposePublish) Tool() Tool       { return ToolProposePublish }
+
 func (ListRepos) isCall()           {}
 func (RepoStatus) isCall()          {}
 func (RemoteStatus) isCall()        {}
@@ -138,6 +171,10 @@ func (ProposeMergeRequest) isCall() {}
 func (ProposeInstall) isCall()      {}
 func (ProposeAgentFile) isCall()    {}
 func (ProposeDeleteFiles) isCall()  {}
+
+func (ProposeIgnore) isCall()        {}
+func (ProposeReviewComment) isCall() {}
+func (ProposePublish) isCall()       {}
 
 // The wire shapes of the arguments, one per tool. They are used both to decode
 // (unknown fields refused) and to encode, so ParseCall and FormatCall agree.
@@ -208,6 +245,27 @@ type (
 		Repo    string   `json:"repo"`
 		Paths   []string `json:"paths"`
 		Summary string   `json:"summary,omitempty"`
+	}
+	wIgnore struct {
+		Repo    string   `json:"repo"`
+		Entries []string `json:"entries"`
+		Summary string   `json:"summary,omitempty"`
+	}
+	wReviewComment struct {
+		Repo         string `json:"repo"`
+		MR           int    `json:"mr"`
+		ExpectedHead string `json:"expected_head"`
+		Body         string `json:"body"`
+		Summary      string `json:"summary,omitempty"`
+	}
+	wPublish struct {
+		Repo       string `json:"repo"`
+		Host       string `json:"host"`
+		Owner      string `json:"owner"`
+		OwnerKind  string `json:"owner_kind"`
+		Name       string `json:"name"`
+		Visibility string `json:"visibility,omitempty"`
+		Summary    string `json:"summary,omitempty"`
 	}
 )
 
@@ -373,6 +431,29 @@ func build(name string, args []byte) (Call, error) {
 			return nil, err
 		}
 		return ProposeDeleteFiles{Repo: RepoRef(w.Repo), Paths: nilIfEmpty(w.Paths), Summary: w.Summary}, nil
+	case ToolProposeIgnore:
+		var w wIgnore
+		if err := decodeArgs(args, &w); err != nil {
+			return nil, err
+		}
+		return ProposeIgnore{Repo: RepoRef(w.Repo), Entries: nilIfEmpty(w.Entries), Summary: w.Summary}, nil
+	case ToolProposeReviewComment:
+		var w wReviewComment
+		if err := decodeArgs(args, &w); err != nil {
+			return nil, err
+		}
+		return ProposeReviewComment{Repo: RepoRef(w.Repo), MR: w.MR, ExpectedHead: w.ExpectedHead, Body: w.Body, Summary: w.Summary}, nil
+	case ToolProposePublish:
+		var w wPublish
+		if err := decodeArgs(args, &w); err != nil {
+			return nil, err
+		}
+		vis := w.Visibility
+		if vis == "" {
+			vis = VisibilityPrivate
+		}
+		return ProposePublish{Repo: RepoRef(w.Repo), Host: w.Host, Owner: w.Owner, OwnerKind: w.OwnerKind,
+			Name: w.Name, Visibility: vis, Summary: w.Summary}, nil
 	}
 	return nil, bad("%q is not a tool of this server", name)
 }
@@ -442,6 +523,12 @@ func FormatCall(c Call) (string, []byte) {
 		w = wAgentFile{string(v.Repo), v.Path, v.Content, v.Summary}
 	case ProposeDeleteFiles:
 		w = wDelete{string(v.Repo), v.Paths, v.Summary}
+	case ProposeIgnore:
+		w = wIgnore{string(v.Repo), v.Entries, v.Summary}
+	case ProposeReviewComment:
+		w = wReviewComment{string(v.Repo), v.MR, v.ExpectedHead, v.Body, v.Summary}
+	case ProposePublish:
+		w = wPublish{string(v.Repo), v.Host, v.Owner, v.OwnerKind, v.Name, v.Visibility, v.Summary}
 	default:
 		return string(c.Tool()), nil
 	}

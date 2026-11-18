@@ -34,6 +34,10 @@ func samples() []Call {
 		ProposeInstall{Repo: "shop-web"},
 		ProposeAgentFile{Repo: "shop-api", Path: "CLAUDE.md", Content: "# hi\n"},
 		ProposeDeleteFiles{Repo: "shop-api", Paths: []string{"old.txt"}},
+		ProposeIgnore{Repo: "shop-api", Entries: []string{"/dist/", "/web/node_modules/"}, Summary: "build output"},
+		ProposeReviewComment{Repo: "shop-api", MR: 7, ExpectedHead: strings.Repeat("a1", 20), Body: "Please check the nil case.\n", Summary: "review"},
+		ProposePublish{Repo: "shop-api", Host: "git.acme.dev", Owner: "acme", OwnerKind: "org", Name: "shop-new", Visibility: VisibilityPrivate},
+		ProposePublish{Repo: "shop-api", Host: "github.com", Owner: "someone", OwnerKind: "user", Name: "x", Visibility: VisibilityPublic, Summary: "s"},
 	}
 }
 
@@ -47,7 +51,7 @@ func TestSamplesCoverEveryTool(t *testing.T) {
 			t.Errorf("no sample for %s", tl)
 		}
 	}
-	if len(AllTools()) != 23 {
+	if len(AllTools()) != 26 {
 		t.Fatalf("tool set changed: %d", len(AllTools()))
 	}
 }

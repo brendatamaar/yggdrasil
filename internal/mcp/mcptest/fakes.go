@@ -248,6 +248,11 @@ func (p *FakeProposer) Create(_ context.Context, task core.TaskID, a coreprop.Ac
 	if p.Err != nil {
 		return mcp.ProposalRef{}, p.Err
 	}
+	// Like the real proposals service: an agent never creates an InitRepo
+	// (invariant 2; docs/design/phase-6-newrepos.md).
+	if _, ok := a.(coreprop.InitRepo); ok {
+		return mcp.ProposalRef{}, errors.New("an agent cannot propose this")
+	}
 	p.Created = append(p.Created, Proposed{Task: task, Action: a, Summary: summary})
 	ref := mcp.ProposalRef{
 		ID: core.ProposalID(fmt.Sprintf("prp_%d", len(p.Created))), Status: string(core.ProposalPending),

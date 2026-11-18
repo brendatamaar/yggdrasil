@@ -16,13 +16,22 @@ func TestToolsHaveNoConfirm(t *testing.T) {
 		if err := tool.Validate(); err != nil {
 			t.Error(err)
 		}
-		for _, bad := range []string{"confirm", "reject", "execute", "publish", "subtasks"} {
+		// No tool confirms, rejects, executes, approves, posts or creates a repo.
+		// A tool that acts on the world is a propose_* tool (it only creates a
+		// pending proposal); "publish" is allowed only in that form.
+		for _, bad := range []string{"confirm", "reject", "execute", "approve", "post", "subtasks", "init", "create"} {
 			if contains(string(tool), bad) {
 				t.Errorf("tool %q looks like it can %s (M4)", tool, bad)
 			}
 		}
+		if contains(string(tool), "publish") && string(tool) != "propose_publish" {
+			t.Errorf("tool %q looks like it can publish (M4)", tool)
+		}
+		if contains(string(tool), "propose_") && string(tool)[:8] != "propose_" {
+			t.Errorf("tool %q: propose_ is not the prefix", tool)
+		}
 	}
-	for _, name := range []string{"propose_publish", "propose_subtasks", "", "confirm_proposal"} {
+	for _, name := range []string{"propose_subtasks", "propose_init_repo", "init_repo", "publish", "", "confirm_proposal"} {
 		if Tool(name).Validate() == nil {
 			t.Errorf("%q is in the tool set", name)
 		}

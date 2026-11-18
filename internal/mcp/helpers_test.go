@@ -31,6 +31,7 @@ type env struct {
 	git    *mcptest.FakeGit
 	hosts  *mcptest.FakeHosts
 	prop   *mcptest.FakeProposer
+	pub    *mcptest.FakePublishing
 	audit  *mcptest.FakeAudit
 	redact *safety.SecretRedactor
 	token  string
@@ -81,13 +82,13 @@ func newEnv(t testing.TB) *env {
 		bl:    &mcptest.FakeBuilds{ProjectRepos: []core.RepoID{webRepo, apiRepo, adminRepo}, Logs: map[core.BuildID]string{}, Install: "install"},
 		git:   &mcptest.FakeGit{},
 		hosts: &mcptest.FakeHosts{Remotes: map[core.RepoID]mcp.RemoteInfo{apiRepo: {GitLab: true, Lines: []string{"MR !4 open"}}}},
-		prop:  &mcptest.FakeProposer{}, audit: &mcptest.FakeAudit{}, redact: safety.NewRedactor(), task: "t1",
+		prop:  &mcptest.FakeProposer{}, pub: mcptest.NewFakePublishing(apiRepo), audit: &mcptest.FakeAudit{}, redact: safety.NewRedactor(), task: "t1",
 	}
 	e.now.Store(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano())
 	e.ws.Set(e.task, snapshot(core.ModeCode))
 	srv, err := mcp.New(mcp.Config{
 		Workspace: e.ws, Reader: e.rd, Builds: e.bl, Git: e.git, Hosts: e.hosts, DevServers: mcp.NoDevServers{},
-		Proposer: e.prop, Audit: e.audit, Redactor: e.redact,
+		Proposer: e.prop, Audit: e.audit, Redactor: e.redact, Publish: e.pub,
 		Logger: slog.New(slog.NewTextHandler(&e.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		Clock:  func() time.Time { return time.Unix(0, e.now.Load()).UTC() },
 	})
@@ -110,7 +111,26 @@ func (e *env) withReader(t *testing.T, r mcp.Reader) {
 	t.Helper()
 	srv, err := mcp.New(mcp.Config{
 		Workspace: e.ws, Reader: r, Builds: e.bl, Git: e.git, Hosts: e.hosts, DevServers: mcp.NoDevServers{},
-		Proposer: e.prop, Audit: e.audit, Redactor: e.redact, Sessions: e.srv.Sessions(),
+		Proposer: e.prop, Audit: e.audit, Redactor: e.redact, Publish: e.pub, Sessions: e.srv.Sessions(),
+		Clock:  func() time.Time { return time.Unix(0, e.now.Load()).UTC() },
+		Logger: slog.New(slog.NewTextHandler(&e.logs, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.srv = srv
+	e.http.Close()
+	e.http = httptest.NewServer(srv.Handler())
+	t.Cleanup(e.http.Close)
+}
+
+// withPublishing replaces the server with one that publishes through p (nil:
+// no publishing service), keeping the same sessions and token.
+func (e *env) withPublishing(t *testing.T, p mcp.Publishing) {
+	t.Helper()
+	srv, err := mcp.New(mcp.Config{
+		Workspace: e.ws, Reader: e.rd, Builds: e.bl, Git: e.git, Hosts: e.hosts, DevServers: mcp.NoDevServers{},
+		Proposer: e.prop, Audit: e.audit, Redactor: e.redact, Publish: p, Sessions: e.srv.Sessions(),
 		Clock:  func() time.Time { return time.Unix(0, e.now.Load()).UTC() },
 		Logger: slog.New(slog.NewTextHandler(&e.logs, nil)),
 	})
