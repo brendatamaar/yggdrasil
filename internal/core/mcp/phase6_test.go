@@ -212,6 +212,16 @@ func TestPropChildNeverGetsMoreTools(t *testing.T) {
 		r := rand.New(rand.NewSource(seed))
 		parent := randCtx(r)
 		parent.Live = true
+		if parent.Mode == core.ModeCode || parent.Mode == core.ModeProject {
+			// A task in a worktree mode edits in a worktree of each repo it
+			// works in; a context without one is not reachable. Without this, an
+			// Ask child (which may propose a commit against the main checkout)
+			// would trivially exceed a parent that has no worktree and no way to
+			// edit anywhere.
+			for _, id := range parent.Scope {
+				parent.HasWorktree[id] = true
+			}
+		}
 		child := parent
 		child.Mode = childMode(r, parent.Mode)
 		child.Scope = nil
