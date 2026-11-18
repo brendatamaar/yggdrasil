@@ -30,7 +30,7 @@ const sourceLabel = (s: string): string => SOURCE_LABEL[s] ?? s;
 const btn = "rounded border border-line px-3 py-1 text-sm";
 const primary = "rounded bg-accent px-3 py-1 text-sm font-medium text-canvas disabled:opacity-50";
 
-/** Standup of one project over a day range (AU-02, UI-03). Reading never starts an agent. */
+/** Standup of one project over a day range (AU-02, UI-03). Nothing is read until Refresh, and reading never starts an agent. */
 export function StandupPanel() {
   const repos = useRepos("all");
   const [chosen, setChosen] = useState("");
@@ -148,13 +148,6 @@ function StandupView({ projectId }: { projectId: string }) {
     dispatch({ tag: "requested", range: r.range, attempt: attemptRef.current });
   }, [fromDay, toDay, dispatch]);
 
-  // The first read of the default day when the view opens; later reads are the person's Refresh.
-  const first = useRef(true);
-  useEffect(() => {
-    if (!first.current) return;
-    first.current = false;
-    refresh();
-  }, [refresh]);
   useEffect(
     () => () => {
       abort.current?.abort();
@@ -211,7 +204,7 @@ function StandupView({ projectId }: { projectId: string }) {
           {rangeError}
         </p>
       ) : null}
-      {state.tag === "empty" && !rangeError ? <p className="text-muted">Pick a range and refresh.</p> : null}
+      {state.tag === "empty" && !rangeError ? <p className="text-muted">Pick a range, then press Refresh. Nothing is read until you do.</p> : null}
       {state.tag === "loading" ? (
         <p role="status" className="text-muted">
           Reading sources…

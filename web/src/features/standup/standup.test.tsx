@@ -98,6 +98,12 @@ const reposBody = {
   counts: { all: 1, uncommitted: 0, behind: 0, ahead: 0, failedPipeline: 0, problems: 0 },
   projects: [{ id: "p1", name: "acme-shop", path: "/w", counts: {}, repos: [] }],
 };
+/** Renders the panel and presses Refresh once: the view reads nothing until then. */
+async function renderAndRefresh() {
+  const r = await renderWidget(StandupPanel);
+  fireEvent.click(await screen.findByRole("button", { name: "Refresh" }));
+  return r;
+}
 const handler =
   (s: () => { status?: number; body: unknown }) =>
   (c: Call) => {
@@ -108,9 +114,11 @@ const handler =
   };
 
 describe("standup widget", () => {
-  it("reads once on open, shows source labels, and starts no agent", async () => {
+  it("reads only on Refresh, shows source labels, and starts no agent", async () => {
     const api = stubApi(handler(() => ({ body: summary() })));
     await renderWidget(StandupPanel);
+    expect(api.calls.filter((c) => c.path.startsWith("/api/projects/p1/standup?"))).toHaveLength(0);
+    fireEvent.click(await screen.findByRole("button", { name: "Refresh" }));
     expect((await screen.findByLabelText("Standup summary")).textContent).toContain("Fix cart total");
     expect(screen.getByText(/1 commits \(from git history\)/)).toBeTruthy();
     expect(api.calls.filter((c) => c.path.startsWith("/api/projects/p1/standup?"))).toHaveLength(1);
@@ -125,7 +133,7 @@ describe("standup widget", () => {
 
   it("Polish is an explicit click: one request with a key, then a link to the visible task", async () => {
     const api = stubApi(handler(() => ({ body: summary() })));
-    await renderWidget(StandupPanel);
+    await renderAndRefresh();
     await screen.findByLabelText("Standup summary");
     await waitFor(() => {
       expect(screen.getByRole<HTMLButtonElement>("button", { name: "Polish with agent" }).disabled).toBe(false);
@@ -143,7 +151,7 @@ describe("standup widget", () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", { clipboard: { writeText } });
     stubApi(handler(() => ({ body: summary() })));
-    await renderWidget(StandupPanel);
+    await renderAndRefresh();
     await screen.findByLabelText("Standup summary");
     fireEvent.click(screen.getByRole("button", { name: "Copy" }));
     await screen.findByText("Copied.");
@@ -155,7 +163,7 @@ describe("standup widget", () => {
 
   it("an empty summary is NoStandup, not an error, and cannot be polished", async () => {
     stubApi(handler(() => ({ body: summary({ commits: [], text: "" }) })));
-    const { container } = await renderWidget(StandupPanel);
+    const { container } = await renderAndRefresh();
     await waitFor(() => {
       expect(container.querySelector('[data-empty="NoStandup"]')).not.toBeNull();
     });
@@ -168,7 +176,7 @@ describe("standup widget", () => {
         body: summary({ phase: "partial", unavailable: [{ source: "merge_requests", reason: "no token" }], truncated: ["commits"] }),
       })),
     );
-    const { container } = await renderWidget(StandupPanel);
+    const { container } = await renderAndRefresh();
     await waitFor(() => {
       expect(container.querySelector('[data-standup="partial"]')).not.toBeNull();
     });
@@ -178,7 +186,7 @@ describe("standup widget", () => {
 
   it("a failed read is an error with retry, never NoStandup", async () => {
     stubApi(handler(() => ({ status: 500, body: { code: "internal", message: "Sources failed.", hint: "Try again." } })));
-    const { container } = await renderWidget(StandupPanel);
+    const { container } = await renderAndRefresh();
     expect((await screen.findByRole("alert")).textContent).toContain("Sources failed.");
     expect(container.querySelector("[data-empty]")).toBeNull();
     expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
@@ -186,7 +194,7 @@ describe("standup widget", () => {
 
   it("refuses a range over 31 days before any request", async () => {
     const api = stubApi(handler(() => ({ body: summary() })));
-    await renderWidget(StandupPanel);
+    await renderAndRefresh();
     await screen.findByLabelText("Standup summary");
     fireEvent.change(screen.getByLabelText("First day"), { target: { value: "2026-01-01" } });
     fireEvent.change(screen.getByLabelText("Last day"), { target: { value: "2026-03-01" } });
