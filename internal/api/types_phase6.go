@@ -616,3 +616,9 @@ type PublishNewRepoRequest struct {
 	PublishPreviewRequest
 	Hash string `json:"hash"`
 }
+
+// RetryNewRepoRequest is the body of POST /api/new-repos/{id}/retry: the
+// immutable spec hash the user confirms again. A retry is never automatic.
+type RetryNewRepoRequest struct {
+	Hash string `json:"hash"`
+}

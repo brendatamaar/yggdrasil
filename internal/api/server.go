@@ -231,6 +231,7 @@ func (s *Server) Handler() http.Handler {
 	s.routesDevServers(mux)
 	s.routesWorktreeEnv(mux)
 	s.routesTerminal(mux)
+	s.routesPhase6(mux)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, ErrNotFound, "That API endpoint doesn't exist.", "")
 	})
