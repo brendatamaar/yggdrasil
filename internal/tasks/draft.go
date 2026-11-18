@@ -131,7 +131,7 @@ func (s *Service) importOnce(ctx context.Context, spec coretasks.DraftSpec, dige
 		// The store has one write connection, so nothing can commit between
 		// these reads and the writes below. The reads go through the read
 		// pool, which sees only committed rows, and no write has happened yet.
-		facts, err := s.draftFacts(ctx, tx, spec)
+		facts, err := s.draftFacts(ctx, tx, spec.Project, spec.Repo)
 		if err != nil {
 			return err
 		}
@@ -196,17 +196,17 @@ func (s *Service) importOnce(ctx context.Context, spec coretasks.DraftSpec, dige
 // same answer for all three, so nothing outside the project is revealed), and
 // a reserved repo of this project is "tracked, not ready". Any other error
 // stays an error.
-func (s *Service) draftFacts(ctx context.Context, tx *db.Tx, spec coretasks.DraftSpec) (coretasks.DraftFacts, error) {
-	_, err := tx.GetTrackedReadyRepo(ctx, spec.Project, spec.Repo)
+func (s *Service) draftFacts(ctx context.Context, tx *db.Tx, project core.ProjectID, repo core.RepoID) (coretasks.DraftFacts, error) {
+	_, err := tx.GetTrackedReadyRepo(ctx, project, repo)
 	if err == nil {
 		return coretasks.DraftFacts{RepoTracked: true, RepoReady: true}, nil
 	}
 	if !errors.Is(err, db.ErrNotFound) {
 		return coretasks.DraftFacts{}, fmt.Errorf("read repo for issue import: %w", err)
 	}
-	reserved, err := s.c.Store.GetReservedRepo(ctx, spec.Repo)
+	reserved, err := s.c.Store.GetReservedRepo(ctx, repo)
 	switch {
-	case err == nil && reserved.ProjectID == spec.Project:
+	case err == nil && reserved.ProjectID == project:
 		return coretasks.DraftFacts{RepoTracked: true}, nil
 	case err == nil || errors.Is(err, db.ErrNotFound):
 		return coretasks.DraftFacts{}, nil
