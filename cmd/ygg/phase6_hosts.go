@@ -101,12 +101,17 @@ type hostContextAPI struct {
 var _ api.HostContextService = hostContextAPI{}
 
 func (h hostContextAPI) read(ctx context.Context, key corehosts.ContextKey) (hosts.ContextOutcome, error) {
+	// An untracked or reserved repo is not found; a tracked repo that is not
+	// linked to a host is a normal blocked answer.
+	if err := h.tracked(ctx, key.Repo); err != nil {
+		return hosts.ContextOutcome{}, fmt.Errorf("host context of repo %s: %w", key.Repo, err)
+	}
 	out, err := h.reader.Read(ctx, key)
 	switch {
 	case errors.Is(err, hosts.ErrContextSuperseded):
 		return hosts.ContextOutcome{}, api.TryAgain(err)
 	case errors.Is(err, hosts.ErrContextScope):
-		return hosts.ContextOutcome{}, fmt.Errorf("host context of repo %s: %w", key.Repo, db.ErrNotFound)
+		return hosts.ContextOutcome{Blocked: &corehosts.CtxBlocked{Reason: corehosts.ContextUntracked}}, nil
 	case err != nil:
 		return hosts.ContextOutcome{}, fmt.Errorf("read host context of repo %s: %w", key.Repo, err)
 	}

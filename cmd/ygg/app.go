@@ -76,6 +76,8 @@ type app struct {
 	envSvc     *worktreeenv.Service
 	// phase6 is the Phase 6 services; run starts them and closes them in order.
 	phase6 *phase6
+	// git is the safe git wrapper (tests read the repos through it too).
+	git *git.Git
 }
 
 // newLogger writes redacted text logs: no token reaches a log (invariant 4).
@@ -330,7 +332,7 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		devservers: devSvc, terminal: termSvc, envSvc: envSvc, compose: envAPI.compose,
 		cfg: cfg, log: log, db: d, store: store, srv: srv, status: status, builds: buildSvc, hosts: hostSvc, actions: actions,
 		feeder: feeder, tasks: taskSvc, proposals: propSvc, mcp: mcpSvc,
-		verify: verifySvc, changesets: csSvc, fanout: fanout, phase6: p6,
+		verify: verifySvc, changesets: csSvc, fanout: fanout, phase6: p6, git: g,
 	}, nil
 }
 
