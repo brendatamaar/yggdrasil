@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -58,6 +59,21 @@ type scopeReader struct {
 	status statusReader
 	hosts  hostCache
 	git    *git.Git
+	// log and redact report a failed read; both are optional (a nil log is silent).
+	log    *slog.Logger
+	redact safety.Redactor
+}
+
+// logRead records a failed read without its secrets.
+func (s *scopeReader) logRead(what string, err error) {
+	if s.log == nil {
+		return
+	}
+	msg := err.Error()
+	if s.redact != nil {
+		msg = s.redact.Redact(msg)
+	}
+	s.log.Warn("scope read failed", "what", what, "error", msg)
 }
 
 var (
@@ -131,8 +147,16 @@ func (s *scopeReader) Facts(ctx context.Context, id core.RepoID) (coreactions.Fa
 	if haveSnap && snap.Conflicted > 0 && !hasReason(f.Reasons, coreactions.ReasonConflicts) {
 		f.Reasons = append(f.Reasons, coreactions.ReasonConflicts)
 	}
-	view2, _ := s.hosts.RepoHost(ctx, id)
-	failed, _ := s.hosts.FailedPipelines(ctx)
+	// A host read that fails removes only the reasons and offerings that need
+	// it; it never invents one. The failure is logged, redacted.
+	view2, herr := s.hosts.RepoHost(ctx, id)
+	if herr != nil {
+		s.logRead("read the host link of repo "+string(id), herr)
+	}
+	failed, ferr := s.hosts.FailedPipelines(ctx)
+	if ferr != nil {
+		s.logRead("read the failed pipelines", ferr)
+	}
 	if _, ok := failed[id]; ok {
 		f.Reasons = append(f.Reasons, coreactions.ReasonFailedCI)
 		f.CIRunID = pipelineRunID(view2)
@@ -154,17 +178,28 @@ func (s *scopeReader) Facts(ctx context.Context, id core.RepoID) (coreactions.Fa
 		}
 	}
 	// HEAD is read live: a stale offering is refused against what the repo is
-	// now, not against the last status read.
+	// now, not against the last status read. When the live read fails, the last
+	// status read is not a pin either: the pin stays empty and the repo is
+	// marked unreadable, so a pull or review is never pinned to a stale head.
 	if f.Readable && s.git != nil {
-		if h, herr := s.git.Head(ctx, r.Path); herr == nil && h != "" {
+		h, herr := s.git.Head(ctx, r.Path)
+		if herr != nil || h == "" {
+			if herr != nil {
+				s.logRead("read HEAD of repo "+string(id), herr)
+			}
+			f.Head, f.Readable = "", false
+			if !hasReason(f.Reasons, coreactions.ReasonUnreadable) {
+				f.Reasons = append(f.Reasons, coreactions.ReasonUnreadable)
+			}
+		} else {
 			f.Head = h
 		}
 	}
 	if view2.Linked && view2.Instance.Token && hostReadsContext(view2.Instance.Kind) {
 		f.Caps.HostLogs, f.Caps.HostIssues, f.Caps.HostMR, f.Caps.CommentPost = true, true, true, true
 	}
-	if m := view2.Entry; true {
-		if n, head, ok := openMR(m); ok {
+	if herr == nil {
+		if n, head, ok := openMR(view2.Entry); ok {
 			f.MRNumber, f.MRHead = n, head
 		}
 	}
@@ -208,18 +243,7 @@ func pipelineRunID(v api.RepoHostView) string {
 }
 
 func cachedPipeline(e corehosts.Entry) *corehosts.Pipeline {
-	var prev corehosts.Idle
-	switch ph := e.Phase.(type) {
-	case corehosts.Idle:
-		prev = ph
-	case corehosts.Fetching:
-		prev = ph.Prev
-	case corehosts.Waiting:
-		prev = ph.Prev
-	case corehosts.Blocked:
-		prev = ph.Prev
-	}
-	if rd, ok := prev.Data.(corehosts.RepoState); ok {
+	if rd, ok := corehosts.Previous(e).Data.(corehosts.RepoState); ok {
 		return rd.Pipeline
 	}
 	return nil
@@ -229,18 +253,7 @@ func cachedPipeline(e corehosts.Entry) *corehosts.Pipeline {
 // repo's branch. The head is empty when the host did not report one; the
 // catalogue then does not offer a review (it needs a pinned head).
 func openMR(e corehosts.Entry) (int, string, bool) {
-	var prev corehosts.Idle
-	switch ph := e.Phase.(type) {
-	case corehosts.Idle:
-		prev = ph
-	case corehosts.Fetching:
-		prev = ph.Prev
-	case corehosts.Waiting:
-		prev = ph.Prev
-	case corehosts.Blocked:
-		prev = ph.Prev
-	}
-	if rd, ok := prev.Data.(corehosts.RepoState); ok && rd.MR != nil && rd.MR.State == corehosts.MROpen {
+	if rd, ok := corehosts.Previous(e).Data.(corehosts.RepoState); ok && rd.MR != nil && rd.MR.State == corehosts.MROpen {
 		return rd.MR.Number, rd.MR.Head, true
 	}
 	return 0, "", false
