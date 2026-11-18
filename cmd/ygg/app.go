@@ -24,7 +24,6 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/devservers"
 	"github.com/brendatamaar/yggdrasil/internal/git"
 	"github.com/brendatamaar/yggdrasil/internal/hosts"
-	"github.com/brendatamaar/yggdrasil/internal/hosts/hostclients"
 	"github.com/brendatamaar/yggdrasil/internal/mainlock"
 	"github.com/brendatamaar/yggdrasil/internal/platform"
 	"github.com/brendatamaar/yggdrasil/internal/proposals"
@@ -75,6 +74,8 @@ type app struct {
 	compose    *worktreeenv.ComposeService
 	terminal   *terminal.Service
 	envSvc     *worktreeenv.Service
+	// phase6 is the Phase 6 services; run starts them and closes them in order.
+	phase6 *phase6
 }
 
 // newLogger writes redacted text logs: no token reaches a log (invariant 4).
@@ -186,11 +187,16 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		return nil, fmt.Errorf("start open in editor: %w", err)
 	}
 
+	hostClients, err := newHostClients()
+	if err != nil {
+		_ = d.Close()
+		return nil, err
+	}
 	hostsPub := &lateHostsPublisher{}
 	hostSvc := hosts.New(hosts.Deps{
 		Config: hostsCfg, EnvPath: envPath,
 		Reload:  func() (hosts.Config, error) { return hosts.LoadConfig(envPath, nil) },
-		Clients: hostclients.New(nil, nil), Remotes: g, Publish: hostsPub, Log: log,
+		Clients: hostClients, Remotes: g, Publish: hostsPub, Log: log,
 		Secrets: redactor,
 	})
 
@@ -203,7 +209,7 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	propHub := &api.ProposalsHub{}
 	fanout := newProposalFanout(propHub, log.Warn)
 	live := &liveProbe{store: store, builds: buildSvc}
-	propSvc, err := newProposals(store, g, checkoutLock, buildSvc, hostSvc, fanout, live, cfg.dataDir, redactor)
+	propSvc, err := newProposals(store, g, checkoutLock, buildSvc, hostSvc, fanout, live, cfg.dataDir, redactor, pullRunner{batches: actions})
 	if err != nil {
 		_ = d.Close()
 		return nil, err
@@ -221,14 +227,15 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		return nil, err
 	}
 	taskHub := &api.HubAdapter{}
-	taskSvc, err := newTasks(store, adapters, g, taskHub, redactor, checkoutLock, cfg.dataDir, cfg.writeModes, propSvc.PendingCount, mcpSvc, envSvc, log)
+	feeder6 := newNoticeFeeder(log)
+	taskSvc, err := newTasks(store, adapters, g, taskNoticeHub{Hub: taskHub, feeder: feeder6}, redactor, checkoutLock, cfg.dataDir, cfg.writeModes, propSvc.PendingCount, mcpSvc, envSvc, log)
 	if err != nil {
 		_ = d.Close()
 		return nil, err
 	}
 
 	verifyHub := &lateVerifyHub{}
-	verifySvc, err := newVerifyService(store, buildSvc, taskSvc, g, redactor, verifyHub)
+	verifySvc, err := newVerifyService(store, buildSvc, taskSvc, g, redactor, &verifyNoticeHub{next: verifyHub, feeder: feeder6, store: store, rows: verify.NewSQLiteStore(store)})
 	if err != nil {
 		_ = d.Close()
 		return nil, err
@@ -308,12 +315,22 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		WorktreeEnv: envAPI,
 		Terminal:    termSvc,
 	})
+	p6, err := newPhase6(ctx, phase6Deps{
+		store: store, status: status, hosts: hostSvc, git: g, builds: buildSvc, tasks: taskSvc,
+		proposals: propSvc, srv: srv, redactor: redactor, log: log, feeder: feeder6,
+	})
+	if err != nil {
+		devSvc.Close(ctx)
+		_ = d.Close()
+		return nil, err
+	}
+	srv.SetPhase6Services(p6.services)
 	fanout.after = func(ctx context.Context) { releaseRemoved(ctx, store, envSvc, log) }
 	return &app{
 		devservers: devSvc, terminal: termSvc, envSvc: envSvc, compose: envAPI.compose,
 		cfg: cfg, log: log, db: d, store: store, srv: srv, status: status, builds: buildSvc, hosts: hostSvc, actions: actions,
 		feeder: feeder, tasks: taskSvc, proposals: propSvc, mcp: mcpSvc,
-		verify: verifySvc, changesets: csSvc, fanout: fanout,
+		verify: verifySvc, changesets: csSvc, fanout: fanout, phase6: p6,
 	}, nil
 }
 
@@ -328,15 +345,20 @@ func (a *app) run(ctx context.Context, ln net.Listener) error {
 	if err := a.tasks.Start(ctx); err != nil {
 		a.closePhase5()
 		_ = a.tasks.Close()
+		a.phase6.closeNotices()
 		return errors.Join(fmt.Errorf("start tasks: %w", err), a.db.Close())
 	}
 	// Proposals that were Confirmed at the last shutdown are reconciled here,
 	// never executed again on their own.
 	if err := a.proposals.Start(ctx); err != nil {
+		a.phase6.stopActions()
 		a.proposals.Close()
 		a.closePhase5()
-		return errors.Join(fmt.Errorf("start proposals: %w", err), a.tasks.Close(), a.db.Close())
+		tasksErr := a.tasks.Close()
+		a.phase6.closeNotices()
+		return errors.Join(fmt.Errorf("start proposals: %w", err), tasksErr, a.db.Close())
 	}
+	a.phase6.start(ctx)
 	// Dev servers that were running at the last shutdown are reconciled
 	// (stopped or marked orphaned) before anything is served (DV-03). A
 	// failure is not fatal: the rows are tried again at the next start.
@@ -359,8 +381,10 @@ func (a *app) run(ctx context.Context, ln net.Listener) error {
 	serveErr := group.Wait()
 	// Dev servers and terminals stop before anything the store serves them.
 	a.closePhase5()
+	a.phase6.stopActions()
 	a.proposals.Close()
 	tasksErr := a.tasks.Close()
+	a.phase6.closeNotices()
 	a.hosts.Close()
 	closeErr := a.db.Close()
 	return errors.Join(serveErr, tasksErr, closeErr)
