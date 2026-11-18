@@ -3,8 +3,8 @@ import { useState } from "react";
 import type { NewRepoOperationDTO } from "../../api/gen/api.gen";
 import { SafeLink } from "../../components/SafeLink";
 import { ProposalsByIds } from "../proposals";
-import { describeOperation, STAGE_STATUS_LABEL, stageLabel, type Tone } from "./core";
-import { describeNewRepoError, useOperation, useRetryMachine } from "./hooks";
+import { describeOperation, retrySpecOf, STAGE_STATUS_LABEL, stageLabel, type Tone } from "./core";
+import { describeNewRepoError, useOperation, usePublishProposalId, useRetryMachine } from "./hooks";
 import { PublishPanel } from "./PublishPanel";
 import { useSpecMemory } from "./store";
 import { btn, Footer, Hash, Lines, primary } from "./ui";
@@ -34,9 +34,12 @@ function Stages({ op }: { op: NewRepoOperationDTO }) {
   );
 }
 
-function RetryDialog({ operationId, kind }: { operationId: string; kind: "init" | "publish" }) {
+function RetryDialog({ op, kind }: { op: NewRepoOperationDTO; kind: "init" | "publish" }) {
+  const operationId = op.operationId;
   const machine = useRetryMachine(operationId);
-  const spec = useSpecMemory((s) => s.specs[operationId]?.[kind]);
+  // The hash is the server's, so Retry works after a reload; the session's wording only adds the step list.
+  const remembered = useSpecMemory((s) => s.specs[operationId]?.[kind]);
+  const spec = retrySpecOf(op, remembered);
   const { state } = machine;
   return (
     <>
@@ -44,7 +47,7 @@ function RetryDialog({ operationId, kind }: { operationId: string; kind: "init" 
         type="button"
         className={primary}
         onClick={() => {
-          machine.open(spec ? { hash: spec.hash, lines: spec.lines } : undefined);
+          machine.open(spec);
         }}
       >
         Retry…
@@ -67,11 +70,11 @@ function RetryDialog({ operationId, kind }: { operationId: string; kind: "init" 
             </Dialog.Description>
             {state.tag === "missing" ? (
               <p role="alert" className="text-sm text-warn">
-                This page no longer holds the preview you confirmed (it is kept only until you reload), so it cannot confirm it again. Nothing was changed.
+                This page no longer holds the confirmation code for this step, so it cannot confirm it again. Nothing was changed.
               </p>
             ) : state.tag !== "closed" ? (
               <>
-                <Lines label="What will run again" lines={state.lines} />
+                {state.lines.length > 0 ? <Lines label="What will run again" lines={state.lines} /> : null}
                 <Hash hash={state.hash} />
               </>
             ) : null}
@@ -94,6 +97,48 @@ function RetryDialog({ operationId, kind }: { operationId: string; kind: "init" 
         </Dialog.Portal>
       </Dialog.Root>
     </>
+  );
+}
+
+/**
+ * The publish step of a ready or publishing repo. A publish proposal that is already waiting (made
+ * before a reload, say) is found again on the server and shown in the shared confirmation, and the
+ * Publish button gives way to it: there is one proposal to decide, not a second one to make.
+ */
+function PublishStep({ op, publishing, setPublishing }: { op: NewRepoOperationDTO; publishing: boolean; setPublishing: (v: boolean) => void }) {
+  const waitingId = usePublishProposalId(op);
+  // While the panel is open it owns the confirmation it just created, so it is not swapped out.
+  if (waitingId && !publishing) {
+    return (
+      <div className="space-y-2">
+        <p className="text-sm">{op.state === "ready" ? "A publish proposal is waiting. Review it and confirm to create the remote repository." : "The publish proposal:"}</p>
+        <ProposalsByIds ids={[waitingId]} />
+      </div>
+    );
+  }
+  if (op.state !== "ready") return null;
+  if (publishing) {
+    return (
+      <PublishPanel
+        operation={op}
+        onClose={() => {
+          setPublishing(false);
+        }}
+      />
+    );
+  }
+  return (
+    <Footer>
+      <button
+        type="button"
+        className={primary}
+        onClick={() => {
+          setPublishing(true);
+        }}
+      >
+        Publish…
+      </button>
+    </Footer>
   );
 }
 
@@ -156,35 +201,14 @@ export function OperationView({ operationId, onBack }: { operationId: string; on
         </p>
       ) : null}
       {v.next.tag === "confirm" ? <ProposalsByIds ids={[v.next.proposalId]} /> : null}
-      {v.next.tag === "publish" ? (
-        publishing ? (
-          <PublishPanel
-            operation={op}
-            onClose={() => {
-              setPublishing(false);
-            }}
-          />
-        ) : (
-          <Footer>
-            <button
-              type="button"
-              className={primary}
-              onClick={() => {
-                setPublishing(true);
-              }}
-            >
-              Publish…
-            </button>
-          </Footer>
-        )
-      ) : null}
+      {op.state === "ready" || op.state === "publishing" ? <PublishStep op={op} publishing={publishing} setPublishing={setPublishing} /> : null}
       <Footer>
         {onBack ? (
           <button type="button" className={btn} onClick={onBack}>
             Back
           </button>
         ) : null}
-        {v.next.tag === "retry" ? <RetryDialog operationId={op.operationId} kind={v.next.kind} /> : null}
+        {v.next.tag === "retry" ? <RetryDialog op={op} kind={v.next.kind} /> : null}
       </Footer>
     </div>
   );

@@ -20,12 +20,20 @@ export const taskKeys = {
   one: (id: string) => ["tasks", "one", id] as const,
 };
 
-const taskPath = (id: string) => `/api/tasks/${encodeURIComponent(id)}`;
+/**
+ * The agent of the internal draft that only holds a project's workspace-action proposals. It is
+ * not a task the person made and cannot be started, so task lists and the board never show it;
+ * the proposals it holds stay visible in the proposal views.
+ */
+export const ANCHOR_AGENT = "ygg-anchor";
+export const isAnchorAgent = (agent: string): boolean => agent === ANCHOR_AGENT;
+
+const taskPath =(id: string) => `/api/tasks/${encodeURIComponent(id)}`;
 
 export function useRunningTasks() {
   return useQuery({
     queryKey: taskKeys.running,
-    queryFn: async (): Promise<Task[]> => (await apiFetch<TaskListResponse>("/api/tasks?status=running")).tasks,
+    queryFn: async (): Promise<Task[]> => (await apiFetch<TaskListResponse>("/api/tasks?status=running")).tasks.filter((t) => !isAnchorAgent(t.agent)),
   });
 }
 
