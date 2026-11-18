@@ -63,6 +63,9 @@ packages:
       - terminal.go
       - terminal_ws.go
       - phase6.go
+      - phase6_handlers.go
+      - phase6_parse.go
+      - phase6_respond.go
     frontmatter: |
       import type * as agents from "./agents.gen";
       import type * as core from "./core.gen";

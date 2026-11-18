@@ -1880,6 +1880,13 @@ export interface PublishNewRepoRequest {
   PublishPreviewRequest: PublishPreviewRequest;
   hash: string;
 }
+/**
+ * RetryNewRepoRequest is the body of POST /api/new-repos/{id}/retry: the
+ * immutable spec hash the user confirms again. A retry is never automatic.
+ */
+export interface RetryNewRepoRequest {
+  hash: string;
+}
 
 //////////
 // source: types_proposals.go
