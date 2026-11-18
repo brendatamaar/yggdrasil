@@ -180,6 +180,16 @@ func localOnly(r api.AttentionReason) bool {
 	return false
 }
 
+func setupRank(r api.AttentionReason) int {
+	switch r {
+	case api.ReasonConflicts:
+		return 1
+	case api.ReasonUnreadable:
+		return 2
+	}
+	return 0
+}
+
 func reasonSet(rs ...api.AttentionReason) map[api.AttentionReason]bool {
 	m := map[api.AttentionReason]bool{}
 	for _, x := range rs {
@@ -247,7 +257,11 @@ func TestPhase6NeedsAttentionTable(t *testing.T) {
 		}
 		t.Run(strings.Join(names, "+"), func(t *testing.T) {
 			p := r.newRepo(t)
-			for _, reason := range combo {
+			// Conflicts block further commits and an unreadable folder blocks
+			// everything in it, so those two are applied last.
+			ordered := append([]api.AttentionReason(nil), combo...)
+			sort.SliceStable(ordered, func(i, j int) bool { return setupRank(ordered[i]) < setupRank(ordered[j]) })
+			for _, reason := range ordered {
 				attentionSetups[reason](t, r, p, h)
 			}
 			r.refresh(t, p)

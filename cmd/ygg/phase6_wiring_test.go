@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -30,6 +31,7 @@ type p6Rig struct {
 	base string
 	cfg  config
 	env  []string
+	seq  int
 }
 
 func newP6Rig(t *testing.T) *p6Rig {
@@ -57,7 +59,9 @@ func (r *p6Rig) newRepo(t *testing.T) *p6Repo {
 	searchtest.RunGit(t, r.env, dir, "remote", "add", "origin", bare)
 	searchtest.RunGit(t, r.env, dir, "push", "-u", "origin", "HEAD")
 	var out bytes.Buffer
-	if err := seed(context.Background(), &out, r.cfg, dir, ""); err != nil {
+	// A unique project name: the folder name is not (t.TempDir is "001" in every subtest).
+	r.seq++
+	if err := seed(context.Background(), &out, r.cfg, dir, fmt.Sprintf("shop-%d", r.seq)); err != nil {
 		t.Fatal(err)
 	}
 	ids := regexp.MustCompile(`(prj|rep)_[0-9a-f]+`).FindAllString(out.String(), -1)
