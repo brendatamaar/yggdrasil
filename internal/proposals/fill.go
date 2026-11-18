@@ -36,8 +36,9 @@ func (s *Service) dirOf(ctx context.Context, where coreprop.Target) (string, err
 }
 
 // fillExpected completes the checksums a caller may leave out: the branch tip
-// (expect_head) of a Commit, Push or MergeRequest and the diff checksum of a
-// Commit. It runs before the action is hashed, so what the user confirms
+// (expect_head) of a Commit, Push or MergeRequest, the diff checksum of a
+// Commit, and the current state of the .gitignore an IgnoreEntries proposal
+// edits (an agent cannot know it; the executor refuses if it changed). It runs before the action is hashed, so what the user confirms
 // includes them. A value the caller gave is kept; whether it is right is
 // judged at execution. The result is validated with the strict rules, so an
 // action that cannot be pinned is refused.
@@ -49,6 +50,8 @@ func (s *Service) fillExpected(ctx context.Context, a coreprop.Action) (coreprop
 	case coreprop.Push:
 		where = v.Where
 	case coreprop.MergeRequest:
+		where = v.Where
+	case coreprop.IgnoreEntries:
 		where = v.Where
 	default:
 		return a, validated(a)
@@ -94,6 +97,19 @@ func (s *Service) fillExpected(ctx context.Context, a coreprop.Action) (coreprop
 			if v.ExpectHead, err = head(); err != nil {
 				return nil, err
 			}
+		}
+		a = v
+	case coreprop.IgnoreEntries:
+		if v.ExpectedHash == "" && !v.ExpectedAbsent {
+			if s.cfg.Ignore == nil {
+				return nil, refusal(coreprop.RefuseBadFacts, "Editing .gitignore is not set up in this build of Yggdrasil.")
+			}
+			snap, rerr := s.cfg.Ignore.ReadIgnore(ctx, dir)
+			if rerr != nil {
+				// No error text: it can hold a machine path.
+				return nil, refusal(coreprop.RefuseBadFacts, "Yggdrasil could not read .gitignore of this repo. It may be in use, a link, or larger than 1 MiB.")
+			}
+			v.ExpectedAbsent, v.ExpectedHash = snap.Absent, snap.Hash
 		}
 		a = v
 	}

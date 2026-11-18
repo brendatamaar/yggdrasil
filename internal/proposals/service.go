@@ -440,8 +440,12 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (View, error) {
 		switch req.Action.(type) {
 		case coreprop.MergeLocal, coreprop.RemoveWorktree:
 			return View{}, refusal(coreprop.RefuseUnsupported, "An agent cannot propose this. Merging and removing a worktree are started from the change set.")
-		case coreprop.InitRepo, coreprop.PublishRepo:
-			return View{}, refusal(coreprop.RefuseUnsupported, "An agent cannot propose this. Creating and publishing a repo are started by you, from the new repo dialog.")
+		case coreprop.InitRepo:
+			// Initialization starts only from the user's new repo dialog. An agent
+			// may propose a PublishRepo (MCP-05): it is still pending until the
+			// user confirms its exact destination, and checkPublishCreate binds it
+			// to a tracked repo with a finished new-repo operation.
+			return View{}, refusal(coreprop.RefuseUnsupported, "An agent cannot propose this. Creating a repo is started by you, from the new repo dialog.")
 		}
 	}
 	n, err := s.prepare(ctx, req)

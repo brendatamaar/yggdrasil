@@ -100,15 +100,12 @@ func TestReservedRepoIsInvisibleToOrdinaryProposals(t *testing.T) {
 	}
 }
 
-func TestPublishCreateNeedsAReadyOperationAndRefusesAgents(t *testing.T) {
+func TestPublishCreateNeedsAReadyOperation(t *testing.T) {
 	x := newNR(t)
 	if _, err := x.createNR(x.publishAction()); !errors.Is(err, ErrRefused) {
 		t.Fatalf("publish before the repo is initialized: %v", err)
 	}
 	x.toReady()
-	if _, err := x.svc.Create(x.ctx, CreateRequest{Task: nrSetup, Action: x.publishAction(), Source: coreprop.AgentSource{Task: nrSetup}}); !errors.Is(err, ErrRefused) {
-		t.Fatalf("an agent proposed a publish: %v", err)
-	}
 	v := x.mustCreate(x.publishAction())
 	if v.Status != core.ProposalPending || x.fake.Confirms() != 0 {
 		t.Fatalf("view = %+v, confirms %d", v, x.fake.Confirms())
