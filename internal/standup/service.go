@@ -16,6 +16,7 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	corestandup "github.com/brendatamaar/yggdrasil/internal/core/standup"
 	"github.com/brendatamaar/yggdrasil/internal/repos"
+	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
 
 // readConcurrency bounds the source reads that run at once.
@@ -76,8 +77,12 @@ func New(d Deps) (*Service, error) {
 		return nil, errors.New("standup: Deps.Builds is required")
 	case d.Polish == nil:
 		return nil, errors.New("standup: Deps.Polish is required")
-	case d.Clock == nil:
+	}
+	if d.Clock == nil {
 		d.Clock = time.Now
+	}
+	if d.Redactor == nil {
+		d.Redactor = safety.NewRedactor()
 	}
 	return &Service{d: d, projects: map[core.ProjectID]*projectRead{}, inflight: map[core.RequestID]*polishCall{}, finished: map[core.RequestID]*polishCall{}}, nil
 }
@@ -314,7 +319,7 @@ func (s *Service) readOne(ctx context.Context, rng corestandup.Range, j job) job
 			if c.OID == "" || !inRange(c.At) {
 				return invalid("commit")
 			}
-			out = append(out, corestandup.Commit{Repo: j.repo.ID, RepoName: j.repo.Name, OID: c.OID, Subject: c.Subject, Author: c.Author, At: c.At.UTC()})
+			out = append(out, corestandup.Commit{Repo: j.repo.ID, RepoName: j.repo.Name, OID: c.OID, Subject: s.d.Redactor.Redact(c.Subject), Author: s.d.Redactor.Redact(c.Author), At: c.At.UTC()})
 		}
 		return jobResult{commits: out, truncated: trunc}
 	case corestandup.SourceMRs:

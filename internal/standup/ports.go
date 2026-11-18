@@ -8,6 +8,7 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	corestandup "github.com/brendatamaar/yggdrasil/internal/core/standup"
 	"github.com/brendatamaar/yggdrasil/internal/repos"
+	"github.com/brendatamaar/yggdrasil/internal/safety"
 )
 
 // Consumer-local sources of the standup. Each has a fake and a contract suite
@@ -57,6 +58,9 @@ type Deps struct {
 	Builds  BuildSource
 	Polish  Polisher
 	Hub     api.Phase6Hub
+	// Redactor masks tokens in commit subjects and authors before they enter a
+	// summary (invariant 4). Nil means safety.NewRedactor().
+	Redactor safety.Redactor
 	// Clock is the shell's time; the core never reads one.
 	Clock func() time.Time
 }
