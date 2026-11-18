@@ -19,6 +19,7 @@ import (
 	corebuilds "github.com/brendatamaar/yggdrasil/internal/core/builds"
 	corehosts "github.com/brendatamaar/yggdrasil/internal/core/hosts"
 	"github.com/brendatamaar/yggdrasil/internal/db"
+	"github.com/brendatamaar/yggdrasil/internal/hosts"
 	"github.com/brendatamaar/yggdrasil/internal/search/searchtest"
 )
 
@@ -89,17 +90,29 @@ func (h *hostStub) FailedPipelines(context.Context) (map[core.RepoID]struct{}, e
 // the stub as host cache, and binds it to the API.
 func (r *p6Rig) bindActions(t *testing.T, h *hostStub) *scopeReader {
 	t.Helper()
+	return r.bindActionsWith(t, h, noHostReader{})
+}
+
+// bindActionsWith also takes the bounded host reader, and binds the drafts and
+// noise services next to the actions, as the composition root does.
+func (r *p6Rig) bindActionsWith(t *testing.T, h *hostStub, host hosts.ContextReader) *scopeReader {
+	t.Helper()
 	scope := &scopeReader{store: r.a.store, status: r.a.status, hosts: h, git: r.a.git}
+	creator := &proposalCreator{svc: r.a.proposals, drafts: r.a.tasks, store: r.a.store}
 	svc, err := actions.New(actions.Deps{
-		Scope: scope, Context: &contextReader{scope: scope, host: noHostReader{}, store: r.a.store, logs: r.a.builds, git: r.a.git, redact: redactorForTest()},
-		Tasks: r.a.tasks, Proposals: &proposalCreator{svc: r.a.proposals, drafts: r.a.tasks, store: r.a.store}, Requests: r.a.store,
+		Scope: scope, Context: &contextReader{scope: scope, host: host, store: r.a.store, logs: r.a.builds, git: r.a.git, redact: redactorForTest()},
+		Tasks: r.a.tasks, Proposals: creator, Requests: r.a.store,
 		Hub: r.a.srv, Drafts: folderDrafts{svc: r.a.tasks}, Redactor: redactorForTest(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = svc.Close() })
-	r.a.srv.SetPhase6Services(api.Phase6Services{Actions: actionsAPI{svc: svc}})
+	r.a.srv.SetPhase6Services(api.Phase6Services{
+		Actions: actionsAPI{svc: svc},
+		Drafts:  draftAPI{actions: svc, tasks: r.a.tasks, store: r.a.store, now: func() time.Time { return time.Now().UTC() }},
+		Noise:   noiseAPI{scope: scope, proposals: r.a.proposals, creator: creator},
+	})
 	return scope
 }
 
