@@ -161,8 +161,8 @@ func (s *Service) message(ctx context.Context, req MessageRequest, submission *s
 		if err != nil {
 			return MessageResult{}, err
 		}
-		if st.Row.Source != nil && st.Row.Source.Kind == core.SourceRepoSetup {
-			return MessageResult{}, &coretasks.UserError{Message: "Repo setup drafts cannot start an agent."}
+		if refusal := coretasks.StartRefusal(st.Row.Source); refusal != nil {
+			return MessageResult{}, refusal
 		}
 		existing = &st
 	}

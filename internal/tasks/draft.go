@@ -44,7 +44,7 @@ func (s *Service) LookupRequest(ctx context.Context, id core.RequestID) (core.Ta
 // SubmitWithRequest admits a new task once, with its immutable payload and link
 // stored atomically with the first turn and audit. Existing tasks use Message.
 func (s *Service) SubmitWithRequest(ctx context.Context, id core.RequestID, req MessageRequest) (MessageResult, error) {
-	if id.Validate() != nil || len(id) > 100 || req.TaskID != "" {
+	if id.Validate() != nil || len(id) > 100 || req.TaskID != "" || coretasks.HasReservedPrefix(id) {
 		return MessageResult{}, &coretasks.UserError{Message: "Choose a valid request ID for a new task."}
 	}
 	digest, err := payloadDigest("message", req)
@@ -224,8 +224,8 @@ func (s *Service) StartDraft(ctx context.Context, start coretasks.DraftStart, ag
 	if err != nil {
 		return MessageResult{}, err
 	}
-	if task.Source != nil && task.Source.Kind == core.SourceRepoSetup {
-		return MessageResult{}, &coretasks.UserError{Message: "Repo setup drafts cannot start an agent."}
+	if refusal := coretasks.StartRefusal(task.Source); refusal != nil {
+		return MessageResult{}, refusal
 	}
 	if (agent != "" && agent != task.Agent) || (start.Model != "" && start.Model != task.Model) {
 		return MessageResult{}, &coretasks.UserError{Message: "Start this draft with its stored agent and model."}

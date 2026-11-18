@@ -114,6 +114,10 @@ const (
 	// initialization proposal. It never starts an agent and is not listed on
 	// the board.
 	SourceRepoSetup TaskSourceKind = "repo_setup"
+	// SourceProposalAnchor is the fixed draft that holds the proposals made by
+	// workspace actions of one repo (a pull, ignore entries). It never starts
+	// an agent; it stays on the board so its proposals have a visible owner.
+	SourceProposalAnchor TaskSourceKind = "proposal_anchor"
 )
 
 // ProposalStatus is the lifecycle of a proposal.
@@ -293,7 +297,7 @@ func (r RepoReadiness) Validate() error {
 // Validate reports whether k is a known source kind.
 func (k TaskSourceKind) Validate() error {
 	switch k {
-	case SourceUser, SourceIssue, SourceRepoSetup:
+	case SourceUser, SourceIssue, SourceRepoSetup, SourceProposalAnchor:
 		return nil
 	}
 	return fmt.Errorf("unknown task source kind %q", string(k))

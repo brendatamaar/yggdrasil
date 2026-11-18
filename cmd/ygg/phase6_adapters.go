@@ -64,17 +64,17 @@ type proposalCreator struct {
 
 var _ actions.ProposalCreator = (*proposalCreator)(nil)
 
-func anchorRequest(repo core.RepoID) core.RequestID { return core.RequestID("anchor-" + string(repo)) }
 
 func (c *proposalCreator) anchor(ctx context.Context, repo core.RepoID) (core.TaskID, error) {
 	r, err := c.store.GetRepo(ctx, repo)
 	if err != nil {
 		return "", err
 	}
-	return c.drafts.SaveWaitingDraft(ctx, anchorRequest(repo), tasks.WaitingDraft{
-		Project: r.ProjectID, Repo: repo, Title: "Workspace actions for " + r.Name,
-		Brief: "This draft holds the proposals that workspace actions made for this repo (a pull, ignore entries). Nothing runs for it; decide each proposal in Review.",
-		Agent: anchorAgent,
+	// The title and brief are fixed (not the repo's name) so a rename cannot
+	// change the payload; the request ID is reserved, so no client can occupy it.
+	return c.drafts.SaveWaitingDraft(ctx, coretasks.AnchorRequest(repo), tasks.WaitingDraft{
+		Project: r.ProjectID, Repo: repo, Title: coretasks.AnchorTitle, Brief: coretasks.AnchorBrief,
+		Agent: anchorAgent, Anchor: true,
 	})
 }
 
