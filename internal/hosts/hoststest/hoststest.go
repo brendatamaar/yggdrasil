@@ -276,11 +276,14 @@ func (f *Fake) Inbox(ctx context.Context, inst corehosts.Instance, token string)
 	return fn(ctx, inst, token)
 }
 
+// ExpectedHead is the head commit every contract scenario's MR carries.
+const ExpectedHead = "4f2a9c1e7b3d5a60918c2e4d6f8a0b1c3d5e7f90"
+
 // ExpectedMR is the MR every contract scenario expects (URL aside).
 func ExpectedMR(state corehosts.MRState) corehosts.MergeRequest {
 	return corehosts.MergeRequest{
 		Number: 42, Title: "Add cart badge", Author: "mara", Source: "feature/cart", Target: "main",
-		State: state, UpdatedAt: time.Date(2026, 10, 12, 9, 30, 0, 0, time.UTC),
+		State: state, UpdatedAt: time.Date(2026, 10, 12, 9, 30, 0, 0, time.UTC), Head: ExpectedHead,
 	}
 }
 

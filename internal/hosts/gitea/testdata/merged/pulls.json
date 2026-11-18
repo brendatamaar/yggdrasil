@@ -11,7 +11,8 @@
       "login": "mara"
     },
     "head": {
-      "ref": "feature/cart"
+      "ref": "feature/cart",
+      "sha": "4f2a9c1e7b3d5a60918c2e4d6f8a0b1c3d5e7f90"
     },
     "base": {
       "ref": "main"
