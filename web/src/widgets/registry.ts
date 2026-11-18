@@ -7,6 +7,7 @@ import { needsAttention } from "./needs-attention";
 import { recentAreas } from "./recent-areas";
 import { recentChats } from "./recent-chats";
 import { runningServices } from "./running-services";
+import { standup } from "./standup";
 import { thisMachine } from "./this-machine";
 import type { WidgetModule } from "./types";
 import { workingNow } from "./working-now";
@@ -27,6 +28,7 @@ export const widgetRegistry: readonly WidgetModule[] = [
   recentAreas,
   recentChats,
   agentUsage,
+  standup,
 ];
 
 export function getWidget(id: string): WidgetModule | undefined {

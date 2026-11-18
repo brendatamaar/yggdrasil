@@ -1,7 +1,10 @@
 import { Link, useParams } from "@tanstack/react-router";
 import { useState } from "react";
 import { ApiError, describeError } from "../../api/client";
+import { RepoActions } from "../actions";
 import { DevServerPanel } from "../devservers";
+import { HostContextPanel } from "../hostcontext";
+import { NoiseSuggestions } from "../noise";
 import { RepoEnvSettings } from "../repoenv";
 import { TerminalToggle, useTerminalTarget } from "../terminal";
 import { relativeTime } from "../repos/ui";
@@ -93,6 +96,10 @@ function RepoView({ id }: { id: string }) {
 
       {/* Room for git actions (a later task). */}
       <div role="toolbar" aria-label="Repo actions" data-testid="repo-actions" className="flex min-h-0 gap-2 empty:hidden" />
+
+      <RepoActions repoId={id} repoName={repo.name} />
+      <NoiseSuggestions repoId={id} />
+      <HostContextPanel repoId={id} repoName={repo.name} />
 
       <HostBlock repoId={id} />
 
