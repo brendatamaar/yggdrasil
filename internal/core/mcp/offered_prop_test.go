@@ -49,11 +49,18 @@ func TestPropOfferedMatchesAuthorize(t *testing.T) {
 
 func TestOfferedTable(t *testing.T) {
 	live := Context{Task: "t", Live: true, Mode: core.ModeCode, Scope: []core.RepoID{"a"}, Project: []core.RepoID{"a", "b"}, HasWorktree: map[core.RepoID]bool{}}
-	if slices.Contains(Offered(live), ToolProposeCommit) {
-		t.Error("propose_commit offered without a worktree")
+	// propose_commit needs no worktree in any mode (it targets the main checkout);
+	// push and merge request do.
+	if !slices.Contains(Offered(live), ToolProposeCommit) {
+		t.Error("propose_commit not offered without a worktree")
 	}
-	if d := Authorize(live, ToolProposeCommit); d.Reason != DenyNoWorktree {
-		t.Errorf("want NoWorktree, got %+v", d)
+	for _, tool := range []Tool{ToolProposePush, ToolProposeMR} {
+		if slices.Contains(Offered(live), tool) {
+			t.Errorf("%s offered without a worktree", tool)
+		}
+		if d := Authorize(live, tool); d.Reason != DenyNoWorktree {
+			t.Errorf("%s: want NoWorktree, got %+v", tool, d)
+		}
 	}
 	for _, tool := range []Tool{ToolListRepos, ToolFetch, ToolProposeInstall, ToolProposeAgentFile, ToolProposeDelete, ToolStartBuild} {
 		if !slices.Contains(Offered(live), tool) {
@@ -70,8 +77,10 @@ func TestOfferedTable(t *testing.T) {
 	// a worktree outside the scope does not count
 	out := live
 	out.HasWorktree = map[core.RepoID]bool{"b": true}
-	if slices.Contains(Offered(out), ToolProposeCommit) {
-		t.Error("worktree of an out-of-scope repo enables propose_commit")
+	for _, tool := range []Tool{ToolProposePush, ToolProposeMR} {
+		if slices.Contains(Offered(out), tool) {
+			t.Errorf("worktree of an out-of-scope repo enables %s", tool)
+		}
 	}
 	cb := live
 	cb.Mode = core.ModeCurrentBranch
@@ -174,13 +183,16 @@ func TestMetadataToolsNameProjectRepos(t *testing.T) {
 	if d := Authorize(c, ToolStartBuild, "a"); !d.Allowed {
 		t.Errorf("%+v", d)
 	}
-	// propose_commit needs the worktree of the named repo
+	// push needs the worktree of the named repo; propose_commit does not
 	c.HasWorktree = map[core.RepoID]bool{"a": true}
 	c.Scope = []core.RepoID{"a", "b"}
-	if d := Authorize(c, ToolProposeCommit, "b"); d.Reason != DenyNoWorktree {
+	if d := Authorize(c, ToolProposePush, "b"); d.Reason != DenyNoWorktree {
 		t.Errorf("%+v", d)
 	}
-	if d := Authorize(c, ToolProposeCommit, "a"); !d.Allowed {
+	if d := Authorize(c, ToolProposePush, "a"); !d.Allowed {
+		t.Errorf("%+v", d)
+	}
+	if d := Authorize(c, ToolProposeCommit, "b"); !d.Allowed {
 		t.Errorf("%+v", d)
 	}
 }
@@ -227,10 +239,11 @@ func TestPropAskModeNeverPulls(t *testing.T) {
 	}
 }
 
-// AC-03: an Ask task with a repo in scope and no worktree may propose a commit
-// (it targets the main checkout; the user's confirmation is what commits), but
-// not a push or a merge request, and not for a repo it cannot see or work in.
-func TestAskModeProposeCommitWithoutWorktree(t *testing.T) {
+// AC-03: a task with a repo in scope and no worktree may propose a commit in
+// every mode (it targets the main checkout; the user's confirmation is what
+// commits), but not a push or a merge request, and not for a repo it cannot see
+// or work in.
+func TestProposeCommitWithoutWorktree(t *testing.T) {
 	ask := Context{Task: "t", Live: true, Mode: core.ModeAsk, Scope: []core.RepoID{"a"}, Project: []core.RepoID{"a", "b"},
 		HasWorktree: map[core.RepoID]bool{}}
 	if !slices.Contains(Offered(ask), ToolProposeCommit) {
@@ -262,12 +275,22 @@ func TestAskModeProposeCommitWithoutWorktree(t *testing.T) {
 	if d := Authorize(none, ToolProposeCommit); d.Reason != DenyNoSuchRepo {
 		t.Errorf("no scope: %+v", d)
 	}
-	// Code and Project mode keep the worktree rule.
-	for _, m := range []core.TaskMode{core.ModeCode, core.ModeProject} {
+	// Every mode: the same answers, and push and MR keep the worktree rule.
+	for _, m := range []core.TaskMode{core.ModeAsk, core.ModeCode, core.ModeProject, core.ModeCurrentBranch} {
 		c := ask
 		c.Mode = m
-		if d := Authorize(c, ToolProposeCommit, "a"); d.Reason != DenyNoWorktree {
+		if d := Authorize(c, ToolProposeCommit, "a"); !d.Allowed {
 			t.Errorf("%s without a worktree: %+v", m, d)
+		}
+		if d := Authorize(c, ToolProposeCommit, "b"); d != (Decision{Reason: DenyNoSuchRepo}) {
+			t.Errorf("%s out of scope: %+v", m, d)
+		}
+		if m != core.ModeCurrentBranch {
+			for _, tool := range []Tool{ToolProposePush, ToolProposeMR} {
+				if d := Authorize(c, tool, "a"); d.Reason != DenyNoWorktree {
+					t.Errorf("%s %s without a worktree: %+v", m, tool, d)
+				}
+			}
 		}
 	}
 }

@@ -23,27 +23,22 @@ func ClassOf(t Tool) Class {
 	return ClassNone
 }
 
-// needsWorktree: the tools that act on a task branch (commit, push, MR).
+// needsWorktree: the tools that act on a task branch (push, MR). propose_commit
+// does not: without a task worktree its proposal targets the repo's main
+// checkout, with explicit paths and the head and diff hash pinned when it is
+// created (AC-03, "Propose commits"). Creating it touches no tree (invariant
+// 9), only the user's confirmation commits (invariant 2), and the executor
+// refuses if either pin moved.
 func needsWorktree(t Tool) bool {
-	return t == ToolProposeCommit || t == ToolProposePush || t == ToolProposeMR
+	return t == ToolProposePush || t == ToolProposeMR
 }
 
-// worktreeExempt: propose_commit alone may do without a task worktree in Ask
-// mode. The proposal then targets the repo's main checkout with explicit paths
-// and the head and diff hash pinned when it is created (AC-03, "Propose
-// commits"). Creating it touches no tree (invariant 9), only the user's
-// confirmation commits, and the executor refuses if either pin moved. Push and
-// merge request still need a worktree, and every other mode keeps the rule.
-func worktreeExempt(c Context, t Tool) bool {
-	return t == ToolProposeCommit && c.Mode == core.ModeAsk
-}
-
-// needsScope: the Phase 6 proposal tools only make sense for a repo the task
-// works in, so a task whose scope is empty is not offered them. Creating one of
+// needsScope: these proposal tools only make sense for a repo the task works
+// in, so a task whose scope is empty is not offered them. Creating one of
 // these proposals touches no tree and posts nothing, so Ask mode is no
 // obstacle; the user's confirmation is.
 func needsScope(t Tool) bool {
-	return t == ToolProposePublish || t == ToolProposeReviewComment || t == ToolProposeIgnore
+	return t == ToolProposeCommit || t == ToolProposePublish || t == ToolProposeReviewComment || t == ToolProposeIgnore
 }
 
 // Offered lists the tools a task is offered in a context (the Offered table of
@@ -85,7 +80,7 @@ func Authorize(c Context, t Tool, repos ...core.RepoID) Decision {
 		// pull rewrites the main checkout; Ask mode never changes a tree (invariant 9).
 		return Decision{Reason: DenyAskMode}
 	}
-	if (needsScope(t) || worktreeExempt(c, t)) && len(c.Scope) == 0 {
+	if needsScope(t) && len(c.Scope) == 0 {
 		return Decision{Reason: DenyNoSuchRepo}
 	}
 	for _, r := range repos {
@@ -93,7 +88,7 @@ func Authorize(c Context, t Tool, repos ...core.RepoID) Decision {
 			return Decision{Reason: DenyNoSuchRepo}
 		}
 	}
-	if needsWorktree(t) && c.Mode != core.ModeCurrentBranch && !worktreeExempt(c, t) {
+	if needsWorktree(t) && c.Mode != core.ModeCurrentBranch {
 		if len(repos) == 0 {
 			if !slices.ContainsFunc(c.Scope, func(r core.RepoID) bool { return c.HasWorktree[r] }) {
 				return Decision{Reason: DenyNoWorktree}

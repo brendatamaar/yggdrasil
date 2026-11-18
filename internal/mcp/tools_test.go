@@ -220,14 +220,23 @@ func TestStartBuildRefusesInstall(t *testing.T) {
 	}
 }
 
-// Commit, push and merge request need a task worktree; the others do not.
+// Push and merge request need a task worktree; commit and the others do not.
 func TestWorktreeRules(t *testing.T) {
 	e := newEnv(t)
-	r := e.callTool(t, "propose_commit", map[string]any{"repo": "shop-web", "paths": []string{"a.go"}, "message": "m"})
-	if !r.Result.IsError || !strings.Contains(r.text(), "no worktree") {
-		t.Fatalf("commit in a repo without a worktree: %s", r.Raw)
+	for _, tool := range []string{"propose_push", "propose_merge_request"} {
+		r := e.callTool(t, tool, map[string]any{"repo": "shop-web", "branch": "b", "remote": "origin", "title": "t", "target": "main"})
+		if r.Err == nil && (!r.Result.IsError || !strings.Contains(r.text(), "no worktree")) {
+			t.Fatalf("%s in a repo without a worktree: %s", tool, r.Raw)
+		}
 	}
-	// In current_branch mode the main checkout is the working tree.
+	if len(e.prop.Created) != 0 {
+		t.Fatalf("created %d proposals", len(e.prop.Created))
+	}
+	// A commit needs no worktree in any mode: without one it targets the main checkout.
+	r := e.callTool(t, "propose_commit", map[string]any{"repo": "shop-web", "paths": []string{"a.go"}, "message": "m"})
+	if r.Result.IsError {
+		t.Fatalf("commit without a worktree refused in Code mode: %s", r.Raw)
+	}
 	e.ws.Set(e.task, snapshot(core.ModeCurrentBranch))
 	r = e.callTool(t, "propose_commit", map[string]any{"repo": "shop-web", "paths": []string{"a.go"}, "message": "m"})
 	if r.Result.IsError {
