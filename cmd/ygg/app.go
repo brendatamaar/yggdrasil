@@ -271,7 +271,7 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		InsecureNoSession: cfg.noSession,
 		Store:             store, Log: log, Tasks: taskSvc, Worktrees: api.NewWorktreeServiceWithGit(store, g), WriteModes: cfg.writeModes,
 		Redactor: redactor, Version: version, Assets: assets,
-		Tracking: tracking, Status: status, RepoDetail: repos.NewDetailService(store, g),
+		Tracking: untrackingNewRepos{TrackingService: tracking, nr: nrParts.svc, store: store, log: log}, Status: status, RepoDetail: repos.NewDetailService(store, g),
 		Builds: buildSvc, Hosts: hostSvc, Search: searchSvc,
 		GitActions: repos.GitActions{ActionsService: actions, OpenService: opener},
 		Proposals:  rejectingProposals{ProposalService: propSvc, nr: nrParts.svc, store: store, log: log}, Agents: newAgentService(adapters), MCP: mcpSvc,
