@@ -71,6 +71,19 @@ var descriptors = map[cmcp.Tool]descriptor{
 		str("content", "Full new content of the file.", true), str("summary", summaryDesc, false)}},
 	cmcp.ToolProposeDelete: {desc: "Propose removing files. They are moved into a _to_delete folder for the user, never deleted.", props: []prop{
 		str("repo", repoDesc, true), list("paths", "Relative file paths.", true), str("summary", summaryDesc, false)}},
+	cmcp.ToolProposeIgnore: {desc: "Propose adding folders to the repo's top-level .gitignore, for example build output or dependencies. The user confirms it; nothing is written by this call.", props: []prop{
+		str("repo", repoDesc, true),
+		list("entries", "Anchored folder entries such as /dist/ or /web/node_modules/ (at most 32). No wildcards, negations or comments.", true),
+		str("summary", summaryDesc, false)}},
+	cmcp.ToolProposeReviewComment: {desc: "Propose one comment on a merge request, pinned to the head commit you reviewed. The user confirms it; nothing is posted by this call.", props: []prop{
+		str("repo", repoDesc, true), num("mr", "Merge request number.", true),
+		str("expected_head", "Full commit ID of the merge request head you reviewed (40 or 64 lowercase hex digits). The comment is refused if the head has changed.", true),
+		str("body", "The comment text (plain text, at most 16 KiB).", true), str("summary", summaryDesc, false)}},
+	cmcp.ToolProposePublish: {desc: "Propose publishing a repo that was made with Yggdrasil's new repo dialog to a host account: create the remote, add it as origin and push the first commit. The user confirms the exact destination; nothing is created by this call.", props: []prop{
+		str("repo", repoDesc, true), str("host", "Host name, lowercase, for example git.example.com.", true),
+		str("owner", "User or organization that will own the repository.", true),
+		str("owner_kind", "user or org.", true), str("name", "Name of the new repository.", true),
+		str("visibility", "private (default) or public.", false), str("summary", summaryDesc, false)}},
 }
 
 // schemaOf builds the input schema of a tool as a plain map (the SDK accepts
