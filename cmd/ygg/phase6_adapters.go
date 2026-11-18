@@ -44,10 +44,6 @@ type draftSaver interface {
 	SaveWaitingDraft(ctx context.Context, id core.RequestID, d tasks.WaitingDraft) (core.TaskID, error)
 }
 
-// anchorAgent is the agent named on an anchor draft. The draft is never
-// started by Yggdrasil; "mock" is the agent that is always registered.
-const anchorAgent = "mock"
-
 // proposalCreator implements actions.ProposalCreator. A proposal hangs under a
 // task (its change set), and an action such as a pull has none, so the adapter
 // gives the repo one visible Ask-mode draft task as its anchor (no turn,
@@ -64,7 +60,6 @@ type proposalCreator struct {
 
 var _ actions.ProposalCreator = (*proposalCreator)(nil)
 
-
 func (c *proposalCreator) anchor(ctx context.Context, repo core.RepoID) (core.TaskID, error) {
 	r, err := c.store.GetRepo(ctx, repo)
 	if err != nil {
@@ -74,7 +69,7 @@ func (c *proposalCreator) anchor(ctx context.Context, repo core.RepoID) (core.Ta
 	// change the payload; the request ID is reserved, so no client can occupy it.
 	return c.drafts.SaveWaitingDraft(ctx, coretasks.AnchorRequest(repo), tasks.WaitingDraft{
 		Project: r.ProjectID, Repo: repo, Title: coretasks.AnchorTitle, Brief: coretasks.AnchorBrief,
-		Agent: anchorAgent, Anchor: true,
+		Agent: coretasks.AnchorAgent,
 	})
 }
 

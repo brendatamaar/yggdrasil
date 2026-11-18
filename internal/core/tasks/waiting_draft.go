@@ -24,10 +24,6 @@ type WaitingDraftSpec struct {
 	Brief     string
 	Agent     string
 	Model     string
-	// Source is empty for an ordinary waiting draft and core.SourceProposalAnchor
-	// for the fixed anchor of a repo (anchor.go). omitempty keeps the digest of
-	// every ordinary draft stored before this field existed.
-	Source core.TaskSourceKind `json:",omitempty"`
 }
 
 // ParseWaitingDraftSpec validates the fields at the boundary.
@@ -35,17 +31,14 @@ func ParseWaitingDraftSpec(s WaitingDraftSpec) (WaitingDraftSpec, error) {
 	if err := s.RequestID.Validate(); err != nil || len(s.RequestID) > 100 {
 		return WaitingDraftSpec{}, badDraft("the request id is not valid")
 	}
-	// The reserved request IDs belong to anchors, and an anchor has no other ID.
+	// The reserved request IDs and the reserved agent belong to anchors, and an
+	// anchor has no other request ID, title or brief.
+	anchor := s.Agent == AnchorAgent
 	switch {
-	case s.Source != core.SourceUser && s.Source != core.SourceProposalAnchor:
-		return WaitingDraftSpec{}, badDraft("the draft kind is not valid")
-	case s.Source == core.SourceProposalAnchor && s.RequestID != AnchorRequest(s.Repo):
-		return WaitingDraftSpec{}, badDraft("an anchor draft uses its reserved request id")
-	case s.Source == core.SourceUser && HasReservedPrefix(s.RequestID):
+	case anchor && (s.RequestID != AnchorRequest(s.Repo) || s.Title != AnchorTitle || s.Brief != AnchorBrief || s.Model != ""):
+		return WaitingDraftSpec{}, badDraft("an anchor draft uses its fixed request id, title and brief")
+	case !anchor && HasReservedPrefix(s.RequestID):
 		return WaitingDraftSpec{}, badDraft("the request id is reserved")
-	}
-	if s.Project.Validate() != nil || s.Repo.Validate() != nil {
-		return WaitingDraftSpec{}, badDraft("the project or repo id is not valid")
 	}
 	s.Title = strings.TrimSpace(s.Title)
 	switch {
@@ -99,14 +92,11 @@ func PlanWaitingDraft(s WaitingDraftSpec, f DraftFacts) DraftOutcome {
 		}
 		return DraftReplayed{Task: r.Task}
 	}
-	t := core.Task{
+	return DraftCreate{Task: core.Task{
 		ID: f.TaskID, ProjectID: s.Project, RepoIDs: []core.RepoID{s.Repo},
 		Title: s.Title, Prompt: s.Brief, Scope: core.ScopeRepo, Mode: core.ModeAsk,
 		Agent: s.Agent, Model: s.Model, Status: core.TaskDraft,
 		CreatedAt: f.Now, UpdatedAt: f.Now,
-	}
-	if s.Source == core.SourceProposalAnchor {
-		t.Source = &core.TaskSource{Kind: core.SourceProposalAnchor}
-	}
-	return DraftCreate{Task: t}
+	}}
+
 }

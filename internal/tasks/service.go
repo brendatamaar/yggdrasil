@@ -161,7 +161,7 @@ func (s *Service) message(ctx context.Context, req MessageRequest, submission *s
 		if err != nil {
 			return MessageResult{}, err
 		}
-		if refusal := coretasks.StartRefusal(st.Row.Source); refusal != nil {
+		if refusal := coretasks.StartRefusal(st.Row); refusal != nil {
 			return MessageResult{}, refusal
 		}
 		existing = &st

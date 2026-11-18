@@ -173,9 +173,6 @@ func (t Task) Validate() error {
 		if t.Source.Kind == SourceRepoSetup && t.Status != TaskDraft {
 			return fmt.Errorf("task %s is a repo-setup draft and cannot leave the draft status", t.ID)
 		}
-		if t.Source.Kind == SourceProposalAnchor && t.Status != TaskDraft {
-			return fmt.Errorf("task %s is a proposal anchor draft and cannot leave the draft status", t.ID)
-		}
 	}
 	return nil
 }

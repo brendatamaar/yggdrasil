@@ -224,7 +224,7 @@ func (s *Service) StartDraft(ctx context.Context, start coretasks.DraftStart, ag
 	if err != nil {
 		return MessageResult{}, err
 	}
-	if refusal := coretasks.StartRefusal(task.Source); refusal != nil {
+	if refusal := coretasks.StartRefusal(task); refusal != nil {
 		return MessageResult{}, refusal
 	}
 	if (agent != "" && agent != task.Agent) || (start.Model != "" && start.Model != task.Model) {
