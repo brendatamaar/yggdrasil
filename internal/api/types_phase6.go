@@ -133,7 +133,7 @@ type ActionPreviewDTO struct {
 // ActionExecuteRequest is the body of POST /api/actions/execute. Digest and
 // ExpectedHead are copied from the preview; a changed scope refuses.
 type ActionExecuteRequest struct {
-	ActionRequestDTO
+	ActionRequestDTO `tstype:",extends"`
 	Digest       string `json:"digest"`
 	ExpectedHead string `json:"expectedHead,omitempty"`
 }
@@ -546,7 +546,7 @@ type NewRepoPreviewResponse struct {
 // confirmed through the proposals API with the previewed hash.
 type ReserveNewRepoRequest struct {
 	RequestID core.RequestID `json:"requestId"`
-	NewRepoPreviewRequest
+	NewRepoPreviewRequest `tstype:",extends"`
 	// Hash is the hash of the previewed spec; a different spec is refused.
 	Hash  string `json:"hash"`
 	Agent string `json:"agent,omitempty"`
@@ -613,7 +613,7 @@ type PublishPreviewResponse struct {
 // never created before that confirmation.
 type PublishNewRepoRequest struct {
 	RequestID core.RequestID `json:"requestId"`
-	PublishPreviewRequest
+	PublishPreviewRequest `tstype:",extends"`
 	Hash string `json:"hash"`
 }
 
