@@ -1836,6 +1836,11 @@ export interface NewRepoOperationDTO {
    * reconciliation found the stage absent).
    */
   canRetry?: boolean;
+  /**
+   * SpecHash is the hash of the immutable init spec the user confirms again on
+   * Retry, so a retry survives a page reload (the preview is not needed).
+   */
+  specHash?: string;
 }
 /**
  * NewRepoChangedMessage is the data of a message on TopicNewRepos.

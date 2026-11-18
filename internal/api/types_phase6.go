@@ -578,6 +578,9 @@ type NewRepoOperationDTO struct {
 	// CanRetry: a human retry is offered (stopped, or uncertain after
 	// reconciliation found the stage absent).
 	CanRetry bool `json:"canRetry,omitempty"`
+	// SpecHash is the hash of the immutable init spec the user confirms again on
+	// Retry, so a retry survives a page reload (the preview is not needed).
+	SpecHash string `json:"specHash,omitempty"`
 }
 
 // NewRepoChangedMessage is the data of a message on TopicNewRepos.
