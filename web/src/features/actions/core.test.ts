@@ -212,38 +212,46 @@ describe("action dialog reducer, over random input sequences", () => {
     let s = seed;
     return () => (s = (s * 1103515245 + 12345) % 2147483648) / 2147483648;
   }
-  const ids = ["a", "b", "c"];
+  const ids = ["a", "b"];
 
   it("never produces Succeeded unless that exact RequestID was Submitting and answered", () => {
+    let succeeded = 0;
     for (let seed = 1; seed <= 200; seed++) {
       const r = rng(seed);
       const pick = <T,>(xs: readonly T[]): T => xs[Math.floor(r() * xs.length)] as T;
       let state: ActionState = closed;
       const submittedIds = new Set<string>();
-      let nextId = 0;
       for (let i = 0; i < 60; i++) {
         const id = pick(ids);
         const inputs: ActionInput[] = [
-          { tag: "open", target: pick([target, other]), requestId: `n${String(nextId++)}` },
+          { tag: "open", target: pick([target, other]), requestId: pick(ids) },
           { tag: "loaded", requestId: id, preview: preview(id) },
           { tag: "loadFailed", requestId: id, message: "x" },
           { tag: "submit" },
           { tag: "submitted", requestId: id, result: result(id, pick(["completed", "refused", "submitting", "cancelled"] as const)) },
           { tag: "submitFailed", requestId: id, message: "x", definite: r() < 0.5 },
-          { tag: "retry", requestId: `n${String(nextId++)}` },
+          { tag: "retry", requestId: pick(ids) },
           { tag: "close" },
         ];
-        const input = pick(inputs);
-        const before = state;
-        let cmds;
-        [state, cmds] = stepAction(state, input);
+        // Half the time follow the happy path of the current state, so deep states are reached.
+        let input: ActionInput = pick(inputs);
+        if (r() < 0.5) {
+          if (state.tag === "closed" || state.tag === "failed" || state.tag === "succeeded") input = { tag: "open", target, requestId: id };
+          else if (state.tag === "loading") input = { tag: "loaded", requestId: state.requestId, preview: preview(state.requestId) };
+          else if (state.tag === "preview") input = { tag: "submit" };
+          else input = { tag: "submitted", requestId: state.requestId, result: result(state.requestId, pick(["completed", "refused", "submitting"] as const)) };
+        }
+        const before: ActionState = state;
+        const [after, cmds] = stepAction(state, input);
+        state = after;
         if (before.tag === "submitting") submittedIds.add(before.requestId);
         if (cmds.some((c) => c.tag === "submitAction")) {
           // Every submission carries the digest of the preview that was shown.
           const c = cmds.find((x) => x.tag === "submitAction");
           if (c?.tag === "submitAction") expect(c.digest).toBe(`digest-${c.request.requestId}`);
         }
-        if (state.tag === "succeeded") {
+        if (state.tag === "succeeded" && state !== before) {
+          succeeded++;
           expect(before.tag).toBe("submitting");
           expect(input.tag).toBe("submitted");
           if (before.tag === "submitting" && input.tag === "submitted") {
@@ -254,5 +262,7 @@ describe("action dialog reducer, over random input sequences", () => {
         }
       }
     }
+    // The generator reaches the interesting state, so the property is not vacuous.
+    expect(succeeded).toBeGreaterThan(20);
   });
 });

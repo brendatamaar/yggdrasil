@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import * as gen from "../../api/gen/api.gen";
 import type { ActionOfferingDTO, RepoStatusDTO } from "../../api/gen/api.gen";
 import { actionsForReasons, FALLBACK_KIND, kindTitle, reasonCodes, REASON_LABEL } from "./attention";
-import { EMPTY_TEXT, viewKind, type EmptyKind } from "./empty";
+import { EMPTY_TEXT, type EmptyKind } from "./empty";
 
 const generatedReasons = Object.entries(gen)
   .filter(([k, v]) => k.startsWith("Reason") && typeof v === "string")
@@ -68,17 +68,7 @@ describe("attention reasons and actions", () => {
   });
 });
 
-describe("empty, pending and error are different views", () => {
-  it("an error without data is an error, never empty", () => {
-    expect(viewKind({ isPending: false, error: new Error("x"), count: undefined })).toBe("error");
-  });
-  it("pending without data is pending", () => {
-    expect(viewKind({ isPending: true, error: null, count: undefined })).toBe("pending");
-  });
-  it("data with no items is empty, and with items is ready", () => {
-    expect(viewKind({ isPending: false, error: null, count: 0 })).toBe("empty");
-    expect(viewKind({ isPending: false, error: null, count: 3 })).toBe("ready");
-  });
+describe("empty states", () => {
   it("every empty kind has its own wording", () => {
     const kinds: EmptyKind[] = ["NoProjects", "EmptyProject", "NoRemote", "NoCredentials", "NoIssues", "NoMRs", "NoBuilds", "NoTasks", "NoStandup"];
     expect(new Set(kinds.map((k) => EMPTY_TEXT[k])).size).toBe(kinds.length);

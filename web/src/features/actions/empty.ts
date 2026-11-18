@@ -22,14 +22,3 @@ export const EMPTY_TEXT: Record<EmptyKind, string> = {
   NoTasks: "No tasks yet.",
   NoStandup: "Nothing happened in this range.",
 };
-
-export type ViewKind = "pending" | "error" | "empty" | "ready";
-
-/**
- * Which of the four views a list query is in. `count` is undefined until data arrived. An
- * error with no data is an error, never an empty list.
- */
-export function viewKind(q: { isPending: boolean; error: unknown; count: number | undefined }): ViewKind {
-  if (q.count === undefined) return q.error ? "error" : "pending";
-  return q.count === 0 ? "empty" : "ready";
-}
