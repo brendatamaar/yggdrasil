@@ -1016,3 +1016,16 @@ the lead runs the full gate with Node 22 in the scratchpad.
 ## Batch 4: usage limit interruption and resume
 
 P3 (proposals `CreateForRequest`/`FindForRequest`) and T3 (`SaveWaitingDraft` for unreadable repos) were stopped by the usage limit. Their work was saved in their worktrees, and both were resumed through SendMessage after the reset. Still to do in Batch 4: merge P3 and T3 one at a time, S2 (real standup MR and build sources), TM2, the Batch 4 gate.
+
+## Batch 4 round 3: P3, T3, S2 merged
+
+Disk filled mid-run (100% of 69 GB). The human approved `go clean -cache` (24 GB); T3 had already run it. No other deletion.
+
+- **T3** (f7fd7a4): `tasks.Service.SaveWaitingDraft(ctx, RequestID, WaitingDraft) (TaskID, error)`. Ask-mode draft, no turn/worktree/process. Scope is decided before replay. Same payload replays, changed payload gives `db.ErrDigestMismatch`. Audit `task.waiting_draft` carries the repo id only. Closes the unreadable-repo E6 gap. Wiring: thin adapter from `actions.WaitingDraft` to `tasks.WaitingDraft` in cmd/ygg.
+- **P3**: `proposals.Service.CreateForRequest(ctx, RequestID, []RequestProposal) ([]ProposalID, error)` and `FindForRequest`. IDs derive from request ID and index; one transaction for all items plus audit; retry returns the same IDs; a changed list gives `ErrRequestChanged` (`*RequestChangedError`). The request path refuses InitRepo and PublishRepo (agent-created PublishRepo for MCP-05 is still to decide in Batch 5). `workspace_action_proposals` is linked by the action shell through `SaveActionRequest`. Wiring: adapt `actions.ProposalSpec` to `proposals.RequestProposal`. Cap `MaxRequestProposals = 20`.
+- **S2**: `standup.NewMRSource(hostsService, redactor)` and `standup.NewBuildSource(store)` into `standup.Deps.MRs/Builds`.
+  Known limits, to carry into review and the Phase 7 notes:
+  - The MR source is a partial view. The host cache has no per-repo MR list by time, only `hosts.Service.RepoHost` (current-branch MR) and `Inbox` (the user's MRs), and `At` is the last-update time. A complete history needs a new cache in hosts/db.
+  - The builds source reads the newest 1000 builds of a repo and filters in the shell because `db.BuildFilter` has no time filter. Truncation is flagged only when the scan was full.
+- Gate after each merge: `task lint` 0 issues, `task typecheck` ok, `go test` green for the touched packages.
+- Next: TM2 (test-engineer, agent a4226ae08a3f9660e), then the Batch 4 full gate.
