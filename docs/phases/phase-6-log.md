@@ -1029,3 +1029,18 @@ Disk filled mid-run (100% of 69 GB). The human approved `go clean -cache` (24 GB
   - The builds source reads the newest 1000 builds of a repo and filters in the shell because `db.BuildFilter` has no time filter. Truncation is flagged only when the scan was full.
 - Gate after each merge: `task lint` 0 issues, `task typecheck` ok, `go test` green for the touched packages.
 - Next: TM2 (test-engineer, agent a4226ae08a3f9660e), then the Batch 4 full gate.
+
+## Batch 4 closed
+
+TM2 merged (combined test pass for actions, standup, proposals request path and waiting drafts; contract suites `ProposalCreatorContract` and `FolderDraftsContract`; invariants 2, 4, 5, 10 with mutations caught).
+
+- Defect found by TM2 and fixed by the lead: standup commit subjects and authors were not redacted (invariant 4). `standup.Deps.Redactor` (default `safety.NewRedactor()`) now redacts them; the known-defect test is live, and it fails without the fix.
+- Full gate on main: `task generate` leaves no diff, `task lint` 0 issues, `task typecheck` ok, `task test` all packages ok, `task test:web` 58 files / 528 tests pass. -race on internal/actions and internal/standup was clean (the actions race run takes about 510 s).
+
+Open items carried into Batch 5 and the reviews:
+- `core/proposals.PlanRequest` returns `CreateAll` for InitRepo/PublishRepo items; only the shell refuses them (low; the reviewers decide).
+- `PullAndCheck` on an unreadable repo creates a pending pull proposal when the facts list both unreadable and behind (needs a confirmation anyway; look in review).
+- `ScopeReader` and `ContextReader` have no real implementation or contract suite yet: cmd/ygg adapters (W).
+- Real `FindForRequest` returns `(nil, nil)` for an unknown request where the port comment says `db.ErrNotFound` (the shell accepts both; align the comment or code in W).
+- Standup MR source is a partial view and the builds source scans the newest 1000 builds (see Batch 4 round 3).
+- Review of Batches 4 and 5 together, range 2b73dbf..main, after Batch 5.

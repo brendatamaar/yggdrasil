@@ -170,8 +170,9 @@ Execution log (design approvals, SHAs, review results, decisions, deviations, in
 | Batch 1 | closed | see log | none |
 | Batch 2 + TM1 tests | closed | 8966339 | see "Still open" and "Batch 2 test handoff TM1" in the log |
 | Batch 3 | closed (N1, N2, N3a, N3b, P1, P2, Q, TE-1, BF3; reviews PASS; -race clean) | see log | wiring contracts and Considers in the log; `task license` unrunnable locally (verify in CI) |
-| Batch 4 | in progress: round 1 (A1 core/actions, S standup) | | round 2 = A2 shell + Replay-fact task; round 3 = TM2 |
-| Batch 5 | not started | | |
+| Batch 4 | closed (A1, S, A2, T2, T3, P3, S2, TM2; full gate green) | see log | reviews run together with Batch 5; open items in the log under "Batch 4 closed" |
+
+| Batch 5 | in progress | | split into W1 API/wiring, W2 MCP, U1..Un frontend rounds; see log |
 | Batch 6 | not started | | |
 
 ### Workflow for the remaining batches (token budget; adopted 2026-11-16)
