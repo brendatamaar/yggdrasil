@@ -124,11 +124,7 @@ func (r *rig) repoView(t *testing.T, id core.RepoID) api.RepoHostView {
 }
 
 func hasData(v api.RepoHostView) bool {
-	switch ph := v.Entry.Phase.(type) {
-	case corehosts.Idle:
-		return ph.Data != nil
-	}
-	return false
+	return corehosts.Previous(v.Entry).Data != nil
 }
 
 func TestServiceLinksAFetchesAndShowsData(t *testing.T) {

@@ -261,7 +261,9 @@ func (h hostContextAPI) MRContext(ctx context.Context, repo core.RepoID, number 
 			Phase: api.HostContextWaiting, Message: "Yggdrasil has not read this merge request's latest commit yet. Try again in a moment.",
 		}}, nil
 	}
-	if key.Validate() != nil {
+	if validKey := key.Validate() == nil; !validKey {
+		// A cached head that is not a full commit id cannot be read; say so as
+		// an answer, not a failure.
 		return blocked(corehosts.ContextUnsupported), nil
 	}
 	out, err := h.read(ctx, key)

@@ -19,7 +19,7 @@ func idsFor(k Kind) IDs {
 	if k.Effect() == EffectStartPull {
 		return IDs{Proposals: []core.ProposalID{"prp_1"}}
 	}
-	return IDs{Task: "tsk_1"}
+	return IDs{}
 }
 
 // factsFor are facts under which the catalogue offers kind k with reqFor(k)'s

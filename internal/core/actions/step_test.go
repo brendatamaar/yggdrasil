@@ -62,7 +62,7 @@ func TestTransitionTable(t *testing.T) {
 			if l := cmds[1].(LoadFactsAndContext); l.Attempt != 1 || l.Request != reqFor(k) {
 				t.Errorf("load = %+v", l)
 			}
-			if d.Digest != reqFor(k).Digest() || d.Request != reqFor(k) || d.IDs.Task != "tsk_1" || d.Version != 1 || d.Seq != 1 {
+			if d.Digest != reqFor(k).Digest() || d.Request != reqFor(k) || d.Version != 1 || d.Seq != 1 {
 				t.Errorf("stored %+v", d)
 			}
 		}
@@ -74,11 +74,11 @@ func TestTransitionTable(t *testing.T) {
 		wantRefused(t, "bad request", d, RefuseInvalid)
 		wantCmds(t, "bad request", cmds, "Explain", "Audit", "Publish")
 
-		d, cmds = Step(Submission{}, Requested{Request: reqFor(k), IDs: IDs{}})
+		d, cmds = Step(Submission{}, Requested{Request: reqFor(PullAndCheck), IDs: IDs{}})
 		wantRefused(t, "no ids", d, RefuseInvalid)
 		wantCmds(t, "no ids", cmds, "Explain", "Audit", "Publish")
 
-		d, _ = Step(Submission{}, Requested{Request: reqFor(PullAndCheck), IDs: IDs{Task: "tsk_1"}})
+		d, _ = Step(Submission{}, Requested{Request: reqFor(PullAndCheck), IDs: IDs{Proposals: nil}})
 		wantRefused(t, "pull without proposal id", d, RefuseInvalid)
 		d, _ = Step(Submission{}, Requested{Request: reqFor(PullAndCheck), IDs: IDs{Proposals: []core.ProposalID{"p_1", "p_1"}}})
 		wantRefused(t, "duplicate proposal ids", d, RefuseInvalid)
@@ -165,7 +165,7 @@ func TestTransitionTable(t *testing.T) {
 		}
 		wantCmds(t, "submit", cmds, "PersistIntent", "Audit", "Dispatch")
 		disp := cmds[2].(Dispatch)
-		if disp.Key != s.Key || disp.Attempt != 2 || disp.Request != reqFor(k) || disp.IDs.Task != "tsk_1" || disp.Context.Text != "log" {
+		if disp.Key != s.Key || disp.Attempt != 2 || disp.Request != reqFor(k) || disp.Context.Text != "log" {
 			t.Errorf("dispatch = %+v", disp)
 		}
 		if in := cmds[0].(PersistIntent); in.Digest != reqFor(k).Digest() || in.Key != s.Key {
@@ -324,7 +324,7 @@ func TestTransitionTable(t *testing.T) {
 		for _, name := range []string{"preparing", "ready", "submitting", "completed", "refused", "cancelled"} {
 			d := to(k, name)
 			// Same request: answered from the stored state, nothing redone.
-			d2, cmds := Step(d, Requested{Request: reqFor(k), IDs: IDs{Task: "tsk_2"}})
+			d2, cmds := Step(d, Requested{Request: reqFor(k), IDs: IDs{}})
 			wantUnchanged(t, name+" replay", d, d2, cmds)
 			// Same key, another body: rejected, the stored request stays.
 			other := reqFor(k)

@@ -164,19 +164,7 @@ type Blocked struct {
 // or the Prev that Fetching, Waiting and Blocked keep showing. An entry with no
 // phase yet has none, so it gives the empty Idle. Readers of the cache use it
 // instead of switching over the phases.
-func Previous(e Entry) Idle {
-	switch ph := e.Phase.(type) {
-	case Idle:
-		return ph
-	case Fetching:
-		return ph.Prev
-	case Waiting:
-		return ph.Prev
-	case Blocked:
-		return ph.Prev
-	}
-	return Idle{}
-}
+func Previous(e Entry) Idle { return prevOf(e.Phase) }
 
 func (Idle) isPhase()     {}
 func (Fetching) isPhase() {}

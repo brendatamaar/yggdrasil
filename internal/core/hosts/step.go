@@ -279,8 +279,8 @@ func (p *Poller) refresh(v RefreshRequested) {
 			prev := ph.Prev
 			prev.FetchedAt = time.Time{}
 			e.Phase = prev
-		default:
-			continue
+		case Fetching:
+			continue // a request is in flight; its answer decides
 		}
 		p.Entries[k] = e
 	}
@@ -334,6 +334,8 @@ func (p *Poller) fail(e Entry, prev Idle, v FetchFailed, t Target) Entry {
 				switch ph := o.Phase.(type) {
 				case Idle, Waiting:
 					p.Entries[k] = Entry{Attempt: o.Attempt, Failures: o.Failures, Phase: Blocked{Why: BlockUnauthorized, Since: now, Prev: prevOf(ph)}}
+				case Fetching, Blocked:
+					// in flight (its own answer decides) or already blocked
 				}
 			}
 		}
@@ -351,6 +353,8 @@ func due(e Entry, t Target, now time.Time) bool {
 		return ph.Data == nil || !now.Before(ph.FetchedAt.Add(t.TTL))
 	case Waiting:
 		return !now.Before(ph.Until)
+	case Fetching, Blocked:
+		return false
 	}
 	return false
 }

@@ -105,10 +105,13 @@ func refuse(d Submission, why RefuseReason, before ...Command) (Submission, []Co
 	return d, cmds
 }
 
+// idsFit reports whether the shell supplied the identifiers the kind's effect
+// needs. A task is named by the task service itself, so only a pull carries IDs
+// (the proposal it creates).
 func idsFit(k Kind, ids IDs) bool {
 	switch k.Effect() {
 	case EffectSubmitTask, EffectDraftTask:
-		return ids.Task.Validate() == nil
+		return true
 	case EffectStartPull:
 		return proposalsFit(ids.Proposals)
 	}

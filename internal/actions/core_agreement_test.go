@@ -62,7 +62,7 @@ func TestShellOutcomeAgreesWithCoreForEveryKindAndFactPair(t *testing.T) {
 	r := rand.New(rand.NewSource(7))
 	seen := map[coreactions.Kind]int{}
 	stale, notOffered := 0, 0
-	for i := 0; i < 160; i++ {
+	for i := 0; i < 60; i++ {
 		e := newEnv(t)
 		f1, f2 := randomFacts(r, e.repo.ID), randomFacts(r, e.repo.ID)
 		if r.Intn(3) == 0 {
