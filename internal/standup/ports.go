@@ -2,6 +2,7 @@ package standup
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/api"
@@ -46,9 +47,22 @@ type BuildSource interface {
 // Polisher submits the explicit polish task through the ordinary action path
 // (Ask mode, RequestID-bound). It is called only for user input, never from a
 // refresh.
+//
+// key is corestandup.PolishKey: the stable identity of the request (project,
+// range, agent, model, request ID), never the rebuilt text. FindPolish answers a
+// repeat from the stored link before any text is rebuilt: the task already made
+// for this request ID (found), or none yet, or ErrRequestReused when the ID was
+// used for another request. SubmitPolish stores the key with the task, so a
+// repeat after a lost reply or a restart returns the first task even though the
+// text, rebuilt from newer data, differs.
 type Polisher interface {
-	SubmitPolish(ctx context.Context, id core.RequestID, project core.ProjectID, text, agent, model string) (core.TaskID, error)
+	FindPolish(ctx context.Context, id core.RequestID, key string) (core.TaskID, bool, error)
+	SubmitPolish(ctx context.Context, id core.RequestID, key string, project core.ProjectID, text, agent, model string) (core.TaskID, error)
 }
+
+// ErrRequestReused is returned by a Polisher when the request ID was already
+// used for a different request (another range, agent or model).
+var ErrRequestReused = errors.New("standup polish request id reused for another request")
 
 // Deps is the aggregate the standup task builds the service from.
 type Deps struct {

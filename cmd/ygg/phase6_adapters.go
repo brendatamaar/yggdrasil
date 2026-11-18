@@ -443,12 +443,28 @@ type polisher struct {
 	scope standup.ScopeReader
 	tasks interface {
 		SubmitWithRequest(ctx context.Context, id core.RequestID, req tasks.MessageRequest) (tasks.MessageResult, error)
+		LookupRequestKey(ctx context.Context, id core.RequestID, key string) (core.TaskID, error)
 	}
 }
 
 var _ standup.Polisher = polisher{}
 
-func (p polisher) SubmitPolish(ctx context.Context, id core.RequestID, project core.ProjectID, text, agent, model string) (core.TaskID, error) {
+// FindPolish answers a repeat from the stored link: the task made for id when
+// its stored digest is that of key. The text is not needed (and not rebuilt).
+func (p polisher) FindPolish(ctx context.Context, id core.RequestID, key string) (core.TaskID, bool, error) {
+	task, err := p.tasks.LookupRequestKey(ctx, id, key)
+	switch {
+	case errors.Is(err, db.ErrNotFound):
+		return "", false, nil
+	case errors.Is(err, db.ErrDigestMismatch):
+		return "", false, standup.ErrRequestReused
+	case err != nil:
+		return "", false, err
+	}
+	return task, true, nil
+}
+
+func (p polisher) SubmitPolish(ctx context.Context, id core.RequestID, key string, project core.ProjectID, text, agent, model string) (core.TaskID, error) {
 	// An Ask task reads one tracked repo at a time (the whole-project scope needs
 	// a write-capable mode), so the polish task is attached to the project's
 	// first ready repo; it needs no repo content, only the summary text.
@@ -463,7 +479,12 @@ func (p polisher) SubmitPolish(ctx context.Context, id core.RequestID, project c
 		ProjectID: project, Mode: string(core.ModeAsk), Scope: string(core.ScopeRepo), Repos: []string{string(rs[0].ID)},
 		Prompt: "Rewrite this standup summary as short, friendly notes for a team chat. Keep every fact; do not add anything.\n\n" + text,
 		Agent:  agent, Model: model, Title: "Polish the standup",
+		// The digest is over the request's fixed fields, not over the text.
+		RequestKey: key,
 	})
+	if errors.Is(err, db.ErrDigestMismatch) {
+		return "", standup.ErrRequestReused
+	}
 	if err != nil {
 		return "", err
 	}

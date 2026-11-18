@@ -35,6 +35,40 @@ func payloadDigest(kind string, value any) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
+// maxRequestKey bounds a stable request key.
+const maxRequestKey = 512
+
+// requestDigest is the stored digest of a submission: over the whole request,
+// or over its stable key when it has one.
+func requestDigest(req MessageRequest) (string, error) {
+	if req.RequestKey == "" {
+		return payloadDigest("message", req)
+	}
+	return payloadDigest("message_key", req.RequestKey)
+}
+
+// LookupRequestKey answers a repeat of a keyed submission before any request
+// text is rebuilt: the task linked to id when its stored digest is that of key,
+// db.ErrNotFound when none is linked, and db.ErrDigestMismatch when id was used
+// for another request.
+func (s *Service) LookupRequestKey(ctx context.Context, id core.RequestID, key string) (core.TaskID, error) {
+	if key == "" || len(key) > maxRequestKey {
+		return "", &coretasks.UserError{Message: "Choose a valid request for this task."}
+	}
+	digest, err := payloadDigest("message_key", key)
+	if err != nil {
+		return "", err
+	}
+	task, stored, err := s.c.Store.GetTaskSubmission(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if stored != digest {
+		return "", db.ErrDigestMismatch
+	}
+	return task, nil
+}
+
 // LookupRequest reconciles a committed submission without admitting any work.
 func (s *Service) LookupRequest(ctx context.Context, id core.RequestID) (core.TaskID, error) {
 	task, _, err := s.c.Store.GetTaskSubmission(ctx, id)
@@ -47,7 +81,10 @@ func (s *Service) SubmitWithRequest(ctx context.Context, id core.RequestID, req 
 	if id.Validate() != nil || len(id) > 100 || req.TaskID != "" || coretasks.HasReservedPrefix(id) {
 		return MessageResult{}, &coretasks.UserError{Message: "Choose a valid request ID for a new task."}
 	}
-	digest, err := payloadDigest("message", req)
+	if len(req.RequestKey) > maxRequestKey {
+		return MessageResult{}, &coretasks.UserError{Message: "Choose a valid request for this task."}
+	}
+	digest, err := requestDigest(req)
 	if err != nil {
 		return MessageResult{}, err
 	}
