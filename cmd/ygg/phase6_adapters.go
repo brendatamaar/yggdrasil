@@ -19,6 +19,7 @@ import (
 	coretasks "github.com/brendatamaar/yggdrasil/internal/core/tasks"
 	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/notify"
+	"github.com/brendatamaar/yggdrasil/internal/platform"
 	"github.com/brendatamaar/yggdrasil/internal/proposals"
 	"github.com/brendatamaar/yggdrasil/internal/repos"
 	"github.com/brendatamaar/yggdrasil/internal/standup"
@@ -49,8 +50,10 @@ const anchorAgent = "mock"
 
 // proposalCreator implements actions.ProposalCreator. A proposal hangs under a
 // task (its change set), and an action such as a pull has none, so the adapter
-// gives such a request one visible Ask-mode draft task as its anchor (no turn,
-// worktree or process), keyed by a request ID derived from the action's.
+// gives the repo one visible Ask-mode draft task as its anchor (no turn,
+// worktree or process). The anchor is per repo with a fixed payload, so every
+// request of the repo reuses it: a refused or repeated request never makes more
+// than that one draft.
 type proposalCreator struct {
 	svc    proposalService
 	drafts draftSaver
@@ -61,20 +64,16 @@ type proposalCreator struct {
 
 var _ actions.ProposalCreator = (*proposalCreator)(nil)
 
-func anchorRequest(id core.RequestID) core.RequestID { return core.RequestID("anchor-" + string(id)) }
+func anchorRequest(repo core.RepoID) core.RequestID { return core.RequestID("anchor-" + string(repo)) }
 
-func (c *proposalCreator) anchor(ctx context.Context, id core.RequestID, spec actions.ProposalSpec) (core.TaskID, error) {
-	repo, err := c.store.GetRepo(ctx, spec.Repo)
+func (c *proposalCreator) anchor(ctx context.Context, repo core.RepoID) (core.TaskID, error) {
+	r, err := c.store.GetRepo(ctx, repo)
 	if err != nil {
 		return "", err
 	}
-	title := strings.TrimSpace(spec.Summary)
-	if title == "" {
-		title = "Workspace action"
-	}
-	return c.drafts.SaveWaitingDraft(ctx, anchorRequest(id), tasks.WaitingDraft{
-		Project: repo.ProjectID, Repo: spec.Repo, Title: title,
-		Brief: "This draft holds the proposal \"" + title + "\". Nothing runs for it; decide the proposal in Review.",
+	return c.drafts.SaveWaitingDraft(ctx, anchorRequest(repo), tasks.WaitingDraft{
+		Project: r.ProjectID, Repo: repo, Title: "Workspace actions for " + r.Name,
+		Brief: "This draft holds the proposals that workspace actions made for this repo (a pull, ignore entries). Nothing runs for it; decide each proposal in Review.",
 		Agent: anchorAgent,
 	})
 }
@@ -88,7 +87,7 @@ func (c *proposalCreator) CreateForRequest(ctx context.Context, id core.RequestI
 			t, ok := anchors[it.Repo]
 			if !ok {
 				var err error
-				if t, err = c.anchor(ctx, id, it); err != nil {
+				if t, err = c.anchor(ctx, it.Repo); err != nil {
 					return nil, fmt.Errorf("anchor the proposals of request %s: %w", id, err)
 				}
 				anchors[it.Repo] = t
@@ -352,7 +351,16 @@ func (n noiseAPI) CreateIgnoreProposal(ctx context.Context, repo core.RepoID, re
 			return api.ProposalDTO{}, &coretasks.UserError{Message: "The suggestions changed since you looked. Reload them and choose again."}
 		}
 	}
-	action := coreprop.IgnoreEntries{Where: coreprop.MainCheckout{Repo: repo}, Entries: append([]string(nil), req.Entries...)}
+	// The server reads the current .gitignore itself and pins its hash (or its
+	// absence), so a file that changed before the confirmation refuses the write.
+	r, err := n.scope.tracked(ctx, repo)
+	if err != nil {
+		return api.ProposalDTO{}, err
+	}
+	action, err := ignoreAction(ctx, repo, r.Path, req.Entries)
+	if err != nil {
+		return api.ProposalDTO{}, err
+	}
 	kind, payload := coreprop.RowOf(action)
 	ids, err := n.creator.CreateForRequest(ctx, req.RequestID, []actions.ProposalSpec{{
 		Repo: repo, Kind: kind, Payload: payload, Summary: "Ignore generated files (" + strconv.Itoa(len(req.Entries)) + " entries)",
@@ -365,6 +373,19 @@ func (n noiseAPI) CreateIgnoreProposal(ctx context.Context, repo core.RepoID, re
 		return api.ProposalDTO{}, err
 	}
 	return api.NewProposalDTO(v), nil
+}
+
+// ignoreAction builds the pinned IgnoreEntries action of a repo: it reads the
+// repo's .gitignore through the guarded platform reader (no file is written).
+func ignoreAction(ctx context.Context, repo core.RepoID, dir string, entries []string) (coreprop.IgnoreEntries, error) {
+	snap, err := platform.NewIgnoreWriter().ReadIgnore(ctx, dir)
+	if err != nil {
+		return coreprop.IgnoreEntries{}, &coretasks.UserError{Message: "Yggdrasil could not read this repo's .gitignore. It may be in use, a link, or larger than 1 MiB."}
+	}
+	return coreprop.IgnoreEntries{
+		Where: coreprop.MainCheckout{Repo: repo}, Entries: append([]string(nil), entries...),
+		ExpectedHash: snap.Hash, ExpectedAbsent: snap.Absent,
+	}, nil
 }
 
 // ---- api.NoticeService ----
