@@ -134,8 +134,8 @@ type ActionPreviewDTO struct {
 // ExpectedHead are copied from the preview; a changed scope refuses.
 type ActionExecuteRequest struct {
 	ActionRequestDTO `tstype:",extends"`
-	Digest       string `json:"digest"`
-	ExpectedHead string `json:"expectedHead,omitempty"`
+	Digest           string `json:"digest"`
+	ExpectedHead     string `json:"expectedHead,omitempty"`
 }
 
 // ActionRequestState is the stored state of a request.
@@ -545,7 +545,7 @@ type NewRepoPreviewResponse struct {
 // initialization proposal; no folder is created until that proposal is
 // confirmed through the proposals API with the previewed hash.
 type ReserveNewRepoRequest struct {
-	RequestID core.RequestID `json:"requestId"`
+	RequestID             core.RequestID `json:"requestId"`
 	NewRepoPreviewRequest `tstype:",extends"`
 	// Hash is the hash of the previewed spec; a different spec is refused.
 	Hash  string `json:"hash"`
@@ -612,9 +612,9 @@ type PublishPreviewResponse struct {
 // proposal (a ProposalDTO), confirmed through the proposals API; the remote is
 // never created before that confirmation.
 type PublishNewRepoRequest struct {
-	RequestID core.RequestID `json:"requestId"`
+	RequestID             core.RequestID `json:"requestId"`
 	PublishPreviewRequest `tstype:",extends"`
-	Hash string `json:"hash"`
+	Hash                  string `json:"hash"`
 }
 
 // RetryNewRepoRequest is the body of POST /api/new-repos/{id}/retry: the
