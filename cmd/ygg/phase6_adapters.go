@@ -424,6 +424,7 @@ func (s standupAPI) Polish(ctx context.Context, project core.ProjectID, req api.
 // request-bound task submission, never from a refresh. The mode is fixed here;
 // no caller can choose another.
 type polisher struct {
+	scope standup.ScopeReader
 	tasks interface {
 		SubmitWithRequest(ctx context.Context, id core.RequestID, req tasks.MessageRequest) (tasks.MessageResult, error)
 	}
@@ -432,8 +433,18 @@ type polisher struct {
 var _ standup.Polisher = polisher{}
 
 func (p polisher) SubmitPolish(ctx context.Context, id core.RequestID, project core.ProjectID, text, agent, model string) (core.TaskID, error) {
+	// An Ask task reads one tracked repo at a time (the whole-project scope needs
+	// a write-capable mode), so the polish task is attached to the project's
+	// first ready repo; it needs no repo content, only the summary text.
+	rs, err := p.scope.Repos(ctx, project)
+	if err != nil {
+		return "", err
+	}
+	if len(rs) == 0 {
+		return "", &coretasks.UserError{Message: "This project has no repo to attach the task to."}
+	}
 	res, err := p.tasks.SubmitWithRequest(ctx, id, tasks.MessageRequest{
-		ProjectID: project, Mode: string(core.ModeAsk), Scope: string(core.ScopeProject),
+		ProjectID: project, Mode: string(core.ModeAsk), Scope: string(core.ScopeRepo), Repos: []string{string(rs[0].ID)},
 		Prompt: "Rewrite this standup summary as short, friendly notes for a team chat. Keep every fact; do not add anything.\n\n" + text,
 		Agent:  agent, Model: model, Title: "Polish the standup",
 	})

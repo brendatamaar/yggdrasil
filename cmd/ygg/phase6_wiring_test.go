@@ -103,6 +103,9 @@ func (r *p6Rig) tree(t *testing.T, p *p6Repo) string {
 func (r *p6Rig) refresh(t *testing.T, repos ...*p6Repo) {
 	t.Helper()
 	ctx := context.Background()
+	if err := r.a.status.ReloadRepos(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if err := r.a.status.Refresh(ctx, nil, corerepos.ReasonUser); err != nil {
 		t.Fatal(err)
 	}
@@ -328,11 +331,9 @@ func TestPhase6ClosedServicesAnswer503(t *testing.T) {
 	if code := r.get(t, "/api/repos/"+string(p.id)+"/actions", nil); code != http.StatusServiceUnavailable {
 		t.Fatalf("catalogue after Close = %d, want 503", code)
 	}
-	if err := r.a.phase6.producer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if code := r.get(t, "/api/notifications", nil); code != http.StatusServiceUnavailable {
-		t.Fatalf("notifications after Close = %d, want 503", code)
+	// The preview of an action answers 503 as well.
+	if code, _ := r.post(t, "/api/actions/preview", api.ActionRequestDTO{RequestID: "req_closed_1", RepoID: p.id, Kind: api.ActionDiagnoseRepo, Agent: "mock"}, nil); code != http.StatusServiceUnavailable {
+		t.Fatalf("preview after Close = %d, want 503", code)
 	}
 }
 

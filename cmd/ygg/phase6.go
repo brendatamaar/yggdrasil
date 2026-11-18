@@ -82,7 +82,7 @@ func newPhase6(ctx context.Context, d phase6Deps) (*phase6, error) {
 	}
 	stand, err := standup.New(standup.Deps{
 		Scope: scope, Commits: repos.NewHistoryReader(d.store, d.git), MRs: mrs, Builds: bs,
-		Polish: polisher{tasks: d.tasks}, Hub: d.srv, Redactor: d.redactor, Clock: now,
+		Polish: polisher{scope: scope, tasks: d.tasks}, Hub: d.srv, Redactor: d.redactor, Clock: now,
 	})
 	if err != nil {
 		_ = act.Close()
