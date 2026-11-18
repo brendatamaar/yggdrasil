@@ -30,6 +30,9 @@ type config struct {
 	// writeModes allows task modes other than Ask (YGG_WRITE_MODES). Off by
 	// default.
 	writeModes bool
+	// newRepoFakes swaps the host-facing capabilities of new repos and review
+	// comments in tests only: a fake git host, publish transport and comment host.
+	newRepoFakes *newRepoFakes
 	// phase5 swaps the platform process functions in tests only.
 	phase5 *phase5Hooks
 	// noSession switches the per-launch UI session off (YGG_INSECURE_NO_SESSION=1,

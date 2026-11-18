@@ -97,7 +97,7 @@ func (m *mcpService) EndRun(task core.TaskID, attempt int) { m.Revoke(task, atte
 
 // newMCP builds the MCP server over the real services.
 func newMCP(store *db.Store, g *git.Git, buildSvc *builds.Service, hostSvc *hosts.Service, actions *repos.ActionsService,
-	propSvc *proposals.Service, redactor *safety.SecretRedactor, version, dataDir string) (*mcpService, error) {
+	propSvc *proposals.Service, publish mcp.Publishing, redactor *safety.SecretRedactor, version, dataDir string) (*mcpService, error) {
 	srv, err := mcp.New(mcp.Config{
 		Workspace:  mcpWorkspace{store: store},
 		Reader:     mcpReader{store: store, git: g},
@@ -106,6 +106,7 @@ func newMCP(store *db.Store, g *git.Git, buildSvc *builds.Service, hostSvc *host
 		Hosts:      mcpHosts{svc: hostSvc},
 		DevServers: mcp.NoDevServers{},
 		Proposer:   mcpProposer{svc: propSvc},
+		Publish:    publish,
 		Audit:      mcpAudit{store: store, redactor: redactor},
 		Redactor:   redactor,
 		Version:    version,

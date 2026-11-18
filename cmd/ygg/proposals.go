@@ -141,7 +141,7 @@ func (h proposalHosts) Kind(remoteURL string) proposals.HostKind {
 // worktree" for the merge and removal executors; dataDir holds the worktree
 // root the removal executor stays inside (the same DataDir/wt as
 // internal/worktrees).
-func newProposals(store *db.Store, g *git.Git, lock *mainlock.Registry, buildSvc *builds.Service, hostSvc *hosts.Service, pub proposals.Publisher, live proposals.LiveProbe, dataDir string, redactor safety.Redactor, pull proposals.PullRunner) (*proposals.Service, error) {
+func newProposals(store *db.Store, g *git.Git, lock *mainlock.Registry, buildSvc *builds.Service, hostSvc *hosts.Service, pub proposals.Publisher, live proposals.LiveProbe, dataDir string, redactor safety.Redactor, pull proposals.PullRunner, nr *newRepoParts) (*proposals.Service, error) {
 	svc, err := proposals.New(proposals.Config{
 		Store: store, Git: g, Resolver: proposals.StoreResolver{Store: store}, Lock: lock,
 		Builds: proposalBuilds{queue: buildSvc, store: store, toolchains: toolchains.All()},
@@ -150,6 +150,8 @@ func newProposals(store *db.Store, g *git.Git, lock *mainlock.Registry, buildSvc
 		Links:   changeSetLinks{store: store, red: redactor},
 		Landing: g, Reader: g, Platform: platform.RealLanding{},
 		Marks: proposals.DBMarks{}, Live: live, Pull: pull, Ignore: platform.NewIgnoreWriter(), WorktreeRoot: filepath.Join(dataDir, "wt"),
+		// The new-repo lifecycle and the review-comment writer (NR-01..04, AC-02).
+		NewRepos: nr.svc, Comments: nr.comments,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("start proposals: %w", err)
