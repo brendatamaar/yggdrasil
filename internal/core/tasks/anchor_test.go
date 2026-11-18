@@ -131,7 +131,7 @@ func TestAnchorParsersProperty(t *testing.T) {
 		}
 		isAnchor := got.Agent == AnchorAgent
 		reservedID := HasReservedPrefix(got.RequestID)
-		if (isAnchor || reservedID) && !(isAnchor && got.RequestID == AnchorRequest(got.Repo)) {
+		if (isAnchor || reservedID) && (!isAnchor || got.RequestID != AnchorRequest(got.Repo)) {
 			t.Fatalf("accepted %+v: anchor=%v", got, isAnchor)
 		}
 	}
