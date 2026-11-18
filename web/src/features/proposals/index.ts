@@ -1,2 +1,2 @@
-export { ProposalsPanel } from "./ProposalsPanel";
+export { ProposalsByIds, ProposalsPanel } from "./ProposalsPanel";
 export { proposalKeys } from "./hooks";
