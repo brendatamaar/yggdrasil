@@ -12,11 +12,29 @@ import {
   type ConfirmInput,
   type ConfirmState,
 } from "./core";
-import { proposalKeys, useProposalMutations, useTaskProposals } from "./hooks";
+import { proposalKeys, useProposalMutations, useProposalsByIds, useTaskProposals } from "./hooks";
+
+/** The proposals a view lists: the part of a TanStack Query result the panel reads. */
+interface ProposalList {
+  data: ProposalDTO[] | undefined;
+  isPending: boolean;
+  error: unknown;
+}
 
 /** Proposals of a task (RV-02): what each would run, confirm or reject, retry when it failed. */
 export function ProposalsPanel({ taskId }: { taskId: string }) {
-  const list = useTaskProposals(taskId);
+  return <ProposalsView list={useTaskProposals(taskId)} />;
+}
+
+/**
+ * The proposals an action created (Phase 6): the same review and confirm UI as a task's
+ * proposals, so a pull, ignore, comment or init is never confirmed through another path.
+ */
+export function ProposalsByIds({ ids }: { ids: readonly string[] }) {
+  return <ProposalsView list={useProposalsByIds(ids)} />;
+}
+
+function ProposalsView({ list }: { list: ProposalList }) {
   const qc = useQueryClient();
   const { confirm, reject, retry } = useProposalMutations();
   const [state, setState] = useState<ConfirmState>({ tag: "idle" });

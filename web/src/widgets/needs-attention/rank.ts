@@ -1,10 +1,13 @@
-import type { BuildDTO, RepoStatusDTO } from "../../api/gen/api.gen";
+import type { AttentionReason, BuildDTO, RepoStatusDTO } from "../../api/gen/api.gen";
+import { reasonCodes } from "../../features/actions";
 
 export interface Item {
   repo: RepoStatusDTO;
   /** Lower is more urgent. */
   urgency: number;
   reasons: string[];
+  /** The same reasons as generated codes, so each one can offer an action. */
+  codes: AttentionReason[];
   failedBuildId?: string;
 }
 
@@ -48,7 +51,7 @@ export function rankRepos(repos: RepoStatusDTO[], builds: BuildDTO[]): Item[] {
   for (const r of repos) {
     const failedBuildId = failed.get(r.id);
     const { urgency, reasons } = reasonsFor(r, failedBuildId !== undefined);
-    if (reasons.length > 0) items.push({ repo: r, urgency, reasons, ...(failedBuildId ? { failedBuildId } : {}) });
+    if (reasons.length > 0) items.push({ repo: r, urgency, reasons, codes: reasonCodes(r, failedBuildId !== undefined), ...(failedBuildId ? { failedBuildId } : {}) });
   }
   items.sort((a, b) => a.urgency - b.urgency || a.repo.name.localeCompare(b.repo.name));
   return items;

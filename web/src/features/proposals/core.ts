@@ -61,6 +61,10 @@ export const KIND_LABEL: Record<string, string> = {
   subtasks: "Split into sub-tasks",
   merge_local: "Merge into the main checkout",
   remove_worktree: "Remove worktree",
+  ignore_entries: "Add entries to .gitignore",
+  review_comment: "Post a review comment",
+  pull_ff: "Pull (fast-forward only)",
+  init_repo: "Set up a new repo",
 };
 
 export const kindLabel = (kind: string): string => KIND_LABEL[kind] ?? "Change";
@@ -87,6 +91,24 @@ export function describeProposal(p: Pick<ProposalDTO, "status" | "failKind" | "m
       return { label: "Rejected", tone: "muted", actions: [] };
     case "failed": {
       const actions: ProposalAction[] = p.retryable ? ["retry"] : [];
+      if (p.kind === "pull_ff") {
+        // AC-04: a refusal says why; a pull never falls back to a merge.
+        const why =
+          p.failKind === "stale"
+            ? "The branch moved after this was proposed. Preview the pull again."
+            : p.failKind === "precondition"
+              ? "The repo is busy or has changes that block a fast-forward. Nothing was changed."
+              : "";
+        return { label: "Not pulled", tone: "problem", note: p.message || why || "The pull did not complete.", actions };
+      }
+      if (p.kind === "ignore_entries" && p.failKind === "stale") {
+        return {
+          label: "Stale",
+          tone: "problem",
+          note: p.message || "The ignore file changed after this was proposed. Create the suggestion again.",
+          actions,
+        };
+      }
       if (p.failKind === "stale") {
         return {
           label: "Stale",
