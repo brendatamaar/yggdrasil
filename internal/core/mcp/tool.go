@@ -33,6 +33,14 @@ const (
 	ToolProposeInstall   Tool = "propose_install"
 	ToolProposeAgentFile Tool = "propose_agent_file"
 	ToolProposeDelete    Tool = "propose_delete_files"
+	// ToolProposePublish proposes publishing a repo made with the new repo
+	// dialog (MCP-05, NR-04). There is no tool that proposes creating a repo:
+	// that starts only from the user's dialog.
+	ToolProposePublish Tool = "propose_publish"
+	// ToolProposeReviewComment proposes one comment on a merge request (GH-06).
+	ToolProposeReviewComment Tool = "propose_review_comment"
+	// ToolProposeIgnore proposes adding entries to a repo's .gitignore (WS-09).
+	ToolProposeIgnore Tool = "propose_ignore"
 )
 
 // AllTools is the closed set, in the order of docs/design/mcp.md.
@@ -43,6 +51,7 @@ func AllTools() []Tool {
 		ToolBuildLog, ToolStartBuild, ToolRunBuildPreset, ToolListDevServers, ToolDevServerLog,
 		ToolFetch, ToolPull, ToolProposeCommit, ToolProposePush, ToolProposeMR,
 		ToolProposeInstall, ToolProposeAgentFile, ToolProposeDelete,
+		ToolProposePublish, ToolProposeReviewComment, ToolProposeIgnore,
 	}
 }
 

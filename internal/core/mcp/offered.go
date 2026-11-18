@@ -16,7 +16,8 @@ func ClassOf(t Tool) Class {
 	case ToolRecentCommits, ToolChangedFiles, ToolGetDiff, ToolBuildLog:
 		return ClassContent
 	case ToolStartBuild, ToolRunBuildPreset, ToolFetch, ToolPull, ToolProposeCommit, ToolProposePush,
-		ToolProposeMR, ToolProposeInstall, ToolProposeAgentFile, ToolProposeDelete:
+		ToolProposeMR, ToolProposeInstall, ToolProposeAgentFile, ToolProposeDelete,
+		ToolProposePublish, ToolProposeReviewComment, ToolProposeIgnore:
 		return ClassAction
 	}
 	return ClassNone
@@ -25,6 +26,14 @@ func ClassOf(t Tool) Class {
 // needsWorktree: the tools that act on a task branch (commit, push, MR).
 func needsWorktree(t Tool) bool {
 	return t == ToolProposeCommit || t == ToolProposePush || t == ToolProposeMR
+}
+
+// needsScope: the Phase 6 proposal tools only make sense for a repo the task
+// works in, so a task whose scope is empty is not offered them. Creating one of
+// these proposals touches no tree and posts nothing, so Ask mode is no
+// obstacle; the user's confirmation is.
+func needsScope(t Tool) bool {
+	return t == ToolProposePublish || t == ToolProposeReviewComment || t == ToolProposeIgnore
 }
 
 // Offered lists the tools a task is offered in a context (the Offered table of
@@ -65,6 +74,9 @@ func Authorize(c Context, t Tool, repos ...core.RepoID) Decision {
 	if t == ToolPull && c.Mode == core.ModeAsk {
 		// pull rewrites the main checkout; Ask mode never changes a tree (invariant 9).
 		return Decision{Reason: DenyAskMode}
+	}
+	if needsScope(t) && len(c.Scope) == 0 {
+		return Decision{Reason: DenyNoSuchRepo}
 	}
 	for _, r := range repos {
 		if r == "" || !slices.Contains(c.Project, r) || (class != ClassMetadata && !slices.Contains(c.Scope, r)) {

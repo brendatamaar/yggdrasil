@@ -18,6 +18,19 @@ const (
 	maxNameLen       = 128
 	maxRefLen        = 255
 	maxRemoteLen     = 100
+
+	// The Phase 6 proposal limits, equal to core/proposals (TestDrift* keeps
+	// them in step).
+	MaxIgnoreEntries = 32
+	MaxIgnoreBytes   = 4 << 10
+	MaxCommentBytes  = 16 << 10
+	maxAccountLen    = 100
+	maxHostLen       = 255
+	// MaxMRNumber keeps a merge request number well inside every host's range.
+	MaxMRNumber = 1 << 30
+
+	VisibilityPrivate = "private"
+	VisibilityPublic  = "public"
 )
 
 func bad(format string, a ...any) error { return fmt.Errorf(format, a...) }
@@ -284,6 +297,127 @@ func CheckCall(c Call) error {
 	return checkPropose(c)
 }
 
+// checkIgnoreEntry is the rule of core/proposals.CheckIgnoreEntry: an anchored
+// folder such as /build/ with every pattern character escaped.
+func checkIgnoreEntry(e string) error {
+	if len(e) < 3 || len(e) > 512 || !utf8.ValidString(e) || hasControl(e) {
+		return bad("an ignore entry is empty, too long or has control characters")
+	}
+	if e[0] != '/' || e[len(e)-1] != '/' {
+		return bad("ignore entry %q must be an anchored folder such as /build/", e)
+	}
+	var plain strings.Builder
+	esc := false
+	for _, r := range e[1 : len(e)-1] {
+		switch {
+		case esc:
+			plain.WriteRune(r)
+			esc = false
+		case r == '\\':
+			esc = true
+		case strings.ContainsRune("*?[]!#", r):
+			return bad("ignore entry %q has an unescaped pattern character", e)
+		default:
+			plain.WriteRune(r)
+		}
+	}
+	if esc {
+		return bad("ignore entry %q ends in a lone backslash", e)
+	}
+	p := plain.String()
+	if p == "" || strings.ContainsAny(p, `:<>"|`) {
+		return bad("ignore entry %q has a character Windows does not allow", e)
+	}
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "" || seg == "." || seg == ".." || strings.EqualFold(seg, ".git") ||
+			strings.HasSuffix(seg, ".") || strings.HasSuffix(seg, " ") || strings.HasPrefix(seg, " ") {
+			return bad("ignore entry %q has an empty, relative or reserved part", e)
+		}
+	}
+	return nil
+}
+
+func checkIgnoreEntries(es []string) error {
+	if len(es) == 0 || len(es) > MaxIgnoreEntries {
+		return bad("name between 1 and %d ignore entries", MaxIgnoreEntries)
+	}
+	seen := make(map[string]bool, len(es))
+	total := 0
+	for _, e := range es {
+		if err := checkIgnoreEntry(e); err != nil {
+			return err
+		}
+		if seen[e] {
+			return bad("ignore entry %q is listed twice", e)
+		}
+		seen[e] = true
+		total += len(e) + 1
+	}
+	if total > MaxIgnoreBytes {
+		return bad("the ignore entries are over %d KiB", MaxIgnoreBytes>>10)
+	}
+	return nil
+}
+
+func isLowerHex(s string) bool {
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return s != ""
+}
+
+// checkFullHead: a full lowercase hex commit ID (SHA-1 or SHA-256).
+func checkFullHead(what, v string) error {
+	if (len(v) != 40 && len(v) != 64) || !isLowerHex(v) {
+		return bad("%s must be a full lowercase hex commit ID (40 or 64 digits)", what)
+	}
+	return nil
+}
+
+func checkCommentBody(s string) error {
+	switch {
+	case strings.TrimSpace(s) == "":
+		return bad("the comment is empty")
+	case len(s) > MaxCommentBytes:
+		return bad("the comment is over %d KiB", MaxCommentBytes>>10)
+	case !utf8.ValidString(s):
+		return bad("the comment is not valid text")
+	}
+	for _, r := range s {
+		if (r < 0x20 && r != '\n' && r != '\t' && r != '\r') || r == 0x7f {
+			return bad("the comment has control characters")
+		}
+	}
+	return nil
+}
+
+// checkAccount is the rule of core/proposals for a host account or repository
+// name: letters, digits, dash, underscore and dot, not starting with a dot or
+// dash and not ending in .git.
+func checkAccount(what, v string) error {
+	if v == "" || len(v) > maxAccountLen || v[0] == '.' || v[0] == '-' || strings.HasSuffix(v, ".git") {
+		return bad("the %s is not valid", what)
+	}
+	for _, r := range v {
+		ok := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.'
+		if !ok {
+			return bad("the %s may only hold letters, digits, - _ and .", what)
+		}
+	}
+	return nil
+}
+
+// checkHost: a lowercase host name with no space, slash, backslash or @.
+func checkHost(v string) error {
+	if v == "" || len(v) > maxHostLen || v != strings.ToLower(v) || !utf8.ValidString(v) ||
+		strings.ContainsFunc(v, func(c rune) bool { return c <= ' ' || c == '/' || c == '\\' || c == '@' || c == 0x7f }) {
+		return bad("the host is not valid; use its lowercase name such as git.example.com")
+	}
+	return nil
+}
+
 func checkPropose(c Call) error {
 	var repo RepoRef
 	var summary string
@@ -335,6 +469,39 @@ func checkPropose(c Call) error {
 		repo, summary = v.Repo, v.Summary
 		if err := checkPaths(v.Paths); err != nil {
 			return err
+		}
+	case ProposeIgnore:
+		repo, summary = v.Repo, v.Summary
+		if err := checkIgnoreEntries(v.Entries); err != nil {
+			return err
+		}
+	case ProposeReviewComment:
+		repo, summary = v.Repo, v.Summary
+		if v.MR < 1 || v.MR > MaxMRNumber {
+			return bad("mr must be a merge request number between 1 and %d", MaxMRNumber)
+		}
+		if err := checkFullHead("expected_head", v.ExpectedHead); err != nil {
+			return err
+		}
+		if err := checkCommentBody(v.Body); err != nil {
+			return err
+		}
+	case ProposePublish:
+		repo, summary = v.Repo, v.Summary
+		if err := checkHost(v.Host); err != nil {
+			return err
+		}
+		if err := checkAccount("owner", v.Owner); err != nil {
+			return err
+		}
+		if err := checkAccount("repository name", v.Name); err != nil {
+			return err
+		}
+		if v.OwnerKind != "user" && v.OwnerKind != "org" {
+			return bad("owner_kind must be user or org")
+		}
+		if v.Visibility != VisibilityPrivate && v.Visibility != VisibilityPublic {
+			return bad("visibility must be private or public")
 		}
 	default:
 		return bad("unknown call %T", c)

@@ -78,6 +78,12 @@ func repoNames(c Call) []string {
 		return []string{string(v.Repo)}
 	case ProposeDeleteFiles:
 		return []string{string(v.Repo)}
+	case ProposeIgnore:
+		return []string{string(v.Repo)}
+	case ProposeReviewComment:
+		return []string{string(v.Repo)}
+	case ProposePublish:
+		return []string{string(v.Repo)}
 	}
 	return nil
 }
