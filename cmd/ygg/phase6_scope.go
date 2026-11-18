@@ -164,8 +164,8 @@ func (s *scopeReader) Facts(ctx context.Context, id core.RepoID) (coreactions.Fa
 		f.Caps.HostLogs, f.Caps.HostIssues, f.Caps.HostMR, f.Caps.CommentPost = true, true, true, true
 	}
 	if m := view2.Entry; true {
-		if n, ok := openMR(m); ok {
-			f.MRNumber = n
+		if n, head, ok := openMR(m); ok {
+			f.MRNumber, f.MRHead = n, head
 		}
 	}
 	return f, nil
@@ -225,10 +225,10 @@ func cachedPipeline(e corehosts.Entry) *corehosts.Pipeline {
 	return nil
 }
 
-// openMR is the number of the cached open merge request of the repo's branch.
-// The cached host data holds no head for it, so the catalogue does not offer a
-// review (it needs a pinned head); see the W3a report.
-func openMR(e corehosts.Entry) (int, bool) {
+// openMR is the number and head commit of the cached open merge request of the
+// repo's branch. The head is empty when the host did not report one; the
+// catalogue then does not offer a review (it needs a pinned head).
+func openMR(e corehosts.Entry) (int, string, bool) {
 	var prev corehosts.Idle
 	switch ph := e.Phase.(type) {
 	case corehosts.Idle:
@@ -241,9 +241,9 @@ func openMR(e corehosts.Entry) (int, bool) {
 		prev = ph.Prev
 	}
 	if rd, ok := prev.Data.(corehosts.RepoState); ok && rd.MR != nil && rd.MR.State == corehosts.MROpen {
-		return rd.MR.Number, true
+		return rd.MR.Number, rd.MR.Head, true
 	}
-	return 0, false
+	return 0, "", false
 }
 
 // failedBuild is the newest build of the repo when it failed.

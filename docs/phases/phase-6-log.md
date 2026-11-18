@@ -1080,3 +1080,7 @@ The API handlers do not exist yet (only route consts and ports), and cmd/ygg own
   3. Standup polish attaches its Ask task to the project's first repo (whole-project scope is refused in Ask mode).
   4. Not covered: a notify real-adapter contract (the suite is internal to internal/notify); an HTTP-level test that a standup refresh makes no network call (the narrow `HostCache` type guarantees it); `notify.ErrClosed` mapping untested because `ListNotices` never returns it.
 - W3b scope: NewRepos service + adapter with SpecHash, proposals `NewRepos`/`OperationChanged`/`Comments`, `mcp.Publishing`, TryLock, Reject, Recover and shutdown.
+
+### Batch 5 round 3: H3 merged
+- H3 merged: `corehosts.MergeRequest.Head` (validated by `ParseHead`; an invalid head rejects the whole list, like an unknown MR state), filled by the GitHub, GitLab (`sha`, fallback `diff_refs.head_sha`) and Gitea clients from the list response; inbox/search results carry none; no API DTO or db change; mutations killed for each client and for a lax parser.
+- Lead edit: `openMR` in cmd/ygg/phase6_scope.go now returns the head, so the catalogue can offer Review merge request. **Test gap for Batch 6 (test-engineer):** an end-to-end check that a cached open MR with a head yields the review offering, and without a head yields none.
