@@ -28,7 +28,7 @@ export const taskKeys = {
 export const ANCHOR_AGENT = "ygg-anchor";
 export const isAnchorAgent = (agent: string): boolean => agent === ANCHOR_AGENT;
 
-const taskPath =(id: string) => `/api/tasks/${encodeURIComponent(id)}`;
+const taskPath = (id: string) => `/api/tasks/${encodeURIComponent(id)}`;
 
 export function useRunningTasks() {
   return useQuery({
