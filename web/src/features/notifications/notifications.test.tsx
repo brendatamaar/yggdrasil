@@ -54,8 +54,10 @@ function fakeNotification(permission: NotificationPermission) {
       FakeNotification.permission = "granted";
       return Promise.resolve("granted" as NotificationPermission);
     };
+    readonly title: string;
     constructor(title: string, options?: NotificationOptions) {
       if (throwOnShow) throw new Error("blocked");
+      this.title = title;
       shown.push(options ? { title, options } : { title });
     }
   }
