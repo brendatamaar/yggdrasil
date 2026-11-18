@@ -8,6 +8,7 @@
     "draft": true,
     "updated_at": "2026-10-12T09:30:00.000Z",
     "source_branch": "feature/cart",
+    "sha": "4f2a9c1e7b3d5a60918c2e4d6f8a0b1c3d5e7f90",
     "target_branch": "main",
     "author": {
       "id": 3,

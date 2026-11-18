@@ -53,7 +53,7 @@ func HostClientContract(t *testing.T, newHarness func(t *testing.T) Harness) {
 		}
 		want := ExpectedMR(state)
 		if got.Number != want.Number || got.Title != want.Title || got.Author != want.Author || got.Source != want.Source ||
-			got.Target != want.Target || got.State != want.State || !got.UpdatedAt.Equal(want.UpdatedAt) || got.URL == "" {
+			got.Target != want.Target || got.State != want.State || !got.UpdatedAt.Equal(want.UpdatedAt) || got.Head != want.Head || got.URL == "" {
 			t.Errorf("MR = %+v, want %+v with a URL", *got, want)
 		}
 	}

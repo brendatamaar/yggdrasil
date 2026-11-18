@@ -3,6 +3,7 @@ package github
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,7 +22,7 @@ func formatPull(m corehosts.MergeRequest) map[string]any {
 	}
 	return map[string]any{"number": m.Number, "title": m.Title, "html_url": m.URL, "state": state,
 		"draft": m.State == corehosts.MRDraft, "merged_at": mergedAt, "updated_at": m.UpdatedAt.Format(time.RFC3339Nano),
-		"user": map[string]string{"login": m.Author}, "head": map[string]string{"ref": m.Source}, "base": map[string]string{"ref": m.Target}}
+		"user": map[string]string{"login": m.Author}, "head": map[string]string{"ref": m.Source, "sha": m.Head}, "base": map[string]string{"ref": m.Target}}
 }
 
 func TestPullRoundTrip(t *testing.T) {
@@ -30,7 +31,7 @@ func TestPullRoundTrip(t *testing.T) {
 	var raw []map[string]any
 	for i, st := range []corehosts.MRState{corehosts.MROpen, corehosts.MRDraft, corehosts.MRMerged, corehosts.MRClosed} {
 		m := corehosts.MergeRequest{Number: i + 1, Title: "Add cart \"quotes\" é", URL: "https://github.com/acme-shop/shop-web/pull/1",
-			Author: "ada", Source: "feature/cart", Target: "main", State: st, UpdatedAt: at.Add(time.Duration(i) * time.Minute)}
+			Author: "ada", Source: "feature/cart", Target: "main", State: st, UpdatedAt: at.Add(time.Duration(i) * time.Minute), Head: roundTripHead(i)}
 		want = append(want, m)
 		raw = append(raw, formatPull(m))
 	}
@@ -39,4 +40,12 @@ func TestPullRoundTrip(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("round trip = %+v, %v\nwant %+v", got, err, want)
 	}
+}
+
+// roundTripHead alternates a full commit id and none, so both survive the trip.
+func roundTripHead(i int) string {
+	if i%2 == 0 {
+		return strings.Repeat("4f2a9c1e", 5)
+	}
+	return ""
 }

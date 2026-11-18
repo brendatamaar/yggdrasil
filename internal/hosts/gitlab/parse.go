@@ -27,6 +27,12 @@ type mrJSON struct {
 	Author       *struct {
 		Username string `json:"username"`
 	} `json:"author"`
+	// SHA is the head of the source branch; diff_refs.head_sha is the same
+	// commit on hosts that omit sha from lists.
+	SHA      string `json:"sha"`
+	DiffRefs *struct {
+		HeadSHA string `json:"head_sha"`
+	} `json:"diff_refs"`
 	References *struct {
 		Full string `json:"full"`
 	} `json:"references"`
@@ -64,6 +70,15 @@ func (m mrJSON) toMR(needBranches bool) (corehosts.MergeRequest, error) {
 	if m.Author != nil {
 		out.Author = m.Author.Username
 	}
+	rawHead := m.SHA
+	if rawHead == "" && m.DiffRefs != nil {
+		rawHead = m.DiffRefs.HeadSHA
+	}
+	head, err := corehosts.ParseHead(rawHead)
+	if err != nil {
+		return corehosts.MergeRequest{}, fmt.Errorf("merge request %d: %w", *m.IID, err)
+	}
+	out.Head = head
 	return out, nil
 }
 

@@ -27,6 +27,7 @@ type pullJSON struct {
 	} `json:"user"`
 	Head *struct {
 		Ref string `json:"ref"`
+		SHA string `json:"sha"`
 	} `json:"head"`
 	Base *struct {
 		Ref string `json:"ref"`
@@ -64,6 +65,11 @@ func (p pullJSON) toMR(needBranches bool) (corehosts.MergeRequest, error) {
 	}
 	if p.Head != nil {
 		out.Source = p.Head.Ref
+		head, err := corehosts.ParseHead(p.Head.SHA)
+		if err != nil {
+			return corehosts.MergeRequest{}, fmt.Errorf("pull request %d: %w", *p.Number, err)
+		}
+		out.Head = head
 	}
 	if p.Base != nil {
 		out.Target = p.Base.Ref

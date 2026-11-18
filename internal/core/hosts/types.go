@@ -224,6 +224,11 @@ type MergeRequest struct {
 	Target    string
 	State     MRState
 	UpdatedAt time.Time
+	// Head is the head commit of the source branch: 40 (or 64) lower case hex
+	// digits, or empty when the host did not say (inbox lists carry none).
+	// A review pins to it (GH-05, AC-02); a different Head after a refresh
+	// means the pin is stale. Validated by ParseHead at the boundary.
+	Head string
 }
 
 // MRState is the state of a merge request.
