@@ -444,11 +444,40 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (View, error) {
 			return View{}, refusal(coreprop.RefuseUnsupported, "An agent cannot propose this. Creating and publishing a repo are started by you, from the new repo dialog.")
 		}
 	}
+	n, err := s.prepare(ctx, req)
+	if err != nil {
+		return View{}, err
+	}
+	id := core.ProposalID(s.cfg.NewID("prp"))
+	n.ID = id
+	n.Now = s.now()
+	var created coreprop.Proposal
+	var cmds []coreprop.Command
+	err = s.cfg.Store.Commit(ctx, func(tx *db.Tx) error {
+		var err error
+		created, cmds, err = s.storePending(ctx, tx, n, "")
+		return err
+	})
+	if err != nil {
+		var er errRefused
+		if errors.As(err, &er) {
+			return View{}, er.r
+		}
+		return View{}, fmt.Errorf("create proposal: %w", err)
+	}
+	s.publishAll(created, cmds)
+	return s.view(ctx, created), nil
+}
+
+// prepare reads the facts a Created input needs and completes the pins of the
+// action, outside any transaction. A thing that is missing is a refusal; only
+// an unexpected error is an error. The caller sets ID and Now.
+func (s *Service) prepare(ctx context.Context, req CreateRequest) (newProposal, error) {
 	if why := s.portMissing(req.Action); why != "" {
-		return View{}, refusal(coreprop.RefuseUnsupported, why)
+		return newProposal{}, refusal(coreprop.RefuseUnsupported, why)
 	}
 	if err := req.Task.Validate(); err != nil {
-		return View{}, refusal(coreprop.RefuseBadFacts, "The task for this proposal is not valid.")
+		return newProposal{}, refusal(coreprop.RefuseBadFacts, "The task for this proposal is not valid.")
 	}
 	var (
 		facts  coreprop.Facts
@@ -468,68 +497,76 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (View, error) {
 		}
 	}
 	if err != nil {
-		return View{}, err
+		return newProposal{}, err
 	}
 	if facts.RepoTracked && facts.PathsOK && facts.RemoteSupported {
 		if req.Action, err = s.fillExpected(ctx, req.Action); err != nil {
-			return View{}, err
+			return newProposal{}, err
 		}
 	}
 	src := req.Source
 	if src == nil {
 		src = coreprop.UserSource{}
 	}
-	id := core.ProposalID(s.cfg.NewID("prp"))
-	now := s.now()
-	var created coreprop.Proposal
-	var cmds []coreprop.Command
-	err = s.cfg.Store.Commit(ctx, func(tx *db.Tx) error {
-		cs, err := tx.EnsureChangeSet(ctx, req.Task, core.ChangeSetID(s.cfg.NewID("cs")), now)
-		if err != nil {
-			return err
-		}
-		pending, err := tx.CountPendingProposals(ctx, req.Task)
-		if err != nil {
-			return err
-		}
-		f := facts
-		f.PendingForTask, f.TaskChangeSet = pending, cs
-		var p coreprop.Proposal
-		p, cmds = coreprop.Step(coreprop.Proposal{}, coreprop.Created{
-			Proposal: coreprop.Proposal{
-				ID: id, ChangeSet: cs, Task: req.Task, Repo: repo, Source: src, Action: req.Action,
-				Summary: clip(s.redact(req.Summary), maxSummary),
-			},
-			Facts: f, Now: now,
-		})
-		for _, c := range cmds {
-			if rf, ok := c.(coreprop.Refuse); ok {
-				return errRefused{refusal(rf.Reason, detailFor(rf.Reason, detail))}
-			}
-		}
-		if p.State == nil {
-			return errRefused{refusal(coreprop.RefuseBadFacts, detail)}
-		}
-		created = p
-		if err := tx.CreateProposalRecord(ctx, p); err != nil {
-			return err
-		}
-		if reserv != nil {
-			if err := s.linkReservation(ctx, tx, *reserv, p, now); err != nil {
-				return err
-			}
-		}
-		return s.writeAudit(ctx, tx, p, cmds, "", now)
-	})
+	return newProposal{
+		Task: req.Task, Repo: repo, Source: src, Action: req.Action, Summary: req.Summary, Facts: facts, Detail: detail, Reserv: reserv,
+	}, nil
+}
+
+// newProposal is what storePending needs to create one pending proposal.
+type newProposal struct {
+	ID      core.ProposalID
+	Task    core.TaskID
+	Repo    core.RepoID
+	Source  coreprop.Source
+	Action  coreprop.Action
+	Summary string
+	Facts   coreprop.Facts
+	Detail  string
+	// Reserv is set for an InitRepo: the reservation is linked in the same transaction.
+	Reserv *db.ReservationRecord
+	Now    time.Time
+}
+
+// storePending runs Step for one Created input inside tx and stores the
+// pending proposal, its change set and its audit entry. A refusal returns
+// errRefused so the caller's transaction rolls back. request, when set, is
+// recorded in the audit detail.
+func (s *Service) storePending(ctx context.Context, tx *db.Tx, n newProposal, request core.RequestID) (coreprop.Proposal, []coreprop.Command, error) {
+	cs, err := tx.EnsureChangeSet(ctx, n.Task, core.ChangeSetID(s.cfg.NewID("cs")), n.Now)
 	if err != nil {
-		var er errRefused
-		if errors.As(err, &er) {
-			return View{}, er.r
-		}
-		return View{}, fmt.Errorf("create proposal: %w", err)
+		return coreprop.Proposal{}, nil, err
 	}
-	s.publishAll(created, cmds)
-	return s.view(ctx, created), nil
+	pending, err := tx.CountPendingProposals(ctx, n.Task)
+	if err != nil {
+		return coreprop.Proposal{}, nil, err
+	}
+	f := n.Facts
+	f.PendingForTask, f.TaskChangeSet = pending, cs
+	p, cmds := coreprop.Step(coreprop.Proposal{}, coreprop.Created{
+		Proposal: coreprop.Proposal{
+			ID: n.ID, ChangeSet: cs, Task: n.Task, Repo: n.Repo, Source: n.Source, Action: n.Action,
+			Summary: clip(s.redact(n.Summary), maxSummary),
+		},
+		Facts: f, Now: n.Now,
+	})
+	for _, c := range cmds {
+		if rf, ok := c.(coreprop.Refuse); ok {
+			return coreprop.Proposal{}, nil, errRefused{refusal(rf.Reason, detailFor(rf.Reason, n.Detail))}
+		}
+	}
+	if p.State == nil {
+		return coreprop.Proposal{}, nil, errRefused{refusal(coreprop.RefuseBadFacts, n.Detail)}
+	}
+	if err := tx.CreateProposalRecord(ctx, p); err != nil {
+		return coreprop.Proposal{}, nil, err
+	}
+	if n.Reserv != nil {
+		if err := s.linkReservation(ctx, tx, *n.Reserv, p, n.Now); err != nil {
+			return coreprop.Proposal{}, nil, err
+		}
+	}
+	return p, cmds, s.writeAuditFor(ctx, tx, p, cmds, "", n.Now, request)
 }
 
 // detailFor keeps our own explanation only for the generic reason it explains.
