@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import type { NewRepoOperationDTO } from "../../api/gen/api.gen";
 import {
   describeOperation,
+  findPublishProposal,
   initRequest,
   leafProblem,
+  retrySpecOf,
   stepPrepare,
   stepRetry,
   type PrepareInput,
@@ -212,5 +214,36 @@ describe("form helpers", () => {
     expect(leafProblem("a/b")).toBeDefined();
     expect(leafProblem("a\\b")).toBeDefined();
     expect(leafProblem("shop-docs")).toBeUndefined();
+  });
+});
+
+describe("retrySpecOf", () => {
+  const hash = "a".repeat(64);
+  it("takes the hash from the server's operation, not from the session", () => {
+    expect(retrySpecOf({ specHash: hash }, { hash: "b".repeat(64), lines: ["old"] })).toEqual({ hash, lines: [] });
+    expect(retrySpecOf({ specHash: hash }, undefined)).toEqual({ hash, lines: [] });
+  });
+  it("keeps the remembered wording only for the same hash", () => {
+    expect(retrySpecOf({ specHash: hash }, { hash, lines: ["Write README.md"] })).toEqual({ hash, lines: ["Write README.md"] });
+  });
+  it("has no spec without a server hash, even with a remembered preview", () => {
+    expect(retrySpecOf({}, { hash, lines: ["x"] })).toBeUndefined();
+    expect(retrySpecOf({ specHash: "" }, { hash, lines: ["x"] })).toBeUndefined();
+  });
+});
+
+describe("findPublishProposal", () => {
+  const p = (id: string, status: string, createdAt: string, kind = "publish") => ({ id, kind, status, createdAt });
+  const list = [p("init", "executed", "2026-01-01", "init_repo"), p("old", "rejected", "2026-01-02"), p("a", "pending", "2026-01-03"), p("b", "pending", "2026-01-04")];
+  it("finds the newest pending publish proposal while ready", () => {
+    expect(findPublishProposal({ state: "ready" }, list)).toBe("b");
+  });
+  it("ignores other kinds and finished ones while ready", () => {
+    expect(findPublishProposal({ state: "ready" }, [p("init", "pending", "2026-01-01", "init_repo"), p("x", "executed", "2026-01-02")])).toBeUndefined();
+  });
+  it("keeps a confirmed one in view while publishing, and looks nowhere in other states", () => {
+    expect(findPublishProposal({ state: "publishing" }, [p("c", "confirmed", "2026-01-05")])).toBe("c");
+    expect(findPublishProposal({ state: "published" }, list)).toBeUndefined();
+    expect(findPublishProposal({ state: "awaiting_confirm" }, list)).toBeUndefined();
   });
 });

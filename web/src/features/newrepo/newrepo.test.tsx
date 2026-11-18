@@ -43,6 +43,8 @@ interface Script {
   hosts?: { id: string; kind: string; base: string; tokenConfigured: boolean }[];
   publishProblems?: string[];
   reserve?: () => Reply;
+  /** The proposals of the setup draft t1, as the server lists them. */
+  setupProposals?: ProposalDTO[];
 }
 function server(s: Script = {}) {
   return (c: Call): Reply | undefined => {
@@ -74,6 +76,7 @@ function server(s: Script = {}) {
       };
     }
     if (c.path === "/api/new-repos/o1/publish") return { body: proposal({ id: "pr2", kind: "publish", actionHash: "e".repeat(64), lines: ["Create acme/shop-docs"] }) };
+    if (c.path === "/api/proposals?task=t1") return { body: { proposals: s.setupProposals ?? [] } };
     if (c.path === "/api/proposals/pr1" && c.method === "GET") return { body: proposal() };
     if (c.path === "/api/proposals/pr2" && c.method === "GET") return { body: proposal({ id: "pr2", kind: "publish", actionHash: "e".repeat(64), lines: ["Create acme/shop-docs"] }) };
     if (c.path.endsWith("/confirm")) return { body: proposal({ status: "confirmed" }) };
@@ -213,17 +216,20 @@ describe("new repo: lifecycle wording", () => {
 });
 
 describe("new repo: explicit retry", () => {
-  it("never retries by itself; Retry shows the confirmed hash and sends exactly it", async () => {
-    // Reserve in this session so the page holds the confirmed spec, then the server reports it stopped.
-    const stopped = op({ state: "stopped", stages: [{ name: "write_readme", status: "failed" }], reason: "That file is locked.", canRetry: true });
-    const api = stubApi(server({ operation: stopped }));
+  const stoppedOp = (over: Partial<NewRepoOperationDTO> = {}) =>
+    op({ state: "stopped", stages: [{ name: "write_readme", status: "failed" }], reason: "That file is locked.", canRetry: true, ...over });
+  const openRetry = async (o: NewRepoOperationDTO) => {
+    const api = stubApi(server({ operation: o, list: [o] }));
     await renderWidget(Harness);
-    await previewIt();
-    fireEvent.click(screen.getByRole("button", { name: "Reserve and review" }));
-    await screen.findByText("Stopped");
-    expect(api.calls.some((c) => c.path.endsWith("/retry"))).toBe(false);
+    fireEvent.click(await screen.findByRole("button", { name: "Open shop-docs" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Retry…" }));
+    return api;
+  };
 
-    fireEvent.click(screen.getByRole("button", { name: "Retry…" }));
+  it("after a reload Retry shows the server's spec hash and sends exactly it, never by itself", async () => {
+    // A reload: the page holds no in-session preview (the memory is empty, or holds another hash).
+    useSpecMemory.getState().remember("o1", { kind: "init", hash: "b".repeat(64), lines: ["An older preview"] });
+    const api = await openRetry(stoppedOp({ specHash }));
     const dlg = await screen.findByRole("alertdialog");
     expect(within(dlg).getByTestId("spec-hash").textContent).toBe(specHash);
     expect(api.calls.some((c) => c.path.endsWith("/retry"))).toBe(false);
@@ -232,22 +238,28 @@ describe("new repo: explicit retry", () => {
     await waitFor(() => {
       expect(api.calls.some((c) => c.path === "/api/new-repos/o1/retry")).toBe(true);
     });
+    expect(api.calls.filter((c) => c.path.endsWith("/retry"))).toHaveLength(1);
     expect(api.calls.find((c) => c.path === "/api/new-repos/o1/retry")?.body).toEqual({ hash: specHash });
   });
 
-  it("without the confirmed preview it explains and sends nothing", async () => {
-    const stopped = op({ state: "stopped", stages: [{ name: "write_readme", status: "failed" }], canRetry: true });
-    const api = stubApi(server({ operation: stopped, list: [stopped] }));
-    await renderWidget(Harness);
-    fireEvent.click(await screen.findByRole("button", { name: "Open shop-docs" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Retry…" }));
-    expect((await screen.findByRole("alertdialog")).textContent).toContain("no longer holds the preview");
+  it("uses the session's wording only when it holds the same hash", async () => {
+    useSpecMemory.getState().remember("o1", { kind: "init", hash: specHash, lines: ["Write README.md"] });
+    await openRetry(stoppedOp({ specHash }));
+    const dlg = await screen.findByRole("alertdialog");
+    expect(within(dlg).getByRole("list", { name: "What will run again" }).textContent).toContain("Write README.md");
+  });
+
+  it("without a spec hash from the server it explains and sends nothing", async () => {
+    // Even a remembered preview is not trusted when the server named no hash.
+    useSpecMemory.getState().remember("o1", { kind: "init", hash: specHash, lines: ["Write README.md"] });
+    const api = await openRetry(stoppedOp());
+    expect((await screen.findByRole("alertdialog")).textContent).toContain("no longer holds the confirmation code");
     expect(screen.queryByRole("button", { name: "Confirm retry" })).toBeNull();
     expect(api.calls.some((c) => c.path.endsWith("/retry"))).toBe(false);
   });
 
   it("a refused retry shows the server's reason and keeps the dialog", async () => {
-    const stopped = op({ state: "stopped", stages: [{ name: "write_readme", status: "failed" }], canRetry: true });
+    const stopped = op({ state: "stopped", stages: [{ name: "write_readme", status: "failed" }], canRetry: true, specHash });
     stubApi((c) =>
       c.path === "/api/new-repos/o1/retry"
         ? { status: 409, body: { code: "conflict", message: "The folder changed since the preview.", hint: "Start again." } }
@@ -321,5 +333,41 @@ describe("publish", () => {
     fireEvent.click(screen.getByLabelText(/Public: anyone/));
     fireEvent.click(screen.getByRole("button", { name: "Preview" }));
     expect(await screen.findByText("Public (anyone can see it)")).toBeTruthy();
+  });
+
+  describe("after a reload", () => {
+    const publishProposal = (over: Partial<ProposalDTO> = {}) =>
+      proposal({ id: "pr2", kind: "publish", actionHash: "e".repeat(64), lines: ["Create acme/shop-docs"], createdAt: "2026-01-02T10:00:00Z", ...over });
+    const reopen = async (o: NewRepoOperationDTO, setupProposals: ProposalDTO[]) => {
+      const api = stubApi(server({ operation: o, list: [o], setupProposals }));
+      await renderWidget(Harness);
+      fireEvent.click(await screen.findByRole("button", { name: "Open shop-docs" }));
+      return api;
+    };
+
+    it("finds a pending publish proposal again and shows it in the shared confirmation", async () => {
+      const api = await reopen(ready, [proposal({ status: "executed" }), publishProposal()]);
+      fireEvent.click(await screen.findByRole("button", { name: "Review and confirm" }));
+      expect((await screen.findByTestId("proposal-hash")).textContent).toBe("e".repeat(64));
+      expect(screen.queryByRole("button", { name: "Publish…" })).toBeNull();
+      fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Confirm" }));
+      await waitFor(() => {
+        expect(api.calls.some((c) => c.path === "/api/proposals/pr2/confirm")).toBe(true);
+      });
+      expect(api.calls.find((c) => c.path === "/api/proposals/pr2/confirm")?.body).toEqual({ hash: "e".repeat(64) });
+    });
+
+    it("offers Publish again when the only publish proposal was rejected", async () => {
+      await reopen(ready, [publishProposal({ status: "rejected" })]);
+      expect(await screen.findByRole("button", { name: "Publish…" })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Review and confirm" })).toBeNull();
+    });
+
+    it("keeps the proposal in view while the repo is being published", async () => {
+      await reopen(op({ state: "publishing", stages: [{ name: "create_remote", status: "current" }] }), [publishProposal({ status: "confirmed" })]);
+      expect(await screen.findByText("The publish proposal:")).toBeTruthy();
+      fireEvent.click(await screen.findByRole("button", { name: "Review and confirm" }));
+      expect((await screen.findByTestId("proposal-hash")).textContent).toBe("e".repeat(64));
+    });
   });
 });

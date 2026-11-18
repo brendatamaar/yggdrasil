@@ -1,12 +1,13 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, describeError } from "../../api/client";
-import { TopicNewRepos } from "../../api/gen/api.gen";
+import { TopicNewRepos, type NewRepoOperationDTO } from "../../api/gen/api.gen";
 import { fetchHostConfig } from "../../api/mrs";
 import { WSContext } from "../../api/wsContext";
 import { registerCommands } from "../../stores/commands";
+import { proposalKeys } from "../proposals";
 import * as api from "./api";
-import { isActive, stepPrepare, stepRetry, type PrepareCommand, type PrepareInput, type PrepareState, type RetryCommand, type RetryInput, type RetryState } from "./core";
+import { findPublishProposal, isActive, stepPrepare, stepRetry, type PrepareCommand, type PrepareInput, type PrepareState, type RetryCommand, type RetryInput, type RetryState } from "./core";
 
 export const newRepoKeys = {
   all: ["newrepos"] as const,
@@ -59,6 +60,20 @@ export function useOperation(id: string) {
 export function useProjectOperations(projectId: string, enabled: boolean) {
   useNewReposLive();
   return useQuery({ queryKey: newRepoKeys.project(projectId), queryFn: ({ signal }) => api.listNewRepos(projectId, signal), enabled });
+}
+
+/**
+ * The publish proposal this operation is waiting on, read from the server again (it is never held
+ * only in the page), so a reload does not lose it. Undefined until found, or when there is none.
+ */
+export function usePublishProposalId(op: NewRepoOperationDTO): string | undefined {
+  const watching = op.state === "ready" || op.state === "publishing";
+  const q = useQuery({
+    queryKey: proposalKeys.task(op.setupTaskId),
+    queryFn: ({ signal }) => api.listSetupProposals(op.setupTaskId, signal),
+    enabled: watching,
+  });
+  return watching && q.data ? findPublishProposal(op, q.data) : undefined;
 }
 
 /** Configured hosts, for choosing where to publish. */

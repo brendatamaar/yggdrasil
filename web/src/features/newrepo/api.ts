@@ -4,6 +4,7 @@ import type {
   NewRepoPreviewRequest,
   NewRepoPreviewResponse,
   ProposalDTO,
+  ProposalsResponse,
   PublishNewRepoRequest,
   PublishPreviewRequest,
   PublishPreviewResponse,
@@ -54,6 +55,10 @@ export const previewPublish = (id: string, req: PublishPreviewRequest, signal?: 
 
 /** Creates the pending publish proposal. The remote is made only after it is confirmed through the proposals UI. */
 export const publishNewRepo = (id: string, req: PublishNewRepoRequest) => apiFetch<ProposalDTO>(`/api/new-repos/${enc(id)}/publish`, post(req));
+
+/** The proposals of the operation's internal setup draft: where a pending publish proposal is found again after a reload. */
+export const listSetupProposals = async (setupTaskId: string, signal?: AbortSignal): Promise<ProposalDTO[]> =>
+  (await apiFetch<ProposalsResponse>(`/api/proposals?task=${enc(setupTaskId)}`, signal ? { signal } : undefined)).proposals;
 
 export const retryNewRepo = async (id: string, hash: string) =>
   parseOperation(await apiFetch<unknown>(`/api/new-repos/${enc(id)}/retry`, post({ hash } satisfies RetryNewRepoRequest)));

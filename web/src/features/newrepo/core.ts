@@ -290,3 +290,34 @@ export interface PublishForm {
   name: string;
   visibility: "private" | "public";
 }
+
+// --- Things a reload must not lose ----------------------------------------------------------------
+
+/**
+ * What Retry asks the person to confirm again. The hash is always the server's (`specHash`), so
+ * it survives a reload. The wording comes from the in-session memory only when that memory holds
+ * the same hash; otherwise it is empty and the hash alone is shown. No hash from the server, no
+ * retry: the caller shows the explanation.
+ */
+export function retrySpecOf(
+  op: Pick<NewRepoOperationDTO, "specHash">,
+  remembered: { hash: string; lines: string[] } | undefined,
+): { hash: string; lines: string[] } | undefined {
+  if (!op.specHash) return undefined;
+  return { hash: op.specHash, lines: remembered && remembered.hash === op.specHash ? remembered.lines : [] };
+}
+
+/**
+ * The publish proposal an operation is waiting on, found again among the proposals of its setup
+ * task. While the repo is ready only a pending one counts (a rejected or finished one is history);
+ * while it publishes, the one being carried out stays in view. Newest first when there are several.
+ */
+export function findPublishProposal(
+  op: Pick<NewRepoOperationDTO, "state">,
+  proposals: readonly { id: string; kind: string; status: string; createdAt: string }[],
+): string | undefined {
+  const live = op.state === "ready" ? ["pending"] : op.state === "publishing" ? ["pending", "confirmed", "failed"] : [];
+  return proposals
+    .filter((p) => p.kind === "publish" && live.includes(p.status))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.id;
+}
