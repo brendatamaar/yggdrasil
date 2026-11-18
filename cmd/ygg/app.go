@@ -211,13 +211,20 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	propHub := &api.ProposalsHub{}
 	fanout := newProposalFanout(propHub, log.Warn)
 	live := &liveProbe{store: store, builds: buildSvc}
-	propSvc, err := newProposals(store, g, checkoutLock, buildSvc, hostSvc, fanout, live, cfg.dataDir, redactor, pullRunner{batches: actions})
+	// New repos come before proposals (its lifecycle port) and before the server
+	// (its hub is bound afterwards).
+	nrParts, err := newNewRepos(store, g, checkoutLock, hostSvc, redactor, log, cfg.newRepoFakes)
+	if err != nil {
+		_ = d.Close()
+		return nil, err
+	}
+	propSvc, err := newProposals(store, g, checkoutLock, buildSvc, hostSvc, fanout, live, cfg.dataDir, redactor, pullRunner{batches: actions}, nrParts)
 	if err != nil {
 		_ = d.Close()
 		return nil, err
 	}
 
-	mcpSvc, err := newMCP(store, g, buildSvc, hostSvc, actions, propSvc, redactor, version, cfg.dataDir)
+	mcpSvc, err := newMCP(store, g, buildSvc, hostSvc, actions, propSvc, mcpPublishing{svc: nrParts.svc, store: store}, redactor, version, cfg.dataDir)
 	if err != nil {
 		_ = d.Close()
 		return nil, err
@@ -264,10 +271,10 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 		InsecureNoSession: cfg.noSession,
 		Store:             store, Log: log, Tasks: taskSvc, Worktrees: api.NewWorktreeServiceWithGit(store, g), WriteModes: cfg.writeModes,
 		Redactor: redactor, Version: version, Assets: assets,
-		Tracking: tracking, Status: status, RepoDetail: repos.NewDetailService(store, g),
+		Tracking: untrackingNewRepos{TrackingService: tracking, nr: nrParts.svc, store: store, log: log}, Status: status, RepoDetail: repos.NewDetailService(store, g),
 		Builds: buildSvc, Hosts: hostSvc, Search: searchSvc,
 		GitActions: repos.GitActions{ActionsService: actions, OpenService: opener},
-		Proposals:  propSvc, Agents: newAgentService(adapters), MCP: mcpSvc,
+		Proposals:  rejectingProposals{ProposalService: propSvc, nr: nrParts.svc, store: store, log: log}, Agents: newAgentService(adapters), MCP: mcpSvc,
 		Composer: newComposer(store, adapters, taskSvc, g, redactor, log),
 	})
 	if err != nil {
@@ -319,7 +326,7 @@ func newApp(ctx context.Context, cfg config, assets fs.FS, logOut io.Writer) (*a
 	})
 	p6, err := newPhase6(ctx, phase6Deps{
 		store: store, status: status, hosts: hostSvc, git: g, builds: buildSvc, tasks: taskSvc,
-		proposals: propSvc, srv: srv, redactor: redactor, log: log, feeder: feeder6,
+		proposals: propSvc, srv: srv, redactor: redactor, log: log, feeder: feeder6, nr: nrParts,
 	})
 	if err != nil {
 		devSvc.Close(ctx)
@@ -350,10 +357,14 @@ func (a *app) run(ctx context.Context, ln net.Listener) error {
 		a.phase6.closeNotices()
 		return errors.Join(fmt.Errorf("start tasks: %w", err), a.db.Close())
 	}
+	// New repos are recovered first (read-only, nothing repeated), so the
+	// proposals below are judged against settled operations.
+	a.phase6.recoverNewRepos(ctx)
 	// Proposals that were Confirmed at the last shutdown are reconciled here,
 	// never executed again on their own.
 	if err := a.proposals.Start(ctx); err != nil {
 		a.phase6.stopActions()
+		a.phase6.stopNewRepos()
 		a.proposals.Close()
 		a.closePhase5()
 		tasksErr := a.tasks.Close()
@@ -384,6 +395,7 @@ func (a *app) run(ctx context.Context, ln net.Listener) error {
 	// Dev servers and terminals stop before anything the store serves them.
 	a.closePhase5()
 	a.phase6.stopActions()
+	a.phase6.stopNewRepos()
 	a.proposals.Close()
 	tasksErr := a.tasks.Close()
 	a.phase6.closeNotices()

@@ -219,8 +219,8 @@ func TestPhase6ServicesAreWired(t *testing.T) {
 	if code, _ := r.post(t, "/api/tasks/tsk_0000000000000000/start", api.StartDraftRequest{Mode: core.ModeAsk}, nil); code != 404 {
 		t.Fatalf("start of an unknown draft = %d, want 404", code)
 	}
-	if code := r.get(t, "/api/projects/"+string(p.project)+"/new-repos", nil); code != http.StatusNotImplemented {
-		t.Fatalf("new repos = %d, want 501 until W3b binds them", code)
+	if code := r.get(t, "/api/projects/"+string(p.project)+"/new-repos", nil); code != 200 {
+		t.Fatalf("new repos = %d, want 200", code)
 	}
 }
 

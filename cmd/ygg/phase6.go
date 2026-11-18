@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/actions"
@@ -23,11 +24,12 @@ import (
 // Phase 6 composition (workspace actions, host context, drafts, noise,
 // notifications, standup). This file builds the services and the adapters of
 // phase6_*.go and binds them to the server; app.go calls newPhase6 once the
-// server exists. New repos and the proposal lifecycle are bound later (W3b):
-// api.Phase6Services.NewRepos stays nil and its endpoints answer 501.
+// server exists. New repos (phase6_newrepos.go) are built earlier, because the
+// proposals service takes them as its lifecycle; newPhase6 binds them.
 //
 // Shutdown order (see app.run): the server stops, then stopActions (the action
-// service calls tasks and proposals, so it stops first), then proposals and
+// service calls tasks and proposals, so it stops first), then stopNewRepos (the
+// workers stop and the last outcomes reach proposals), then proposals and
 // tasks, then closeNotices (so the statuses tasks announced while stopping are
 // handed to the producer), then the hosts service and the store.
 
@@ -43,6 +45,7 @@ type phase6Deps struct {
 	redactor  safety.Redactor
 	log       *slog.Logger
 	feeder    *noticeFeeder
+	nr        *newRepoParts
 }
 
 // phase6 holds what run starts and stops.
@@ -52,6 +55,8 @@ type phase6 struct {
 	standup  *standup.Service
 	producer *notify.Producer
 	feeder   *noticeFeeder
+	nr       *newRepoParts
+	store    *db.Store
 	services api.Phase6Services
 }
 
@@ -98,9 +103,16 @@ func newPhase6(ctx context.Context, d phase6Deps) (*phase6, error) {
 	}
 	d.feeder.bind(prod)
 
+	// New repos were built before the server and the proposals service; bind
+	// them now: the hub publishes to the server and every state change of an
+	// operation reaches the proposals service (OperationChanged).
+	d.nr.hub.srv.Store(d.srv)
+	d.nr.notifier.follow = d.proposals.OperationChanged
+
 	return &phase6{
-		log: d.log, actions: act, standup: stand, producer: prod, feeder: d.feeder,
+		log: d.log, actions: act, standup: stand, producer: prod, feeder: d.feeder, nr: d.nr, store: d.store,
 		services: api.Phase6Services{
+			NewRepos:    newRepoAPI{svc: d.nr.svc, props: d.proposals, store: d.store, hub: d.nr.hub},
 			Actions:     actionsAPI{svc: act},
 			HostContext: hostContextAPI{reader: hostCtx, tracked: scope.StillTracked},
 			Drafts:      draftAPI{actions: act, tasks: d.tasks, store: d.store, now: now},
@@ -118,12 +130,62 @@ func (p *phase6) start(ctx context.Context) {
 	if err := p.actions.Recover(ctx); err != nil {
 		p.log.Warn("could not reconcile the workspace actions of the last run", "err", err)
 	}
+	// New repos: the follow-up loop hands the proposals service what recovery
+	// settled (queued since recoverNewRepos), then the proposals are settled.
+	p.nr.notifier.start(ctx)
+	settleNewRepoProposals(ctx, p.log, p.nr.svc, p.store)
+}
+
+// recoverNewRepos reconciles the operations a crash or stop left running. It
+// runs BEFORE the proposals service starts, so a Confirmed proposal is judged
+// against an operation that recovery already settled, not one that is still
+// being checked (an operation still unsettled is "keep": it stays Confirmed and
+// its outcome arrives through the follow-up loop). Recovery reconciles
+// read-only and repeats no stage. The wait is bounded and ends early when the
+// operations stop changing (an operation parked for a human retry stays
+// unsettled by design).
+func (p *phase6) recoverNewRepos(ctx context.Context) {
+	if err := p.nr.svc.Recover(ctx); err != nil {
+		p.log.Warn("could not reconcile the new repos of the last run", "err", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	last, stable := "", 0
+	for time.Now().Before(deadline) && stable < 5 {
+		recs, err := p.store.ListUnsettledReservations(ctx)
+		if err != nil || len(recs) == 0 {
+			return
+		}
+		var sb strings.Builder
+		for _, r := range recs {
+			fmt.Fprintf(&sb, "%s:%d;", r.Operation.ID, r.Operation.Version)
+		}
+		if sb.String() == last {
+			stable++
+		} else {
+			last, stable = sb.String(), 0
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 // stopActions stops the action service, which calls tasks and proposals.
 func (p *phase6) stopActions() {
 	if p != nil {
 		_ = p.actions.Close()
+	}
+}
+
+// stopNewRepos stops the new-repo workers (a stage that was running is recorded
+// Uncertain, never failed) and hands the last outcomes to the proposals service.
+// It runs before proposals stop and before the store closes.
+func (p *phase6) stopNewRepos() {
+	if p != nil {
+		_ = p.nr.svc.Close()
+		p.nr.notifier.close()
 	}
 }
 
