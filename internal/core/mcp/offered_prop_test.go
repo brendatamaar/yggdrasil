@@ -226,3 +226,48 @@ func TestPropAskModeNeverPulls(t *testing.T) {
 		}
 	}
 }
+
+// AC-03: an Ask task with a repo in scope and no worktree may propose a commit
+// (it targets the main checkout; the user's confirmation is what commits), but
+// not a push or a merge request, and not for a repo it cannot see or work in.
+func TestAskModeProposeCommitWithoutWorktree(t *testing.T) {
+	ask := Context{Task: "t", Live: true, Mode: core.ModeAsk, Scope: []core.RepoID{"a"}, Project: []core.RepoID{"a", "b"},
+		HasWorktree: map[core.RepoID]bool{}}
+	if !slices.Contains(Offered(ask), ToolProposeCommit) {
+		t.Error("propose_commit not offered to an Ask task with a repo in scope")
+	}
+	if d := Authorize(ask, ToolProposeCommit, "a"); !d.Allowed {
+		t.Errorf("scope repo: %+v", d)
+	}
+	for _, tool := range []Tool{ToolProposePush, ToolProposeMR} {
+		if slices.Contains(Offered(ask), tool) {
+			t.Errorf("%s offered to an Ask task without a worktree", tool)
+		}
+		if d := Authorize(ask, tool, "a"); d.Reason != DenyNoWorktree {
+			t.Errorf("%s: %+v", tool, d)
+		}
+	}
+	// Out of scope, untracked, unknown: the identical refusal.
+	for _, r := range []core.RepoID{"b", "r5", "nope", ""} {
+		if d := Authorize(ask, ToolProposeCommit, r); d != (Decision{Reason: DenyNoSuchRepo}) {
+			t.Errorf("repo %q: %+v", r, d)
+		}
+	}
+	// Nothing in scope: not offered.
+	none := ask
+	none.Scope = nil
+	if slices.Contains(Offered(none), ToolProposeCommit) {
+		t.Error("propose_commit offered to an Ask task with no repo in scope")
+	}
+	if d := Authorize(none, ToolProposeCommit); d.Reason != DenyNoSuchRepo {
+		t.Errorf("no scope: %+v", d)
+	}
+	// Code and Project mode keep the worktree rule.
+	for _, m := range []core.TaskMode{core.ModeCode, core.ModeProject} {
+		c := ask
+		c.Mode = m
+		if d := Authorize(c, ToolProposeCommit, "a"); d.Reason != DenyNoWorktree {
+			t.Errorf("%s without a worktree: %+v", m, d)
+		}
+	}
+}

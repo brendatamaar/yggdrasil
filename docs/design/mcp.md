@@ -51,7 +51,7 @@ type Tool string // closed set, below
 | `dev_server_log` | 03 | "no such dev server" until Phase 5 | always |
 | `fetch` | 04 | `git fetch` of a **scope** repo | always |
 | `pull` | 04 | fast-forward-only pull of a **scope** repo's main checkout | not in Ask mode (invariant 9); otherwise always, see open question 1 |
-| `propose_commit` | 05 | creates a `Commit` proposal | the repo has a task worktree, or mode is `current_branch` |
+| `propose_commit` | 05, AC-03 | creates a `Commit` proposal (explicit paths; head and diff hash pinned when it is created) | the repo has a task worktree, or mode is `current_branch`, or mode is `ask` with a repo in scope (the proposal then targets the repo's main checkout) |
 | `propose_push` | 05 | `Push` | same |
 | `propose_merge_request` | 05 | `MergeRequest` | same, and the remote is GitLab |
 | `propose_install` | 05 | `Install` | always |
@@ -85,7 +85,7 @@ Results are values built by the shell and passed back to the agent: `Result{Text
 | Condition | Result |
 |---|---|
 | tool is in the table above and its "Offered when" holds | offered / allowed |
-| tool needs a worktree (`propose_commit/push/merge_request`) and the repo has none and mode ≠ `current_branch` | not offered; `Authorize` returns `Denied{NoWorktree}` |
+| tool needs a worktree (`propose_commit/push/merge_request`) and the repo has none and mode ≠ `current_branch` (for `propose_commit` alone, mode `ask` is also exempt, provided the scope is not empty) | not offered; `Authorize` returns `Denied{NoWorktree}` |
 | tool unknown | `Denied{Unknown}` |
 | any argument repo not visible or (for content/action tools) not in scope | `Denied{NoSuchRepo}` |
 | `Context.Task` has no live run | `Denied{NoSession}` |
@@ -229,3 +229,12 @@ Shell:
 - **M4 test name.** The test is `TestToolsHaveNoConfirm`, as in the table above.
 - **Enforcement (S6).** `mcp.Caps.Enforcement` is the typed `mcp.Enforcement` (`hook`, `limited`) with `Validate`; the shell converts from `agents.Enforcement` (core packages do not import each other).
 - Offered, Authorize, ParseCall and FormatCall are implemented in the core (`call.go`, `check.go`; `CheckCall` holds the rules ParseCall applies). Defaults: `limit` 20, `max_bytes` 64 KiB.
+
+## Review fix FX1 (AC-03, MCP-05)
+
+The workspace action "Propose commits" runs as an Ask task and tells the agent to propose commits, but Ask tasks have no worktree, so `propose_commit` answered `NoWorktree` and the action could not do what it promised.
+
+- `propose_commit` (only it; push and merge request still need a worktree) is offered and authorized in Ask mode for a repo in scope. The shell builds a `Commit` with `Where: MainCheckout{repo}` and the agent's explicit paths; the proposals service pins `ExpectHead` and `ExpectDiffHash` when it creates the proposal (`fillExpected`, unchanged). The proposal is pending. The call touches no tree (invariant 9), only the user's confirmation commits (invariant 2), and the executor refuses with `FailStale` when HEAD or the diff hash of the paths changed since. It also takes the main-checkout lock, so a confirmation while a task still holds the checkout is refused with a retry.
+- Scope rules are unchanged (MCP-06): an out-of-scope, untracked or unknown repo gets the identical `NoSuchRepo` refusal, and an Ask task with an empty scope is offered nothing here. Code and Project mode keep the worktree rule.
+- Sub-task rule (invariant 11): an Ask child may now have `propose_commit` where a Code parent without a worktree did not. A Code or Project task always works in a worktree of the repos it edits, so `TestPropChildNeverGetsMoreTools` only generates parents that have a worktree for every scope repo in those modes. The child gets no tool a reachable parent lacks.
+- Tests: `TestAskModeProposeCommitWithoutWorktree` (core), `TestAskModeProposeCommitTargetsMainCheckout`, `TestActionInstructionsOnlyAskForAuthorizedTools` (every tool an action instruction asks for is authorized in the mode and scope the action runs in), and `TestAskTaskProposesCommitOfDirtyMainCheckout` (real git and the real proposals service: pending, pinned, nothing committed by the call, stale on a changed diff, commits on a clean confirm, no token in any record).

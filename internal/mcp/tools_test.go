@@ -348,3 +348,37 @@ func TestInvalidArgumentsAreInvalidParams(t *testing.T) {
 		t.Fatal("a call with bad arguments ran")
 	}
 }
+
+// AC-03: an Ask task proposes a commit without a worktree. The proposal is
+// pending and targets the main checkout; push stays refused. Ask mode creates
+// the proposal only: nothing else runs.
+func TestAskModeProposeCommitTargetsMainCheckout(t *testing.T) {
+	e := newEnv(t)
+	e.ws.Set(e.task, snapshot(core.ModeAsk))
+	if !slices.Contains(e.listTools(t), "propose_commit") {
+		t.Fatal("propose_commit not offered in Ask mode")
+	}
+	r := e.callTool(t, "propose_commit", map[string]any{"repo": "shop-web", "paths": []string{"a.go"}, "message": "m"})
+	if r.Result.IsError || !strings.Contains(r.text(), "status pending") {
+		t.Fatalf("Ask commit: %s", r.Raw)
+	}
+	if len(e.prop.Created) != 1 {
+		t.Fatalf("created %d", len(e.prop.Created))
+	}
+	if c := e.prop.Created[0].Action.(coreprop.Commit); c.Where != (coreprop.MainCheckout{Repo: webRepo}) {
+		t.Fatalf("target %+v", c.Where)
+	}
+	if len(e.git.All())+len(e.bl.All()) != 0 {
+		t.Fatal("the Ask commit proposal ran something")
+	}
+	// The repo outside the scope and the push stay refused.
+	if r := e.callTool(t, "propose_commit", map[string]any{"repo": "shop-admin", "paths": []string{"a.go"}, "message": "m"}); !r.Result.IsError {
+		t.Fatalf("out-of-scope repo: %s", r.Raw)
+	}
+	if r := e.callTool(t, "propose_push", map[string]any{"repo": "shop-web", "branch": "x", "remote": "origin"}); r.Err == nil && !r.Result.IsError {
+		t.Fatalf("Ask push without a worktree: %s", r.Raw)
+	}
+	if len(e.prop.Created) != 1 {
+		t.Fatalf("created %d proposals", len(e.prop.Created))
+	}
+}
