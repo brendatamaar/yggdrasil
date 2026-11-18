@@ -414,6 +414,16 @@ func (s *Service) legacyInterrupt(ctx context.Context) (int, error) {
 
 // appendImportAudit keeps import audit preparation and persistence together.
 // The caller supplies the same transaction that creates the draft/request link.
+// appendWaitingDraftAudit records a saved waiting draft: repo ID only, no path
+// and no brief text.
+func (s *Service) appendWaitingDraftAudit(ctx context.Context, tx *db.Tx, id core.TaskID, repo core.RepoID) error {
+	entry, err := s.auditEntry("user", "task.waiting_draft", id, map[string]any{"repo": repo})
+	if err != nil {
+		return err
+	}
+	return tx.AppendAudit(ctx, entry)
+}
+
 func (s *Service) appendImportAudit(ctx context.Context, tx *db.Tx, id core.TaskID, created bool) error {
 	entry, err := s.auditEntry("user", "task.import", id, map[string]any{"created": created})
 	if err != nil {

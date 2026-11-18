@@ -96,11 +96,7 @@ func (s *Service) saveWaitingOnce(ctx context.Context, spec coretasks.WaitingDra
 		if err := tx.LinkTaskSubmission(ctx, spec.RequestID, digest, saved); err != nil {
 			return err
 		}
-		entry, err := s.auditEntry("user", "task.waiting_draft", saved, map[string]any{"repo": spec.Repo})
-		if err != nil {
-			return err
-		}
-		return tx.AppendAudit(ctx, entry)
+		return s.appendWaitingDraftAudit(ctx, tx, saved, spec.Repo)
 	})
 	if err != nil {
 		return "", err
