@@ -184,6 +184,48 @@ type Proposer interface {
 	Create(ctx context.Context, task core.TaskID, action coreprop.Action, summary string) (ProposalRef, error)
 }
 
+// PublishRequest is the destination an agent proposes: nothing else about a
+// publish comes from the agent.
+type PublishRequest struct {
+	Host, Owner, OwnerKind, Name, Visibility string
+}
+
+// PublishPlan is everything the proposal needs, resolved by the server: the new
+// repo operation of the repo, the destination, the first branch and the commit
+// that would be pushed, and the operation marker. Problems are plain-language
+// reasons it cannot be published now (for example, an account the token cannot
+// create repositories under); with any problem no proposal is made.
+type PublishPlan struct {
+	Operation core.OperationID
+	Repo      core.RepoID
+	Host      string
+	Owner     string
+	OwnerKind string
+	Name      string
+	// Visibility is "private" or "public".
+	Visibility   string
+	Branch       string
+	ExpectedHead string
+	Marker       string
+	Problems     []string
+}
+
+// ErrNotPublishable: the repo has no new repo operation that is ready to
+// publish (it was not made with the dialog, is not finished, or is published).
+var ErrNotPublishable = errors.New("mcp: repo cannot be published")
+
+// Publishing prepares an agent's publish proposal (MCP-05, NR-04). It is
+// optional: without it propose_publish is not offered. Plan only reads (the
+// reservation and, through the server's own host client, whether the account
+// accepts new repositories); it creates nothing on the host and never exposes a
+// token. Bind remembers the proposal so that the user's later confirmation of
+// its hash finds this destination; it does not confirm anything. The new repos
+// service implements both (PreparePublish with and without the proposal ID).
+type Publishing interface {
+	Plan(ctx context.Context, repo core.RepoID, req PublishRequest) (PublishPlan, error)
+	Bind(ctx context.Context, plan PublishPlan, proposal core.ProposalID) error
+}
+
 // AuditRecord is one audit entry the MCP server asks for. The adapter makes it
 // with audit.Prepare and commits it.
 type AuditRecord struct {

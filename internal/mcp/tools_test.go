@@ -100,6 +100,25 @@ func TestToolTable(t *testing.T) {
 			}
 		}},
 		{"propose_delete_files", map[string]any{"repo": "shop-api", "paths": []string{"old.txt"}}, "status pending", nil},
+		{"propose_ignore", map[string]any{"repo": "shop-web", "entries": []string{"/dist/"}}, "status pending", func(t *testing.T, e *env) {
+			if a, ok := e.prop.Created[0].Action.(coreprop.IgnoreEntries); !ok || a.Where != (coreprop.MainCheckout{Repo: webRepo}) || !slices.Equal(a.Entries, []string{"/dist/"}) {
+				t.Errorf("ignore action %+v", e.prop.Created[0].Action)
+			}
+		}},
+		{"propose_review_comment", map[string]any{"repo": "shop-api", "mr": 4, "expected_head": strings.Repeat("ab", 20), "body": "Looks fine."}, "status pending", func(t *testing.T, e *env) {
+			if a, ok := e.prop.Created[0].Action.(coreprop.ReviewComment); !ok || a.Repo != apiRepo || a.MRNumber != 4 || len(a.Marker) != 32 {
+				t.Errorf("comment action %+v", e.prop.Created[0].Action)
+			}
+		}},
+		{"propose_publish", map[string]any{"repo": "shop-api", "host": "git.acme.dev", "owner": "acme", "owner_kind": "org", "name": "shop-new"}, "status pending", func(t *testing.T, e *env) {
+			a, ok := e.prop.Created[0].Action.(coreprop.PublishRepo)
+			if !ok || a.Repo != apiRepo || a.Visibility != "private" || a.Operation != "op_r-api" || a.Branch != "main" {
+				t.Errorf("publish action %+v", e.prop.Created[0].Action)
+			}
+			if len(e.pub.Bound) != 1 || e.pub.Bound[0].Proposal != "prp_1" {
+				t.Errorf("bound %+v", e.pub.Bound)
+			}
+		}},
 	}
 	for _, r := range rows {
 		t.Run(r.tool, func(t *testing.T) {
@@ -133,11 +152,12 @@ func TestToolTable(t *testing.T) {
 }
 
 // M4: the tool set is closed and has no way to confirm, reject, execute or
-// publish. propose_publish and propose_subtasks are not registered.
+// create a repo. propose_publish only proposes; propose_subtasks is not
+// registered.
 func TestToolsHaveNoConfirm(t *testing.T) {
 	e := newEnv(t)
 	for _, name := range e.listTools(t) {
-		for _, bad := range []string{"confirm", "reject", "execute", "run_proposal", "publish", "subtasks", "retry", "delete_branch", "force", "reset"} {
+		for _, bad := range []string{"confirm", "reject", "execute", "run_proposal", "subtasks", "retry", "init", "create", "post", "delete_branch", "force", "reset"} {
 			if slices.Contains(strings.Split(name, "_"), bad) || strings.Contains(name, bad) && bad != "reset" {
 				t.Errorf("tool %q looks like it can %s", name, bad)
 			}
@@ -149,7 +169,7 @@ func TestToolsHaveNoConfirm(t *testing.T) {
 			t.Errorf("tool %q is outside the closed set", name)
 		}
 	}
-	for _, name := range []string{"propose_publish", "propose_subtasks", "confirm_proposal"} {
+	for _, name := range []string{"propose_subtasks", "propose_init_repo", "init_repo", "publish", "confirm_proposal"} {
 		r := e.callTool(t, name, map[string]any{})
 		if r.Err == nil {
 			t.Errorf("calling %s did not fail: %s", name, r.Raw)
