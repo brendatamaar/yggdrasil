@@ -1012,3 +1012,7 @@ the lead runs the full gate with Node 22 in the scratchpad.
 - Standup: refresh publishes nothing (no standup message on Phase6Hub); polish publishes PublishAction. API adapter for
   api.ActionService (Catalogue, Preview, Execute, Get) is not written: W.
 - Observations not yet fixed: core.checkID accepts \v, \f, NUL; title/identity checks reject only C0 and DEL (C1/bidi pass).
+
+## Batch 4: usage limit interruption and resume
+
+P3 (proposals `CreateForRequest`/`FindForRequest`) and T3 (`SaveWaitingDraft` for unreadable repos) were stopped by the usage limit. Their work was saved in their worktrees, and both were resumed through SendMessage after the reset. Still to do in Batch 4: merge P3 and T3 one at a time, S2 (real standup MR and build sources), TM2, the Batch 4 gate.
