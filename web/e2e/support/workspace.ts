@@ -180,9 +180,9 @@ export async function seedWorkspace(request: APIRequestContext): Promise<Workspa
   } catch {
     // The merge stops on a conflict: that is the state the fixture wants.
   }
-  // noisy: 150 generated files under one folder, more than the noise threshold of 100.
-  mkdirSync(join(dirs.noisy, "build-output"), { recursive: true });
-  for (let i = 0; i < 150; i++) write(join(dirs.noisy, "build-output"), `chunk-${String(i)}.js`, `// generated ${String(i)}\n`);
+  // noisy: 150 generated files under dist/, more than the noise threshold of 100.
+  mkdirSync(join(dirs.noisy, "dist"), { recursive: true });
+  for (let i = 0; i < 150; i++) write(join(dirs.noisy, "dist"), `chunk-${String(i)}.js`, `// generated ${String(i)}\n`);
 
   const picks = (Object.keys(REPOS) as RepoKey[]).map((k) => ({ relPath: REPOS[k], name: REPOS[k] }));
   const tracked = await api<{ projectId: string; added: string[] }>(request, "POST", "/api/projects", {
