@@ -64,6 +64,8 @@ const (
 )
 
 // RequestPlan is the decision of PlanRequest (sealed).
+//
+//sumtype:decl
 type RequestPlan interface{ isRequestPlan() }
 
 // CreateAll: nothing exists yet; create every item under IDs, in one
