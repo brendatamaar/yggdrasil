@@ -23,17 +23,22 @@ func ClassOf(t Tool) Class {
 	return ClassNone
 }
 
-// needsWorktree: the tools that act on a task branch (commit, push, MR).
+// needsWorktree: the tools that act on a task branch (push, MR). propose_commit
+// does not: without a task worktree its proposal targets the repo's main
+// checkout, with explicit paths and the head and diff hash pinned when it is
+// created (AC-03, "Propose commits"). Creating it touches no tree (invariant
+// 9), only the user's confirmation commits (invariant 2), and the executor
+// refuses if either pin moved.
 func needsWorktree(t Tool) bool {
-	return t == ToolProposeCommit || t == ToolProposePush || t == ToolProposeMR
+	return t == ToolProposePush || t == ToolProposeMR
 }
 
-// needsScope: the Phase 6 proposal tools only make sense for a repo the task
-// works in, so a task whose scope is empty is not offered them. Creating one of
+// needsScope: these proposal tools only make sense for a repo the task works
+// in, so a task whose scope is empty is not offered them. Creating one of
 // these proposals touches no tree and posts nothing, so Ask mode is no
 // obstacle; the user's confirmation is.
 func needsScope(t Tool) bool {
-	return t == ToolProposePublish || t == ToolProposeReviewComment || t == ToolProposeIgnore
+	return t == ToolProposeCommit || t == ToolProposePublish || t == ToolProposeReviewComment || t == ToolProposeIgnore
 }
 
 // Offered lists the tools a task is offered in a context (the Offered table of
