@@ -1,10 +1,11 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Menu from "@radix-ui/react-dropdown-menu";
 import { useMutation } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { describeError } from "../../api/client";
 import type { ProjectDTO } from "../../api/gen/api.gen";
 import { renameProject, rescanProject, trackRepos, untrackProject, untrackRepo } from "../../api/repos";
+import { NewRepoDialog, useNewRepoPaletteCommand } from "../newrepo";
 import { CandidateList, DialogShell } from "./AddProjectDialog";
 import { useRepoMutation } from "./hooks";
 import { btn, btnPrimary, menuContent, menuItem, useChecked } from "./ui";
@@ -153,9 +154,14 @@ const titles = {
 
 export function ProjectMenu({ project }: { project: ProjectDTO }) {
   const [mode, setMode] = useState<Mode>(null);
+  const [newRepo, setNewRepo] = useState(false);
   const close = () => {
     setMode(null);
   };
+  const openNewRepo = useCallback(() => {
+    setNewRepo(true);
+  }, []);
+  useNewRepoPaletteCommand(project.id, project.name, openNewRepo);
   const item = (m: Exclude<Mode, null>, label: string) => (
     <Menu.Item
       className={menuItem}
@@ -174,12 +180,16 @@ export function ProjectMenu({ project }: { project: ProjectDTO }) {
         </Menu.Trigger>
         <Menu.Portal>
           <Menu.Content align="end" className={menuContent}>
+            <Menu.Item className={menuItem} onSelect={openNewRepo}>
+              New repo...
+            </Menu.Item>
             {item("rescan", "Rescan")}
             {item("rename", "Rename")}
             {item("untrack", "Stop tracking project")}
           </Menu.Content>
         </Menu.Portal>
       </Menu.Root>
+      <NewRepoDialog projectId={project.id} projectName={project.name} open={newRepo} onOpenChange={setNewRepo} />
       <Dialog.Root
         open={mode !== null}
         onOpenChange={(o) => {

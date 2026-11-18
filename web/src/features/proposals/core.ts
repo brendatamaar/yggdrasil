@@ -65,6 +65,7 @@ export const KIND_LABEL: Record<string, string> = {
   review_comment: "Post a review comment",
   pull_ff: "Pull (fast-forward only)",
   init_repo: "Set up a new repo",
+  publish_repo: "Publish a new repo",
 };
 
 export const kindLabel = (kind: string): string => KIND_LABEL[kind] ?? "Change";

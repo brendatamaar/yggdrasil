@@ -247,6 +247,11 @@ function ConfirmDialog({
               </ul>
             </div>
           ) : null}
+          {proposal && (state.tag === "reviewing" || state.tag === "sending") ? (
+            <p className="text-xs text-muted">
+              Confirmation code: <code data-testid="proposal-hash" className="font-mono break-all">{state.hash}</code>
+            </p>
+          ) : null}
           {state.tag === "changed" ? (
             <p role="alert" className="text-sm text-danger">
               This changed while you were looking. Review it again before you confirm.

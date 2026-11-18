@@ -5,12 +5,16 @@ import { App } from "./App";
 import { WSClient } from "./api/ws";
 import { createAppRouter } from "./router";
 import { useCommandStore } from "./stores/commands";
-import { useNotificationStore } from "./stores/notifications";
 import { stubApi } from "./test/fakeApi";
 import { FakeSocket } from "./test/fakeSocket";
 
-function renderAt(path: string) {
-  stubApi(); // a quiet server: nothing running, tasks not found
+const notice = { id: "n1", taskId: "t1", taskTitle: "Add cart page", status: "needs_you", revision: 1, createdAt: "2026-01-01T10:00:00Z", cursor: 1 };
+
+function renderAt(path: string, notices: unknown[] = []) {
+  // A quiet server: nothing running, tasks not found, the given notices in history.
+  stubApi((c) =>
+    c.path.startsWith("/api/notifications") ? { body: { notices, oldest: notices.length > 0 ? 1 : 0, newest: notices.length, gap: false } } : undefined,
+  );
   const router = createAppRouter(createMemoryHistory({ initialEntries: [path] }));
   const socket = new WSClient({ url: "ws://x/ws", socketCtor: FakeSocket });
   render(<App router={router} socket={socket} />);
@@ -19,7 +23,6 @@ function renderAt(path: string) {
 describe("app shell", () => {
   beforeEach(() => {
     FakeSocket.instances = [];
-    useNotificationStore.setState({ items: [] });
     useCommandStore.setState({ open: false });
   });
 
@@ -69,8 +72,7 @@ describe("app shell", () => {
   });
 
   it("lists notifications with task name and status only", async () => {
-    useNotificationStore.getState().notify("Add cart page", "needs_you");
-    renderAt("/");
+    renderAt("/", [notice]);
 
     fireEvent.click(await screen.findByRole("button", { name: /notifications, 1 unread/i }));
     const item = await screen.findByText("Add cart page");
