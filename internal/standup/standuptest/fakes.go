@@ -282,32 +282,65 @@ func (f *Scope) Repos(ctx context.Context, project core.ProjectID) ([]standup.Re
 // db.ErrNotFound in a test that needs the real class.
 var ErrNoProject = errors.New("standuptest: project not tracked")
 
-// Polisher is a fake standup.Polisher. It is idempotent per request ID, like the
-// ordinary action path: a repeat returns the first task.
+// Polisher is a fake standup.Polisher. It is idempotent per request ID and
+// request key, like the ordinary action path: a repeat with the same key returns
+// the first task whatever the text, and the same ID with another key is refused
+// with standup.ErrRequestReused. Like the real store it survives a new Service.
 type Polisher struct {
 	mu    sync.Mutex
-	tasks map[core.RequestID]core.TaskID
-	// Calls records every call, repeats included.
+	tasks map[core.RequestID]polished
+	// Calls records every SubmitPolish call, repeats included.
 	Calls []PolishCall
+	// Finds records every FindPolish call.
+	Finds []FindCall
 	Err   error
 	// Gate, when set, is waited on inside SubmitPolish (to hold a first call
 	// while a second arrives).
 	Gate chan struct{}
+	// SubmitThenFail, when set, makes the next SubmitPolish store its task and
+	// then return this error, as if the reply was lost.
+	SubmitThenFail error
+}
+
+type polished struct {
+	task core.TaskID
+	key  string
 }
 
 // PolishCall is one SubmitPolish call.
 type PolishCall struct {
 	ID           core.RequestID
+	Key          string
 	Project      core.ProjectID
 	Text         string
 	Agent, Model string
 }
 
+// FindCall is one FindPolish call.
+type FindCall struct {
+	ID  core.RequestID
+	Key string
+}
+
 var _ standup.Polisher = (*Polisher)(nil)
 
-func (f *Polisher) SubmitPolish(ctx context.Context, id core.RequestID, project core.ProjectID, text, agent, model string) (core.TaskID, error) {
+func (f *Polisher) FindPolish(_ context.Context, id core.RequestID, key string) (core.TaskID, bool, error) {
 	f.mu.Lock()
-	f.Calls = append(f.Calls, PolishCall{ID: id, Project: project, Text: text, Agent: agent, Model: model})
+	defer f.mu.Unlock()
+	f.Finds = append(f.Finds, FindCall{ID: id, Key: key})
+	p, ok := f.tasks[id]
+	switch {
+	case !ok:
+		return "", false, nil
+	case p.key != key:
+		return "", false, standup.ErrRequestReused
+	}
+	return p.task, true, nil
+}
+
+func (f *Polisher) SubmitPolish(ctx context.Context, id core.RequestID, key string, project core.ProjectID, text, agent, model string) (core.TaskID, error) {
+	f.mu.Lock()
+	f.Calls = append(f.Calls, PolishCall{ID: id, Key: key, Project: project, Text: text, Agent: agent, Model: model})
 	gate, err := f.Gate, f.Err
 	f.mu.Unlock()
 	if gate != nil {
@@ -323,13 +356,20 @@ func (f *Polisher) SubmitPolish(ctx context.Context, id core.RequestID, project 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.tasks == nil {
-		f.tasks = map[core.RequestID]core.TaskID{}
+		f.tasks = map[core.RequestID]polished{}
 	}
-	if t, ok := f.tasks[id]; ok {
-		return t, nil
+	if p, ok := f.tasks[id]; ok {
+		if p.key != key {
+			return "", standup.ErrRequestReused
+		}
+		return p.task, nil
 	}
 	t := core.TaskID(fmt.Sprintf("tsk_%d", len(f.tasks)+1))
-	f.tasks[id] = t
+	f.tasks[id] = polished{task: t, key: key}
+	if lost := f.SubmitThenFail; lost != nil {
+		f.SubmitThenFail = nil
+		return "", lost
+	}
 	return t, nil
 }
 

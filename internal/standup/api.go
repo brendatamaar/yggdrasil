@@ -78,7 +78,7 @@ func (s *Service) Polish(ctx context.Context, project core.ProjectID, req api.St
 		return api.ActionResultDTO{}, err
 	}
 
-	key := fmt.Sprintf("%s|%d|%d|%s|%s", project, rng.From.UnixNano(), rng.To.UnixNano(), req.Agent, req.Model)
+	key := corestandup.PolishKey(rng, req.Agent, req.Model, req.RequestID)
 	s.mu.Lock()
 	if c, ok := s.inflight[req.RequestID]; ok {
 		s.mu.Unlock()
@@ -92,7 +92,7 @@ func (s *Service) Polish(ctx context.Context, project core.ProjectID, req api.St
 	s.inflight[req.RequestID] = c
 	s.mu.Unlock()
 
-	c.res, c.err = s.polish(ctx, project, rng, req)
+	c.res, c.err = s.polish(ctx, project, rng, req, key)
 	s.mu.Lock()
 	delete(s.inflight, req.RequestID)
 	if c.err == nil {
@@ -124,7 +124,19 @@ func waitPolish(ctx context.Context, c *polishCall, key string) (api.ActionResul
 	}
 }
 
-func (s *Service) polish(ctx context.Context, project core.ProjectID, rng corestandup.Range, req api.StandupPolishRequest) (api.ActionResultDTO, error) {
+func (s *Service) polish(ctx context.Context, project core.ProjectID, rng corestandup.Range, req api.StandupPolishRequest, key string) (api.ActionResultDTO, error) {
+	// A repeat of a request that already made its task (the reply was lost, or
+	// Yggdrasil restarted) is answered from the stored link before the text is
+	// rebuilt: new commits in the range must not turn it into a different request.
+	task, found, err := s.d.Polish.FindPolish(ctx, req.RequestID, key)
+	switch {
+	case errors.Is(err, ErrRequestReused):
+		return api.ActionResultDTO{}, apperr.New(apperr.Conflict, "This request was already used for a different standup. Try again.", err)
+	case err != nil:
+		return api.ActionResultDTO{}, fmt.Errorf("look up standup polish %s: %w", req.RequestID, err)
+	case found:
+		return polishResult(req.RequestID, task), nil
+	}
 	scope, scopeCut, err := s.scope(ctx, project)
 	if err != nil {
 		return api.ActionResultDTO{}, err
@@ -153,20 +165,27 @@ func (s *Service) polish(ctx context.Context, project core.ProjectID, rng corest
 		if !ok {
 			continue
 		}
-		task, err := s.d.Polish.SubmitPolish(ctx, draft.RequestID, project, draft.Text, req.Agent, req.Model)
+		task, err := s.d.Polish.SubmitPolish(ctx, draft.RequestID, key, project, draft.Text, req.Agent, req.Model)
+		if errors.Is(err, ErrRequestReused) {
+			return api.ActionResultDTO{}, apperr.New(apperr.Conflict, "This request was already used for a different standup. Try again.", err)
+		}
 		if err != nil {
 			return api.ActionResultDTO{}, fmt.Errorf("submit standup polish %s: %w", draft.RequestID, err)
 		}
-		res := api.ActionResultDTO{
-			RequestID: draft.RequestID, State: api.ActionStateCompleted, TaskID: task,
-			Message: "Started an Ask task to polish the standup text. Your summary is unchanged.",
-		}
+		res := polishResult(draft.RequestID, task)
 		if s.d.Hub != nil {
 			s.d.Hub.PublishAction(api.ActionChangedMessage{RequestID: res.RequestID, State: res.State})
 		}
 		return res, nil
 	}
 	return api.ActionResultDTO{}, errors.New("standup: polish produced no submission")
+}
+
+func polishResult(id core.RequestID, task core.TaskID) api.ActionResultDTO {
+	return api.ActionResultDTO{
+		RequestID: id, State: api.ActionStateCompleted, TaskID: task,
+		Message: "Started an Ask task to polish the standup text. Your summary is unchanged.",
+	}
 }
 
 // validAgent checks the agent and model names at the boundary: short, printable,

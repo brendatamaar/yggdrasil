@@ -14,6 +14,7 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/core/notify"
 	coreprop "github.com/brendatamaar/yggdrasil/internal/core/proposals"
 	"github.com/brendatamaar/yggdrasil/internal/core/standup"
+	coretasks "github.com/brendatamaar/yggdrasil/internal/core/tasks"
 )
 
 // The boundary parsers of the Phase 6 endpoints (docs/AGENTS.md 5.11). Each
@@ -77,8 +78,10 @@ func parseOperationID(v string) (core.OperationID, error) {
 }
 
 func parseRequestID(v string) (core.RequestID, error) {
-	id := core.RequestID(v)
-	if id.Validate() != nil || len(v) > maxRequestIDLen {
+	// The reserved prefix is Yggdrasil's own (the proposal anchors); a client
+	// can never produce one.
+	id, err := coretasks.ParseClientRequestID(v, maxRequestIDLen)
+	if err != nil {
 		return "", reject6("The request ID isn't valid. Reload the page and try again.")
 	}
 	return id, nil

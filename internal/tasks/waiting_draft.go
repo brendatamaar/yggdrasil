@@ -31,12 +31,19 @@ func (s *Service) SaveWaitingDraft(ctx context.Context, id core.RequestID, d Wai
 	if s.isClosed() {
 		return "", &RejectedError{Reason: "shutting_down", Message: "Yggdrasil is shutting down."}
 	}
-	spec, err := coretasks.ParseWaitingDraftSpec(coretasks.WaitingDraftSpec{
-		RequestID: id, Project: d.Project, Repo: d.Repo, Title: d.Title, Brief: d.Brief, Agent: d.Agent, Model: d.Model})
+	raw := coretasks.WaitingDraftSpec{
+		RequestID: id, Project: d.Project, Repo: d.Repo, Title: d.Title, Brief: d.Brief, Agent: d.Agent, Model: d.Model}
+	spec, err := coretasks.ParseWaitingDraftSpec(raw)
 	if err != nil {
 		return "", err
 	}
-	digest, err := payloadDigest("waiting_draft", spec)
+	// An anchor is identified by its repo alone: its fixed payload is the same
+	// whatever the project says, so only the repo and kind are digested.
+	digestSpec := spec
+	if spec.Agent == coretasks.AnchorAgent {
+		digestSpec.Project = ""
+	}
+	digest, err := payloadDigest("waiting_draft", digestSpec)
 	if err != nil {
 		return "", err
 	}

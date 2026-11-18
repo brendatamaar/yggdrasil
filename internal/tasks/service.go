@@ -129,6 +129,12 @@ type MessageRequest struct {
 	// OptIn is the user's explicit consent to a mode that edits main checkouts
 	// (current_branch, project).
 	OptIn bool
+	// RequestKey, for SubmitWithRequest only, is the stable identity of the
+	// request (its fixed fields, never text that is rebuilt on each call). When
+	// set, the stored request digest is over the key alone, so a retry whose
+	// prompt differs (e.g. text rebuilt from newer data) still returns the first
+	// task, and a request with another key under the same ID is refused.
+	RequestKey string
 }
 
 // MessageResult is what a message produced.
@@ -161,8 +167,8 @@ func (s *Service) message(ctx context.Context, req MessageRequest, submission *s
 		if err != nil {
 			return MessageResult{}, err
 		}
-		if st.Row.Source != nil && st.Row.Source.Kind == core.SourceRepoSetup {
-			return MessageResult{}, &coretasks.UserError{Message: "Repo setup drafts cannot start an agent."}
+		if refusal := coretasks.StartRefusal(st.Row); refusal != nil {
+			return MessageResult{}, refusal
 		}
 		existing = &st
 	}

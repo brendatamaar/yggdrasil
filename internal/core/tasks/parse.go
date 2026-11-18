@@ -135,7 +135,7 @@ func ParseMessage(r RawMessage) (ParsedMessage, error) {
 			return ParsedMessage{}, reject("Choose exactly one repo for this mode.")
 		}
 	}
-	if !ValidModelName(r.Agent) {
+	if !ValidModelName(r.Agent) || r.Agent == AnchorAgent {
 		return ParsedMessage{}, reject("That agent name isn't valid.")
 	}
 	if r.Model != "" && !ValidModelName(r.Model) {

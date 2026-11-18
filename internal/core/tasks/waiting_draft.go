@@ -31,6 +31,15 @@ func ParseWaitingDraftSpec(s WaitingDraftSpec) (WaitingDraftSpec, error) {
 	if err := s.RequestID.Validate(); err != nil || len(s.RequestID) > 100 {
 		return WaitingDraftSpec{}, badDraft("the request id is not valid")
 	}
+	// The reserved request IDs and the reserved agent belong to anchors, and an
+	// anchor has no other request ID, title or brief.
+	anchor := s.Agent == AnchorAgent
+	switch {
+	case anchor && (s.RequestID != AnchorRequest(s.Repo) || s.Title != AnchorTitle || s.Brief != AnchorBrief || s.Model != ""):
+		return WaitingDraftSpec{}, badDraft("an anchor draft uses its fixed request id, title and brief")
+	case !anchor && HasReservedPrefix(s.RequestID):
+		return WaitingDraftSpec{}, badDraft("the request id is reserved")
+	}
 	if s.Project.Validate() != nil || s.Repo.Validate() != nil {
 		return WaitingDraftSpec{}, badDraft("the project or repo id is not valid")
 	}
