@@ -17,6 +17,7 @@ import (
 	"github.com/brendatamaar/yggdrasil/internal/api"
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	corestandup "github.com/brendatamaar/yggdrasil/internal/core/standup"
+	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/repos"
 	"github.com/brendatamaar/yggdrasil/internal/standup"
 )
@@ -300,6 +301,9 @@ type Polisher struct {
 	// SubmitThenFail, when set, makes the next SubmitPolish store its task and
 	// then return this error, as if the reply was lost.
 	SubmitThenFail error
+	// Project, when set, is the only project the fake knows: another one is
+	// db.ErrNotFound, as the real polisher answers for an untracked project.
+	Project core.ProjectID
 }
 
 type polished struct {
@@ -339,10 +343,16 @@ func (f *Polisher) FindPolish(_ context.Context, id core.RequestID, key string) 
 }
 
 func (f *Polisher) SubmitPolish(ctx context.Context, id core.RequestID, key string, project core.ProjectID, text, agent, model string) (core.TaskID, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	f.mu.Lock()
 	f.Calls = append(f.Calls, PolishCall{ID: id, Key: key, Project: project, Text: text, Agent: agent, Model: model})
-	gate, err := f.Gate, f.Err
+	gate, err, known := f.Gate, f.Err, f.Project
 	f.mu.Unlock()
+	if known != "" && project != known {
+		return "", fmt.Errorf("project %s: %w", project, db.ErrNotFound)
+	}
 	if gate != nil {
 		select {
 		case <-gate:
@@ -371,6 +381,13 @@ func (f *Polisher) SubmitPolish(ctx context.Context, id core.RequestID, key stri
 		return "", lost
 	}
 	return t, nil
+}
+
+// TaskCount is the number of tasks the fake made.
+func (f *Polisher) TaskCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.tasks)
 }
 
 // CallCount is the number of SubmitPolish calls so far.
