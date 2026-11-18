@@ -40,6 +40,9 @@ func ParseWaitingDraftSpec(s WaitingDraftSpec) (WaitingDraftSpec, error) {
 	case !anchor && HasReservedPrefix(s.RequestID):
 		return WaitingDraftSpec{}, badDraft("the request id is reserved")
 	}
+	if s.Project.Validate() != nil || s.Repo.Validate() != nil {
+		return WaitingDraftSpec{}, badDraft("the project or repo id is not valid")
+	}
 	s.Title = strings.TrimSpace(s.Title)
 	switch {
 	case s.Title == "" || utf8.RuneCountInString(s.Title) > MaxDraftTitle || !utf8.ValidString(s.Title) ||
@@ -98,5 +101,4 @@ func PlanWaitingDraft(s WaitingDraftSpec, f DraftFacts) DraftOutcome {
 		Agent: s.Agent, Model: s.Model, Status: core.TaskDraft,
 		CreatedAt: f.Now, UpdatedAt: f.Now,
 	}}
-
 }
