@@ -378,6 +378,8 @@ func TestPropNoFetchBeforeTTL(t *testing.T) { // H8
 				}
 			case Fetching:
 				t.Errorf("%v fetched while a fetch is in flight", f.Key)
+			case Blocked:
+				// a blocked key is fetched again only when the user asks
 			}
 		}
 	})
@@ -598,6 +600,8 @@ func TestPropUnauthorizedBlocksTheTokensOtherKeys(t *testing.T) {
 				if _, still := now.(Fetching); !still {
 					t.Errorf("%v was in flight and is now %#v", k, now)
 				}
+			case Blocked:
+				// already blocked; another answer changes nothing about it
 			}
 		}
 	})

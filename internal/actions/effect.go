@@ -68,7 +68,7 @@ func (r *run) perform(ctx context.Context, c coreactions.Dispatch) (coreactions.
 func (r *run) submitTask(ctx context.Context, c coreactions.Dispatch) (coreactions.Result, *effectFailure) {
 	req := c.Request
 	mode := req.Kind.Mode()
-	if mode != core.ModeAsk && (mode != core.ModeCode || req.Kind != coreactions.FixPipeline) {
+	if !coreactions.ModeAllowed(req.Kind, mode) {
 		return coreactions.Result{}, definite(coreactions.RefuseNoOffering, "")
 	}
 	res, err := r.s.d.Tasks.SubmitWithRequest(ctx, req.RequestID, tasks.MessageRequest{
@@ -132,7 +132,7 @@ func (r *run) startPull(ctx context.Context, c coreactions.Dispatch) (coreaction
 		return coreactions.Result{}, definite(coreactions.RefuseScopeChanged,
 			"This repo can't be pulled right now: "+r.s.d.Redactor.Redact(err.Error()))
 	}
-	if pt.Head != r.l.facts.Head {
+	if !coreactions.StillCurrent(r.l.facts.Head, pt.Head) {
 		return coreactions.Result{}, definite(coreactions.RefuseStaleHead, "")
 	}
 	kind, payload := coreproposals.RowOf(a)

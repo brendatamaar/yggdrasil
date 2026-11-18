@@ -139,7 +139,6 @@ const (
 // IDs are the identifiers the shell generated for the effects of one request,
 // so the core never makes one.
 type IDs struct {
-	Task      core.TaskID
 	Proposals []core.ProposalID
 	Batch     string
 }

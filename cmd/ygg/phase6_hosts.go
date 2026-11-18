@@ -94,6 +94,9 @@ func (r contextResolver) ResolveContext(ctx context.Context, key corehosts.Conte
 // holds no host writer: only a hosts.ContextReader.
 type hostContextAPI struct {
 	reader hosts.ContextReader
+	// repoHost is the cached host link and merge request of a repo, read
+	// without any network call.
+	repoHost repoHostReader
 	// tracked is db.ErrNotFound for an untracked or reserved repo.
 	tracked func(context.Context, core.RepoID) error
 }
@@ -228,16 +231,54 @@ func (h hostContextAPI) Issue(ctx context.Context, repo core.RepoID, number int)
 	return resp, nil
 }
 
-// MRContext: a merge request diff is read for one immutable head, and the
-// cached host data holds no head for a merge request, so there is nothing the
-// server can pin the key to. The answer says so instead of guessing a head.
-// Open gap for the hosts model (see the W3a report).
+// MRContext serves the merge request's diff for the head the poller last cached
+// for the repo's open merge request, through the same bounded reader as the
+// other host reads (explicit log-origin allowlist, size bounds, redaction). The
+// head is the pin of the key, never taken from the browser. A merge request
+// whose head is not known yet is a retryable wait, not an unsupported one; one
+// the cache does not hold is not found.
 func (h hostContextAPI) MRContext(ctx context.Context, repo core.RepoID, number int) (api.MRContextResponse, error) {
 	if err := h.tracked(ctx, repo); err != nil {
 		return api.MRContextResponse{}, err // an untracked repo is not found, as for every read
 	}
-	return api.MRContextResponse{RepoID: repo, Status: api.HostContextStatusDTO{
-		Phase: api.HostContextBlocked, Reason: api.HostContextUnsupported,
-		Message: "Yggdrasil does not know this merge request's latest commit yet, so it cannot read its diff.",
-	}}, nil
+	blocked := func(r corehosts.ContextBlockReason) api.MRContextResponse {
+		return api.MRContextResponse{RepoID: repo, Status: statusOf(hosts.ContextOutcome{Blocked: &corehosts.CtxBlocked{Reason: r}})}
+	}
+	view, err := h.repoHost.RepoHost(ctx, repo)
+	if err != nil {
+		return api.MRContextResponse{}, fmt.Errorf("read the host of repo %s: %w", repo, err)
+	}
+	if !view.Linked {
+		return blocked(corehosts.ContextUntracked), nil
+	}
+	n, head, ok := openMR(view.Entry)
+	if !ok || n != number {
+		return blocked(corehosts.ContextNotFound), nil
+	}
+	key := corehosts.ContextKey{Repo: repo, Kind: corehosts.ContextMRDiff, ObjectID: strconv.Itoa(number), Head: head}
+	if head == "" {
+		return api.MRContextResponse{RepoID: repo, Status: api.HostContextStatusDTO{
+			Phase: api.HostContextWaiting, Message: "Yggdrasil has not read this merge request's latest commit yet. Try again in a moment.",
+		}}, nil
+	}
+	if validKey := key.Validate() == nil; !validKey {
+		// A cached head that is not a full commit id cannot be read; say so as
+		// an answer, not a failure.
+		return blocked(corehosts.ContextUnsupported), nil
+	}
+	out, err := h.read(ctx, key)
+	if err != nil {
+		return api.MRContextResponse{}, err
+	}
+	resp := api.MRContextResponse{RepoID: repo, Status: statusOf(out)}
+	if out.Result != nil {
+		if v, ok := out.Result.Value.(corehosts.MRContext); ok {
+			resp.Head, resp.Diff, resp.DiffTruncated = v.Head, v.Diff, v.DiffTruncated
+			resp.MR = &api.MergeRequestDTO{
+				Number: v.MR.Number, Title: v.MR.Title, URL: v.MR.URL, Author: v.MR.Author,
+				Source: v.MR.Source, Target: v.MR.Target, State: string(v.MR.State), UpdatedAt: v.MR.UpdatedAt,
+			}
+		}
+	}
+	return resp, nil
 }

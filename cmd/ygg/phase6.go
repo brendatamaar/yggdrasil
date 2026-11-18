@@ -65,7 +65,7 @@ func newPhase6(ctx context.Context, d phase6Deps) (*phase6, error) {
 
 	// Host context reads: the bounded reader only (never a host writer).
 	hostCtx := hosts.NewContextService(d.hosts, contextResolver{store: d.store, hosts: d.hosts})
-	scope := &scopeReader{store: d.store, status: d.status, hosts: d.hosts, git: d.git}
+	scope := &scopeReader{store: d.store, status: d.status, hosts: d.hosts, git: d.git, log: d.log, redact: d.redactor}
 	ctxReader := &contextReader{scope: scope, host: hostCtx, store: d.store, logs: d.builds, git: d.git, redact: d.redactor}
 	creator := &proposalCreator{svc: d.proposals, drafts: d.tasks, store: d.store}
 
@@ -114,7 +114,7 @@ func newPhase6(ctx context.Context, d phase6Deps) (*phase6, error) {
 		services: api.Phase6Services{
 			NewRepos:    newRepoAPI{svc: d.nr.svc, props: d.proposals, store: d.store, hub: d.nr.hub},
 			Actions:     actionsAPI{svc: act},
-			HostContext: hostContextAPI{reader: hostCtx, tracked: scope.StillTracked},
+			HostContext: hostContextAPI{reader: hostCtx, repoHost: d.hosts, tracked: scope.StillTracked},
 			Drafts:      draftAPI{actions: act, tasks: d.tasks, store: d.store, now: now},
 			Noise:       noiseAPI{scope: scope, proposals: d.proposals, creator: creator},
 			Notices:     noticeAPI{prod: prod},

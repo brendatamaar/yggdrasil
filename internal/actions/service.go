@@ -248,13 +248,12 @@ func effectOf(k coreactions.Kind, c coreactions.PreparedContext) coreactions.Eff
 }
 
 // newIDs makes the identifiers the core carries for the request's effects. The
-// task service names a task itself, so IDs.Task only has to be well formed.
+// task service names a task itself, so only a pull needs one (its proposal).
 func (s *Service) newIDs(k coreactions.Kind) coreactions.IDs {
-	switch k.Effect() {
-	case coreactions.EffectStartPull:
+	if k.Effect() == coreactions.EffectStartPull {
 		return coreactions.IDs{Proposals: []core.ProposalID{core.ProposalID(s.d.IDs("prp"))}}
 	}
-	return coreactions.IDs{Task: core.TaskID(s.d.IDs("tsk"))}
+	return coreactions.IDs{}
 }
 
 // Get returns the stored outcome of a request without changing anything.

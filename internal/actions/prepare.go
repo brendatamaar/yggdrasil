@@ -120,7 +120,7 @@ func (s *Service) prepare(ctx context.Context, req coreactions.Request) (*loaded
 		return nil, scopeReason(err)
 	}
 	l := &loaded{facts: facts, target: tgt}
-	if ok, _ := offered(facts, req); !ok {
+	if _, _, ok := coreactions.Admit(facts, req); !ok {
 		// The core refuses with the exact reason; nothing is read for it.
 		return l, ""
 	}
@@ -188,34 +188,6 @@ func scopeReason(err error) coreactions.RefuseReason {
 		return coreactions.RefuseUntracked
 	}
 	return coreactions.RefusePrepareFailed
-}
-
-// offered reports whether the facts still offer the requested kind and source.
-// It mirrors the core's admission so the shell can recheck at execution.
-func offered(f coreactions.Facts, r coreactions.Request) (bool, coreactions.RefuseReason) {
-	if f.Repo != r.RepoID {
-		return false, coreactions.RefuseScopeChanged
-	}
-	if r.Kind == coreactions.ImportIssue {
-		if !f.Caps.HostIssues {
-			return false, coreactions.RefuseCapability
-		}
-		return true, ""
-	}
-	same := false
-	for _, o := range coreactions.Catalogue(f) {
-		if o.Kind != r.Kind {
-			continue
-		}
-		if o.SourceID == r.SourceID {
-			return true, ""
-		}
-		same = true
-	}
-	if same {
-		return false, coreactions.RefuseScopeChanged
-	}
-	return false, coreactions.RefuseNoOffering
 }
 
 func factLines(f coreactions.Facts) string {

@@ -65,6 +65,8 @@ type Instance struct {
 
 // Key says what is polled. It is a closed set: RepoKey or InboxKey. Both are
 // comparable, so a Key is a map key.
+//
+//sumtype:decl
 type Key interface{ isKey() }
 
 // RepoKey is the MR and pipeline of one repo's branch. A detached HEAD
@@ -126,6 +128,8 @@ type Entry struct {
 
 // Phase is where a key is in its polling cycle. It is a closed set: Idle,
 // Fetching, Waiting or Blocked.
+//
+//sumtype:decl
 type Phase interface{ isPhase() }
 
 // Idle has data, or Data == nil before the first fetch.
@@ -155,6 +159,12 @@ type Blocked struct {
 	Since time.Time
 	Prev  Idle
 }
+
+// Previous is the last data the key held, whatever its phase: the Idle itself,
+// or the Prev that Fetching, Waiting and Blocked keep showing. An entry with no
+// phase yet has none, so it gives the empty Idle. Readers of the cache use it
+// instead of switching over the phases.
+func Previous(e Entry) Idle { return prevOf(e.Phase) }
 
 func (Idle) isPhase()     {}
 func (Fetching) isPhase() {}
@@ -200,6 +210,8 @@ func (b BlockReason) Validate() error {
 }
 
 // Payload is fetched data. It is a closed set: RepoState or Inbox.
+//
+//sumtype:decl
 type Payload interface{ isPayload() }
 
 // RepoState is the MR and pipeline of the current branch.
