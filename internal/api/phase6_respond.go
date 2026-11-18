@@ -138,12 +138,13 @@ func (s *Server) redactTree(v any) any {
 // reads; the handler re-applies the limits so a misbehaving adapter can never
 // send the browser an unbounded body.
 const (
-	maxP6Entries  = 500       // jobs, issues, ignore candidates (ContextMaxEntries)
-	maxP6JobLog   = 256 << 10 // one job log
-	maxP6Text     = 64 << 10  // an issue body, an MR diff, a preview context, a standup text
-	maxP6Lines    = 100       // lines and problems of a preview
-	maxP6Records  = 200       // standup records per source, new-repo operations listed
-	maxP6Offering = 64        // catalogue entries
+	maxP6Entries   = 500       // jobs, issues, ignore candidates (ContextMaxEntries)
+	maxP6JobLog    = 256 << 10 // one job log
+	maxP6Aggregate = 1 << 20   // all text of one list response (ContextMaxResponseBytes)
+	maxP6Text      = 64 << 10  // an issue body, an MR diff, a preview context, a standup text
+	maxP6Lines     = 100       // lines and problems of a preview
+	maxP6Records   = 200       // standup records per source, new-repo operations listed
+	maxP6Offering  = 64        // catalogue entries
 )
 
 // cutText cuts s to at most max bytes without splitting a character.
@@ -189,10 +190,15 @@ func boundFailedJobs(r *FailedJobsResponse) {
 	if r.Jobs, cut = capSlice(nonNil6(r.Jobs), maxP6Entries); cut {
 		r.Truncated = true
 	}
+	// One log is at most 256 KiB and all logs together at most 1 MiB
+	// (core/hosts ContextMaxResponseBytes): later logs are cut first.
+	budget := maxP6Aggregate
 	for i := range r.Jobs {
-		if r.Jobs[i].Log, cut = cutText(r.Jobs[i].Log, maxP6JobLog); cut {
+		if r.Jobs[i].Log, cut = cutText(r.Jobs[i].Log, min(maxP6JobLog, budget)); cut {
 			r.Jobs[i].LogTruncated = true
+			r.Truncated = true
 		}
+		budget -= len(r.Jobs[i].Log)
 	}
 }
 
@@ -211,8 +217,14 @@ func boundIssues(r *IssuesResponse) {
 	if r.Issues, cut = capSlice(nonNil6(r.Issues), maxP6Entries); cut {
 		r.Truncated = true
 	}
+	budget := maxP6Aggregate
 	for i := range r.Issues {
-		boundIssue(&r.Issues[i])
+		var cut bool
+		if r.Issues[i].Body, cut = cutText(r.Issues[i].Body, min(maxP6Text, budget)); cut {
+			r.Issues[i].BodyTruncated = true
+			r.Truncated = true
+		}
+		budget -= len(r.Issues[i].Body)
 	}
 }
 
