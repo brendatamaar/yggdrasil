@@ -1,4 +1,5 @@
 import { ApiError, describeError } from "../../api/client";
+import { HostContextDecodeError } from "./api";
 import type { HostContextReason, HostContextStatusDTO } from "../../api/gen/api.gen";
 
 // Pure reading of the shared status of every host context answer (docs/design/phase-6-host-context.md).
@@ -74,7 +75,11 @@ export function readErrorText(err: unknown): { text: string; superseded: boolean
   // A read overtaken by a newer change: asking again is the fix (host-context design, ErrContextSuperseded).
   const superseded = err instanceof ApiError && (err.code === "superseded" || err.status === 409);
   return {
-    text: superseded ? "A newer change replaced this read. Ask again." : describeError(err),
+    text: superseded
+      ? "A newer change replaced this read. Ask again."
+      : err instanceof HostContextDecodeError
+        ? err.message
+        : describeError(err),
     superseded,
   };
 }
