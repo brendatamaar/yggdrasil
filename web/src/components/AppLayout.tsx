@@ -4,6 +4,7 @@ import { useRegisterCommands, type Command } from "../stores/commands";
 import { useThemeStore } from "../stores/theme";
 import { CommandPalette } from "./CommandPalette";
 import { TerminalDock, useTerminalStore } from "../features/terminal";
+import { NoticeSync } from "../features/notifications";
 import { LiveSync } from "./LiveSync";
 import { TopBar } from "./TopBar";
 
@@ -40,6 +41,7 @@ export function AppLayout() {
       <TerminalDock />
       <CommandPalette />
       <LiveSync />
+      <NoticeSync />
     </div>
   );
 }
