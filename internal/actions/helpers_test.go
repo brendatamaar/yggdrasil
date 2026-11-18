@@ -273,6 +273,7 @@ type fakeProposals struct {
 	failAfter  error
 	findErr    error
 	afterWrite func()
+	items      map[core.RequestID][]ProposalSpec
 }
 
 func newFakeProposals(t *testing.T, store *db.Store) *fakeProposals {
@@ -284,7 +285,28 @@ func (p *fakeProposals) CreateForRequest(ctx context.Context, id core.RequestID,
 	defer p.mu.Unlock()
 	p.creates++
 	p.specs = append(p.specs, items...)
+	// The contract of the live creator: a bad request, a new-repo kind or an
+	// over-long list is refused before anything is stored.
+	if id.Validate() != nil || len(items) == 0 || len(items) > coreproposals.MaxRequestProposals {
+		return nil, errors.New("proposal request refused")
+	}
+	for _, it := range items {
+		if it.Kind == core.ProposalInitRepo || it.Kind == core.ProposalPublish {
+			return nil, errors.New("proposal request refused: new-repo kinds start from their dialog")
+		}
+	}
 	if ids, ok := p.byReq[id]; ok {
+		// Same list: the first IDs. A different list is refused, never merged.
+		first := p.items[id]
+		if len(first) != len(items) {
+			return nil, errors.New("this request already created different proposals")
+		}
+		for i := range items {
+			if first[i].Summary != items[i].Summary || first[i].Kind != items[i].Kind || first[i].Repo != items[i].Repo ||
+				string(first[i].Payload) != string(items[i].Payload) {
+				return nil, errors.New("this request already created different proposals")
+			}
+		}
 		return ids, nil
 	}
 	var ids []core.ProposalID
@@ -297,6 +319,10 @@ func (p *fakeProposals) CreateForRequest(ctx context.Context, id core.RequestID,
 		ids = append(ids, it.ID)
 	}
 	p.byReq[id] = ids
+	if p.items == nil {
+		p.items = map[core.RequestID][]ProposalSpec{}
+	}
+	p.items[id] = append([]ProposalSpec(nil), items...)
 	if p.afterWrite != nil {
 		p.afterWrite()
 	}
@@ -324,6 +350,9 @@ type fakeDrafts struct {
 	tasks *fakeTasks
 	calls int
 	last  WaitingDraft
+	// scope, when set, is the tracked-repo check (the live one reads the repo row).
+	scope   *fakeScope
+	digests map[core.RequestID]WaitingDraft
 }
 
 func (d *fakeDrafts) SaveWaitingDraft(_ context.Context, id core.RequestID, w WaitingDraft) (core.TaskID, error) {
@@ -331,9 +360,24 @@ func (d *fakeDrafts) SaveWaitingDraft(_ context.Context, id core.RequestID, w Wa
 	defer d.tasks.mu.Unlock()
 	d.calls++
 	d.last = w
+	if d.scope != nil {
+		d.scope.mu.Lock()
+		ok := d.scope.tracked && w.Repo == d.scope.facts.Repo && w.Project == d.scope.target.Project
+		d.scope.mu.Unlock()
+		if !ok {
+			return "", db.ErrNotFound
+		}
+	}
 	if tid, ok := d.tasks.byReq[id]; ok {
+		if d.digests != nil && d.digests[id] != w {
+			return "", db.ErrDigestMismatch
+		}
 		return tid, nil
 	}
+	if d.digests == nil {
+		d.digests = map[core.RequestID]WaitingDraft{}
+	}
+	d.digests[id] = w
 	return d.tasks.create(id, core.TaskDraft, core.ModeAsk, w.Title, w.Brief, nil), nil
 }
 
@@ -423,7 +467,7 @@ func newEnv(t *testing.T) *env {
 	e.ctxr = &fakeContext{host: map[corehosts.ContextKind]hosts.ContextOutcome{}}
 	e.tasks = newFakeTasks(t, store, proj.ID, repo.ID)
 	e.props = newFakeProposals(t, store)
-	e.drafts = &fakeDrafts{tasks: e.tasks}
+	e.drafts = &fakeDrafts{tasks: e.tasks, scope: e.scope}
 	e.hub = &fakeHub{}
 	e.svc = e.build(store)
 	t.Cleanup(func() { _ = e.svc.Close() })
