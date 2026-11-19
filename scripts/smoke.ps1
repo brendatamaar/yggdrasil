@@ -4,8 +4,8 @@
   docs/phases/phase-1.md).
 
 .DESCRIPTION
-  Default: checks 1 to 9 with the demo agent and a fake Claude Code shim. No
-  real agent, no network. Used by `task smoke` and CI.
+  Default: checks 1 to 9 and the Phase 6 checks P6a to P6c with the demo agent
+  and fake Claude Code shims. No real agent, no network. Used by `task smoke` and CI.
 
   -RealAgent: checks 6b, 6c and 6d with the real Claude Code CLI (model haiku,
   short prompts; uses a little of the user's quota). Stops at the first
@@ -590,6 +590,203 @@ function Invoke-DefaultChecks {
     }
 }
 
+# --- Phase 6 checks (no real agent, no network) --------------------------------
+# Workspace actions, notifications, standup and the closed MCP tool set, against
+# the built binary with fictional repos in a temp folder (spaces in the path on
+# purpose). They run after the default checks and use their own server.
+
+$P6Reasons = @('unreadable', 'conflicts', 'diverged', 'failed_build', 'behind', 'dirty')
+
+# A copy of Invoke-Git that sets an author, for commits made by this script.
+function Invoke-GitAs([string]$Dir, [string[]]$ArgList) {
+    return (Invoke-Git $Dir (@('-c', 'user.name=Smoke Test', '-c', 'user.email=smoke@example.invalid', '-c', 'commit.gpgsign=false') + $ArgList))
+}
+
+# A repo whose exit code does not matter (a merge that stops on a conflict).
+function Invoke-GitLoose([string]$Dir, [string[]]$ArgList) {
+    [void](Invoke-Proc -File $script:GitPath -ArgList (@('-C', $Dir, '-c', 'user.name=Smoke Test', '-c', 'user.email=smoke@example.invalid', '-c', 'commit.gpgsign=false') + $ArgList))
+}
+
+# New-RemoteRepo makes a repo with one commit and a local bare origin it was pushed to.
+function New-RemoteRepo([string]$Root, [string]$Name) {
+    $dir = Join-Path $Root "acme smoke\$Name"
+    New-TestRepo $dir @{ 'README.md' = "# $Name`r`n`r`nFictional repo.`r`n" }
+    $bare = Join-Path $Root "remotes\$Name.git"
+    [void](New-Item -ItemType Directory -Force -Path $bare)
+    [void](Invoke-Git $bare @('init', '-q', '--bare', '-b', 'main'))
+    [void](Invoke-Git $dir @('remote', 'add', 'origin', $bare))
+    [void](Invoke-Git $dir @('push', '-q', '-u', 'origin', 'main'))
+    return $dir
+}
+
+# Add-RemoteCommit pushes one more commit from a second clone and fetches it into the repo.
+function Add-RemoteCommit([string]$Root, [string]$Name, [string]$Dir) {
+    $clone = Join-Path $Root "clones\$Name"
+    [void](New-Item -ItemType Directory -Force -Path (Split-Path -Parent $clone))
+    [void](Invoke-Proc -File $script:GitPath -ArgList @('clone', '-q', (Join-Path $Root "remotes\$Name.git"), $clone))
+    [IO.File]::WriteAllText((Join-Path $clone 'remote-change.md'), "change from another developer`r`n")
+    [void](Invoke-GitAs $clone @('add', '-A'))
+    [void](Invoke-GitAs $clone @('commit', '-q', '-m', 'feat: remote change'))
+    [void](Invoke-GitAs $clone @('push', '-q', 'origin', 'main'))
+    [void](Invoke-Git $Dir @('fetch', '-q', 'origin'))
+}
+
+# The fake Claude Code of the MCP check: it records its arguments (they hold the
+# path of the MCP config), prints one stream-json line and waits a little so the
+# MCP token stays valid while the script uses it.
+$P6FakeClaude = @(
+    '@echo off',
+    'if "%~1"=="--version" goto version',
+    'echo %* > "%~dp0args.txt"',
+    'more > "%~dp0stdin.txt"',
+    'echo {"type":"system","subtype":"init","session_id":"smoke-p6-0001"}',
+    'ping -n 31 127.0.0.1 >nul',
+    'exit /b 0',
+    ':version',
+    'echo 2.1.999 (smoke fake Claude Code)',
+    'exit /b 0'
+) -join "`r`n"
+
+function Invoke-Phase6Checks {
+    $p6 = Join-Path $TempRoot 'phase6 workspace'
+    $fakeDir = Join-Path $TempRoot 'phase6 fake claude'
+    $script:P6 = @{}
+
+    Invoke-Check 'P6a' 'seeded repos, one Needs-attention offering per reason' {
+        $names = @{ dirty = 'shop-dirty'; behind = 'shop-behind'; diverged = 'shop-diverged'; conflicts = 'shop-conflicts'; broken = 'shop-broken'; failed = 'shop-failed' }
+        $dirs = @{}
+        foreach ($k in @($names.Keys)) { $dirs[$k] = New-RemoteRepo $p6 $names[$k] }
+        # dirty: an uncommitted edit and an untracked file.
+        [IO.File]::WriteAllText((Join-Path $dirs.dirty 'notes.txt'), "scratch`r`n")
+        # behind: the origin has one more commit.
+        Add-RemoteCommit $p6 $names.behind $dirs.behind
+        # diverged: one commit on each side.
+        Add-RemoteCommit $p6 $names.diverged $dirs.diverged
+        [IO.File]::WriteAllText((Join-Path $dirs.diverged 'local-only.md'), "only here`r`n")
+        [void](Invoke-GitAs $dirs.diverged @('add', '-A'))
+        [void](Invoke-GitAs $dirs.diverged @('commit', '-q', '-m', 'feat: local-only change'))
+        # conflicts: the same line changed on two branches, merge stopped.
+        $c = $dirs.conflicts
+        [IO.File]::WriteAllText((Join-Path $c 'README.md'), "# shop-conflicts`r`n`r`nmain side`r`n")
+        [void](Invoke-GitAs $c @('commit', '-q', '-a', '-m', 'docs: main side'))
+        [void](Invoke-GitAs $c @('checkout', '-q', '-b', 'other', 'HEAD~1'))
+        [IO.File]::WriteAllText((Join-Path $c 'README.md'), "# shop-conflicts`r`n`r`nother side`r`n")
+        [void](Invoke-GitAs $c @('commit', '-q', '-a', '-m', 'docs: other side'))
+        [void](Invoke-GitAs $c @('checkout', '-q', 'main'))
+        Invoke-GitLoose $c @('merge', 'other')
+
+        # Track every repo under the workspace, then make one unreadable (renamed, never deleted).
+        $seed = Invoke-Proc -File $Ygg -ArgList @('seed', (Join-Path $p6 'acme smoke')) -EnvVars (New-YggEnv)
+        if ($seed.Code -ne 0) { throw "ygg seed exited $($seed.Code): $(Get-Tail $seed.Err 3)" }
+        Rename-Item -LiteralPath (Join-Path $dirs.broken '.git') -NewName '.git-off'
+
+        $script:P6.Server = Start-Server @{ PATH = "$fakeDir;$env:PATH" }
+        $list = Invoke-Http GET '/api/repos'
+        if ($list.Status -ne 200) { throw "GET /api/repos answered $($list.Status)" }
+        $project = @((ConvertFrom-Json $list.Body).projects) | Select-Object -First 1
+        if (-not $project) { throw 'no project is tracked after ygg seed' }
+        $script:P6.Project = $project.id
+        $ids = @{}
+        foreach ($k in @($names.Keys)) {
+            $row = @($project.repos | Where-Object { $_.name -eq $names[$k] }) | Select-Object -First 1
+            if (-not $row) { throw "$($names[$k]) is not in the tracked repo list" }
+            $ids[$k] = $row.id
+        }
+        $script:P6.Ids = $ids
+
+        # failed build: one step that git rejects, recorded in the build history.
+        $b = '{"target":"main","steps":[{"repoId":' + (ConvertTo-JsonString $ids.failed) + ',"name":"verify","argv":["git","status","--no-such-flag"]}]}'
+        $q = Invoke-Http POST '/api/builds' $b
+        if ($q.Status -ne 202) { throw "POST /api/builds answered $($q.Status): $($q.Body)" }
+        $buildId = (ConvertFrom-Json $q.Body).buildId
+        $deadline = (Get-Date).AddSeconds(60)
+        $st = ''
+        while ((Get-Date) -lt $deadline -and $st -ne 'failed') {
+            Start-Sleep -Milliseconds 300
+            $st = (ConvertFrom-Json (Invoke-Http GET "/api/builds/$buildId").Body).status
+        }
+        if ($st -ne 'failed') { throw "the build is '$st' after 60 s, want failed" }
+
+        # Refresh until the unreadable repo is reported as a problem.
+        $deadline = (Get-Date).AddSeconds(30)
+        $problem = $false
+        while ((Get-Date) -lt $deadline -and -not $problem) {
+            [void](Invoke-Http POST '/api/repos/refresh' '{}')
+            $rows = @((ConvertFrom-Json (Invoke-Http GET '/api/repos').Body).projects[0].repos)
+            $one = @($rows | Where-Object { $_.id -eq $ids.broken }) | Select-Object -First 1
+            if ($one -and $one.view -eq 'problem') { $problem = $true } else { Start-Sleep -Milliseconds 300 }
+        }
+        if (-not $problem) { throw 'the renamed .git folder was not reported as a problem within 30 s' }
+
+        $seen = @{}
+        foreach ($k in @($ids.Keys)) {
+            $cat = Invoke-Http GET "/api/repos/$($ids[$k])/actions"
+            if ($cat.Status -ne 200) { throw "GET /api/repos/$($ids[$k])/actions answered $($cat.Status) for $($names[$k])" }
+            foreach ($o in @((ConvertFrom-Json $cat.Body).offerings)) { $seen[[string]$o.reason] = [string]$o.kind }
+        }
+        $missing = @($P6Reasons | Where-Object { -not $seen.ContainsKey($_) })
+        if ($missing.Count -gt 0) { throw "no offering for: $($missing -join ', ') (got: $(($seen.Keys | Sort-Object) -join ', '))" }
+        $script:Notes.Add('failed_ci has no offering check: it needs a recorded host answer (Go test TestPhase6NeedsAttentionActions)')
+        "$($ids.Count) repos tracked; offerings for $($P6Reasons -join ', '): " + (($P6Reasons | ForEach-Object { "$_=$($seen[$_])" }) -join ', ')
+    }
+
+    Invoke-Check 'P6b' 'notifications and standup answer without a git host' {
+        if (-not $script:P6.Server) { throw 'skipped: the workspace check did not start the server' }
+        $n = Invoke-Http GET '/api/notifications'
+        if ($n.Status -ne 200) { throw "GET /api/notifications answered $($n.Status): $($n.Body)" }
+        $nj = ConvertFrom-Json $n.Body
+        if ($null -eq $nj.PSObject.Properties['notices']) { throw "the notifications answer has no 'notices': $(Get-Tail $n.Body 2)" }
+        $day = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
+        # No YGG_HOST_n is set for this server, so a network read would have nowhere to go: the answer is local data.
+        $s = Invoke-Http GET "/api/projects/$($script:P6.Project)/standup?from=${day}T00:00:00Z&to=${day}T23:59:59Z"
+        if ($s.Status -ne 200) { throw "GET standup answered $($s.Status): $($s.Body)" }
+        if ($s.Body -notmatch 'first commit|Initial commit') { throw "today's standup does not mention the fixture commits: $(Get-Tail $s.Body 3)" }
+        $far = Invoke-Http GET "/api/projects/$($script:P6.Project)/standup?from=2020-01-01T00:00:00Z&to=2020-12-31T00:00:00Z"
+        if ($far.Status -lt 400 -or $far.Status -ge 500) { throw "a range over the limit answered $($far.Status), want a 4xx" }
+        "notifications 200 ($(@($nj.notices).Count) notices); standup 200 from local commits; over-limit range refused ($($far.Status))"
+    }
+
+    Invoke-Check 'P6c' 'the MCP server offers propose_publish and no init or confirm tool' {
+        if (-not $script:P6.Server) { throw 'skipped: the workspace check did not start the server' }
+        $status = Invoke-Http GET '/api/mcp/status'
+        if ($status.Status -ne 200 -or $status.Body -notmatch '"enabled":true') { throw "GET /api/mcp/status answered $($status.Status): $($status.Body)" }
+        $url = [string](ConvertFrom-Json $status.Body).url
+        $path = ([Uri]$url).AbsolutePath
+        # Without a task token the tool server answers 401 and tells nothing.
+        $anon = Invoke-Http POST $path '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' @{ Accept = 'application/json, text/event-stream' }
+        if ($anon.Status -ne 401) { throw "POST $path without a token answered $($anon.Status), want 401" }
+
+        # A task of the fake Claude Code gets an MCP token in a config file named in its arguments.
+        [void](New-Item -ItemType Directory -Force -Path $fakeDir)
+        [IO.File]::WriteAllText((Join-Path $fakeDir 'claude.cmd'), $P6FakeClaude + "`r`n", [Text.Encoding]::ASCII)
+        $task = New-Task ([pscustomobject]@{ Project = $script:P6.Project; Repo = $script:P6.Ids.dirty }) 'claude-code' 'Smoke MCP tools' 'List your tools.'
+        $argsFile = Join-Path $fakeDir 'args.txt'
+        $deadline = (Get-Date).AddSeconds(30)
+        while ((Get-Date) -lt $deadline -and -not (Test-Path -LiteralPath $argsFile)) { Start-Sleep -Milliseconds 250 }
+        if (-not (Test-Path -LiteralPath $argsFile)) { throw 'the fake Claude Code did not start within 30 s' }
+        $argText = [IO.File]::ReadAllText($argsFile)
+        $m = [regex]::Match($argText, '--mcp-config\s+"?([^"\r\n]*ygg-mcp\.json)"?')
+        if (-not $m.Success) { throw "the agent arguments name no MCP config: $(Get-Tail $argText 2)" }
+        $cfg = ConvertFrom-Json ([IO.File]::ReadAllText($m.Groups[1].Value))
+        $srvEntry = @($cfg.mcpServers.PSObject.Properties) | Select-Object -First 1
+        $auth = [string]$srvEntry.Value.headers.Authorization
+        $hdr = @{ Authorization = $auth; Accept = 'application/json, text/event-stream' }
+        $init = Invoke-Http POST $path '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' $hdr
+        if ($init.Status -ne 200) { throw "initialize answered $($init.Status): $(Get-Tail $init.Body 2)" }
+        $sid = [regex]::Match($init.Headers, '(?im)^Mcp-Session-Id:\s*(\S+)')
+        if ($sid.Success) { $hdr['Mcp-Session-Id'] = $sid.Groups[1].Value }
+        [void](Invoke-Http POST $path '{"jsonrpc":"2.0","method":"notifications/initialized"}' $hdr)
+        $tools = Invoke-Http POST $path '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' $hdr
+        if ($tools.Status -ne 200) { throw "tools/list answered $($tools.Status): $(Get-Tail $tools.Body 2)" }
+        if ($tools.Body -notmatch 'propose_publish') { throw "tools/list does not offer propose_publish: $(Get-Tail $tools.Body 3)" }
+        foreach ($bad in @('propose_init', 'init_repo', 'confirm_proposal', 'propose_subtasks')) {
+            if ($tools.Body -match $bad) { throw "tools/list offers '$bad', which must never be an agent tool" }
+        }
+        [void](Invoke-Http POST "/api/tasks/$($task.id)/cancel" '{}')
+        'propose_publish listed; no init, confirm or sub-task tool; unauthenticated call refused (401)'
+    }
+}
+
 # --- real agent checks (-RealAgent) -------------------------------------------
 
 function Invoke-RealChecks {
@@ -735,7 +932,7 @@ try {
     if ($RealAgent) { $mode = 'real Claude Code, model haiku' }
     Write-Host "ygg smoke test: $mode; port $script:Port; temp folder $TempRoot"
 
-    if ($RealAgent) { Invoke-RealChecks } else { Invoke-DefaultChecks }
+    if ($RealAgent) { Invoke-RealChecks } else { Invoke-DefaultChecks; Invoke-Phase6Checks }
 
     # Stop what is still ours on purpose (the real-agent server) before check 8.
     foreach ($s in $script:Servers) {
