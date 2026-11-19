@@ -1,4 +1,5 @@
-// The e2e files run in Node, but the tooling tsconfig carries no @types/node
+/// <reference lib="dom" />
+// The e2e files run in Node and in the page (page.evaluate), so the DOM lib is added above. But the tooling tsconfig carries no @types/node
 // (package.json is foundation-owned). These are the few calls the fixtures use,
 // declared by hand; widen them here when a spec needs another call.
 declare module "node:child_process" {

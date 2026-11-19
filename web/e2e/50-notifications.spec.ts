@@ -33,20 +33,19 @@ async function installFakes(page: Page, initial: "default" | "granted" | "denied
     window.__toasts = [];
     window.__asks = 0;
     window.__vis = "visible";
-    class FakeNotification {
-      constructor(title: string, options?: { body?: string }) {
-        window.__toasts.push({ title, body: options?.body ?? "" });
-      }
-      static get permission(): string {
-        return sessionStorage.getItem(key) ?? "default";
-      }
-      static requestPermission(): Promise<string> {
+    // A constructor function (the app calls `new Notification(title, options)`).
+    const fake = function (title: string, options?: { body?: string }) {
+      window.__toasts.push({ title, body: options?.body ?? "" });
+    };
+    Object.defineProperty(fake, "permission", { get: () => sessionStorage.getItem(key) ?? "default" });
+    Object.defineProperty(fake, "requestPermission", {
+      value: () => {
         window.__asks += 1;
         sessionStorage.setItem(key, "granted");
         return Promise.resolve("granted");
-      }
-    }
-    Object.defineProperty(window, "Notification", { value: FakeNotification, configurable: true });
+      },
+    });
+    Object.defineProperty(window, "Notification", { value: fake, configurable: true });
     Object.defineProperty(document, "visibilityState", { get: () => window.__vis, configurable: true });
     window.__setVisibility = (v) => {
       window.__vis = v;
