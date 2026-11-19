@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -21,8 +22,8 @@ import (
 // case per rejection rule, and a fuzz target.
 
 func isRefusal(err error) bool {
-	_, ok := err.(*refusal6)
-	return ok
+	var r *refusal6
+	return errors.As(err, &r)
 }
 
 func query(raw string) *http.Request {
@@ -297,7 +298,7 @@ func FuzzPlainName(f *testing.F) {
 			t.Fatalf("accepted an over-long name %q", v)
 		}
 		for _, r := range v {
-			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-') {
+			if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '.' && r != '_' && r != '-' {
 				t.Fatalf("accepted %q with %q", v, r)
 			}
 		}
