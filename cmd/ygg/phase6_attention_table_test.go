@@ -108,11 +108,12 @@ func (r *p6Rig) bindActionsWith(t *testing.T, h *hostStub, host hosts.ContextRea
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = svc.Close() })
-	r.a.srv.SetPhase6Services(api.Phase6Services{
-		Actions: actionsAPI{svc: svc},
-		Drafts:  draftAPI{actions: svc, tasks: r.a.tasks, store: r.a.store, now: func() time.Time { return time.Now().UTC() }},
-		Noise:   noiseAPI{scope: scope, proposals: r.a.proposals, creator: creator},
-	})
+	// Replace only the three services this builds; the rest stay as wired.
+	services := r.a.phase6.services
+	services.Actions = actionsAPI{svc: svc}
+	services.Drafts = draftAPI{actions: svc, tasks: r.a.tasks, store: r.a.store, now: func() time.Time { return time.Now().UTC() }}
+	services.Noise = noiseAPI{scope: scope, proposals: r.a.proposals, creator: creator}
+	r.a.srv.SetPhase6Services(services)
 	return scope
 }
 
