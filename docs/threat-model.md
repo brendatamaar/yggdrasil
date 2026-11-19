@@ -77,6 +77,15 @@ Status: draft for v0.4.0 (Phase 3). Covers SF-08 and the safety invariants in do
 - **Port blocks (WE-02).** Blocks are advisory: they prevent collisions between our own worktrees, not a hostile local process. Released blocks stay as history rows.
 - **Docker compose (WE-03), when enabled.** Only `up -d`, `stop`, `down` and `ps`, never `-v`. The compose file lives in a worktree an agent can edit, so the user confirms the file's hash and any change needs a new confirmation. Containers outlive `ygg` on purpose and are not stopped at shutdown. The confirmed hash covers the compose file and the `.env` next to it; a file that uses `include:`, `extends:` or `env_file:` is refused because those files are outside the hash; the file is passed to docker on standard input and hashed again right before `up`, so docker runs what was confirmed. Accepted limits: the `.env` is read by docker from disk, so it can change in the short window between that last hash and docker reading it; a file can bind-mount any host folder, and that is the user's call after seeing the file; and the confirmation is per repo, so another worktree with identical content is confirmed too (the audit entry records the worktree it came from).
 
+## Added in Phase 6 (accepted limits and decisions)
+
+- Workspace actions never run an agent against a main checkout on their own: Ask-mode actions (diagnose, review, propose commits, polish) cannot change a tree, Fix runs in its own Code worktree, and a pull, an ignore edit, a commit, a push, an MR comment, an init and a publish are each a proposal that needs your confirmation, pinned to the head or file hash you saw. A stale pin is refused.
+- Proposals need a task, so pull and ignore proposals hang off a hidden per-repo "anchor" draft task (agent name `ygg-anchor`). It cannot be started and is hidden in the task list and board in the browser only; other API consumers still see it.
+- Host tokens are optional. Without one (or with a read-only token) actions explain what is missing; log and issue text is redacted before it reaches an agent, a standup or a notification.
+- The standup merge request source is a partial view and its build source scans the newest 1000 builds; both say so in the UI.
+- Notifications carry only the task name and status. The browser decides whether a desktop notice shows; real Windows toast behaviour is manual verification.
+- Accepted: the core/tasks issue-reference rule is looser than the host rule used elsewhere (it accepts uppercase and does not check a port); a bracketed IPv6 host is syntax-checked loosely.
+
 ## The one reading of invariant 2
 
 MCP `pull` is a direct tool, not a proposal (decision 2026-10-25): fast-forward only, on a clean tree, with no build or editing task holding the checkout, audited with the old and new commit. `pull` is not offered or allowed in Ask mode (invariant 9). A fast-forward pull changes the working tree of a main checkout, so this is an explicit, narrow exception to "every mutation of a main checkout is a proposal". Fetch changes only refs. Everything else that changes a main checkout or a remote goes through a proposal you confirm.

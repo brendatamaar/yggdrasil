@@ -162,14 +162,14 @@ Goal: parallel worktrees can each run their own app without collisions, in every
 
 Goal: the dashboard becomes the agent's to-do list.
 
-- [ ] CI job logs and issue reading (GH-05, GH-06).
-- [ ] Actions: diagnose/fix failed pipelines, review MRs, propose commits, pull and check, issues to tasks (AC-01–AC-05).
-- [ ] Actions on widget rows, repo rows and in the palette (AC-06).
-- [ ] Noise detection for large untracked file counts (WS-09).
-- [ ] Notifications: in-app plus browser notifications, minimal content (UI-06, D11).
-- [ ] Standup widget with "polish with agent" (AU-02, UI-03).
-- [ ] New repo, direct editing before a remote exists, dependency install, publish to GitHub (NR-01–NR-04).
-- [ ] Empty states (UI-07).
+- [x] CI job logs and issue reading (GH-05, GH-06).
+- [x] Actions: diagnose/fix failed pipelines, review MRs, propose commits, pull and check, issues to tasks (AC-01–AC-05).
+- [x] Actions on widget rows, repo rows and in the palette (AC-06).
+- [x] Noise detection for large untracked file counts (WS-09).
+- [x] Notifications: in-app plus browser notifications, minimal content (UI-06, D11).
+- [x] Standup widget with "polish with agent" (AU-02, UI-03).
+- [x] New repo, direct editing before a remote exists, dependency install, publish to GitHub (NR-01–NR-04).
+- [x] Empty states (UI-07).
 
 **Exit:** every "Needs attention" item has at least one agent action.
 
