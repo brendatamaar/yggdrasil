@@ -172,8 +172,8 @@ Execution log (design approvals, SHAs, review results, decisions, deviations, in
 | Batch 3 | closed (N1, N2, N3a, N3b, P1, P2, Q, TE-1, BF3; reviews PASS; -race clean) | see log | wiring contracts and Considers in the log; `task license` unrunnable locally (verify in CI) |
 | Batch 4 | closed (A1, S, A2, T2, T3, P3, S2, TM2; full gate green) | see log | reviews run together with Batch 5; open items in the log under "Batch 4 closed" |
 
-| Batch 5 | closed pending the safety re-review of the fixes (W1, W2, W3a, W3b, U1, U2, U3, H3, FX1-FX3; Go gate green, test:web 70 files / 708 tests) | e165efd | open items in the log under "Batch 5 review fixes"; Batch 6 next |
-| Batch 6 | not started | | |
+| Batch 5 | closed (W1-W3b, U1-U3, H3, FX1-FX3; safety re-review PASS: no Blocking/Must-fix; Go gate green, test:web 70 files / 708 tests) | e165efd | open items in the log under "Batch 5 review fixes" and "Batch 5 close" |
+| Batch 6 | in progress: E1 (Go) merged, E2 (web/e2e/smoke) merged, FX4 (five defects) merged; race run, build, full gate and phase-close reviews remain | see log | log under "Batch 6" |
 
 ### Workflow for the remaining batches (token budget; adopted 2026-11-16)
 
