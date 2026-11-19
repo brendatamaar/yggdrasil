@@ -187,6 +187,16 @@ export const OutcomeCancelled: StepOutcome = "cancelled";
 export const OutcomeInterrupted: StepOutcome = "interrupted";
 
 //////////
+// source: hostrule.go
+
+/**
+ * MaxHostInstanceLen is the one length limit, in bytes, of a git host instance
+ * ("git.acme.test:8443") wherever one is accepted: the API boundary, MCP
+ * arguments, proposals and the new-repository flow.
+ */
+export const MaxHostInstanceLen = 255;
+
+//////////
 // source: ids.go
 
 /**
