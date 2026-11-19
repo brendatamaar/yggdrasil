@@ -1,6 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { Link } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { ProposalsByIds } from "../proposals";
 import type { ActionState } from "./core";
 import { describePreview, shortHead } from "./describe";
@@ -37,6 +37,10 @@ function titleOf(s: ActionState): string {
 export function ActionDialog({ machine }: { machine: ActionMachine }) {
   const { state } = machine;
   const open = state.tag !== "closed";
+  // The dialog is controlled and has no Dialog.Trigger, so Radix cannot hand focus back. Remember
+  // the element that had focus when the dialog opened and restore it on close (keyboard users keep
+  // their place in the list).
+  const opener = useRef<HTMLElement | null>(null);
   return (
     <Dialog.Root
       open={open}
@@ -49,6 +53,17 @@ export function ActionDialog({ machine }: { machine: ActionMachine }) {
         <Dialog.Content
           className="fixed top-1/2 left-1/2 max-h-[90vh] w-[40rem] max-w-[95vw] -translate-x-1/2 -translate-y-1/2 space-y-3 overflow-auto rounded-md border-2 border-line bg-canvas p-4 text-fg shadow-lg"
           aria-describedby="action-dialog-desc"
+          onOpenAutoFocus={() => {
+            opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          }}
+          onCloseAutoFocus={(e) => {
+            const el = opener.current;
+            opener.current = null;
+            if (el?.isConnected) {
+              e.preventDefault();
+              el.focus();
+            }
+          }}
         >
           <Dialog.Title className="text-base font-semibold">{titleOf(state)}</Dialog.Title>
           <Dialog.Description id="action-dialog-desc" className="text-sm text-muted">

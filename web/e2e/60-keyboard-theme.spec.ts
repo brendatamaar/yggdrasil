@@ -30,12 +30,8 @@ test("the action dialog works from the keyboard: open and focus stays inside", a
   expect(started).toHaveLength(0);
 });
 
-// KNOWN DEFECT (found by this suite): after the action dialog closes with Escape, keyboard focus is
-// not on the button that opened it (activeElement is not the button), so a keyboard user loses
-// their place in the Needs-attention list. The dialog is controlled without a Dialog.Trigger, so
-// Radix has nothing to hand focus back to. Repro: Tab to "Diagnose repo" on the home page, press
-// Enter, press Escape, read document.activeElement. Skipped until the production code restores focus.
-test.skip("KNOWN DEFECT: Escape returns focus to the button that opened the action dialog", async ({ page }) => {
+// Regression: Escape returns focus to the button that opened the action dialog (found by this suite).
+test("Escape returns focus to the button that opened the action dialog", async ({ page }) => {
   await fakeAgentStarts(page);
   await page.goto("/");
   const button = page.getByRole("list", { name: `Actions for ${REPOS.conflicts}` }).getByRole("button", { name: "Diagnose repo" });

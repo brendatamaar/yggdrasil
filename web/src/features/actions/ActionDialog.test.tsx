@@ -199,6 +199,21 @@ describe("action dialog", () => {
     expect(api.calls.filter((c) => c.path === "/api/actions/execute")).toHaveLength(0);
   });
 
+  it("Escape returns focus to the button that opened the dialog", async () => {
+    stubApi(server({}));
+    await renderWidget(Harness);
+    const opener = screen.getByRole("button", { name: "Open action" });
+    opener.focus();
+    await openAndPreview();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(opener);
+    });
+  });
+
   it("closing while the request is out does not cancel it, and reopening the same action does not make a second request key", async () => {
     let release: (r: Response) => void = () => undefined;
     const api = stubApi(server({}));
