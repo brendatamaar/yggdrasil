@@ -36,10 +36,16 @@ func oracleUTF8(s string) bool {
 	return true
 }
 
-// oracleID: a non-empty identifier with no space, tab, CR, LF, slash or backslash.
+// oracleID: a non-empty identifier with no space, tab, CR, LF, slash,
+// backslash or control character (C0, DEL, C1).
 func oracleID(s string) bool {
 	if s == "" {
 		return false
+	}
+	for _, r := range s {
+		if r < 0x20 || (r >= 0x7f && r <= 0x9f) {
+			return false
+		}
 	}
 	for i := 0; i < len(s); i++ {
 		switch s[i] {

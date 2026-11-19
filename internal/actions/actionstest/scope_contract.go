@@ -39,17 +39,6 @@ type ScopeRig struct {
 	Untrack func(t *testing.T, repo core.RepoID)
 	Dirty   func(t *testing.T, repo core.RepoID)
 	Break   func(t *testing.T, repo core.RepoID)
-	// Known maps a clause name to a production defect it exposes in this
-	// implementation; the clause is skipped with a KNOWN DEFECT message.
-	Known map[string]string
-}
-
-// skipKnown skips the clause when the rig lists it as a known defect.
-func skipKnown(t *testing.T, known map[string]string, clause string) {
-	t.Helper()
-	if why := known[clause]; why != "" {
-		t.Skip("KNOWN DEFECT: " + why)
-	}
 }
 
 const unknownRepo = core.RepoID("rep_0000000000000000")
@@ -123,7 +112,6 @@ func ScopeReaderContract(t *testing.T, mk func(t *testing.T) ScopeRig) {
 
 	t.Run("unreadable folder has no pin", func(t *testing.T) {
 		r := mk(t)
-		skipKnown(t, r.Known, "unreadable folder has no pin")
 		repo := r.Repo(t, true)
 		r.Break(t, repo.ID)
 		f, err := r.Reader.Facts(ctx, repo.ID)

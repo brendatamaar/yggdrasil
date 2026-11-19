@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/brendatamaar/yggdrasil/internal/core"
 )
 
 // Argument limits. The proposals core re-checks every propose_* value; these
@@ -25,7 +27,6 @@ const (
 	MaxIgnoreBytes   = 4 << 10
 	MaxCommentBytes  = 16 << 10
 	maxAccountLen    = 100
-	maxHostLen       = 255
 	// MaxMRNumber keeps a merge request number well inside every host's range.
 	MaxMRNumber = 1 << 30
 
@@ -411,9 +412,8 @@ func checkAccount(what, v string) error {
 
 // checkHost: a lowercase host name with no space, slash, backslash or @.
 func checkHost(v string) error {
-	if v == "" || len(v) > maxHostLen || v != strings.ToLower(v) || !utf8.ValidString(v) ||
-		strings.ContainsFunc(v, func(c rune) bool { return c <= ' ' || c == '/' || c == '\\' || c == '@' || c == 0x7f }) {
-		return bad("the host is not valid; use its lowercase name such as git.example.com")
+	if core.ValidateHostInstance(v) != nil {
+		return bad("the host is not valid; use its lowercase name such as git.example.com, with an optional port")
 	}
 	return nil
 }

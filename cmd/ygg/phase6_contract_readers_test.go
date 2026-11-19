@@ -44,7 +44,6 @@ func TestScopeReaderContractRealAdapter(t *testing.T) {
 		dirs := map[core.RepoID]*p6Repo{}
 		n := 0
 		return actionstest.ScopeRig{
-			Known:  map[string]string{"unreadable folder has no pin": "scopeReader.Facts of an unreadable repo keeps the last status snapshot's HEAD as the pin (the live read is skipped when the view is a Problem), so a stale head is pinned; FX3 intended an empty pin"},
 			Reader: r.scopeReader(),
 			Repo: func(t *testing.T, up bool) actionstest.Tracked {
 				p := r.newRepo(t)
@@ -122,7 +121,6 @@ func TestContextReaderContractRealAdapter(t *testing.T) {
 		scope := r.scopeReader()
 		reader := &contextReader{scope: scope, host: noHostReader{}, store: r.a.store, logs: stub, git: r.a.git, redact: redactorForTest()}
 		return actionstest.ContextRig{
-			Known:  map[string]string{"diff of a clean repo": "contextReader.Diff of a clean repo fails with 'git check paths: invalid git argument' (git.DiffHash with no paths) instead of returning an empty diff or a plain-language refusal"},
 			Reader: reader, Repo: main.id, OtherRepo: other.id,
 			Head: func(t *testing.T) string { return r.head(t, main) },
 			Edit: func(t *testing.T, name string) []string {

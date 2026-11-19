@@ -230,8 +230,7 @@ func (s PublishSpec) Validate() error {
 	if s.Repo.Validate() != nil {
 		return invalid("the repo id is not valid")
 	}
-	if s.HostInstance == "" || s.HostInstance != strings.ToLower(s.HostInstance) ||
-		strings.ContainsFunc(s.HostInstance, func(c rune) bool { return c <= ' ' || c == '/' || c == '\\' || c == '@' || c == 0x7f }) {
+	if core.ValidateHostInstance(s.HostInstance) != nil {
 		return invalid("the host is not valid")
 	}
 	if err := checkAccountName("owner", s.Owner, MaxOwner); err != nil {

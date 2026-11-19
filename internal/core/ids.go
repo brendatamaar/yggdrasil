@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 // Typed IDs keep a task ID from being passed where a repo ID is expected.
@@ -34,11 +35,12 @@ type (
 	OperationID string
 )
 
-// ErrInvalidID is returned for empty IDs or IDs with whitespace.
+// ErrInvalidID is returned for empty IDs or IDs with whitespace, slashes or
+// control characters (NUL, escape, DEL and the rest).
 var ErrInvalidID = errors.New("invalid id")
 
 func checkID(kind, id string) error {
-	if id == "" || strings.ContainsAny(id, " \t\r\n/\\") {
+	if id == "" || strings.ContainsAny(id, " \t\r\n/\\") || strings.ContainsFunc(id, unicode.IsControl) {
 		return fmt.Errorf("%s %q: %w", kind, id, ErrInvalidID)
 	}
 	return nil

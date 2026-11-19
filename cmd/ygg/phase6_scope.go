@@ -173,7 +173,8 @@ func (s *scopeReader) Facts(ctx context.Context, id core.RepoID) (coreactions.Fa
 			f.Reasons = append(f.Reasons, coreactions.ReasonDirty)
 		}
 		f.UntrackedCount = snap.Untracked
-		if snap.LastCommit != nil {
+		// An unreadable folder has no pin: the snapshot's head is stale.
+		if snap.LastCommit != nil && !problem {
 			f.Head = snap.LastCommit.OID
 		}
 	}
@@ -436,9 +437,13 @@ func (c *contextReader) Diff(ctx context.Context, repo core.RepoID) (actions.Dif
 			paths = append(paths, f.Path)
 		}
 	}
-	hash, err := c.git.DiffHash(ctx, r.Path, paths)
-	if err != nil {
-		return actions.DiffContext{}, fmt.Errorf("fingerprint the changes of repo %s: %w", repo, err)
+	// A clean repo has no changes to pin: no paths, no text and no hash (git
+	// refuses a fingerprint over zero paths), never an error.
+	var hash string
+	if len(paths) > 0 {
+		if hash, err = c.git.DiffHash(ctx, r.Path, paths); err != nil {
+			return actions.DiffContext{}, fmt.Errorf("fingerprint the changes of repo %s: %w", repo, err)
+		}
 	}
 	var text strings.Builder
 	for _, mode := range []git.DiffMode{git.DiffStaged, git.DiffWorktree} {
