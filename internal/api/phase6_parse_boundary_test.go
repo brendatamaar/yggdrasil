@@ -396,13 +396,11 @@ func TestParseRequestIDRules(t *testing.T) {
 	}
 }
 
-// KNOWN DEFECT: core.checkID only refuses empty IDs and space, tab, CR, LF and
-// slashes, so a client request ID with a NUL or another control character
-// (parseRequestID("req\x00")) is accepted and stored. Correct behaviour: refuse.
+// A client request ID with a NUL or another control character is refused.
 func TestParseRequestIDRefusesControlCharacters(t *testing.T) {
 	for _, v := range []string{"req\x00", "req\x1b[31m", "req\x7f"} {
 		if _, err := parseRequestID(v); err == nil {
-			t.Skipf("KNOWN DEFECT: request ID %q is accepted (core.checkID lets control characters through)", v)
+			t.Errorf("request ID %q is accepted (control characters must be refused)", v)
 		}
 	}
 }

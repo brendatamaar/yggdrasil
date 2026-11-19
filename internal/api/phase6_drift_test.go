@@ -79,10 +79,9 @@ func TestPublishAccountRulesDoNotDrift(t *testing.T) {
 	}
 }
 
-// KNOWN DEFECT: core/hosts.InstanceID is host[:port] ("git.acme.test:8443"),
-// and core/mcp, core/proposals and core/newrepos accept a port in the host, but
-// the API boundary rejects ':' so a self-hosted instance with a port can never
-// be published to from the UI. Correct behaviour: the four rules agree.
+// core/hosts.InstanceID is host[:port] ("git.acme.test:8443"); the four rules
+// share core.ValidateHostInstance, so a self-hosted instance with a port can be
+// published to from the UI and the four always agree.
 func TestPublishHostRulesDoNotDrift(t *testing.T) {
 	var drift []string
 	for _, h := range []string{
@@ -97,7 +96,7 @@ func TestPublishHostRulesDoNotDrift(t *testing.T) {
 		}
 	}
 	if len(drift) > 0 {
-		t.Skipf("KNOWN DEFECT: the host rules differ between api and the core packages: %s", strings.Join(drift, "; "))
+		t.Errorf("the host rules differ between api and the core packages: %s", strings.Join(drift, "; "))
 	}
 }
 
@@ -123,14 +122,12 @@ func TestCorePublishHostRulesAgree(t *testing.T) {
 	}
 }
 
-// KNOWN DEFECT: core/mcp refuses a host over 255 bytes but core/proposals and
-// core/newrepos have no length limit (and the api limit is 100). Correct
-// behaviour: one bound everywhere.
+// One bound everywhere: core.MaxHostInstanceLen.
 func TestCoreHostLengthDoesNotDrift(t *testing.T) {
 	h := strings.Repeat("a", 300)
 	if mcpAccepts(h, "acme", "shop-api") != proposalsAccepts(h, "acme", "shop-api") ||
 		proposalsAccepts(h, "acme", "shop-api") != newreposAccepts(h, "acme", "shop-api") {
-		t.Skipf("KNOWN DEFECT: a 300 byte host is mcp=%v proposals=%v newrepos=%v", mcpAccepts(h, "acme", "shop-api"), proposalsAccepts(h, "acme", "shop-api"), newreposAccepts(h, "acme", "shop-api"))
+		t.Errorf("a 300 byte host is mcp=%v proposals=%v newrepos=%v", mcpAccepts(h, "acme", "shop-api"), proposalsAccepts(h, "acme", "shop-api"), newreposAccepts(h, "acme", "shop-api"))
 	}
 }
 

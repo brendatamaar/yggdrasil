@@ -301,8 +301,7 @@ func (a PublishRepo) Validate() error {
 	if a.Operation.Validate() != nil || a.Repo.Validate() != nil {
 		return invalid("the operation or repo id is not valid")
 	}
-	if a.HostInstance == "" || a.HostInstance != strings.ToLower(a.HostInstance) ||
-		strings.ContainsFunc(a.HostInstance, func(c rune) bool { return c <= ' ' || c == '/' || c == '\\' || c == '@' || c == 0x7f }) {
+	if core.ValidateHostInstance(a.HostInstance) != nil {
 		return invalid("the host is not valid")
 	}
 	if err := checkAccount("owner", a.Owner); err != nil {

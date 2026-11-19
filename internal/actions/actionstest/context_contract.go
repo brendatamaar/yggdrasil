@@ -37,9 +37,6 @@ type ContextRig struct {
 	Untrack func(t *testing.T)
 	// NoTokenKey is a host context key whose host has no token configured.
 	NoTokenKey corehosts.ContextKey
-	// Known maps a clause name to a production defect it exposes in this
-	// implementation; the clause is skipped with a KNOWN DEFECT message.
-	Known map[string]string
 }
 
 // ContextReaderContract states what every actions.ContextReader promises:
@@ -91,7 +88,6 @@ func ContextReaderContract(t *testing.T, mk func(t *testing.T) ContextRig) {
 
 	t.Run("diff of a clean repo", func(t *testing.T) {
 		r := mk(t)
-		skipKnown(t, r.Known, "diff of a clean repo")
 		d, err := r.Reader.Diff(ctx, r.Repo)
 		if err != nil || len(d.Paths) != 0 || d.Text != "" || d.Truncated || d.Head != r.Head(t) {
 			t.Fatalf("diff = %+v, %v; want no paths, no text and the current head", d, err)

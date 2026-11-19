@@ -353,8 +353,7 @@ func accountName(what, v string, max int) error {
 }
 
 func parsePublishPreview(req PublishPreviewRequest) error {
-	if req.HostInstance == "" || len(req.HostInstance) > 100 || req.HostInstance != strings.ToLower(req.HostInstance) ||
-		strings.ContainsFunc(req.HostInstance, func(c rune) bool { return c <= ' ' || c == '/' || c == '\\' || c == '@' || c == ':' || c == 0x7f }) {
+	if core.ValidateHostInstance(req.HostInstance) != nil {
 		return reject6("The host isn't valid.")
 	}
 	if err := accountName("owner", req.Owner, newrepos.MaxOwner); err != nil {

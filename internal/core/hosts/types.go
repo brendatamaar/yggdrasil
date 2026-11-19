@@ -9,7 +9,6 @@ package hosts
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
@@ -23,9 +22,7 @@ type InstanceID string
 // whitespace, slash or control character.
 func (id InstanceID) Validate() error {
 	s := string(id)
-	if s == "" || s != strings.ToLower(s) || strings.ContainsFunc(s, func(r rune) bool {
-		return r <= ' ' || r == 0x7f || r == '/' || r == '\\' || r == '@'
-	}) {
+	if core.ValidateHostInstance(s) != nil {
 		return fmt.Errorf("invalid host instance id %q", s)
 	}
 	return nil
