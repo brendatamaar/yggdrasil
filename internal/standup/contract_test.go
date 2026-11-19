@@ -110,3 +110,12 @@ func (s *gitSource) ListRepos(context.Context, core.ProjectID) ([]core.Repo, err
 	defer s.mu.Unlock()
 	return append([]core.Repo(nil), s.repos...), nil
 }
+
+// The fake polisher runs the same suite as the real one (TestPolisherContractRealAdapter
+// in cmd/ygg).
+func TestPolisherContractFake(t *testing.T) {
+	standuptest.PolisherContract(t, func(*testing.T) standuptest.PolishRig {
+		f := &standuptest.Polisher{Project: "prj_known"}
+		return standuptest.PolishRig{Polisher: f, Project: "prj_known", Unknown: "prj_unknown", Tasks: f.TaskCount}
+	})
+}
