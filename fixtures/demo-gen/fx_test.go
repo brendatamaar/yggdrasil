@@ -245,6 +245,21 @@ func copyTree(t *testing.T, src, dst string) {
 	}
 }
 
+// buildServer compiles the Go fixture server in dir and returns the binary's path.
+// Running the binary directly (not through `go run`) means killing the process
+// at cleanup stops the server itself; on Windows the child of `go run` would
+// outlive its parent and keep the folder locked.
+func buildServer(t *testing.T, dir string) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "server.exe")
+	cmd := exec.Command("go", "build", "-o", bin, ".") //nolint:forbidigo // test of a fixture server, not product code
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build the fixture server in %s: %v\n%s", dir, err, out)
+	}
+	return bin
+}
+
 // startServer runs a dev server in dir with PORT and waits for its
 // "Listening on" line. The process is killed at test end.
 func startServer(t *testing.T, dir string, port int, name string, args ...string) {
@@ -327,7 +342,7 @@ func TestFixtures_PairRunsSideBySide(t *testing.T) {
 		copyTree(t, filepath.Join(proj, "shop-api-dev"), apiDir)
 		copyTree(t, filepath.Join(proj, "shop-web-dev"), webDir)
 		p := pair{wt: wt, api: freePort(t)}
-		startServer(t, apiDir, p.api, "go", "run", ".")
+		startServer(t, apiDir, p.api, buildServer(t, apiDir))
 		p.web = freePort(t)
 		// The web server learns its API through YGG_PORT_1, like the block of
 		// ports Yggdrasil gives a worktree.
