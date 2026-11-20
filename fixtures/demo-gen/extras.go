@@ -160,7 +160,7 @@ func buildShopInventory(b *builder) {
 	const stockPath = "src/inventory/stock.py"
 
 	b.commit("main", dana, "chore: initial uv project",
-		f("pyproject.toml", "[project]\nname = \"shop-inventory\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\ndependencies = [\"fastapi>=0.110\"]\n\n[dependency-groups]\ndev = [\"pytest>=8\"]\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n"),
+		f("pyproject.toml", "[project]\nname = \"shop-inventory\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\ndependencies = [\"fastapi>=0.110\"]\n\n[dependency-groups]\ndev = [\"pytest>=8\"]\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\npythonpath = [\"src\"]\n"),
 		f("uv.lock", "version = 1\nrequires-python = \">=3.11\"\n\n[[package]]\nname = \"shop-inventory\"\nversion = \"0.1.0\"\nsource = { virtual = \".\" }\n"),
 		f(".python-version", "3.12\n"),
 		f(".gitignore", ".venv/\n__pycache__/\n"),
@@ -179,7 +179,7 @@ func buildShopInventory(b *builder) {
 	// of date and resolves again.
 	b.branch("chore/bump-deps", "main")
 	b.commit("chore/bump-deps", dana, "build: add httpx and refresh uv.lock",
-		f("pyproject.toml", "[project]\nname = \"shop-inventory\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\ndependencies = [\"fastapi>=0.110\", \"httpx>=0.27\"]\n\n[dependency-groups]\ndev = [\"pytest>=8\"]\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n"),
+		f("pyproject.toml", "[project]\nname = \"shop-inventory\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\ndependencies = [\"fastapi>=0.110\", \"httpx>=0.27\"]\n\n[dependency-groups]\ndev = [\"pytest>=8\"]\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\npythonpath = [\"src\"]\n"),
 		f("uv.lock", "version = 1\nrequires-python = \">=3.11\"\n\n[[package]]\nname = \"shop-inventory\"\nversion = \"0.1.0\"\nsource = { virtual = \".\" }\n\n[package.metadata]\nrequires-dist = [\n    { name = \"httpx\", specifier = \">=0.27\" },\n]\n"))
 
 	b.branch("feature/low-stock-alert", "main")
