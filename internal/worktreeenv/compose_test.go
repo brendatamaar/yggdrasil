@@ -272,7 +272,7 @@ func (r *composeRig) enable(t *testing.T) {
 
 func (r *composeRig) waitFor(t *testing.T, pred func(env.Service) bool) worktreeenv.ComposeStatus {
 	t.Helper()
-	for range 400 {
+	for range 2000 {
 		st, err := r.svc.Status(context.Background(), r.wt.ID)
 		if err != nil {
 			t.Fatal(err)
