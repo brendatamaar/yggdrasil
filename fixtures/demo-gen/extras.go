@@ -161,7 +161,7 @@ func buildShopInventory(b *builder) {
 
 	b.commit("main", dana, "chore: initial uv project",
 		f("pyproject.toml", "[project]\nname = \"shop-inventory\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\ndependencies = [\"fastapi>=0.110\"]\n\n[dependency-groups]\ndev = [\"pytest>=8\"]\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n"),
-		f("uv.lock", "version = 1\nrequires-python = \">=3.11\"\n\n[[package]]\nname = \"shop-inventory\"\nversion = \"0.1.0\"\nsource = { editable = \".\" }\n"),
+		f("uv.lock", "version = 1\nrequires-python = \">=3.11\"\n\n[[package]]\nname = \"shop-inventory\"\nversion = \"0.1.0\"\nsource = { virtual = \".\" }\n"),
 		f(".python-version", "3.12\n"),
 		f(".gitignore", ".venv/\n__pycache__/\n"),
 		f("README.md", "# shop-inventory\n\nStock levels for acme-shop.\n\n    uv sync\n    uv run pytest\n"),
@@ -173,11 +173,14 @@ func buildShopInventory(b *builder) {
 	b.push("main")
 
 	// Second venv state: a branch whose uv.lock and dependencies differ from
-	// main, so a venv built on main is stale on this branch.
+	// main, so a venv built on main is stale on this branch. The lock files are
+	// small on purpose and valid for current uv (every package has a source and
+	// nothing refers to a package the file does not list); uv sees they are out
+	// of date and resolves again.
 	b.branch("chore/bump-deps", "main")
 	b.commit("chore/bump-deps", dana, "build: add httpx and refresh uv.lock",
 		f("pyproject.toml", "[project]\nname = \"shop-inventory\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\ndependencies = [\"fastapi>=0.110\", \"httpx>=0.27\"]\n\n[dependency-groups]\ndev = [\"pytest>=8\"]\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n"),
-		f("uv.lock", "version = 1\nrequires-python = \">=3.11\"\n\n[[package]]\nname = \"shop-inventory\"\nversion = \"0.1.0\"\nsource = { editable = \".\" }\ndependencies = [\n    { name = \"httpx\" },\n]\n"))
+		f("uv.lock", "version = 1\nrequires-python = \">=3.11\"\n\n[[package]]\nname = \"shop-inventory\"\nversion = \"0.1.0\"\nsource = { virtual = \".\" }\n\n[package.metadata]\nrequires-dist = [\n    { name = \"httpx\", specifier = \">=0.27\" },\n]\n"))
 
 	b.branch("feature/low-stock-alert", "main")
 	b.commit("feature/low-stock-alert", ada, "feat(stock): lower the low-stock threshold",
