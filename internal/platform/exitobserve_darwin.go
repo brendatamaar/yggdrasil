@@ -3,6 +3,7 @@ package platform
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"syscall"
 
@@ -86,9 +87,12 @@ func (o *darwinExitObserver) wait() error {
 		if n == 1 {
 			ev := events[0]
 			if ev.Flags&unix.EV_ERROR != 0 {
-				return syscall.Errno(ev.Data)
+				if ev.Data < 0 || ev.Data > math.MaxInt32 {
+					return fmt.Errorf("process watch failed with code %d", ev.Data)
+				}
+				return syscall.Errno(uint32(ev.Data))
 			}
-			if ev.Ident == uint64(o.pid) && ev.Filter == unix.EVFILT_PROC && ev.Fflags&unix.NOTE_EXIT != 0 {
+			if o.pid >= 0 && ev.Ident == uint64(o.pid) && ev.Filter == unix.EVFILT_PROC && ev.Fflags&unix.NOTE_EXIT != 0 {
 				return nil
 			}
 			return fmt.Errorf("unexpected process exit event: %+v", ev)

@@ -23,7 +23,7 @@ func descendants(root int) []int {
 	if err != nil {
 		return nil
 	}
-	defer windows.CloseHandle(snap)
+	defer func() { _ = windows.CloseHandle(snap) }() // test helper: nothing to do on failure
 	parent := map[int]int{}
 	var e windows.ProcessEntry32
 	e.Size = uint32(unsafe.Sizeof(e))
@@ -59,7 +59,7 @@ func pidAlive(pid int) bool {
 	if err != nil {
 		return false // gone (or never ours)
 	}
-	defer windows.CloseHandle(h)
+	defer func() { _ = windows.CloseHandle(h) }() // test helper: nothing to do on failure
 	ev, err := windows.WaitForSingleObject(h, 0)
 	return err == nil && ev == uint32(windows.WAIT_TIMEOUT)
 }
@@ -70,6 +70,6 @@ func killPid(pid int) {
 	if err != nil {
 		return
 	}
-	defer windows.CloseHandle(h)
+	defer func() { _ = windows.CloseHandle(h) }() // test helper: nothing to do on failure
 	_ = windows.TerminateProcess(h, 1)
 }

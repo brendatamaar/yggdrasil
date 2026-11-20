@@ -3,8 +3,9 @@
 package platform
 
 import (
-	"golang.org/x/sys/windows"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
 
 func waitTerminationExit(t *testing.T, p Process, permitExit func()) {
@@ -13,7 +14,7 @@ func waitTerminationExit(t *testing.T, p Process, permitExit func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer windows.CloseHandle(h)
+	defer func() { _ = windows.CloseHandle(h) }() // test helper: nothing to do on failure
 	permitExit()
 	result, err := windows.WaitForSingleObject(h, 10000)
 	if err != nil || result != windows.WAIT_OBJECT_0 {
