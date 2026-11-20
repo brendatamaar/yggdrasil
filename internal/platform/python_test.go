@@ -25,6 +25,16 @@ func fakeExe(t *testing.T, dir, name string) string {
 	return p
 }
 
+// samePath compares two file paths the way the OS does: Windows paths are
+// case-insensitive, and lookPath returns the extension as PATHEXT spells it
+// (python3.EXE), not as the file was created (python3.exe).
+func samePath(got, want string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(got, want)
+	}
+	return got == want
+}
+
 func TestPythonBaseUsesPathOfEnv(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "my tools")
 	want := fakeExe(t, bin, "python3")
@@ -32,7 +42,7 @@ func TestPythonBaseUsesPathOfEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != want {
+	if !samePath(got, want) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
@@ -41,7 +51,7 @@ func TestPythonBaseFallsBackToPython(t *testing.T) {
 	bin := t.TempDir()
 	want := fakeExe(t, bin, "python")
 	got, err := PythonBase([]string{"PATH=" + bin})
-	if err != nil || got != want {
+	if err != nil || !samePath(got, want) {
 		t.Fatalf("got %q, %v; want %q", got, err, want)
 	}
 }
@@ -56,7 +66,7 @@ func TestPythonBaseIgnoresVirtualEnv(t *testing.T) {
 	want := fakeExe(t, system, "python3")
 
 	got, err := PythonBase([]string{"VIRTUAL_ENV=" + venv, "PATH=" + system})
-	if err != nil || got != want {
+	if err != nil || !samePath(got, want) {
 		t.Fatalf("got %q, %v; want %q", got, err, want)
 	}
 	// With nothing on the PATH it fails instead of using the venv.
