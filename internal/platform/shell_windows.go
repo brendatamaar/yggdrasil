@@ -67,16 +67,47 @@ func mustGUID(s string) windows.GUID {
 	return g
 }
 
+// ePointer is E_POINTER, what a call on a missing interface reports.
+const ePointer = 0x80004003
+
+// errExplorerUnavailable means there is no Explorer shell to talk to (a
+// headless session, a service, a locked-down runner). Callers and tests treat
+// it as "cannot launch through Explorer here", not as a bug.
+var errExplorerUnavailable = errors.New("windows explorer is not available")
+
 // iface is the memory layout of any COM interface pointer.
 type iface struct{ vtbl *[32]uintptr }
 
+// call invokes a vtable slot. A nil interface (or one without a vtable, or an
+// empty slot) reports E_POINTER instead of crashing.
 func (o *iface) call(slot int, args ...uintptr) uintptr {
+	if o == nil || o.vtbl == nil || slot < 0 || slot >= len(o.vtbl) || o.vtbl[slot] == 0 {
+		return ePointer
+	}
 	all := append([]uintptr{ptr(o)}, args...)
 	r, _, _ := syscall.SyscallN(o.vtbl[slot], all...)
 	return r
 }
 
-func (o *iface) release() { o.call(slotRelease) }
+// release drops one reference; it does nothing on a nil interface.
+func (o *iface) release() {
+	if o != nil {
+		o.call(slotRelease)
+	}
+}
+
+// heapNew returns a zeroed T that lives on the heap and stays alive and in place
+// until pin.Unpin. COM writes its out-values through raw addresses (ptr turns a
+// pointer into a uintptr), and Go does not track such an address: a local the
+// compiler keeps on the stack moves when the stack grows, so the callee would
+// write into the old copy and the local would stay zero (a nil interface after
+// a successful HRESULT). The race build grows stacks more often and showed it.
+// Pinning forces the object to the heap, where it never moves.
+func heapNew[T any](pin *runtime.Pinner) *T {
+	p := new(T)
+	pin.Pin(p)
+	return p
+}
 
 // failed reports a failing HRESULT (high bit set).
 func failed(hr uintptr) bool { return hr&0x80000000 != 0 }
@@ -115,12 +146,22 @@ func bstrVariant(s string) (variant, error) {
 // invoke calls a method or property of an IDispatch by name. args are in
 // natural order.
 func invoke(d *iface, name string, flags uintptr, args ...variant) (variant, error) {
-	n, err := windows.UTF16PtrFromString(name)
+	if d == nil {
+		return variant{}, fmt.Errorf("%s: no object to call (HRESULT 0x%x)", name, ePointer)
+	}
+	w, err := windows.UTF16PtrFromString(name)
 	if err != nil {
 		return variant{}, err
 	}
-	var id uint32
-	if hr := d.call(slotGetIDsOfNames, ptr(&iidNull), ptr(&n), 1, 0, ptr(&id)); failed(hr) {
+	// Everything COM reads or writes through a raw address is pinned on the
+	// heap (see heapNew).
+	var pin runtime.Pinner
+	defer pin.Unpin()
+	n := heapNew[*uint16](&pin)
+	*n = w
+	pin.Pin(w)
+	id := heapNew[uint32](&pin)
+	if hr := d.call(slotGetIDsOfNames, ptr(&iidNull), ptr(n), 1, 0, ptr(id)); failed(hr) {
 		return variant{}, fmt.Errorf("no member %s (HRESULT 0x%x)", name, hr)
 	}
 	// Invoke wants the arguments in reverse order.
@@ -128,15 +169,17 @@ func invoke(d *iface, name string, flags uintptr, args ...variant) (variant, err
 	for i, a := range args {
 		rev[len(args)-1-i] = a
 	}
-	dp := dispParams{cArgs: uint32(len(rev))} //nolint:gosec // at most 5 arguments
+	dp := heapNew[dispParams](&pin)
+	dp.cArgs = uint32(len(rev)) //nolint:gosec // at most 5 arguments
 	if len(rev) > 0 {
+		pin.Pin(&rev[0])
 		dp.args = &rev[0]
 	}
-	var res variant
-	if hr := d.call(slotInvoke, uintptr(id), ptr(&iidNull), 0, flags, ptr(&dp), ptr(&res), 0, 0); failed(hr) {
+	res := heapNew[variant](&pin)
+	if hr := d.call(slotInvoke, uintptr(*id), ptr(&iidNull), 0, flags, ptr(dp), ptr(res), 0, 0); failed(hr) {
 		return variant{}, fmt.Errorf("%s failed (HRESULT 0x%x)", name, hr)
 	}
-	return res, nil
+	return *res, nil
 }
 
 // shellExecute asks Explorer to run file with args (a ready command-line
@@ -164,6 +207,9 @@ func shellExecuteSTA(file, args, dir string) error {
 	app, err := explorerApplication()
 	if err != nil {
 		return fmt.Errorf("%s: %w", hint, err)
+	}
+	if app == nil {
+		return fmt.Errorf("%s: %w", hint, errExplorerUnavailable)
 	}
 	defer app.release()
 
@@ -195,49 +241,57 @@ func shellExecuteSTA(file, args, dir string) error {
 // explorerApplication returns the Shell.Application object that lives in
 // Explorer's own process: desktop shell view -> its Application property.
 func explorerApplication() (*iface, error) {
-	var sw *iface
-	hr, _, _ := procCoCreate.Call(ptr(&clsidShellWindows), 0, clsctxLocalServer, ptr(&iidShellWindows), ptr(&sw))
+	var pin runtime.Pinner
+	defer pin.Unpin()
+	// All out-values live in one pinned heap block (see heapNew).
+	out := heapNew[struct {
+		sw, desktop, sp, sb, sv, bg *iface
+		hwnd                        int32
+		vLoc, vRoot                 variant
+	}](&pin)
+	out.vLoc = variant{vt: vtI4} // CSIDL_DESKTOP = 0
+	out.vRoot = variant{vt: vtEmpty}
+
+	hr, _, _ := procCoCreate.Call(ptr(&clsidShellWindows), 0, clsctxLocalServer, ptr(&iidShellWindows), ptr(&out.sw))
 	if failed(hr) {
-		return nil, fmt.Errorf("windows explorer is not available (HRESULT 0x%x)", hr)
+		return nil, fmt.Errorf("%w (HRESULT 0x%x)", errExplorerUnavailable, hr)
 	}
-	defer sw.release()
+	if out.sw == nil {
+		return nil, fmt.Errorf("%w (no shell windows object)", errExplorerUnavailable)
+	}
+	defer out.sw.release()
 
-	vLoc := variant{vt: vtI4} // CSIDL_DESKTOP = 0
-	vRoot := variant{vt: vtEmpty}
-	var hwnd int32
-	var desktop *iface
-	if hr := sw.call(slotFindWindowSW, ptr(&vLoc), ptr(&vRoot), swcDesktop, ptr(&hwnd), swfoNeedDispatch, ptr(&desktop)); failed(hr) || hr != 0 {
-		return nil, fmt.Errorf("no desktop shell window (HRESULT 0x%x)", hr)
+	if hr := out.sw.call(slotFindWindowSW, ptr(&out.vLoc), ptr(&out.vRoot), swcDesktop, ptr(&out.hwnd), swfoNeedDispatch, ptr(&out.desktop)); failed(hr) || hr != 0 {
+		return nil, fmt.Errorf("%w (no desktop shell window, HRESULT 0x%x)", errExplorerUnavailable, hr)
 	}
-	defer desktop.release()
+	if out.desktop == nil {
+		return nil, fmt.Errorf("%w (no desktop shell window)", errExplorerUnavailable)
+	}
+	defer out.desktop.release()
 
-	var sp *iface
-	if hr := desktop.call(slotQueryInterface, ptr(&iidServiceProv), ptr(&sp)); failed(hr) {
-		return nil, fmt.Errorf("shell window has no service provider (HRESULT 0x%x)", hr)
+	if hr := out.desktop.call(slotQueryInterface, ptr(&iidServiceProv), ptr(&out.sp)); failed(hr) || out.sp == nil {
+		return nil, fmt.Errorf("%w (shell window has no service provider, HRESULT 0x%x)", errExplorerUnavailable, hr)
 	}
-	defer sp.release()
-	var sb *iface
-	if hr := sp.call(slotQueryService, ptr(&sidTopLevelBrowse), ptr(&iidShellBrowser), ptr(&sb)); failed(hr) {
-		return nil, fmt.Errorf("no shell browser (HRESULT 0x%x)", hr)
+	defer out.sp.release()
+	if hr := out.sp.call(slotQueryService, ptr(&sidTopLevelBrowse), ptr(&iidShellBrowser), ptr(&out.sb)); failed(hr) || out.sb == nil {
+		return nil, fmt.Errorf("%w (no shell browser, HRESULT 0x%x)", errExplorerUnavailable, hr)
 	}
-	defer sb.release()
-	var sv *iface
-	if hr := sb.call(slotActiveView, ptr(&sv)); failed(hr) {
-		return nil, fmt.Errorf("no shell view (HRESULT 0x%x)", hr)
+	defer out.sb.release()
+	if hr := out.sb.call(slotActiveView, ptr(&out.sv)); failed(hr) || out.sv == nil {
+		return nil, fmt.Errorf("%w (no shell view, HRESULT 0x%x)", errExplorerUnavailable, hr)
 	}
-	defer sv.release()
-	var bg *iface
-	if hr := sv.call(slotGetItemObject, svgioBackground, ptr(&iidDispatch), ptr(&bg)); failed(hr) {
-		return nil, fmt.Errorf("no shell folder view (HRESULT 0x%x)", hr)
+	defer out.sv.release()
+	if hr := out.sv.call(slotGetItemObject, svgioBackground, ptr(&iidDispatch), ptr(&out.bg)); failed(hr) || out.bg == nil {
+		return nil, fmt.Errorf("%w (no shell folder view, HRESULT 0x%x)", errExplorerUnavailable, hr)
 	}
-	defer bg.release()
+	defer out.bg.release()
 
-	res, err := invoke(bg, "Application", dispatchPropGet)
+	res, err := invoke(out.bg, "Application", dispatchPropGet)
 	if err != nil {
 		return nil, err
 	}
 	if res.vt != vtDispatch || res.val[0] == 0 {
-		return nil, errors.New("shell folder view returned no Application")
+		return nil, fmt.Errorf("%w (shell folder view returned no Application)", errExplorerUnavailable)
 	}
 	return *(**iface)(unsafe.Pointer(&res.val[0])), nil //nolint:gosec // reads the IDispatch pointer out of the VARIANT union
 }
