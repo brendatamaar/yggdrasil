@@ -17,6 +17,7 @@ import (
 
 	"github.com/brendatamaar/yggdrasil/internal/core"
 	env "github.com/brendatamaar/yggdrasil/internal/core/worktreeenv"
+	"github.com/brendatamaar/yggdrasil/internal/db"
 	"github.com/brendatamaar/yggdrasil/internal/worktreeenv"
 	"github.com/brendatamaar/yggdrasil/internal/worktreeenv/worktreeenvtest"
 )
@@ -351,7 +352,7 @@ func TestRealDiskProfileEndToEnd(t *testing.T) {
 		Ports: store, Settings: store, Audit: store, Prober: worktreeenv.PlatformProber{}, FS: worktreeenv.OSFileSystem{},
 		RepoDir: func(context.Context, core.RepoID) (string, error) { return repoDir, nil },
 		Now:     func() time.Time { return now },
-		NewID:   func(p string) string { return p + "_" + fmt.Sprint(time.Now().UnixNano()) },
+		NewID:   db.NewID, // random IDs, as in production; a clock-based ID collides on the coarse Windows clock
 	})
 	if err != nil {
 		t.Fatal(err)
