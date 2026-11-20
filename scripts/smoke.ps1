@@ -765,7 +765,7 @@ function Invoke-Phase6Checks {
         while ((Get-Date) -lt $deadline -and -not (Test-Path -LiteralPath $argsFile)) { Start-Sleep -Milliseconds 250 }
         if (-not (Test-Path -LiteralPath $argsFile)) { throw 'the fake Claude Code did not start within 30 s' }
         $argText = [IO.File]::ReadAllText($argsFile)
-        $m = [regex]::Match($argText, '--mcp-config\s+"?([^"\r\n]*ygg-mcp\.json)"?')
+        $m = [regex]::Match($argText, '--mcp-config"?\s+"?([^"\r\n]*mcp\.json)"?')
         if (-not $m.Success) { throw "the agent arguments name no MCP config: $(Get-Tail $argText 2)" }
         $cfg = ConvertFrom-Json ([IO.File]::ReadAllText($m.Groups[1].Value))
         $srvEntry = @($cfg.mcpServers.PSObject.Properties) | Select-Object -First 1
