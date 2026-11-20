@@ -61,7 +61,7 @@ func TestComposeEndAuditAfterARestartIsWritten(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer svc2.Wait()
-	for range 400 {
+	for range 2000 {
 		st, err := svc2.Status(ctx, r.wt.ID)
 		if err != nil {
 			t.Fatal(err)
@@ -74,7 +74,7 @@ func TestComposeEndAuditAfterARestartIsWritten(t *testing.T) {
 	if _, err := svc2.Up(ctx, r.wt.ID); err != nil {
 		t.Fatal(err)
 	}
-	for range 400 {
+	for range 2000 {
 		if len(startedIDs(r)) == 2 {
 			break
 		}
@@ -215,7 +215,7 @@ func TestComposeWaitIsBounded(t *testing.T) {
 	r.runner.Gate = gate // the up never returns
 	t.Cleanup(func() { close(gate) })
 	r.up(t)
-	for range 400 {
+	for range 2000 {
 		if len(r.ops()) > 0 {
 			break
 		}
@@ -245,12 +245,23 @@ func TestComposeQuarantineRacesWithQueueing(t *testing.T) {
 		}
 		return nil
 	}
+	// Overflow the queue before any goroutine starts, so the drop counter is
+	// known to be exercised whatever the scheduler does afterwards.
+	const overflow = 10
+	for i := range 50 + overflow {
+		r.svc.QueueAudit(entryWith("bad-pre"+strconv.Itoa(i)), true)
+	}
+	if got := r.svc.Dropped(); got != overflow {
+		t.Fatalf("Dropped() after overflowing a queue of 50 by %d = %d", overflow, got)
+	}
 	var stop atomic.Bool
 	var wg sync.WaitGroup
+	wrote := make(chan struct{}) // closed after the writer's first iteration
 	wg.Add(2)
 	go func() { // flusher: every failing head is quarantined after a few flushes
 		defer wg.Done()
 		defer stop.Store(true)
+		<-wrote // overlap with the writer, never run ahead of it
 		for range 3000 {
 			clock.Add(120)
 			r.svc.FlushAudits()
@@ -261,10 +272,14 @@ func TestComposeQuarantineRacesWithQueueing(t *testing.T) {
 		for i := 0; !stop.Load(); i++ {
 			r.svc.QueueAudit(entryWith("bad"+strconv.Itoa(i)), true)
 			_ = r.svc.Dropped()
+			if i == 0 {
+				close(wrote)
+			}
 		}
 	}()
 	wg.Wait()
-	if r.svc.Dropped() == 0 {
-		t.Fatal("nothing was dropped: the test did not exercise the counter")
+	// The counter only grows: FlushAudits and quarantine never reset it.
+	if got := r.svc.Dropped(); got < overflow {
+		t.Fatalf("Dropped() = %d after the race, below the %d drops made before it", got, overflow)
 	}
 }

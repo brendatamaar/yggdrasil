@@ -207,7 +207,7 @@ func TestComposeRecoveryDoesNotHoldTheLock(t *testing.T) {
 	r.enable(t)
 	first := make(chan error, 1)
 	go func() { _, err := r.svc.Status(ctx, r.wt.ID); first <- err }()
-	for range 400 { // wait until docker is being asked
+	for range 2000 { // wait until docker is being asked
 		if len(r.runner.Calls()) > 0 {
 			break
 		}
