@@ -208,6 +208,11 @@ func TestNoisePatternEscapingIsLiteral(t *testing.T) {
 		{"a b/build", `/a\ b/build/`},
 		{"[x]/target", `/\[x\]/target/`},
 		{"w*?/__pycache__", `/w\*\?/__pycache__/`},
+		// names Windows cannot create: the escaping is still checked here, as text
+		{"a*b/dist", `/a\*b/dist/`},
+		{"q?/obj", `/q\?/obj/`},
+		{`a"b/dist`, `/a"b/dist/`},
+		{"a&b|c/dist", "/a&b|c/dist/"},
 		{"#!/dist", `/\#\!/dist/`},
 		{"日本語/bin", "/日本語/bin/"},
 		{"é/ü ö/obj", `/é/ü\ ö/obj/`},
