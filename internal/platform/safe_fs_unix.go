@@ -39,7 +39,9 @@ func identityOf(fd int) (DirIdentity, error) {
 	if err := retryEINTR(func() error { return unix.Fstat(fd, &st) }); err != nil {
 		return "", fmt.Errorf("read the folder identity: %w", err)
 	}
-	return DirIdentity(fmt.Sprintf("unix:%x:%x", uint64(st.Dev), uint64(st.Ino))), nil //nolint:unconvert // Dev is int32 on darwin
+	// %x takes Dev and Ino as they are (Dev is int32 on darwin, uint64 on Linux),
+	// so no integer conversion is needed.
+	return DirIdentity(fmt.Sprintf("unix:%x:%x", st.Dev, st.Ino)), nil
 }
 
 func retryEINTR(f func() error) error {

@@ -145,8 +145,14 @@ func (p *process) run() {
 	p.release()
 	// release synchronizes with Kill and prevents any subsequent kill request
 	// from changing killSent. The marker proves the main process was terminated.
-	p.terminated = p.killSent && uint32(p.code) == callerTerminationExitCode
+	p.terminated = p.killSent && exitCodeIs(p.code, callerTerminationExitCode)
 	close(p.done)
+}
+
+// exitCodeIs compares an exit code with a Windows DWORD exit code. Go reports
+// the DWORD as an int (negative on 32-bit builds), so only its low 32 bits count.
+func exitCodeIs(code int, want uint32) bool {
+	return int64(code)&0xFFFFFFFF == int64(want)
 }
 
 // release closes the process job and drops its reference on the task job.
