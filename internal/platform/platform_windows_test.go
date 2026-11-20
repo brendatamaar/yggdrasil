@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -515,6 +516,9 @@ func TestShellExecuteStartsViaExplorer(t *testing.T) {
 	}
 	pidFile := filepath.Join(t.TempDir(), "ed")
 	if err := shellExecute(selfExe(t), windows.ComposeCommandLine([]string{editorArgPrefix + pidFile}), ""); err != nil {
+		if errors.Is(err, errExplorerUnavailable) {
+			t.Skipf("Explorer COM is not usable in this session: %v", err)
+		}
 		t.Fatal(err)
 	}
 	pids, err := waitPIDs(pidFile)
